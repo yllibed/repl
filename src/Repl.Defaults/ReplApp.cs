@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using System.Reflection;
 
 namespace Repl;
 
@@ -128,6 +129,26 @@ public sealed class ReplApp : IReplApp
 	public ReplApp MapModule(IReplModule module)
 	{
 		_core.MapModule(module);
+		return this;
+	}
+
+	/// <summary>
+	/// Maps a module instance with a runtime presence predicate.
+	/// </summary>
+	public ReplApp MapModule(
+		IReplModule module,
+		Func<ModulePresenceContext, bool> isPresent)
+	{
+		_core.MapModule(module, isPresent);
+		return this;
+	}
+
+	/// <summary>
+	/// Maps a module instance with an injectable runtime presence predicate.
+	/// </summary>
+	public ReplApp MapModule(IReplModule module, Delegate isPresent)
+	{
+		_core.MapModule(module, AdaptModulePresencePredicate(isPresent));
 		return this;
 	}
 
@@ -374,11 +395,20 @@ public sealed class ReplApp : IReplApp
 
 	ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);
 
+	ICoreReplApp ICoreReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+		MapModule(module, isPresent);
+
 	ICoreReplApp ICoreReplApp.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
 
 	ICoreReplApp ICoreReplApp.WithBanner(string text) => WithBanner(text);
 
 	IReplApp IReplApp.MapModule(IReplModule module) => MapModule(module);
+
+	IReplApp IReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+		MapModule(module, isPresent);
+
+	IReplApp IReplApp.MapModule(IReplModule module, Delegate isPresent) =>
+		MapModule(module, isPresent);
 
 	IReplApp IReplApp.MapModule<TModule>() => MapModule<TModule>();
 
@@ -387,6 +417,9 @@ public sealed class ReplApp : IReplApp
 	IReplApp IReplApp.WithBanner(string text) => WithBanner(text);
 
 	IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
+
+	IReplMap IReplMap.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+		MapModule(module, isPresent);
 
 	IReplMap IReplMap.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
 
@@ -399,6 +432,123 @@ public sealed class ReplApp : IReplApp
 		return provider.GetService<TModule>()
 			?? throw new InvalidOperationException(
 				$"Unable to resolve module '{typeof(TModule).FullName}'. Register it in services or call MapModule(IReplModule).");
+	}
+
+	private static Func<ModulePresenceContext, bool> AdaptModulePresencePredicate(Delegate isPresent)
+	{
+		ArgumentNullException.ThrowIfNull(isPresent);
+		var parameters = isPresent.Method.GetParameters();
+		ValidateModulePresencePredicateSignature(isPresent, parameters);
+
+		return context =>
+		{
+			var arguments = new object?[parameters.Length];
+			for (var i = 0; i < parameters.Length; i++)
+			{
+				arguments[i] = ResolveModulePresenceArgument(parameters[i], context, isPresent);
+			}
+
+			try
+			{
+				return (bool)isPresent.DynamicInvoke(arguments)!;
+			}
+			catch (TargetInvocationException ex) when (ex.InnerException is not null)
+			{
+				throw new InvalidOperationException(
+					$"Failed to evaluate module presence predicate '{FormatDelegateMethod(isPresent)}': {ex.InnerException.Message}",
+					ex.InnerException);
+			}
+			catch (Exception ex)
+			{
+				throw new InvalidOperationException(
+					$"Failed to evaluate module presence predicate '{FormatDelegateMethod(isPresent)}'.",
+					ex);
+			}
+		};
+	}
+
+	private static void ValidateModulePresencePredicateSignature(Delegate isPresent, ParameterInfo[] parameters)
+	{
+		if (isPresent.Method.ReturnType != typeof(bool))
+		{
+			throw new InvalidOperationException(
+				$"Module presence predicate '{FormatDelegateMethod(isPresent)}' must return bool.");
+		}
+
+		if (isPresent.Method.ContainsGenericParameters)
+		{
+			throw new InvalidOperationException(
+				$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot use open generic parameters.");
+		}
+
+		foreach (var parameter in parameters)
+		{
+			if (parameter.ParameterType.IsByRef || parameter.IsOut)
+			{
+				throw new InvalidOperationException(
+					$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot declare ref/out parameter '{parameter.Name}'.");
+			}
+
+			if (parameter.ParameterType == typeof(IServiceProvider))
+			{
+				throw new InvalidOperationException(
+					$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot declare IServiceProvider. Use ModulePresenceContext, IReplSessionState, or IReplSessionInfo.");
+			}
+		}
+	}
+
+	private static object? ResolveModulePresenceArgument(
+		ParameterInfo parameter,
+		ModulePresenceContext context,
+		Delegate isPresent)
+	{
+		if (parameter.ParameterType == typeof(ModulePresenceContext))
+		{
+			return context;
+		}
+
+		if (parameter.ParameterType == typeof(ReplRuntimeChannel))
+		{
+			return context.Channel;
+		}
+
+		if (parameter.ParameterType == typeof(IReplSessionState))
+		{
+			return context.SessionState;
+		}
+
+		if (parameter.ParameterType == typeof(IReplSessionInfo))
+		{
+			return context.SessionInfo;
+		}
+
+		var resolved = context.ServiceProvider.GetService(parameter.ParameterType);
+		if (resolved is not null)
+		{
+			return resolved;
+		}
+
+		if (parameter.HasDefaultValue)
+		{
+			return parameter.DefaultValue;
+		}
+
+		if (!parameter.ParameterType.IsValueType
+			|| Nullable.GetUnderlyingType(parameter.ParameterType) is not null)
+		{
+			return null;
+		}
+
+		throw new InvalidOperationException(
+			$"Unable to resolve module presence predicate parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in '{FormatDelegateMethod(isPresent)}'.");
+	}
+
+	private static string FormatDelegateMethod(Delegate value)
+	{
+		var method = value.Method;
+		return method.DeclaringType is { } declaringType
+			? $"{declaringType.FullName}.{method.Name}"
+			: method.Name;
 	}
 
 	private SessionOverlayServiceProvider CreateSessionOverlay(IServiceProvider external)
@@ -480,6 +630,20 @@ public sealed class ReplApp : IReplApp
 			return this;
 		}
 
+		public IReplApp MapModule(
+			IReplModule module,
+			Func<ModulePresenceContext, bool> isPresent)
+		{
+			_map.MapModule(module, isPresent);
+			return this;
+		}
+
+		public IReplApp MapModule(IReplModule module, Delegate isPresent)
+		{
+			_map.MapModule(module, AdaptModulePresencePredicate(isPresent));
+			return this;
+		}
+
 		ICoreReplApp ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 			Context(segment, scoped => configure(scoped), validation);
 
@@ -487,6 +651,9 @@ public sealed class ReplApp : IReplApp
 			((IReplMap)_map).Context(segment, configure, validation);
 
 		ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);
+
+		ICoreReplApp ICoreReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+			MapModule(module, isPresent);
 
 		ICoreReplApp ICoreReplApp.WithBanner(Delegate bannerProvider)
 		{
@@ -525,5 +692,8 @@ public sealed class ReplApp : IReplApp
 		}
 
 		IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
+
+		IReplMap IReplMap.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+			MapModule(module, isPresent);
 	}
 }

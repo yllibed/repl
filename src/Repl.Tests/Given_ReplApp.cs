@@ -31,6 +31,24 @@ public sealed class Given_ReplApp
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies shell completion setup defaults so apps start in explicit manual install mode.")]
+	public void When_InspectingShellCompletionDefaults_Then_FeatureIsEnabledAndModeIsManual()
+	{
+		var sut = ReplApp.Create();
+		var enabled = false;
+		var mode = ShellCompletionSetupMode.Auto;
+
+		sut.Options(options =>
+		{
+			enabled = options.ShellCompletion.Enabled;
+			mode = options.ShellCompletion.SetupMode;
+		});
+
+		enabled.Should().BeTrue();
+		mode.Should().Be(ShellCompletionSetupMode.Manual);
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies registering duplicate transformer so that exception is thrown.")]
 	public void When_RegisteringDuplicateTransformer_Then_ExceptionIsThrown()
 	{
@@ -100,6 +118,32 @@ public sealed class Given_ReplApp
 		sut.Should().NotBeNull();
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies injectable module presence predicate must return bool.")]
+	public void When_MappingModuleWithInjectablePresencePredicateReturningNonBool_Then_ExceptionIsThrown()
+	{
+		var sut = ReplApp.Create();
+		Delegate predicate = (Func<int>)(() => 1);
+
+		var action = () => sut.MapModule(new EmptyModule(), predicate);
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*must return bool*");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies injectable module presence predicate cannot request IServiceProvider directly.")]
+	public void When_MappingModuleWithInjectablePresencePredicateUsingServiceProvider_Then_ExceptionIsThrown()
+	{
+		var sut = ReplApp.Create();
+		Delegate predicate = (Func<IServiceProvider, bool>)(_ => true);
+
+		var action = () => sut.MapModule(new EmptyModule(), predicate);
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cannot declare IServiceProvider*");
+	}
+
 	private sealed class StubTransformer : IOutputTransformer
 	{
 		public string Name => "stub";
@@ -107,10 +151,14 @@ public sealed class Given_ReplApp
 		public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default) =>
 			ValueTask.FromResult(value?.ToString() ?? string.Empty);
 	}
+
+	private sealed class EmptyModule : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+		}
+	}
 }
-
-
-
 
 
 

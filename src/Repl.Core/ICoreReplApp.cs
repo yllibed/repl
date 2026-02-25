@@ -22,6 +22,14 @@ public interface ICoreReplApp : IReplMap
 	new ICoreReplApp MapModule(IReplModule module);
 
 	/// <summary>
+	/// Maps a reusable module instance into the current route scope with a runtime presence predicate.
+	/// </summary>
+	/// <param name="module">Module instance.</param>
+	/// <param name="isPresent">Runtime presence predicate.</param>
+	/// <returns>The same app contract for fluent chaining.</returns>
+	new ICoreReplApp MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent);
+
+	/// <summary>
 	/// Registers a banner delegate rendered when the scope is entered.
 	/// </summary>
 	/// <param name="bannerProvider">Banner delegate with injectable parameters.</param>

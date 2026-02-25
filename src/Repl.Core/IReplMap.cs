@@ -30,6 +30,15 @@ public interface IReplMap
 	IReplMap MapModule(IReplModule module);
 
 	/// <summary>
+	/// Maps a reusable module instance into the current route scope with a runtime presence predicate.
+	/// The predicate is evaluated for every resolution pass, allowing dynamic module presence.
+	/// </summary>
+	/// <param name="module">Module instance.</param>
+	/// <param name="isPresent">Runtime presence predicate.</param>
+	/// <returns>The same mapper for fluent chaining.</returns>
+	IReplMap MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent);
+
+	/// <summary>
 	/// Registers a banner delegate displayed when entering this scope in interactive mode.
 	/// Unlike <c>WithDescription</c>, which is structural metadata visible in help and documentation,
 	/// banners are display-only messages that appear at runtime.

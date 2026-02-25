@@ -17,6 +17,7 @@ public sealed class ReplOptions
 		Capabilities = new CapabilityOptions();
 		AmbientCommands = new AmbientCommandOptions();
 		Interaction = new InteractionOptions();
+		ShellCompletion = new ShellCompletionOptions();
 	}
 
 	/// <summary>
@@ -53,4 +54,9 @@ public sealed class ReplOptions
 	/// Gets prompt interaction options.
 	/// </summary>
 	public InteractionOptions Interaction { get; }
+
+	/// <summary>
+	/// Gets shell completion setup options.
+	/// </summary>
+	public ShellCompletionOptions ShellCompletion { get; }
 }

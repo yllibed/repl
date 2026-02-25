@@ -3,7 +3,8 @@ namespace Repl;
 internal sealed class ContextDefinition(
 	RouteTemplate template,
 	Delegate? validation,
-	string? description)
+	string? description,
+	int moduleId)
 {
 	public RouteTemplate Template { get; } = template;
 
@@ -12,4 +13,6 @@ internal sealed class ContextDefinition(
 	public string? Description { get; } = description;
 
 	public Delegate? Banner { get; set; }
+
+	public int ModuleId { get; } = moduleId;
 }
