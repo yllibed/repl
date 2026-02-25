@@ -254,7 +254,31 @@ Package details:
 - Architecture blueprint: [`docs/architecture.md`](docs/architecture.md)
 - Terminal/session metadata: [`docs/terminal-metadata.md`](docs/terminal-metadata.md)
 - Testing toolkit: [`docs/testing-toolkit.md`](docs/testing-toolkit.md)
+- Conditional module presence: [`docs/module-presence.md`](docs/module-presence.md)
+- Shell completion bridge: [`docs/shell-completion.md`](docs/shell-completion.md)
 - Samples (recommended learning path): [`samples/README.md`](samples/README.md)
+
+## Shell completion (configurable)
+
+Repl Toolkit includes a shell completion bridge for Bash and PowerShell.
+
+Quick setup commands:
+- `completion install [--shell bash|powershell] [--force]`
+- `completion uninstall [--shell bash|powershell]`
+- `completion status`
+
+`completion ...` commands are CLI-only (not available in interactive or hosted session modes).
+Use the app executable command directly (the CLI head must match the app binary).
+Auto/prompt setup modes run only when entering interactive mode, never for one-shot terminal commands.
+
+Guide and full snippets: [`docs/shell-completion.md`](docs/shell-completion.md)
+
+## Conditional module presence
+
+Modules can be conditionally present at runtime using `MapModule(module, predicate)`.
+This enables dynamic surfaces like signed-out/signed-in experiences and channel-aware modules (`Cli`, `Interactive`, `Session`).
+
+Guide and examples: [`docs/module-presence.md`](docs/module-presence.md)
 
 ---
 

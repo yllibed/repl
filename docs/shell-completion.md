@@ -1,0 +1,145 @@
+# Shell Completion (Bash + PowerShell)
+
+This page describes shell completion support in Repl Toolkit, including setup modes and install commands.
+
+## Overview
+
+Completion resolution is done by a bridge command:
+
+```text
+completion __complete --shell <bash|powershell> --line <input> --cursor <position>
+```
+
+The shell passes current line + cursor, and Repl returns candidates on `stdout` (one per line).
+`completion __complete` is mapped in the regular command graph through the shell-completion module (CLI channel only).
+
+The module exposes a real `completion` route scope:
+
+- `completion` (usage/help entry point)
+- `completion install`
+- `completion uninstall`
+- `completion status`
+- `completion detect-shell`
+- `completion __complete` (protocol bridge; hidden)
+
+## Runtime setup modes
+
+Shell completion behavior is configured through `ReplOptions.ShellCompletion`:
+
+- `Enabled` (default: `true`)
+- `SetupMode` (default: `Manual`)
+- `PreferredShell` (optional override)
+- `PromptOnce` (default: `true`)
+- `StateFilePath` (optional)
+- `BashProfilePath` / `PowerShellProfilePath` (optional overrides)
+
+`SetupMode` values:
+
+- `Manual`: no automatic profile mutation. User runs install/uninstall commands.
+- `Prompt`: interactive startup can propose installation once.
+- `Auto`: interactive startup installs automatically when a supported shell is confidently detected.
+
+`Prompt` and `Auto` apply only when entering interactive mode. Terminal one-shot commands never auto-install.
+
+## User commands
+
+The management surface is:
+
+```text
+completion install [--shell bash|powershell] [--force]
+completion uninstall [--shell bash|powershell]
+completion status
+completion detect-shell
+```
+
+These commands are CLI-only (they are not available in interactive mode or hosted session mode).
+They also require invoking the app through its own executable command head (the running process must match the app binary).
+
+Structured output is supported via global output flags:
+
+- `completion status --json`
+- `completion detect-shell --output:json`
+- `completion install --json`
+- `completion uninstall --json`
+
+Notes:
+
+- `completion install` writes a managed block in the shell profile.
+- `completion uninstall` removes only the managed block.
+- `completion status` prints mode, detection, profile paths, and install status.
+- `completion detect-shell` prints detected shell and detection reason.
+
+## Detection strategy
+
+Shell detection is best-effort and uses weighted signals:
+
+1. `PreferredShell` override (highest priority).
+2. Environment variables (for example `BASH_VERSION`, `SHELL`, `PSModulePath`).
+3. Parent/grand-parent process names as validation (`bash`, `pwsh`, `powershell`).
+
+If signals are conflicting or weak, result is `unknown` (no auto-install in `Auto` mode).
+
+## What completion returns (current scope)
+
+- Command literals from the mapped graph.
+- Static command options from handler parameters (resolved terminal routes).
+- Static global options (`--help`, `--interactive`, `--no-interactive`, `--no-logo`, output aliases, `--output:<format>`).
+
+Not included:
+
+- Dynamic data values (contexts/arguments).
+- `WithCompletion(...)` providers through shell completion.
+- zsh/fish integration.
+
+## Managed profile blocks
+
+Install/uninstall is idempotent through namespaced markers:
+
+- `# >>> repl completion [appId=<app-id>;shell=<bash|powershell>] >>>`
+- `# <<< repl completion [appId=<app-id>;shell=<bash|powershell>] <<<`
+
+Update/remove targets only the block matching the current app and shell.
+
+## Manual setup snippets
+
+Bash:
+
+```bash
+_myapp_complete() {
+  local line cursor
+  local candidate
+  line="$COMP_LINE"
+  cursor="$COMP_POINT"
+  COMPREPLY=()
+  while IFS= read -r candidate; do
+    COMPREPLY+=("$candidate")
+  done < <(myapp completion __complete --shell bash --line "$line" --cursor "$cursor" --no-interactive --no-logo)
+}
+
+complete -F _myapp_complete myapp
+```
+
+PowerShell:
+
+```powershell
+$__replCompletionCommandNames = @('myapp')
+$__replCompleter = {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $invokedCommand = if ($commandAst.CommandElements.Count -gt 0 -and $commandAst.CommandElements[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+        $commandAst.CommandElements[0].Value
+    } else {
+        'myapp'
+    }
+
+    & $invokedCommand completion __complete --shell powershell --line $commandAst.ToString() --cursor $cursorPosition --no-interactive --no-logo |
+        ForEach-Object {
+            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+}
+if ((Get-Command Register-ArgumentCompleter).Parameters.ContainsKey('Native')) {
+    Register-ArgumentCompleter -Native -CommandName $__replCompletionCommandNames -ScriptBlock $__replCompleter
+} else {
+    Register-ArgumentCompleter -CommandName $__replCompletionCommandNames -ScriptBlock $__replCompleter
+}
+```
