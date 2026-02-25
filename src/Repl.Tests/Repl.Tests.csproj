@@ -1,0 +1,20 @@
+<Project Sdk="MSTest.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+		<EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AwesomeAssertions" />
+		<PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+		<PackageReference Include="XTerm.NET" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Repl.Core\Repl.Core.csproj" />
+		<ProjectReference Include="..\Repl.Defaults\Repl.Defaults.csproj" />
+	</ItemGroup>
+
+</Project>

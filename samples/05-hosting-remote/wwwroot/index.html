@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Remote REPL Playground</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg-soft: #121934;
+      --panel: rgba(14, 21, 43, 0.78);
+      --panel-border: rgba(148, 163, 184, 0.24);
+      --text: #d8e1ff;
+      --muted: #93a4ce;
+      --accent: #66d9ef;
+      --ok: #4ade80;
+      --warn: #facc15;
+      --danger: #f87171;
+      --shadow: 0 24px 50px rgba(2, 6, 23, 0.55);
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      display: flex;
+      color: var(--text);
+      font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+      background:
+        radial-gradient(1100px 420px at 12% -10%, rgba(56, 189, 248, 0.22), transparent 65%),
+        radial-gradient(900px 380px at 92% 0%, rgba(59, 130, 246, 0.2), transparent 60%),
+        linear-gradient(180deg, var(--bg-soft), var(--bg));
+    }
+
+    .page {
+      width: min(1080px, 96vw);
+      margin: 14px auto;
+      display: grid;
+      gap: 14px;
+      flex: 1;
+      min-height: calc(100dvh - 28px);
+      grid-template-rows: auto auto auto minmax(320px, 1fr);
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(6px);
+    }
+
+    .hero {
+      display: flex;
+      gap: 14px;
+      align-items: start;
+      justify-content: space-between;
+      padding: 14px 16px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-size: 1.08rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .hero p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.5;
+      max-width: 72ch;
+    }
+
+    .status-pill {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.72);
+      white-space: nowrap;
+    }
+
+    .status-pill.connected {
+      color: #052e16;
+      background: rgba(74, 222, 128, 0.92);
+      border-color: rgba(34, 197, 94, 0.7);
+    }
+
+    .status-pill.connecting {
+      color: #3d2f00;
+      background: rgba(250, 204, 21, 0.9);
+      border-color: rgba(234, 179, 8, 0.7);
+    }
+
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      flex-wrap: wrap;
+    }
+
+    .mode-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .mode {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.56);
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+
+    .mode input { margin: 0; }
+    .mode:has(input:checked) {
+      color: #e0f2fe;
+      border-color: rgba(102, 217, 239, 0.7);
+      background: rgba(15, 50, 72, 0.66);
+    }
+
+    #go {
+      border: 1px solid rgba(102, 217, 239, 0.7);
+      background: linear-gradient(180deg, rgba(56, 189, 248, 0.35), rgba(8, 47, 73, 0.85));
+      color: #e6faff;
+      border-radius: 10px;
+      padding: 7px 14px;
+      font-family: inherit;
+      font-weight: 700;
+      font-size: 0.82rem;
+      letter-spacing: 0.03em;
+      cursor: pointer;
+    }
+
+    #go:disabled {
+      opacity: 0.58;
+      cursor: default;
+    }
+
+    .help {
+      padding: 12px 14px;
+    }
+
+    .help h2 {
+      margin: 0;
+      font-size: 0.86rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+    }
+
+    .help p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .chips code {
+      font-family: inherit;
+      font-size: 0.75rem;
+      color: #dbeafe;
+      background: rgba(2, 132, 199, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 7px;
+      padding: 4px 7px;
+    }
+
+    .terminal-shell {
+      overflow: hidden;
+      border-radius: 16px;
+      border: 1px solid rgba(100, 116, 139, 0.45);
+      box-shadow:
+        0 28px 60px rgba(2, 6, 23, 0.65),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      background: rgba(2, 6, 23, 0.92);
+      display: flex;
+      flex-direction: column;
+      min-height: 320px;
+    }
+
+    .terminal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 9px 12px;
+      border-bottom: 1px solid rgba(100, 116, 139, 0.35);
+      background: linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.94));
+      font-size: 0.76rem;
+      color: #a8bad9;
+    }
+
+    .terminal-title strong {
+      color: #e2e8f0;
+      font-weight: 700;
+    }
+
+    .terminal-title span {
+      color: var(--accent);
+    }
+
+    #term {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 300px;
+      padding: 10px;
+    }
+
+    @media (max-width: 780px) {
+      .page {
+        min-height: calc(100dvh - 20px);
+        grid-template-rows: auto auto auto minmax(260px, 1fr);
+      }
+
+      .hero {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      #term {
+        min-height: 240px;
+      }
+
+      .terminal-shell {
+        min-height: 260px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="panel hero">
+      <div>
+        <h1>Remote REPL Playground</h1>
+        <p>
+          Multi-transport sample for WebSocket, Telnet-over-WebSocket, and SignalR.
+          Try <code>status</code>, <code>sessions</code>, <code>who</code>, <code>watch</code>, and <code>send hello</code>
+          to explore shared state and live session activity.
+        </p>
+      </div>
+      <div id="connStatus" class="status-pill">Disconnected</div>
+    </section>
+
+    <section class="panel controls">
+      <div class="mode-group">
+        <label class="mode"><input type="radio" name="t" value="ws" checked /> WebSocket</label>
+        <label class="mode"><input type="radio" name="t" value="telnet" /> Telnet</label>
+        <label class="mode"><input type="radio" name="t" value="signalr" /> SignalR</label>
+      </div>
+      <button id="go">Connect</button>
+    </section>
+
+    <section class="panel help">
+      <h2>What You Can Do</h2>
+      <p>
+        Inspect the runtime with <code>status</code>, list active clients with <code>sessions</code>,
+        verify connected names with <code>who</code>, update shared settings, and broadcast messages across tabs.
+      </p>
+      <div class="chips">
+        <code>status</code>
+        <code>sessions</code>
+        <code>who</code>
+        <code>settings show maintenance</code>
+        <code>settings set maintenance on</code>
+        <code>watch</code>
+        <code>send hello</code>
+      </div>
+    </section>
+
+    <section class="terminal-shell">
+      <div class="terminal-head">
+        <div class="terminal-title"><strong>Terminal</strong> <span id="modeBadge">websocket</span></div>
+        <div>Type <code>help</code> to discover commands</div>
+      </div>
+      <div id="term"></div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script>
+    const term = new Terminal({
+      cursorBlink: true,
+      fontSize: 14,
+      fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+      theme: {
+        background: '#070b16',
+        foreground: '#e5eefc',
+        cursor: '#8be9fd',
+        black: '#0b1220',
+        brightBlack: '#334155',
+        brightWhite: '#f8fafc'
+      }
+    });
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open(document.getElementById('term'));
+    fit.fit();
+    if (document.fonts?.ready) {
+      document.fonts.ready.then(() => fit.fit());
+    }
+    addEventListener('resize', () => fit.fit());
+
+    const btn = document.getElementById('go');
+    const connStatus = document.getElementById('connStatus');
+    const modeBadge = document.getElementById('modeBadge');
+    const query = new URLSearchParams(location.search);
+    let send = null;
+    let resizeHandler = null;
+    let inputHandler = null;
+
+    function setConnectionState(state) {
+      connStatus.classList.remove('connected', 'connecting');
+      if (state === 'connected') {
+        connStatus.classList.add('connected');
+        connStatus.textContent = 'Connected';
+      } else if (state === 'connecting') {
+        connStatus.classList.add('connecting');
+        connStatus.textContent = 'Connecting';
+      } else {
+        connStatus.textContent = 'Disconnected';
+      }
+    }
+
+    function normalizeTransport(value) {
+      const token = (value ?? '').trim().toLowerCase();
+      if (token === 'ws' || token === 'websocket') return 'ws';
+      if (token === 'telnet') return 'telnet';
+      if (token === 'signalr' || token === 'sr') return 'signalr';
+      return null;
+    }
+
+    function connectSelectedMode() {
+      const mode = document.querySelector('input[name="t"]:checked').value;
+      modeBadge.textContent = mode === 'ws' ? 'websocket' : mode;
+      btn.disabled = true;
+      setConnectionState('connecting');
+      term.clear();
+      if (resizeHandler) { resizeHandler.dispose(); resizeHandler = null; }
+      if (inputHandler) { inputHandler.dispose(); inputHandler = null; }
+      if (mode === 'ws') connectWS();
+      else if (mode === 'telnet') connectTelnet();
+      else connectSR();
+    }
+
+    btn.onclick = connectSelectedMode;
+
+    const autoConnect = normalizeTransport(query.get('autoconnect'));
+    if (autoConnect) {
+      const radio = document.querySelector(`input[name="t"][value="${autoConnect}"]`);
+      if (radio) {
+        radio.checked = true;
+      }
+
+      queueMicrotask(connectSelectedMode);
+    }
+
+    function buildHello() {
+      return TerminalControlProtocol.formatHello(
+        'xterm-256color',
+        term.cols,
+        term.rows,
+        true,
+        ['Ansi', 'ResizeReporting', 'IdentityReporting', 'VtInput']);
+    }
+
+    function buildResize(cols, rows) {
+      return TerminalControlProtocol.formatResize(cols, rows);
+    }
+
+    function buildConnectionQuery() {
+      const params = new URLSearchParams({
+        terminal: 'xterm-256color',
+        cols: String(term.cols),
+        rows: String(term.rows),
+        ansi: 'true',
+        capabilities: 'Ansi,ResizeReporting,IdentityReporting,VtInput'
+      });
+      return `?${params.toString()}`;
+    }
+
+    const TerminalControlProtocol = {
+      formatHello: (terminal, cols, rows, ansi, capabilities) =>
+        `@@repl:hello ${JSON.stringify({ terminal, cols, rows, ansi, capabilities: capabilities.join(',') })}`,
+      formatResize: (cols, rows) =>
+        `@@repl:resize ${JSON.stringify({ cols, rows })}`
+    };
+
+    function connectWS() {
+      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl${buildConnectionQuery()}`);
+      ws.onmessage = e => term.write(e.data);
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+      send = d => { if (ws.readyState === 1) ws.send(d); };
+      inputHandler = term.onData(send);
+      // Send initial DTTERM size so the VT probe detects it.
+      ws.onopen = () => { setConnectionState('connected'); send(buildHello()); send(`\x1b[8;${term.rows};${term.cols}t`); term.focus(); };
+      // DTTERM in-band VT resize sequence.
+      resizeHandler = term.onResize(({ cols, rows }) => {
+        if (send) {
+          send(buildResize(cols, rows));
+          send(`\x1b[8;${rows};${cols}t`);
+        }
+      });
+    }
+
+    function connectTelnet() {
+      const IAC = 255, WILL = 251, WONT = 252, DO = 253, DONT = 254;
+      const SB = 250, SE = 240;
+      const OPT_BINARY = 0, OPT_NAWS = 31, OPT_TTYPE = 24;
+      const TTYPE_IS = 0, TTYPE_SEND = 1;
+      const clientOpts = new Set([OPT_BINARY, OPT_NAWS, OPT_TTYPE]);
+
+      const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${wsProto}://${location.host}/ws/telnet${buildConnectionQuery()}`);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+
+      ws.onmessage = e => {
+        const raw = new Uint8Array(e.data);
+        const vt = telnetParse(raw);
+        if (vt.length > 0) term.write(vt);
+      };
+
+      send = d => {
+        if (ws.readyState !== 1) return;
+        ws.send(telnetEscape(new TextEncoder().encode(d)));
+      };
+      inputHandler = term.onData(send);
+
+      // Send NAWS on resize.
+      resizeHandler = term.onResize(({ cols, rows }) => {
+        if (ws.readyState === 1) ws.send(nawsSubneg(cols, rows));
+      });
+
+      ws.onopen = () => { setConnectionState('connected'); term.focus(); };
+      // Initial NAWS is sent by the DO NAWS handler in telnetParse,
+      // so no explicit onopen send is needed.
+
+      // Telnet client-side parser: strip IAC commands, extract VT data.
+      function telnetParse(data) {
+        const out = [];
+        let i = 0;
+        while (i < data.length) {
+          if (data[i] === IAC) {
+            i++;
+            if (i >= data.length) break;
+            if (data[i] === IAC) { out.push(0xFF); i++; }
+            else if (data[i] === DO || data[i] === DONT) {
+              i++;
+              if (i < data.length) {
+                const opt = data[i]; i++;
+                const resp = clientOpts.has(opt) ? WILL : WONT;
+                ws.send(new Uint8Array([IAC, resp, opt]));
+                if (opt === OPT_NAWS) ws.send(nawsSubneg(term.cols, term.rows));
+              }
+            }
+            else if (data[i] === WILL || data[i] === WONT) {
+              const cmd = data[i]; i++;
+              if (i < data.length) {
+                const opt = data[i]; i++;
+                ws.send(new Uint8Array([IAC, cmd === WILL ? DO : DONT, opt]));
+              }
+            }
+            else if (data[i] === SB) {
+              i++;
+              const sub = [];
+              while (i < data.length) {
+                if (data[i] === IAC && i + 1 < data.length && data[i + 1] === SE) {
+                  i += 2; break;
+                }
+                sub.push(data[i]); i++;
+              }
+              handleSubneg(sub);
+            }
+            else { i++; }
+          } else {
+            out.push(data[i]); i++;
+          }
+        }
+        return new Uint8Array(out);
+      }
+
+      function handleSubneg(sub) {
+        if (sub[0] === OPT_TTYPE && sub[1] === TTYPE_SEND) {
+          const name = new TextEncoder().encode('XTERM-256COLOR');
+          const resp = new Uint8Array([IAC, SB, OPT_TTYPE, TTYPE_IS, ...name, IAC, SE]);
+          ws.send(resp);
+        }
+      }
+
+      // Escape 0xFF in outgoing data.
+      function telnetEscape(data) {
+        let has0xFF = false;
+        for (const b of data) { if (b === 0xFF) { has0xFF = true; break; } }
+        if (!has0xFF) return data;
+        const out = [];
+        for (const b of data) {
+          out.push(b);
+          if (b === 0xFF) out.push(0xFF);
+        }
+        return new Uint8Array(out);
+      }
+
+      // Build NAWS subnegotiation: IAC SB NAWS <w-hi> <w-lo> <h-hi> <h-lo> IAC SE
+      function nawsSubneg(cols, rows) {
+        return new Uint8Array([
+          IAC, SB, OPT_NAWS,
+          (cols >> 8) & 0xFF, cols & 0xFF,
+          (rows >> 8) & 0xFF, rows & 0xFF,
+          IAC, SE
+        ]);
+      }
+    }
+
+    function connectSR() {
+      const hub = new signalR.HubConnectionBuilder().withUrl(`/hub/repl${buildConnectionQuery()}`).withAutomaticReconnect().build();
+      hub.on('Output', t => term.write(t));
+      hub.onclose(() => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; });
+      send = d => { if (hub.state === signalR.HubConnectionState.Connected) hub.invoke('OnInput', d); };
+      inputHandler = term.onData(send);
+      // DTTERM in-band VT resize sequence.
+      resizeHandler = term.onResize(({ cols, rows }) => {
+        if (send) {
+          send(buildResize(cols, rows));
+          send(`\x1b[8;${rows};${cols}t`);
+        }
+      });
+      hub.start()
+        .then(() => { setConnectionState('connected'); send(buildHello()); send(`\x1b[8;${term.rows};${term.cols}t`); term.focus(); })
+        .catch(e => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[error: ' + e + ']'); btn.disabled = false; });
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+<Project>
+
+	<!--
+		CI-only: verify that NuGet Audit scanned every project during restore.
+		Runs after the solution-level Restore target so the output properties
+		(RestoreProjectCount, RestoreProjectsAuditedCount) are available.
+	-->
+	<Target Name="AssertRestoreAuditedAllProjects"
+			AfterTargets="Restore"
+			Condition="'$(CI)' == 'true'">
+		<Error
+			Condition="'$(RestoreProjectsAuditedCount)' != '$(RestoreProjectCount)'"
+			Text="NuGet Audit did not scan every project. Expected: $(RestoreProjectCount), Audited: $(RestoreProjectsAuditedCount)" />
+	</Target>
+
+</Project>

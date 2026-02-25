@@ -1,0 +1,388 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'release/**']
+
+permissions:
+  contents: write
+  checks: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  build-test-cross-platform:
+    name: Build and Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: ga
+
+      - name: Restore
+        run: dotnet restore src/Repl.slnx --force
+
+      - name: Build
+        run: dotnet build src/Repl.slnx -c Release -warnaserror --no-restore
+
+      - name: Test
+        run: >-
+          dotnet test --solution src/Repl.slnx
+          -c Release
+          --no-build
+          --no-restore
+
+  build-test-pack:
+    name: Build, Test, Pack
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_RELEASE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
+    outputs:
+      version: ${{ steps.resolve-version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # Nerdbank.GitVersioning needs full history
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: ga
+
+      - name: Restore
+        run: dotnet restore src/Repl.slnx --force
+
+      - name: Build
+        shell: bash
+        run: |
+          if [[ "${PUBLIC_RELEASE}" == "true" ]]; then
+            dotnet build src/Repl.slnx -c Release -warnaserror --no-restore -p:PublicRelease=true
+          else
+            dotnet build src/Repl.slnx -c Release -warnaserror --no-restore
+          fi
+
+      - name: Test
+        run: >-
+          dotnet test --solution src/Repl.slnx
+          -c Release
+          --no-build
+          --no-restore
+          --results-directory TestResults
+          --
+          --report-trx
+          --coverage
+          --coverage-output-format cobertura
+
+      - name: Test report
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Test Results
+          path: 'TestResults/**/*.trx'
+          reporter: dotnet-trx
+
+      - name: Coverage summary
+        if: always()
+        shell: pwsh
+        run: |
+          $coberturaFiles = Get-ChildItem -Path TestResults -Filter '*.cobertura.xml' -Recurse -ErrorAction SilentlyContinue
+          if (-not $coberturaFiles -or $coberturaFiles.Count -eq 0) {
+            Write-Host 'No Cobertura coverage files found — skipping summary.'
+            exit 0
+          }
+          foreach ($file in $coberturaFiles) {
+            [xml]$xml = Get-Content $file.FullName
+            $lineRate = [math]::Round([double]$xml.coverage.'line-rate' * 100, 1)
+            $branchRate = [math]::Round([double]$xml.coverage.'branch-rate' * 100, 1)
+            "## Code Coverage`n" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "| Metric | Value |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "|--------|-------|" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "| Line coverage | ${lineRate}% |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "| Branch coverage | ${branchRate}% |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Write-Host "Line coverage: ${lineRate}%, Branch coverage: ${branchRate}%"
+          }
+
+      - name: Pack
+        shell: pwsh
+        run: |
+          if ($env:PUBLIC_RELEASE -eq 'true') {
+            dotnet pack src/Repl.slnx -c Release --no-restore -p:PublicRelease=true -p:WarnOnPackingNonPackableProject=false -o '${{ runner.temp }}/packages'
+          }
+          else {
+            dotnet pack src/Repl.slnx -c Release --no-restore -p:WarnOnPackingNonPackableProject=false -o '${{ runner.temp }}/packages'
+          }
+
+      - name: Package readiness report (non-blocking)
+        if: always()
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $packagesDir = '${{ runner.temp }}/packages'
+          $repoUrl = 'https://github.com/yllibed/repl'
+          $issues = New-Object System.Collections.Generic.List[string]
+          $symbolChecksRequired = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
+
+          function Get-ZipEntryText([System.IO.Compression.ZipArchive]$zip, [string]$entryName) {
+            $entry = $zip.Entries | Where-Object { $_.FullName -eq $entryName } | Select-Object -First 1
+            if (-not $entry) { return $null }
+            $reader = [System.IO.StreamReader]::new($entry.Open())
+            try { return $reader.ReadToEnd() } finally { $reader.Dispose() }
+          }
+
+          $nupkgs = @(Get-ChildItem -Path $packagesDir -Filter '*.nupkg' -File |
+            Where-Object { $_.Name -notlike '*.symbols.nupkg' })
+          $snupkgs = @(Get-ChildItem -Path $packagesDir -Filter '*.snupkg' -File)
+
+          if ($nupkgs.Count -eq 0) {
+            $issues.Add('No .nupkg files produced by pack.')
+          }
+
+          foreach ($nupkg in $nupkgs) {
+            $baseName = [System.IO.Path]::GetFileNameWithoutExtension($nupkg.Name)
+            $expectedSnupkg = Join-Path $packagesDir ($baseName + '.snupkg')
+
+            if (-not (Test-Path $expectedSnupkg)) {
+              $issues.Add("Missing .snupkg for package '$($nupkg.Name)'.")
+            }
+
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($nupkg.FullName)
+            try {
+              $containsBuildOutput = @($zip.Entries | Where-Object { $_.FullName -like 'lib/*.dll' -or $_.FullName -like 'lib/*/*.dll' }).Count -gt 0
+              if ($containsBuildOutput) {
+                [void]$symbolChecksRequired.Add($baseName)
+              }
+
+              $nuspecEntry = $zip.Entries | Where-Object { $_.FullName -like '*.nuspec' } | Select-Object -First 1
+              if (-not $nuspecEntry) {
+                $issues.Add("Missing .nuspec in '$($nupkg.Name)'.")
+                continue
+              }
+
+              $nuspecText = Get-ZipEntryText -zip $zip -entryName $nuspecEntry.FullName
+              [xml]$nuspec = $nuspecText
+              $metadata = $nuspec.package.metadata
+              $repository = $metadata.repository
+              $readme = [string]$metadata.readme
+
+              if (-not $repository) {
+                $issues.Add("Missing <repository> metadata in '$($nupkg.Name)'.")
+              }
+              else {
+                if ([string]$repository.type -ne 'git') {
+                  $issues.Add("Repository type is not 'git' in '$($nupkg.Name)'.")
+                }
+                if ([string]$repository.url -ne $repoUrl) {
+                  $issues.Add("Repository URL mismatch in '$($nupkg.Name)'. Expected '$repoUrl'.")
+                }
+                if ([string]::IsNullOrWhiteSpace([string]$repository.commit)) {
+                  $issues.Add("Missing repository commit metadata in '$($nupkg.Name)'.")
+                }
+              }
+
+              if ([string]::IsNullOrWhiteSpace($readme)) {
+                $issues.Add("Missing <readme> metadata in '$($nupkg.Name)'.")
+              }
+              elseif (-not ($zip.Entries | Where-Object { $_.FullName -eq $readme } | Select-Object -First 1)) {
+                $issues.Add("Readme '$readme' not found in '$($nupkg.Name)'.")
+              }
+            }
+            finally {
+              $zip.Dispose()
+            }
+          }
+
+          foreach ($snupkg in $snupkgs) {
+            $snupkgBaseName = [System.IO.Path]::GetFileNameWithoutExtension($snupkg.Name)
+            if (-not $symbolChecksRequired.Contains($snupkgBaseName)) {
+              continue
+            }
+
+            $zip = [System.IO.Compression.ZipFile]::OpenRead($snupkg.FullName)
+            try {
+              $pdbEntries = @($zip.Entries | Where-Object { $_.FullName -like '*.pdb' })
+              if ($pdbEntries.Count -eq 0) {
+                $issues.Add("No .pdb entries found in '$($snupkg.Name)'.")
+                continue
+              }
+
+              $foundSourceLinkHint = $false
+              foreach ($pdb in $pdbEntries) {
+                $stream = $pdb.Open()
+                try {
+                  $ms = New-Object System.IO.MemoryStream
+                  $stream.CopyTo($ms)
+                  $bytes = $ms.ToArray()
+                  $text = [System.Text.Encoding]::ASCII.GetString($bytes)
+                  if ($text.Contains('raw.githubusercontent.com/yllibed/repl') -or
+                      $text.Contains('github.com/yllibed/repl')) {
+                    $foundSourceLinkHint = $true
+                    break
+                  }
+                }
+                finally {
+                  $stream.Dispose()
+                }
+              }
+
+              if (-not $foundSourceLinkHint) {
+                $issues.Add("Could not find GitHub Source Link hint in '$($snupkg.Name)' PDB payload.")
+              }
+            }
+            finally {
+              $zip.Dispose()
+            }
+          }
+
+          "## Package Readiness Report`n" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| Check | Result |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "|---|---|" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| Generated nupkg | $($nupkgs.Count) |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          "| Generated snupkg | $($snupkgs.Count) |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+
+          if ($issues.Count -eq 0) {
+            "| Readiness status | PASS |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            Write-Host 'Package readiness checks passed.'
+          }
+          else {
+            "| Readiness status | WARN ($($issues.Count) issue(s)) |" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            "`n### Warnings`n" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+            foreach ($issue in $issues) {
+              "- $issue" | Out-File -Append $env:GITHUB_STEP_SUMMARY
+              Write-Warning $issue
+            }
+          }
+
+      - name: Validate Repl meta-package
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $packagesDir = '${{ runner.temp }}/packages'
+          $metaPackage = Get-ChildItem -Path $packagesDir -Filter 'Repl.*.nupkg' |
+            Where-Object { $_.Name -match '^Repl\.\d' } |
+            Select-Object -First 1
+          if (-not $metaPackage) {
+            throw "Meta-package Repl.*.nupkg not found in $packagesDir"
+          }
+
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($metaPackage.FullName)
+          try {
+            $entries = $zip.Entries | ForEach-Object { $_.FullName }
+            if ($entries -match '^lib/') {
+              throw "Meta-package '$($metaPackage.Name)' must not contain lib/ assets."
+            }
+
+            $nuspecEntry = $zip.Entries | Where-Object { $_.FullName -like '*.nuspec' } | Select-Object -First 1
+            if (-not $nuspecEntry) {
+              throw "No nuspec found in '$($metaPackage.Name)'."
+            }
+
+            $reader = [System.IO.StreamReader]::new($nuspecEntry.Open())
+            try {
+              $nuspecText = $reader.ReadToEnd()
+            }
+            finally {
+              $reader.Dispose()
+            }
+
+            [xml]$nuspec = $nuspecText
+            $dependencyNodes = @($nuspec.package.metadata.dependencies.group.dependency)
+            $dependencyIds = $dependencyNodes | ForEach-Object { $_.id }
+
+            foreach ($required in @('Repl.Core', 'Repl.Defaults', 'Repl.Protocol')) {
+              if ($dependencyIds -notcontains $required) {
+                throw "Meta-package '$($metaPackage.Name)' is missing dependency '$required'."
+              }
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
+
+      - name: Resolve version
+        id: resolve-version
+        shell: pwsh
+        run: |
+          $toolPath = Join-Path $env:RUNNER_TEMP 'dotnet-tools'
+          dotnet tool install nbgv --tool-path $toolPath
+          $nbgvExe = if ($IsWindows) { 'nbgv.exe' } else { 'nbgv' }
+          $nbgv = Join-Path $toolPath $nbgvExe
+          if ($env:PUBLIC_RELEASE -eq 'true') {
+            $version = & $nbgv get-version -v NuGetPackageVersion --public-release=true
+          }
+          else {
+            $version = & $nbgv get-version -v NuGetPackageVersion
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results
+          path: TestResults/**
+          retention-days: 14
+
+      - name: Upload packages
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: packages
+          path: |
+            ${{ runner.temp }}/packages/*.nupkg
+            ${{ runner.temp }}/packages/*.snupkg
+          retention-days: 14
+
+  release:
+    name: GitHub Release
+    needs: build-test-pack
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: packages
+          path: packages
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.build-test-pack.outputs.version }}"
+          PRERELEASE=""
+          [[ "$VERSION" == *-* ]] && PRERELEASE="--prerelease"
+          gh release create "v${VERSION}" packages/* \
+            --title "v${VERSION}" \
+            --generate-notes \
+            $PRERELEASE
+
+      - name: Publish to NuGet
+        if: success()
+        shell: pwsh
+        run: |
+          dotnet nuget push packages/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+          dotnet nuget push packages/*.snupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate

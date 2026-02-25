@@ -1,0 +1,15 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+TestResults/
+
+# Local tooling / IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# Local dotnet home used in sandboxed/dev sessions
+.dotnethome/
+src/Repl.Benchmarks/bin/Release/net10.0/Perfolizer.dll

@@ -1,0 +1,17 @@
+<Project Sdk="MSTest.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+		<EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="AwesomeAssertions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Repl.Protocol\Repl.Protocol.csproj" />
+	</ItemGroup>
+
+</Project>
