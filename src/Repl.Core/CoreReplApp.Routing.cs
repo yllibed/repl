@@ -18,6 +18,7 @@ public sealed partial class CoreReplApp
 
 		var context = new ContextDefinition(parsedTemplate, validation, description, moduleId);
 		_contexts.Add(context);
+		InvalidateRouting();
 		return context;
 	}
 

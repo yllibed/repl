@@ -63,15 +63,22 @@ Note: `CoreReplApp` exposes the typed predicate overload `Func<ModulePresenceCon
 
 ## Runtime behavior
 
-- Predicates are evaluated every time routing/help/autocomplete is resolved.
-- Module presence can change during the same interactive session.
+- Predicates are evaluated from an active routing cache.
+- Module presence can change during the same interactive session, but cache invalidation is explicit.
 - If a module is not present, its routes/contexts are treated as absent.
+
+When the state that drives module presence changes, call:
+
+```csharp
+app.InvalidateRouting();
+```
 
 Example flow:
 
 1. Signed-out module is present.
 2. User runs `auth login` (updates session state).
-3. Signed-in module becomes present on next command resolution.
+3. App invalidates routing cache.
+4. Signed-in module becomes present on next command resolution.
 
 ## Conflict policy
 

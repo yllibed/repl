@@ -42,4 +42,9 @@ public interface ICoreReplApp : IReplMap
 	/// <param name="text">Banner text.</param>
 	/// <returns>The same app contract for fluent chaining.</returns>
 	new ICoreReplApp WithBanner(string text);
+
+	/// <summary>
+	/// Invalidates the active routing cache so module presence predicates are re-evaluated on next resolution.
+	/// </summary>
+	void InvalidateRouting();
 }

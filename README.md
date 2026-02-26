@@ -277,6 +277,7 @@ Guide and full snippets: [`docs/shell-completion.md`](docs/shell-completion.md)
 
 Modules can be conditionally present at runtime using `MapModule(module, predicate)`.
 This enables dynamic surfaces like signed-out/signed-in experiences and channel-aware modules (`Cli`, `Interactive`, `Session`).
+When predicate-driving state changes, call `app.InvalidateRouting()` so the active graph is recomputed.
 
 Guide and examples: [`docs/module-presence.md`](docs/module-presence.md)
 

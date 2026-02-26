@@ -31,6 +31,17 @@ public sealed class Given_ReplApp
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies routing cache can be invalidated explicitly through public API.")]
+	public void When_InvalidatingRouting_Then_PublicApiIsAvailable()
+	{
+		var sut = ReplApp.Create();
+
+		var action = () => sut.InvalidateRouting();
+
+		action.Should().NotThrow();
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies shell completion setup defaults so apps start in explicit manual install mode.")]
 	public void When_InspectingShellCompletionDefaults_Then_FeatureIsEnabledAndModeIsManual()
 	{
@@ -159,6 +170,5 @@ public sealed class Given_ReplApp
 		}
 	}
 }
-
 
 

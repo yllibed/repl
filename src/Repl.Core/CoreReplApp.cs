@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Repl.ShellCompletion;
 
 namespace Repl;
@@ -22,6 +23,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private readonly Stack<int> _moduleMappingScope = new();
 	private int _nextModuleId = 1;
 	private readonly AsyncLocal<InvocationRuntimeState?> _runtimeState = new();
+	private readonly ConditionalWeakTable<IServiceProvider, RoutingCacheBucket> _routingCacheByServiceProvider = new();
+	private long _routingCacheVersion;
 	private readonly DefaultServiceProvider _services;
 	private readonly ShellCompletionRuntime _shellCompletionRuntime;
 	private string? _description;
@@ -120,6 +123,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	}
 
 	/// <summary>
+	/// Invalidates active routing cache so module presence predicates are re-evaluated on next resolution.
+	/// </summary>
+	public void InvalidateRouting() => Interlocked.Increment(ref _routingCacheVersion);
+
+	/// <summary>
 	/// Maps a route and command handler.
 	/// </summary>
 	/// <param name="route">Route template.</param>
@@ -146,6 +154,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		_commands.Add(command);
 		var routeDefinition = new RouteDefinition(template, command, moduleId);
 		_routes.Add(routeDefinition);
+		InvalidateRouting();
 		return command;
 	}
 
@@ -314,6 +323,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	ICoreReplApp ICoreReplApp.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
 
 	ICoreReplApp ICoreReplApp.WithBanner(string text) => WithBanner(text);
+
+	void ICoreReplApp.InvalidateRouting() => InvalidateRouting();
 
 	IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
@@ -531,6 +542,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		var moduleId = _nextModuleId++;
 		_moduleRegistrations.Add(new ModuleRegistration(moduleId, isPresent));
+		InvalidateRouting();
 		return moduleId;
 	}
 
@@ -554,11 +566,20 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var runtime = _runtimeState.Value;
 		var serviceProvider = runtime?.ServiceProvider ?? _services;
 		var channel = ResolveCurrentRuntimeChannel();
+		var cacheVersion = Interlocked.Read(ref _routingCacheVersion);
+		var cacheBucket = _routingCacheByServiceProvider.GetOrCreateValue(serviceProvider);
+		if (cacheBucket.TryGet(channel, cacheVersion, out var cached))
+		{
+			return cached;
+		}
+
 		var presenceContext = CreateModulePresenceContext(serviceProvider, channel);
 		var activeModuleIds = ResolveActiveModuleIds(presenceContext);
 		var routes = ResolveActiveRoutes(activeModuleIds);
 		var contexts = ResolveActiveContexts(activeModuleIds);
-		return new ActiveRoutingGraph(routes, contexts, channel);
+		var computed = new ActiveRoutingGraph(routes, contexts, channel);
+		cacheBucket.Set(channel, cacheVersion, computed);
+		return computed;
 	}
 
 	private static ModulePresenceContext CreateModulePresenceContext(
@@ -1107,6 +1128,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		var defaults = new Dictionary<Type, object>
 		{
+			[typeof(CoreReplApp)] = this,
+			[typeof(ICoreReplApp)] = this,
 			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
 			[typeof(IReplInteractionChannel)] = new ConsoleInteractionChannel(_options.Interaction, _options.Output),
 			[typeof(IHistoryProvider)] = _options.Interactive.HistoryProvider ?? new InMemoryHistoryProvider(),
@@ -1173,6 +1196,13 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		IServiceProvider ServiceProvider,
 		bool IsInteractiveSession);
 
+	private sealed class RoutingCacheEntry(long version, ActiveRoutingGraph graph)
+	{
+		public long Version { get; } = version;
+
+		public ActiveRoutingGraph Graph { get; } = graph;
+	}
+
 	private enum AmbientCommandOutcome
 	{
 		NotHandled,
@@ -1198,6 +1228,35 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 			_state.Value = _previous;
 			_disposed = true;
+		}
+	}
+
+	private sealed class RoutingCacheBucket
+	{
+		private readonly System.Threading.Lock _syncRoot = new();
+		private readonly Dictionary<ReplRuntimeChannel, RoutingCacheEntry> _entries = [];
+
+		public bool TryGet(ReplRuntimeChannel channel, long version, out ActiveRoutingGraph graph)
+		{
+			lock (_syncRoot)
+			{
+				if (_entries.TryGetValue(channel, out var cached) && cached.Version == version)
+				{
+					graph = cached.Graph;
+					return true;
+				}
+			}
+
+			graph = default;
+			return false;
+		}
+
+		public void Set(ReplRuntimeChannel channel, long version, ActiveRoutingGraph graph)
+		{
+			lock (_syncRoot)
+			{
+				_entries[channel] = new RoutingCacheEntry(version, graph);
+			}
 		}
 	}
 

@@ -5,6 +5,15 @@ namespace Repl;
 
 public sealed partial class CoreReplApp
 {
+	private static readonly string[] StaticShellGlobalOptions =
+	[
+		"--help",
+		"--interactive",
+		"--no-interactive",
+		"--no-logo",
+		"--output:",
+	];
+
 	private string[] ResolveShellCompletionCandidates(string line, int cursor)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
@@ -14,26 +23,63 @@ public sealed partial class CoreReplApp
 			return [];
 		}
 
-		var priorInvocationTokens = state.PriorTokens.Skip(1).ToArray();
+		var priorTokenCount = state.PriorTokens.Length - 1;
+		string[] priorInvocationTokens;
+		if (priorTokenCount <= 0)
+		{
+			priorInvocationTokens = [];
+		}
+		else
+		{
+			priorInvocationTokens = new string[priorTokenCount];
+			Array.Copy(state.PriorTokens, sourceIndex: 1, priorInvocationTokens, destinationIndex: 0, priorTokenCount);
+		}
+
 		var parsed = InvocationOptionParser.Parse(priorInvocationTokens);
 		var commandPrefix = parsed.PositionalArguments.ToArray();
 		var currentTokenPrefix = state.CurrentTokenPrefix;
 		var currentTokenIsOption = IsGlobalOptionToken(currentTokenPrefix);
 		var routeMatch = Resolve(commandPrefix, activeGraph.Routes);
 		var hasTerminalRoute = routeMatch is not null && routeMatch.RemainingTokens.Count == 0;
-		var commandCandidates = currentTokenIsOption
-			? []
-			: CollectShellCommandCandidates(commandPrefix, currentTokenPrefix, activeGraph.Routes, activeGraph.Contexts);
-		var optionCandidates = currentTokenIsOption || (string.IsNullOrEmpty(currentTokenPrefix) && hasTerminalRoute)
-			? CollectShellOptionCandidates(hasTerminalRoute ? routeMatch!.Route : null, currentTokenPrefix)
-			: [];
+		var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var candidates = new List<string>(capacity: 16);
+		if (!currentTokenIsOption)
+		{
+			foreach (var commandCandidate in CollectShellCommandCandidates(
+				commandPrefix,
+				currentTokenPrefix,
+				activeGraph.Routes,
+				activeGraph.Contexts))
+			{
+				TryAddShellCompletionCandidate(commandCandidate, dedupe, candidates);
+			}
+		}
 
-		return commandCandidates
-			.Concat(optionCandidates)
-			.Where(static candidate => !string.IsNullOrWhiteSpace(candidate))
-			.Distinct(StringComparer.OrdinalIgnoreCase)
-			.Order(StringComparer.OrdinalIgnoreCase)
-			.ToArray();
+		if (currentTokenIsOption || (string.IsNullOrEmpty(currentTokenPrefix) && hasTerminalRoute))
+		{
+			foreach (var optionCandidate in CollectShellOptionCandidates(
+				hasTerminalRoute ? routeMatch!.Route : null,
+				currentTokenPrefix))
+			{
+				TryAddShellCompletionCandidate(optionCandidate, dedupe, candidates);
+			}
+		}
+
+		candidates.Sort(StringComparer.OrdinalIgnoreCase);
+		return [.. candidates];
+	}
+
+	private static void TryAddShellCompletionCandidate(
+		string candidate,
+		HashSet<string> dedupe,
+		List<string> candidates)
+	{
+		if (string.IsNullOrWhiteSpace(candidate) || !dedupe.Add(candidate))
+		{
+			return;
+		}
+
+		candidates.Add(candidate);
 	}
 
 	private IEnumerable<string> CollectShellCommandCandidates(
@@ -80,16 +126,7 @@ public sealed partial class CoreReplApp
 
 	private IEnumerable<string> CollectGlobalShellOptionCandidates(string currentTokenPrefix)
 	{
-		var staticOptions = new[]
-		{
-			"--help",
-			"--interactive",
-			"--no-interactive",
-			"--no-logo",
-			"--output:",
-		};
-
-		foreach (var option in staticOptions)
+		foreach (var option in StaticShellGlobalOptions)
 		{
 			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
 			{
@@ -118,10 +155,15 @@ public sealed partial class CoreReplApp
 
 	private static IEnumerable<string> CollectRouteShellOptionCandidates(RouteDefinition route, string currentTokenPrefix)
 	{
-		var routeParameterNames = route.Template.Segments
-			.OfType<DynamicRouteSegment>()
-			.Select(segment => segment.Name)
-			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var routeParameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var segment in route.Template.Segments)
+		{
+			if (segment is DynamicRouteSegment dynamicSegment)
+			{
+				routeParameterNames.Add(dynamicSegment.Name);
+			}
+		}
+
 		foreach (var parameter in route.Command.Handler.Method.GetParameters())
 		{
 			if (string.IsNullOrWhiteSpace(parameter.Name)
@@ -155,16 +197,26 @@ public sealed partial class CoreReplApp
 				continue;
 			}
 
-			var prior = tokens.Take(i).Select(static tokenSpan => tokenSpan.Value).ToArray();
+			var prior = new string[i];
+			for (var priorIndex = 0; priorIndex < i; priorIndex++)
+			{
+				prior[priorIndex] = tokens[priorIndex].Value;
+			}
+
 			var prefix = input[token.Start..cursor];
 			return new ShellCompletionInputState(prior, prefix);
 		}
 
-		var trailingPrior = tokens
-			.Where(token => token.End <= cursor)
-			.Select(static token => token.Value)
-			.ToArray();
-		return new ShellCompletionInputState(trailingPrior, CurrentTokenPrefix: string.Empty);
+		var trailingPrior = new List<string>(tokens.Count);
+		foreach (var token in tokens)
+		{
+			if (token.End <= cursor)
+			{
+				trailingPrior.Add(token.Value);
+			}
+		}
+
+		return new ShellCompletionInputState([.. trailingPrior], CurrentTokenPrefix: string.Empty);
 	}
 
 	private readonly record struct ShellCompletionInputState(

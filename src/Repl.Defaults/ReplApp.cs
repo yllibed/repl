@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using System.Linq.Expressions;
 using System.Reflection;
 
 namespace Repl;
@@ -83,6 +84,11 @@ public sealed class ReplApp : IReplApp
 		_core.Options(configure);
 		return this;
 	}
+
+	/// <summary>
+	/// Invalidates active routing cache so module presence predicates are re-evaluated on next resolution.
+	/// </summary>
+	public void InvalidateRouting() => _core.InvalidateRouting();
 
 	/// <summary>
 	/// Maps a route and command handler.
@@ -400,6 +406,8 @@ public sealed class ReplApp : IReplApp
 
 	ICoreReplApp ICoreReplApp.WithBanner(string text) => WithBanner(text);
 
+	void ICoreReplApp.InvalidateRouting() => InvalidateRouting();
+
 	IReplApp IReplApp.MapModule(IReplModule module) => MapModule(module);
 
 	IReplApp IReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
@@ -413,6 +421,8 @@ public sealed class ReplApp : IReplApp
 	IReplApp IReplApp.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
 
 	IReplApp IReplApp.WithBanner(string text) => WithBanner(text);
+
+	void IReplApp.InvalidateRouting() => InvalidateRouting();
 
 	IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
 
@@ -437,32 +447,100 @@ public sealed class ReplApp : IReplApp
 		ArgumentNullException.ThrowIfNull(isPresent);
 		var parameters = isPresent.Method.GetParameters();
 		ValidateModulePresencePredicateSignature(isPresent, parameters);
+		var argumentResolvers = parameters
+			.Select(parameter => BuildModulePresenceArgumentResolver(parameter, isPresent))
+			.ToArray();
+		var invoker = CompileModulePresencePredicateInvoker(isPresent, parameters);
 
 		return context =>
 		{
-			var arguments = new object?[parameters.Length];
-			for (var i = 0; i < parameters.Length; i++)
+			var arguments = new object?[argumentResolvers.Length];
+			for (var i = 0; i < argumentResolvers.Length; i++)
 			{
-				arguments[i] = ResolveModulePresenceArgument(parameters[i], context, isPresent);
+				arguments[i] = argumentResolvers[i](context);
 			}
 
 			try
 			{
-				return (bool)isPresent.DynamicInvoke(arguments)!;
-			}
-			catch (TargetInvocationException ex) when (ex.InnerException is not null)
-			{
-				throw new InvalidOperationException(
-					$"Failed to evaluate module presence predicate '{FormatDelegateMethod(isPresent)}': {ex.InnerException.Message}",
-					ex.InnerException);
+				return invoker(arguments);
 			}
 			catch (Exception ex)
 			{
 				throw new InvalidOperationException(
-					$"Failed to evaluate module presence predicate '{FormatDelegateMethod(isPresent)}'.",
+					$"Failed to evaluate module presence predicate '{FormatDelegateMethod(isPresent)}': {ex.Message}",
 					ex);
 			}
 		};
+	}
+
+	private static Func<ModulePresenceContext, object?> BuildModulePresenceArgumentResolver(
+		ParameterInfo parameter,
+		Delegate isPresent)
+	{
+		if (parameter.ParameterType == typeof(ModulePresenceContext))
+		{
+			return static context => context;
+		}
+
+		if (parameter.ParameterType == typeof(ReplRuntimeChannel))
+		{
+			return static context => context.Channel;
+		}
+
+		if (parameter.ParameterType == typeof(IReplSessionState))
+		{
+			return static context => context.SessionState;
+		}
+
+		if (parameter.ParameterType == typeof(IReplSessionInfo))
+		{
+			return static context => context.SessionInfo;
+		}
+
+		return context => ResolveModulePresenceServiceArgument(parameter, context, isPresent);
+	}
+
+	private static object? ResolveModulePresenceServiceArgument(
+		ParameterInfo parameter,
+		ModulePresenceContext context,
+		Delegate isPresent)
+	{
+		var resolved = context.ServiceProvider.GetService(parameter.ParameterType);
+		if (resolved is not null)
+		{
+			return resolved;
+		}
+
+		if (parameter.HasDefaultValue)
+		{
+			return parameter.DefaultValue;
+		}
+
+		if (!parameter.ParameterType.IsValueType
+			|| Nullable.GetUnderlyingType(parameter.ParameterType) is not null)
+		{
+			return null;
+		}
+
+		throw new InvalidOperationException(
+			$"Unable to resolve module presence predicate parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in '{FormatDelegateMethod(isPresent)}'.");
+	}
+
+	private static Func<object?[], bool> CompileModulePresencePredicateInvoker(Delegate isPresent, ParameterInfo[] parameters)
+	{
+		var argumentsParameter = Expression.Parameter(typeof(object[]), "arguments");
+		var callArguments = new Expression[parameters.Length];
+		for (var i = 0; i < parameters.Length; i++)
+		{
+			var argumentIndex = Expression.Constant(i);
+			var argumentValue = Expression.ArrayIndex(argumentsParameter, argumentIndex);
+			callArguments[i] = Expression.Convert(argumentValue, parameters[i].ParameterType);
+		}
+
+		Expression call = isPresent.Target is null
+			? Expression.Call(isPresent.Method, callArguments)
+			: Expression.Call(Expression.Constant(isPresent.Target), isPresent.Method, callArguments);
+		return Expression.Lambda<Func<object?[], bool>>(call, argumentsParameter).Compile();
 	}
 
 	private static void ValidateModulePresencePredicateSignature(Delegate isPresent, ParameterInfo[] parameters)
@@ -493,52 +571,6 @@ public sealed class ReplApp : IReplApp
 					$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot declare IServiceProvider. Use ModulePresenceContext, IReplSessionState, or IReplSessionInfo.");
 			}
 		}
-	}
-
-	private static object? ResolveModulePresenceArgument(
-		ParameterInfo parameter,
-		ModulePresenceContext context,
-		Delegate isPresent)
-	{
-		if (parameter.ParameterType == typeof(ModulePresenceContext))
-		{
-			return context;
-		}
-
-		if (parameter.ParameterType == typeof(ReplRuntimeChannel))
-		{
-			return context.Channel;
-		}
-
-		if (parameter.ParameterType == typeof(IReplSessionState))
-		{
-			return context.SessionState;
-		}
-
-		if (parameter.ParameterType == typeof(IReplSessionInfo))
-		{
-			return context.SessionInfo;
-		}
-
-		var resolved = context.ServiceProvider.GetService(parameter.ParameterType);
-		if (resolved is not null)
-		{
-			return resolved;
-		}
-
-		if (parameter.HasDefaultValue)
-		{
-			return parameter.DefaultValue;
-		}
-
-		if (!parameter.ParameterType.IsValueType
-			|| Nullable.GetUnderlyingType(parameter.ParameterType) is not null)
-		{
-			return null;
-		}
-
-		throw new InvalidOperationException(
-			$"Unable to resolve module presence predicate parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in '{FormatDelegateMethod(isPresent)}'.");
 	}
 
 	private static string FormatDelegateMethod(Delegate value)
@@ -587,6 +619,8 @@ public sealed class ReplApp : IReplApp
 
 	private static void EnsureDefaultServices(IServiceCollection services, CoreReplApp core)
 	{
+		services.TryAddSingleton(core);
+		services.TryAddSingleton<ICoreReplApp>(core);
 		services.TryAddSingleton<IReplSessionState, DefaultsSessionState>();
 		services.TryAddSingleton<IHistoryProvider, InMemoryHistoryProvider>();
 		services.TryAddSingleton(TimeProvider.System);
@@ -641,6 +675,8 @@ public sealed class ReplApp : IReplApp
 			return this;
 		}
 
+		public void InvalidateRouting() => _map.InvalidateRouting();
+
 		IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 			Context(segment, scoped => configure(scoped), validation);
 
@@ -675,6 +711,8 @@ public sealed class ReplApp : IReplApp
 			_map.WithBanner(text);
 			return this;
 		}
+
+		void ICoreReplApp.InvalidateRouting() => InvalidateRouting();
 
 		IReplApp IReplApp.WithBanner(string text)
 		{

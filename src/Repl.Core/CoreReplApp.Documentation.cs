@@ -181,6 +181,8 @@ public sealed partial class CoreReplApp
 
 	private static bool IsFrameworkInjectedParameter(Type parameterType) =>
 		parameterType == typeof(IServiceProvider)
+		|| parameterType == typeof(ICoreReplApp)
+		|| parameterType == typeof(CoreReplApp)
 		|| parameterType == typeof(IReplSessionState)
 		|| parameterType == typeof(IReplInteractionChannel)
 		|| parameterType == typeof(IReplKeyReader);

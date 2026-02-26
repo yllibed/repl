@@ -13,17 +13,21 @@ internal sealed partial class ShellCompletionRuntime
 		{
 			if (IsShellCompletionSupportedShell(preferred))
 			{
+				var preferredParentProcessNames = preferred == ShellKind.PowerShell
+					? GetParentProcessNames()
+					: [];
 				return new ShellDetectionResult(
 					preferred,
 					"preferred override",
-					ParentLooksLikeWindowsPowerShell: preferred == ShellKind.PowerShell && IsWindowsPowerShellInProcessChain());
+					ParentLooksLikeWindowsPowerShell: preferred == ShellKind.PowerShell && IsWindowsPowerShellInProcessChain(preferredParentProcessNames));
 			}
 
 			return new ShellDetectionResult(ShellKind.Unknown, "preferred override was not a supported shell");
 		}
 
 		var environment = DetectShellFromEnvironment();
-		var parent = DetectShellFromParentProcess();
+		var parentProcessNames = GetParentProcessNames();
+		var parent = DetectShellFromParentProcess(parentProcessNames);
 		var powershellScore = environment.PowershellScore + parent.PowershellScore;
 		var bashScore = environment.BashScore + parent.BashScore;
 		var zshScore = environment.ZshScore + parent.ZshScore;
@@ -147,9 +151,8 @@ internal sealed partial class ShellCompletionRuntime
 			ParentLooksLikeWindowsPowerShell: false);
 	}
 
-	private static ShellSignal DetectShellFromParentProcess()
+	private static ShellSignal DetectShellFromParentProcess(string[] names)
 	{
-		var names = GetParentProcessNames();
 		if (names.Length == 0)
 		{
 			return new ShellSignal(0, 0, 0, 0, 0, HasKnownUnsupported: false, Reason: string.Empty, ParentLooksLikeWindowsPowerShell: false);
@@ -174,17 +177,32 @@ internal sealed partial class ShellCompletionRuntime
 			|| string.Equals(name, "nushell.exe", StringComparison.OrdinalIgnoreCase));
 		var legacyPowerShell = names.Any(name =>
 			string.Equals(name, "powershell", StringComparison.OrdinalIgnoreCase));
-		var reason = powershellHint
-			? "parent process suggests PowerShell"
-			: bashHint
-				? "parent process suggests bash"
-				: zshHint
-					? "parent process suggests zsh"
-					: fishHint
-						? "parent process suggests fish"
-						: nuHint
-							? "parent process suggests nushell"
-					: $"parent process chain: {string.Join(" -> ", names)}";
+		string reason;
+		if (powershellHint)
+		{
+			reason = "parent process suggests PowerShell";
+		}
+		else if (bashHint)
+		{
+			reason = "parent process suggests bash";
+		}
+		else if (zshHint)
+		{
+			reason = "parent process suggests zsh";
+		}
+		else if (fishHint)
+		{
+			reason = "parent process suggests fish";
+		}
+		else if (nuHint)
+		{
+			reason = "parent process suggests nushell";
+		}
+		else
+		{
+			reason = $"parent process chain: {string.Join(" -> ", names)}";
+		}
+
 		return new ShellSignal(
 			PowershellScore: powershellHint ? 2 : 0,
 			BashScore: bashHint ? 2 : 0,
@@ -196,8 +214,8 @@ internal sealed partial class ShellCompletionRuntime
 			ParentLooksLikeWindowsPowerShell: legacyPowerShell);
 	}
 
-	private static bool IsWindowsPowerShellInProcessChain() =>
-		GetParentProcessNames().Any(name => string.Equals(name, "powershell", StringComparison.OrdinalIgnoreCase));
+	private static bool IsWindowsPowerShellInProcessChain(string[] names) =>
+		names.Any(name => string.Equals(name, "powershell", StringComparison.OrdinalIgnoreCase));
 
 	private static string[] GetParentProcessNames()
 	{

@@ -7,8 +7,8 @@ namespace Repl.IntegrationTests;
 public sealed class Given_ModulePresence
 {
 	[TestMethod]
-	[Description("Regression guard: verifies module presence predicates are re-evaluated between commands so signed-out and signed-in command graphs can switch within the same interactive session.")]
-	public void When_ModulePresenceDependsOnSessionState_Then_CommandGraphSwitchesWithoutRestart()
+	[Description("Regression guard: verifies module presence can switch within an interactive session when state changes and routing cache is explicitly invalidated.")]
+	public void When_ModulePresenceDependsOnSessionState_Then_CommandGraphSwitchesAfterInvalidation()
 	{
 		var sut = ReplApp.Create().UseDefaultInteractive();
 		sut.MapModule(new SignedOutExperienceModule(), static context => !IsSignedIn(context.SessionState));
@@ -59,7 +59,7 @@ public sealed class Given_ModulePresence
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies injectable module presence predicates can resolve services through DI in ReplApp.")]
+	[Description("Regression guard: verifies injectable module presence predicates can resolve services through DI in ReplApp and reflect updates after explicit routing invalidation.")]
 	public void When_ModulePresenceUsesInjectableServicePredicate_Then_ModuleAvailabilityFollowsServiceState()
 	{
 		var gate = new PresenceGate { Enabled = true };
@@ -71,6 +71,7 @@ public sealed class Given_ModulePresence
 		enabled.Text.Should().Contain("pong");
 
 		gate.Enabled = false;
+		sut.InvalidateRouting();
 		var disabled = ConsoleCaptureHelper.Capture(() => sut.Run(["feature", "ping", "--no-logo"]));
 		disabled.ExitCode.Should().Be(1);
 		disabled.Text.Should().Contain("Unknown command");
@@ -98,7 +99,7 @@ public sealed class Given_ModulePresence
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies scoped ReplApp mappings can use injectable module presence predicates.")]
+	[Description("Regression guard: verifies scoped ReplApp mappings can use injectable module presence predicates and reflect updates after explicit routing invalidation.")]
 	public void When_ScopedMapModuleUsesInjectablePredicate_Then_ModuleAvailabilityFollowsServiceState()
 	{
 		var gate = new PresenceGate { Enabled = true };
@@ -114,9 +115,27 @@ public sealed class Given_ModulePresence
 		enabled.Text.Should().Contain("pong");
 
 		gate.Enabled = false;
+		sut.InvalidateRouting();
 		var disabled = ConsoleCaptureHelper.Capture(() => sut.Run(["tenant", "feature", "ping", "--no-logo"]));
 		disabled.ExitCode.Should().Be(1);
 		disabled.Text.Should().Contain("Unknown command");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies module presence graph remains stable within one interactive session until explicit invalidation is requested.")]
+	public void When_ModulePresenceServiceStateChangesWithoutInvalidation_Then_PreviousRoutingGraphRemainsActive()
+	{
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.MapModule(new SignedOutWithoutInvalidationModule(), static context => !IsSignedIn(context.SessionState));
+		sut.MapModule(new SignedInExperienceModule(), static context => IsSignedIn(context.SessionState));
+
+		var output = ConsoleCaptureHelper.CaptureWithInput(
+			"profile whoami\nauth login\nprofile whoami\nexit\n",
+			() => sut.Run([]));
+
+		output.ExitCode.Should().Be(0);
+		CountOccurrences(output.Text, "guest").Should().BeGreaterThanOrEqualTo(2);
+		output.Text.Should().NotContain("member");
 	}
 
 	private static bool IsSignedIn(IReplSessionState sessionState)
@@ -125,6 +144,27 @@ public sealed class Given_ModulePresence
 	}
 
 	private sealed class SignedOutExperienceModule : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+			map.Context("auth", auth =>
+			{
+				auth.Map("login", (IReplSessionState state, ICoreReplApp app) =>
+				{
+					state.Set(key: "auth.signed_in", value: true);
+					app.InvalidateRouting();
+					return "ok";
+				});
+			});
+
+			map.Context("profile", profile =>
+			{
+				profile.Map("whoami", () => "guest");
+			});
+		}
+	}
+
+	private sealed class SignedOutWithoutInvalidationModule : IReplModule
 	{
 		public void Map(IReplMap map)
 		{
@@ -202,6 +242,16 @@ public sealed class Given_ModulePresence
 	private sealed class PresenceGate
 	{
 		public bool Enabled { get; set; }
+	}
+
+	private static int CountOccurrences(string source, string value)
+	{
+		if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(value))
+		{
+			return 0;
+		}
+
+		return source.Split([value], StringSplitOptions.None).Length - 1;
 	}
 
 	private sealed class InMemoryHost(TextReader input, TextWriter output) : IReplHost

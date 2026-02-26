@@ -97,6 +97,8 @@ public sealed partial class CoreReplApp
 			return this;
 		}
 
+		void ICoreReplApp.InvalidateRouting() => _app.InvalidateRouting();
+
 		IReplMap IReplMap.WithBanner(string text)
 		{
 			ArgumentException.ThrowIfNullOrWhiteSpace(text);
