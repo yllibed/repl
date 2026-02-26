@@ -236,19 +236,70 @@ public sealed partial class CoreReplApp
 		string[] PriorTokens,
 		string CurrentTokenPrefix);
 
-	private string ResolveShellCompletionCommandName()
+	internal static string ResolveShellCompletionCommandName(
+		IReadOnlyList<string>? commandLineArgs,
+		string? processPath,
+		string? fallbackName)
 	{
-		var processPath = Environment.ProcessPath;
-		if (!string.IsNullOrWhiteSpace(processPath))
+		if (commandLineArgs is { Count: > 0 })
 		{
-			var name = Path.GetFileNameWithoutExtension(processPath);
-			if (!string.IsNullOrWhiteSpace(name))
+			var commandHead = TryGetCommandHead(commandLineArgs[0]);
+			if (!string.IsNullOrWhiteSpace(commandHead))
 			{
-				return name;
+				return commandHead;
 			}
 		}
 
+		var processHead = TryGetCommandHead(processPath);
+		if (!string.IsNullOrWhiteSpace(processHead))
+		{
+			return processHead;
+		}
+
+		return string.IsNullOrWhiteSpace(fallbackName) ? "repl" : fallbackName;
+	}
+
+	private static string? TryGetCommandHead(string? pathLike)
+	{
+		if (string.IsNullOrWhiteSpace(pathLike))
+		{
+			return null;
+		}
+
+		var fileName = Path.GetFileName(pathLike.Trim());
+		if (string.IsNullOrWhiteSpace(fileName))
+		{
+			return null;
+		}
+
+		foreach (var extension in KnownExecutableExtensions)
+		{
+			if (fileName.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+			{
+				var head = fileName[..^extension.Length];
+				return string.IsNullOrWhiteSpace(head) ? null : head;
+			}
+		}
+
+		return fileName;
+	}
+
+	private static readonly string[] KnownExecutableExtensions =
+	[
+		".exe",
+		".cmd",
+		".bat",
+		".com",
+		".ps1",
+		".dll",
+	];
+
+	private string ResolveShellCompletionCommandName()
+	{
 		var app = BuildDocumentationApp();
-		return string.IsNullOrWhiteSpace(app.Name) ? "repl" : app.Name;
+		return ResolveShellCompletionCommandName(
+			Environment.GetCommandLineArgs(),
+			Environment.ProcessPath,
+			app.Name);
 	}
 }
