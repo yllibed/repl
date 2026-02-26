@@ -103,12 +103,13 @@ printf "%s\n" $matches | string match -r "^contact" >/dev/null
 run_powershell_smoke() {
   echo "[smoke] powershell"
   local profile_path="$workspace/powershell/Microsoft.PowerShell_profile.ps1"
+  local check_script_path="$workspace/powershell/smoke-check.ps1"
   mkdir -p "$(dirname "$profile_path")"
   export REPL_TEST_SHELL_COMPLETION_POWERSHELL_PROFILE_PATH="$profile_path"
 
   "$command_name" completion install --shell powershell --force --no-logo
 
-  REPL_PWSH_PROFILE="$profile_path" pwsh -NoLogo -NoProfile -File - <<'PWSH'
+  cat > "$check_script_path" <<'PWSH'
 . $env:REPL_PWSH_PROFILE
 $line = "$env:REPL_CMD_NAME c"
 $result = TabExpansion2 -InputScript $line -CursorColumn $line.Length
@@ -116,6 +117,7 @@ if (-not ($result.CompletionMatches | Where-Object { $_.CompletionText -eq 'cont
   throw 'PowerShell completion did not return expected candidate.'
 }
 PWSH
+  REPL_PWSH_PROFILE="$profile_path" pwsh -NoLogo -NoProfile -File "$check_script_path"
 }
 
 run_nu_smoke() {
@@ -126,13 +128,7 @@ run_nu_smoke() {
 
   "$command_name" completion install --shell nushell --force --no-logo
 
-  REPL_NU_PROFILE="$profile_path" nu -c '
-source $env.REPL_NU_PROFILE
-let completions = (do $env.config.completions.external.completer [$env.REPL_CMD_NAME "c"])
-if (($completions | where value == "contact" | length) == 0) {
-  exit 1
-}
-'
+  nu -c "source \"$profile_path\"; let completions = (do \$env.config.completions.external.completer [\$env.REPL_CMD_NAME \"c\"]); if ((\$completions | where value == \"contact\" | length) == 0) { exit 1 }"
 }
 
 run_bash_smoke
