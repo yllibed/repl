@@ -56,15 +56,14 @@ run_zsh_smoke() {
   REPL_ZSH_PROFILE="$profile_path" REPL_ZSH_CAPTURE="$workspace/zsh/candidates.txt" zsh -f -c '
 set -eu
 set -o pipefail
-autoload -Uz compinit
-compinit
-source "$REPL_ZSH_PROFILE"
-fn="$(sed -n -E "s/^([_[:alnum:]_]+_complete)\(\) \{/\1/p" "$REPL_ZSH_PROFILE" | head -n 1)"
-[[ -n "$fn" ]]
+compdef() { :; }
 compadd() {
   shift
   printf "%s\n" "$@" > "$REPL_ZSH_CAPTURE"
 }
+source "$REPL_ZSH_PROFILE"
+fn="$(sed -n -E "s/^([_[:alnum:]_]+_complete)\(\) \{/\1/p" "$REPL_ZSH_PROFILE" | head -n 1)"
+[[ -n "$fn" ]]
 BUFFER="$REPL_CMD_NAME c"
 CURSOR=${#BUFFER}
 "$fn"
