@@ -56,7 +56,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		}
 
 		var candidates = _resolveCandidates(line, cursorPosition);
-		return string.Join(Environment.NewLine, candidates);
+		return string.Join('\n', candidates);
 	}
 
 	public object HandleStatusRoute()

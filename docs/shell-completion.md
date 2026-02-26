@@ -110,7 +110,7 @@ _myapp_complete() {
   cursor="$COMP_POINT"
   COMPREPLY=()
   while IFS= read -r candidate; do
-    COMPREPLY+=("$candidate")
+    COMPREPLY[${#COMPREPLY[@]}]="$candidate"
   done < <(myapp completion __complete --shell bash --line "$line" --cursor "$cursor" --no-interactive --no-logo)
 }
 
@@ -178,7 +178,7 @@ complete -c myapp -f -a "(_myapp_complete)"
 Nushell:
 
 ```nu
-const __repl_completion_command = 'myapp'
+const __repl_completion_command = "myapp"
 def _myapp_complete [spans: list<string>] {
   let line = ($spans | str join ' ')
   let cursor = ($line | str length)

@@ -1,9 +1,12 @@
 using System.Reflection;
+using System.Collections.Concurrent;
 
 namespace Repl.ShellCompletion;
 
 internal sealed partial class ShellCompletionRuntime
 {
+	private static readonly ConcurrentDictionary<string, SemaphoreSlim> PathMutationLocks = new(StringComparer.Ordinal);
+
 	private async ValueTask<ShellCompletionOperationResult> InstallShellCompletionAsync(
 		ShellKind shellKind,
 		ShellDetectionResult detection,
@@ -16,36 +19,44 @@ internal sealed partial class ShellCompletionRuntime
 		var block = BuildShellCompletionManagedBlock(shellKind, commandName, appId);
 		try
 		{
-			var existing = File.Exists(profilePath)
-				? await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false)
-				: string.Empty;
-			var alreadyInstalled = ContainsShellCompletionManagedBlock(existing, shellKind, appId);
-			if (alreadyInstalled && !force)
+			var mutationLock = await AcquirePathMutationLockAsync(profilePath, cancellationToken).ConfigureAwait(false);
+			try
 			{
+				var existing = File.Exists(profilePath)
+					? await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false)
+					: string.Empty;
+				var alreadyInstalled = ContainsShellCompletionManagedBlock(existing, shellKind, appId);
+				if (alreadyInstalled && !force)
+				{
+					return new ShellCompletionOperationResult(
+						Success: true,
+						Changed: false,
+						ProfilePath: profilePath,
+						Message:
+							$"Shell completion is already installed for {FormatShellKind(shellKind)} in '{profilePath}'. Use --force to rewrite. "
+							+ BuildShellReloadHint(shellKind));
+				}
+
+				var updated = UpsertShellCompletionManagedBlock(existing, block, shellKind, appId);
+				var directory = Path.GetDirectoryName(profilePath);
+				if (!string.IsNullOrWhiteSpace(directory))
+				{
+					Directory.CreateDirectory(directory);
+				}
+
+				await WriteTextFileAtomicallyAsync(profilePath, updated, cancellationToken).ConfigureAwait(false);
 				return new ShellCompletionOperationResult(
 					Success: true,
-					Changed: false,
+					Changed: true,
 					ProfilePath: profilePath,
 					Message:
-						$"Shell completion is already installed for {FormatShellKind(shellKind)} in '{profilePath}'. Use --force to rewrite. "
+						$"Installed shell completion for {FormatShellKind(shellKind)} in '{profilePath}'. "
 						+ BuildShellReloadHint(shellKind));
 			}
-
-			var updated = UpsertShellCompletionManagedBlock(existing, block, shellKind, appId);
-			var directory = Path.GetDirectoryName(profilePath);
-			if (!string.IsNullOrWhiteSpace(directory))
+			finally
 			{
-				Directory.CreateDirectory(directory);
+				mutationLock.Release();
 			}
-
-			await File.WriteAllTextAsync(profilePath, updated, cancellationToken).ConfigureAwait(false);
-			return new ShellCompletionOperationResult(
-				Success: true,
-				Changed: true,
-				ProfilePath: profilePath,
-				Message:
-					$"Installed shell completion for {FormatShellKind(shellKind)} in '{profilePath}'. "
-					+ BuildShellReloadHint(shellKind));
 		}
 		catch (Exception ex)
 		{
@@ -66,31 +77,39 @@ internal sealed partial class ShellCompletionRuntime
 		var appId = ResolveShellCompletionAppId();
 		try
 		{
-			if (!File.Exists(profilePath))
+			var mutationLock = await AcquirePathMutationLockAsync(profilePath, cancellationToken).ConfigureAwait(false);
+			try
 			{
+				if (!File.Exists(profilePath))
+				{
+					return new ShellCompletionOperationResult(
+						Success: true,
+						Changed: false,
+						ProfilePath: profilePath,
+						Message: $"Shell completion is not installed for {FormatShellKind(shellKind)} (profile does not exist: '{profilePath}').");
+				}
+
+				var existing = await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false);
+				if (!TryRemoveShellCompletionManagedBlock(existing, shellKind, appId, out var updated))
+				{
+					return new ShellCompletionOperationResult(
+						Success: true,
+						Changed: false,
+						ProfilePath: profilePath,
+						Message: $"Shell completion block was not found in '{profilePath}'.");
+				}
+
+				await WriteTextFileAtomicallyAsync(profilePath, updated, cancellationToken).ConfigureAwait(false);
 				return new ShellCompletionOperationResult(
 					Success: true,
-					Changed: false,
+					Changed: true,
 					ProfilePath: profilePath,
-					Message: $"Shell completion is not installed for {FormatShellKind(shellKind)} (profile does not exist: '{profilePath}').");
+					Message: $"Removed shell completion for {FormatShellKind(shellKind)} from '{profilePath}'.");
 			}
-
-			var existing = await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false);
-			if (!TryRemoveShellCompletionManagedBlock(existing, shellKind, appId, out var updated))
+			finally
 			{
-				return new ShellCompletionOperationResult(
-					Success: true,
-					Changed: false,
-					ProfilePath: profilePath,
-					Message: $"Shell completion block was not found in '{profilePath}'.");
+				mutationLock.Release();
 			}
-
-			await File.WriteAllTextAsync(profilePath, updated, cancellationToken).ConfigureAwait(false);
-			return new ShellCompletionOperationResult(
-				Success: true,
-				Changed: true,
-				ProfilePath: profilePath,
-				Message: $"Removed shell completion for {FormatShellKind(shellKind)} from '{profilePath}'.");
 		}
 		catch (Exception ex)
 		{
@@ -161,10 +180,10 @@ internal sealed partial class ShellCompletionRuntime
 
 	private ShellCompletionState LoadShellCompletionState()
 	{
-		var path = ResolveShellCompletionStateFilePath();
+		var path = ResolveExistingShellCompletionStateFilePath(ResolveShellCompletionStateFilePath());
 		try
 		{
-			if (!File.Exists(path))
+			if (string.IsNullOrWhiteSpace(path))
 			{
 				return new ShellCompletionState();
 			}
@@ -206,27 +225,156 @@ internal sealed partial class ShellCompletionRuntime
 	private void TrySaveShellCompletionState(ShellCompletionState state)
 	{
 		var path = ResolveShellCompletionStateFilePath();
+		var mutationLock = GetPathMutationLock(path);
+		var lockTaken = false;
 		try
 		{
+			mutationLock.Wait();
+			lockTaken = true;
 			var directory = Path.GetDirectoryName(path);
 			if (!string.IsNullOrWhiteSpace(directory))
 			{
 				Directory.CreateDirectory(directory);
 			}
 
-			var lines = new[]
-			{
+			var content = string.Join(
+				'\n',
 				$"promptShown={(state.PromptShown ? "true" : "false")}",
 				$"lastDetectedShell={state.LastDetectedShell ?? string.Empty}",
-				$"installedShells={string.Join(',', state.InstalledShells)}",
-			};
-			File.WriteAllLines(path, lines);
+				$"installedShells={string.Join(',', state.InstalledShells)}");
+			WriteTextFileAtomically(path, content);
 		}
 		catch
 		{
 			// Best-effort state persistence only.
 		}
+		finally
+		{
+			if (lockTaken)
+			{
+				mutationLock.Release();
+			}
+		}
 	}
+
+	private static SemaphoreSlim GetPathMutationLock(string path)
+	{
+		var normalizedPath = Path.GetFullPath(path);
+		return PathMutationLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
+	}
+
+	private static async ValueTask<SemaphoreSlim> AcquirePathMutationLockAsync(string path, CancellationToken cancellationToken)
+	{
+		var semaphore = GetPathMutationLock(path);
+		await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+		return semaphore;
+	}
+
+	private static string? ResolveExistingShellCompletionStateFilePath(string preferredPath)
+	{
+		if (File.Exists(preferredPath))
+		{
+			return preferredPath;
+		}
+
+		var legacyPath = ResolveLegacyShellCompletionStateFilePath(preferredPath);
+		return !string.IsNullOrWhiteSpace(legacyPath) && File.Exists(legacyPath) ? legacyPath : null;
+	}
+
+	private static string? ResolveLegacyShellCompletionStateFilePath(string preferredPath)
+	{
+		var fileName = Path.GetFileName(preferredPath);
+		if (string.IsNullOrWhiteSpace(fileName))
+		{
+			return null;
+		}
+
+		var directory = Path.GetDirectoryName(preferredPath);
+		if (string.Equals(fileName, ShellCompletionConstants.StateFileName, StringComparison.OrdinalIgnoreCase))
+		{
+			return string.IsNullOrWhiteSpace(directory)
+				? ShellCompletionConstants.LegacyStateFileName
+				: Path.Combine(directory, ShellCompletionConstants.LegacyStateFileName);
+		}
+
+		return fileName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)
+			? Path.ChangeExtension(preferredPath, ".json")
+			: null;
+	}
+
+	private static async Task WriteTextFileAtomicallyAsync(
+		string path,
+		string content,
+		CancellationToken cancellationToken)
+	{
+		var directory = Path.GetDirectoryName(path);
+		if (!string.IsNullOrWhiteSpace(directory))
+		{
+			Directory.CreateDirectory(directory);
+		}
+
+		var tempDirectory = string.IsNullOrWhiteSpace(directory)
+			? Directory.GetCurrentDirectory()
+			: directory;
+		var tempPath = Path.Combine(
+			tempDirectory,
+			$".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+		try
+		{
+			await File.WriteAllTextAsync(tempPath, content, cancellationToken).ConfigureAwait(false);
+			File.Move(tempPath, path, overwrite: true);
+		}
+		finally
+		{
+			try
+			{
+				if (File.Exists(tempPath))
+				{
+					File.Delete(tempPath);
+				}
+			}
+			catch
+			{
+				// Best-effort temp cleanup only.
+			}
+		}
+	}
+
+	private static void WriteTextFileAtomically(string path, string content)
+	{
+		var directory = Path.GetDirectoryName(path);
+		if (!string.IsNullOrWhiteSpace(directory))
+		{
+			Directory.CreateDirectory(directory);
+		}
+
+		var tempDirectory = string.IsNullOrWhiteSpace(directory)
+			? Directory.GetCurrentDirectory()
+			: directory;
+		var tempPath = Path.Combine(
+			tempDirectory,
+			$".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+		try
+		{
+			File.WriteAllText(tempPath, content);
+			File.Move(tempPath, path, overwrite: true);
+		}
+		finally
+		{
+			try
+			{
+				if (File.Exists(tempPath))
+				{
+					File.Delete(tempPath);
+				}
+			}
+			catch
+			{
+				// Best-effort temp cleanup only.
+			}
+		}
+	}
+
 
 	private static bool ContainsShellCompletionManagedBlock(string content, ShellKind shellKind, string appId)
 	{

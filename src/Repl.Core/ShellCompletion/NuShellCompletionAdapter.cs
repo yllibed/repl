@@ -41,12 +41,12 @@ internal sealed class NuShellCompletionAdapter : IShellCompletionAdapter
 	public string BuildManagedBlock(string commandName, string appId)
 	{
 		var functionName = ShellCompletionScriptBuilder.BuildShellFunctionName(commandName);
-		var escapedCommandName = ShellCompletionScriptBuilder.EscapeNuSingleQuotedLiteral(commandName);
+		var escapedCommandName = ShellCompletionScriptBuilder.EscapeNuDoubleQuotedLiteral(commandName);
 		var startMarker = ShellCompletionScriptBuilder.BuildManagedBlockStartMarker(appId, ShellKind.Nu);
 		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, ShellKind.Nu);
 		return $$"""
 			{{startMarker}}
-			const __repl_completion_command = '{{escapedCommandName}}'
+			const __repl_completion_command = "{{escapedCommandName}}"
 			def {{functionName}} [spans: list<string>] {
 			  let line = ($spans | str join ' ')
 			  let cursor = ($line | str length)

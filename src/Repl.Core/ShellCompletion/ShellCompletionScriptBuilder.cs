@@ -45,8 +45,37 @@ internal static class ShellCompletionScriptBuilder
 	internal static string EscapePowerShellSingleQuotedLiteral(string value) =>
 		value.Replace("'", "''", StringComparison.Ordinal);
 
-	internal static string EscapeNuSingleQuotedLiteral(string value) =>
-		value.Replace("'", "''", StringComparison.Ordinal);
+	internal static string EscapeNuDoubleQuotedLiteral(string value)
+	{
+		System.Text.StringBuilder? builder = null;
+		for (var index = 0; index < value.Length; index++)
+		{
+			var replacement = value[index] switch
+			{
+				'\\' => "\\\\",
+				'"' => "\\\"",
+				'\r' => "\\r",
+				'\n' => "\\n",
+				'\t' => "\\t",
+				_ => null,
+			};
+			if (replacement is null)
+			{
+				builder?.Append(value[index]);
+				continue;
+			}
+
+			builder ??= new System.Text.StringBuilder(value.Length + 8);
+			if (builder.Length == 0 && index > 0)
+			{
+				builder.Append(value, 0, index);
+			}
+
+			builder.Append(replacement);
+		}
+
+		return builder is null ? value : builder.ToString();
+	}
 
 	internal static string BuildShellFunctionName(string commandName)
 	{

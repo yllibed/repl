@@ -43,7 +43,7 @@ internal sealed class BashShellCompletionAdapter : IShellCompletionAdapter
 			  cursor="$COMP_POINT"
 			  COMPREPLY=()
 			  while IFS= read -r candidate; do
-			    COMPREPLY+=("$candidate")
+			    COMPREPLY[${#COMPREPLY[@]}]="$candidate"
 			  done < <({{commandName}} {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell bash --line "$line" --cursor "$cursor" --no-interactive --no-logo)
 			}
 

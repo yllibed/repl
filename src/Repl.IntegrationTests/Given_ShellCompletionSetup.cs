@@ -57,6 +57,8 @@ public sealed class Given_ShellCompletionSetup
 			output.ExitCode.Should().Be(0);
 			var text = File.ReadAllText(paths.ProfilePath);
 			text.Should().Contain("while IFS= read -r candidate; do");
+			text.Should().Contain("COMPREPLY[${#COMPREPLY[@]}]=\"$candidate\"");
+			text.Should().NotContain("COMPREPLY+=(\"$candidate\")");
 			text.Should().NotContain("mapfile -t COMPREPLY");
 		}
 		finally
