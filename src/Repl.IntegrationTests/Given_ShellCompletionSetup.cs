@@ -128,7 +128,7 @@ public sealed class Given_ShellCompletionSetup
 			text.Should().Contain("completion __complete --shell nu");
 			text.Should().Contain("completions.external.completer");
 			text.Should().Contain("const __repl_completion_entries = [");
-			text.Should().Contain("def _repl_nu_dispatch_completion [...args]");
+			text.Should().Contain("def _repl_nu_dispatch_completion [spans: list<string>]");
 			text.Should().Contain("| where { |item| $item.command == $head }");
 			text.Should().Contain("| each { |line| { value: $line, description: \"\" } }");
 			text.Should().Contain("--no-interactive --no-logo");

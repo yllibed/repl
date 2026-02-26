@@ -37,8 +37,8 @@ public sealed class Given_ShellCompletionRuntime
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies nushell global dispatcher accepts variadic completer arguments for runtime compatibility across nushell versions.")]
-	public void When_BuildingNushellDispatcher_Then_DispatcherUsesVariadicArguments()
+	[Description("Regression guard: verifies nushell global dispatcher receives the spans list from the external completer closure.")]
+	public void When_BuildingNushellDispatcher_Then_DispatcherUsesSpansListArgument()
 	{
 		var script = NuShellCompletionAdapter.BuildGlobalDispatcherManagedBlock(
 			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -46,8 +46,8 @@ public sealed class Given_ShellCompletionRuntime
 				["sample-app"] = "sample",
 			});
 
-		script.Should().Contain("def _repl_nu_dispatch_completion [...args]");
-		script.Should().Contain("|...args| _repl_nu_dispatch_completion ...$args");
+		script.Should().Contain("def _repl_nu_dispatch_completion [spans: list<string>]");
+		script.Should().Contain("|spans| _repl_nu_dispatch_completion $spans");
 	}
 
 	[TestMethod]

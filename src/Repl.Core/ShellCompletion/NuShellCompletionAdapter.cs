@@ -82,12 +82,7 @@ internal sealed class NuShellCompletionAdapter : IShellCompletionAdapter
 			const __repl_completion_entries = [
 			  {{entryRecords}}
 			]
-			def _repl_nu_dispatch_completion [...args] {
-			  let span_candidates = ($args | where { |item| (($item | describe) | str starts-with "list<") })
-			  if (($span_candidates | length) == 0) {
-			    return []
-			  }
-			  let spans = ($span_candidates | get 0)
+			def _repl_nu_dispatch_completion [spans: list<string>] {
 			  if (($spans | length) == 0) {
 			    return []
 			  }
@@ -111,7 +106,7 @@ internal sealed class NuShellCompletionAdapter : IShellCompletionAdapter
 			$env.config = (
 			  $env.config
 			  | upsert completions.external.enable true
-			  | upsert completions.external.completer { |...args| _repl_nu_dispatch_completion ...$args }
+			  | upsert completions.external.completer { |spans| _repl_nu_dispatch_completion $spans }
 			)
 			{{endMarker}}
 			""";
