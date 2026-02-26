@@ -29,8 +29,28 @@ internal sealed class BashShellCompletionAdapter : IShellCompletionAdapter
 			: bashProfile;
 	}
 
-	public string BuildManagedBlock(string commandName, string appId) =>
-		ShellCompletionScriptBuilder.BuildBashManagedBlock(commandName, appId);
+	public string BuildManagedBlock(string commandName, string appId)
+	{
+		var functionName = ShellCompletionScriptBuilder.BuildShellFunctionName(commandName);
+		var startMarker = ShellCompletionScriptBuilder.BuildManagedBlockStartMarker(appId, ShellKind.Bash);
+		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, ShellKind.Bash);
+		return $$"""
+			{{startMarker}}
+			{{functionName}}() {
+			  local line cursor
+			  local candidate
+			  line="$COMP_LINE"
+			  cursor="$COMP_POINT"
+			  COMPREPLY=()
+			  while IFS= read -r candidate; do
+			    COMPREPLY+=("$candidate")
+			  done < <({{commandName}} {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell bash --line "$line" --cursor "$cursor" --no-interactive --no-logo)
+			}
+
+			complete -F {{functionName}} {{commandName}}
+			{{endMarker}}
+			""";
+	}
 
 	public string BuildReloadHint() =>
 		"Reload your shell profile (for example: 'source ~/.bashrc') or restart the shell to activate completions.";

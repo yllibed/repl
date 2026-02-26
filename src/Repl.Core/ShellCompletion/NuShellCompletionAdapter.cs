@@ -38,8 +38,32 @@ internal sealed class NuShellCompletionAdapter : IShellCompletionAdapter
 		return Path.Combine(configRoot, "nushell", "config.nu");
 	}
 
-	public string BuildManagedBlock(string commandName, string appId) =>
-		ShellCompletionScriptBuilder.BuildNuManagedBlock(commandName, appId);
+	public string BuildManagedBlock(string commandName, string appId)
+	{
+		var functionName = ShellCompletionScriptBuilder.BuildShellFunctionName(commandName);
+		var escapedCommandName = ShellCompletionScriptBuilder.EscapeNuSingleQuotedLiteral(commandName);
+		var startMarker = ShellCompletionScriptBuilder.BuildManagedBlockStartMarker(appId, ShellKind.Nu);
+		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, ShellKind.Nu);
+		return $$"""
+			{{startMarker}}
+			let __repl_completion_command = '{{escapedCommandName}}'
+			def --env {{functionName}} [spans: list<string>] {
+			  let line = ($spans | str join ' ')
+			  let cursor = ($line | str length)
+			  (
+			    ^$__repl_completion_command {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell nu --line $line --cursor $cursor --no-interactive --no-logo
+			    | lines
+			  )
+			}
+
+			$env.config = (
+			  $env.config
+			  | upsert completions.external.enable true
+			  | upsert completions.external.completer { |spans| {{functionName}} $spans }
+			)
+			{{endMarker}}
+			""";
+	}
 
 	public string BuildReloadHint() =>
 		"Reload your Nushell config (for example: 'source ~/.config/nushell/config.nu') or restart the shell to activate completions.";

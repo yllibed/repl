@@ -38,8 +38,55 @@ internal sealed class PowerShellShellCompletionAdapter : IShellCompletionAdapter
 		return Path.Combine(configRoot, "powershell", "Microsoft.PowerShell_profile.ps1");
 	}
 
-	public string BuildManagedBlock(string commandName, string appId) =>
-		ShellCompletionScriptBuilder.BuildPowerShellManagedBlock(commandName, appId, expectedProcessPath: Environment.ProcessPath);
+	public string BuildManagedBlock(string commandName, string appId)
+	{
+		var escapedCommandName = ShellCompletionScriptBuilder.EscapePowerShellSingleQuotedLiteral(commandName);
+		var escapedCommandNames = ShellCompletionScriptBuilder.BuildPowerShellCompletionCommandNames(commandName)
+			.Select(ShellCompletionScriptBuilder.EscapePowerShellSingleQuotedLiteral)
+			.ToArray();
+		var escapedCommandNamesArrayLiteral = string.Join(", ", escapedCommandNames.Select(static name => $"'{name}'"));
+		var escapedExpectedCommandPath = ShellCompletionScriptBuilder.EscapePowerShellSingleQuotedLiteral(Environment.ProcessPath ?? string.Empty);
+		var startMarker = ShellCompletionScriptBuilder.BuildManagedBlockStartMarker(appId, ShellKind.PowerShell);
+		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, ShellKind.PowerShell);
+		return $$"""
+			{{startMarker}}
+			$__replCompletionCommandNames = @({{escapedCommandNamesArrayLiteral}})
+			$__replExpectedCommandPath = '{{escapedExpectedCommandPath}}'
+			$__replCompleter = {
+			    param($wordToComplete, $commandAst, $cursorPosition)
+
+			    $invokedCommand = if ($commandAst.CommandElements.Count -gt 0 -and $commandAst.CommandElements[0] -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+			        $commandAst.CommandElements[0].Value
+			    } else {
+			        '{{escapedCommandName}}'
+			    }
+
+			    $resolvedCommand = Get-Command $invokedCommand -ErrorAction SilentlyContinue
+			    if ($null -eq $resolvedCommand) {
+			        return
+			    }
+			    $resolvedPath = $resolvedCommand.Source
+			    if ([string]::IsNullOrWhiteSpace($resolvedPath)) {
+			        return
+			    }
+			    if (-not [string]::IsNullOrWhiteSpace($__replExpectedCommandPath) -and -not [string]::Equals($resolvedPath, $__replExpectedCommandPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+			        return
+			    }
+
+			    & $invokedCommand {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell powershell --line $commandAst.ToString() --cursor $cursorPosition --no-interactive --no-logo |
+			        ForEach-Object {
+			            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+			        }
+			}
+
+			if ((Get-Command Register-ArgumentCompleter).Parameters.ContainsKey('Native')) {
+			    Register-ArgumentCompleter -Native -CommandName $__replCompletionCommandNames -ScriptBlock $__replCompleter
+			} else {
+			    Register-ArgumentCompleter -CommandName $__replCompletionCommandNames -ScriptBlock $__replCompleter
+			}
+			{{endMarker}}
+			""";
+	}
 
 	public string BuildReloadHint() =>
 		"Reload your PowerShell profile (for example: '. $PROFILE') or restart the shell to activate completions.";

@@ -38,8 +38,23 @@ internal sealed class FishShellCompletionAdapter : IShellCompletionAdapter
 		return Path.Combine(configRoot, "fish", "config.fish");
 	}
 
-	public string BuildManagedBlock(string commandName, string appId) =>
-		ShellCompletionScriptBuilder.BuildFishManagedBlock(commandName, appId);
+	public string BuildManagedBlock(string commandName, string appId)
+	{
+		var functionName = ShellCompletionScriptBuilder.BuildShellFunctionName(commandName);
+		var startMarker = ShellCompletionScriptBuilder.BuildManagedBlockStartMarker(appId, ShellKind.Fish);
+		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, ShellKind.Fish);
+		return $$"""
+			{{startMarker}}
+			function {{functionName}}
+			  set -l line (commandline -cp)
+			  set -l cursor (string length -- $line)
+			  {{commandName}} {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell fish --line "$line" --cursor "$cursor" --no-interactive --no-logo
+			end
+
+			complete -c {{commandName}} -f -a "({{functionName}})"
+			{{endMarker}}
+			""";
+	}
 
 	public string BuildReloadHint() =>
 		"Reload your fish profile (for example: 'source ~/.config/fish/config.fish') or restart the shell to activate completions.";
