@@ -1,5 +1,7 @@
 # Repl Toolkit
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
+
 **Repl Toolkit** is a **foundational building block** for .NET applications that need a serious command surface.
 
 It is a **POSIX-like**, cross-platform command framework that works **everywhere .NET runs**: Windows, Linux, macOS, containers, CI, servers, including wasm, mobile, and embedded environments.
@@ -257,6 +259,7 @@ Package details:
 - Conditional module presence: [`docs/module-presence.md`](docs/module-presence.md)
 - Shell completion bridge: [`docs/shell-completion.md`](docs/shell-completion.md)
 - Samples (recommended learning path): [`samples/README.md`](samples/README.md)
+- Community DeepWiki (unofficial): [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl)
 
 ## Shell completion (configurable)
 

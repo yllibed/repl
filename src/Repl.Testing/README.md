@@ -1,5 +1,7 @@
 # Repl.Testing
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
+
 `Repl.Testing` is an in-memory harness for **multi-step** and **multi-session** tests over a Repl command surface.
 
 ## Install
@@ -27,4 +29,5 @@ var execution = await session.RunCommandAsync("hello --no-logo");
 
 ## Docs
 
-- Testing toolkit guide: `https://github.com/yllibed/repl/blob/main/docs/testing-toolkit.md`
+- Testing toolkit guide: [docs/testing-toolkit.md](https://github.com/yllibed/repl/blob/main/docs/testing-toolkit.md)
+- Community DeepWiki (unofficial): [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl)
