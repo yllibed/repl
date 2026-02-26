@@ -14,7 +14,7 @@
 		"firstUnstableTag": "dev"
 	},
 	"cloudBuild": {
-		"setAllVariables": true,
+		"setAllVariables": false,
 		"buildNumber": {
 			"enabled": true
 		}
