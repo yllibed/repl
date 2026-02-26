@@ -3,6 +3,7 @@
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
 		<IncludeBuildOutput>false</IncludeBuildOutput>
+		<IncludeSymbols>false</IncludeSymbols>
 		<NoPackageAnalysis>true</NoPackageAnalysis>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 		<Description>Meta package that bundles the default Repl experience (Core + Defaults + Protocol).</Description>

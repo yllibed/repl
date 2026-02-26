@@ -228,17 +228,17 @@ jobs:
 
           foreach ($nupkg in $nupkgs) {
             $baseName = [System.IO.Path]::GetFileNameWithoutExtension($nupkg.Name)
-            $expectedSnupkg = Join-Path $packagesDir ($baseName + '.snupkg')
-
-            if (-not (Test-Path $expectedSnupkg)) {
-              $issues.Add("Missing .snupkg for package '$($nupkg.Name)'.")
-            }
 
             $zip = [System.IO.Compression.ZipFile]::OpenRead($nupkg.FullName)
             try {
               $containsBuildOutput = @($zip.Entries | Where-Object { $_.FullName -like 'lib/*.dll' -or $_.FullName -like 'lib/*/*.dll' }).Count -gt 0
               if ($containsBuildOutput) {
                 [void]$symbolChecksRequired.Add($baseName)
+
+                $expectedSnupkg = Join-Path $packagesDir ($baseName + '.snupkg')
+                if (-not (Test-Path $expectedSnupkg)) {
+                  $issues.Add("Missing .snupkg for package '$($nupkg.Name)'.")
+                }
               }
 
               $nuspecEntry = $zip.Entries | Where-Object { $_.FullName -like '*.nuspec' } | Select-Object -First 1
@@ -455,10 +455,4 @@ jobs:
         shell: pwsh
         run: |
           dotnet nuget push packages/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-
-          $symbolPackages = Get-ChildItem -Path packages -Filter '*.snupkg' -File |
-            Where-Object { $_.Name -notmatch '^Repl\.\d' }
-
-          foreach ($snupkg in $symbolPackages) {
-            dotnet nuget push $snupkg.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-          }
+          dotnet nuget push packages/*.snupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
