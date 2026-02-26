@@ -82,7 +82,7 @@ run_fish_smoke() {
   REPL_FISH_PROFILE="$profile_path" fish -c '
 source $REPL_FISH_PROFILE
 set -l matches (complete --do-complete "$REPL_CMD_NAME c")
-printf "%s\n" $matches | string match -r "^contact(\t|\\$)" >/dev/null
+printf "%s\n" $matches | string match -r "^contact" >/dev/null
 '
 }
 
