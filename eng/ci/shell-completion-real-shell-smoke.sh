@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set -E
+trap 'echo "Shell completion smoke failed at line ${LINENO}" >&2' ERR
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 <test-host-path>" >&2
@@ -23,11 +25,12 @@ export REPL_TEST_SCENARIO="setup"
 export REPL_TEST_SHELL_COMPLETION_STATE_FILE_PATH="$workspace/shell-completion-state.txt"
 
 run_bash_smoke() {
+  echo "[smoke] bash"
   local profile_path="$workspace/bash/.bashrc"
   mkdir -p "$(dirname "$profile_path")"
   export REPL_TEST_SHELL_COMPLETION_BASH_PROFILE_PATH="$profile_path"
 
-  "$host_path" completion install --shell bash --force --silent --no-logo
+  "$command_name" completion install --shell bash --force --no-logo
 
   REPL_BASH_PROFILE="$profile_path" bash --noprofile --norc -c '
 set -euo pipefail
@@ -43,11 +46,12 @@ printf "%s\n" "${COMPREPLY[@]}" | grep -Fx "contact" >/dev/null
 }
 
 run_zsh_smoke() {
+  echo "[smoke] zsh"
   local profile_path="$workspace/zsh/.zshrc"
   mkdir -p "$(dirname "$profile_path")"
   export REPL_TEST_SHELL_COMPLETION_ZSH_PROFILE_PATH="$profile_path"
 
-  "$host_path" completion install --shell zsh --force --silent --no-logo
+  "$command_name" completion install --shell zsh --force --no-logo
 
   REPL_ZSH_PROFILE="$profile_path" REPL_ZSH_CAPTURE="$workspace/zsh/candidates.txt" zsh -f -c '
 set -eu
@@ -69,11 +73,12 @@ grep -Fx "contact" "$REPL_ZSH_CAPTURE" >/dev/null
 }
 
 run_fish_smoke() {
+  echo "[smoke] fish"
   local profile_path="$workspace/fish/config.fish"
   mkdir -p "$(dirname "$profile_path")"
   export REPL_TEST_SHELL_COMPLETION_FISH_PROFILE_PATH="$profile_path"
 
-  "$host_path" completion install --shell fish --force --silent --no-logo
+  "$command_name" completion install --shell fish --force --no-logo
 
   REPL_FISH_PROFILE="$profile_path" fish -c '
 source $REPL_FISH_PROFILE
@@ -83,11 +88,12 @@ printf "%s\n" $matches | string match -r "^contact(\t|$)" >/dev/null
 }
 
 run_powershell_smoke() {
+  echo "[smoke] powershell"
   local profile_path="$workspace/powershell/Microsoft.PowerShell_profile.ps1"
   mkdir -p "$(dirname "$profile_path")"
   export REPL_TEST_SHELL_COMPLETION_POWERSHELL_PROFILE_PATH="$profile_path"
 
-  "$host_path" completion install --shell powershell --force --silent --no-logo
+  "$command_name" completion install --shell powershell --force --no-logo
 
   REPL_PWSH_PROFILE="$profile_path" pwsh -NoLogo -NoProfile -Command @'
 . $env:REPL_PWSH_PROFILE
@@ -100,11 +106,12 @@ if (-not ($result.CompletionMatches | Where-Object { $_.CompletionText -eq 'cont
 }
 
 run_nu_smoke() {
+  echo "[smoke] nushell"
   local profile_path="$workspace/nu/config.nu"
   mkdir -p "$(dirname "$profile_path")"
   export REPL_TEST_SHELL_COMPLETION_NU_PROFILE_PATH="$profile_path"
 
-  "$host_path" completion install --shell nushell --force --silent --no-logo
+  "$command_name" completion install --shell nushell --force --no-logo
 
   REPL_NU_PROFILE="$profile_path" nu -c '
 source $env.REPL_NU_PROFILE
