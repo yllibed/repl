@@ -67,6 +67,7 @@ Notes:
 - `completion uninstall` removes only the managed block.
 - `completion status` prints mode, detection, profile paths, and install status.
 - `completion detect-shell` prints detected shell and detection reason.
+- for Nushell, a shared global dispatcher block is managed in addition to per-app blocks. If another app already manages it, use `--force` to merge.
 
 ## Detection strategy
 
@@ -178,12 +179,25 @@ complete -c myapp -f -a "(_myapp_complete)"
 Nushell:
 
 ```nu
-const __repl_completion_command = "myapp"
-def _myapp_complete [spans: list<string>] {
+const __repl_completion_entries = [
+  { appId: "myapp", command: "myapp" }
+]
+def _repl_nu_dispatch_completion [spans: list<string>] {
+  if (($spans | length) == 0) {
+    return []
+  }
+
+  let head = ($spans | get 0)
+  let matches = ($__repl_completion_entries | where { |item| $item.command == $head })
+  if (($matches | length) == 0) {
+    return []
+  }
+
+  let entry = ($matches | get 0)
   let line = ($spans | str join ' ')
   let cursor = ($line | str length)
   (
-    ^$__repl_completion_command completion __complete --shell nu --line $line --cursor $cursor --no-interactive --no-logo
+    ^$entry.command completion __complete --shell nu --line $line --cursor $cursor --no-interactive --no-logo
     | lines
     | each { |line| { value: $line, description: "" } }
   )
@@ -192,6 +206,11 @@ def _myapp_complete [spans: list<string>] {
 $env.config = (
   $env.config
   | upsert completions.external.enable true
-  | upsert completions.external.completer { |spans| _myapp_complete $spans }
+  | upsert completions.external.completer { |spans| _repl_nu_dispatch_completion $spans }
 )
 ```
+
+## Compatibility notes
+
+- PowerShell 7+ is recommended. In Windows PowerShell 5.1, native completion registration for external executables is limited and may not trigger reliably.
+- Nushell uses one global `completions.external.completer`; Repl manages a shared dispatcher block to route completions per app command head.

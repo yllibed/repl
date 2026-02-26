@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 
 namespace Repl.IntegrationTests;
 
@@ -137,7 +138,7 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies generated nushell completion script configures external completer and uses nu bridge shell token.")]
+	[Description("Regression guard: verifies generated nushell completion script configures a global dispatcher completer and uses nu bridge shell token.")]
 	public void When_NuCompletionScriptIsGenerated_Then_ItUsesExternalCompleterAndNuBridge()
 	{
 		var paths = CreateTempPaths();
@@ -157,13 +158,101 @@ public sealed class Given_ShellCompletionSetup
 			output.ExitCode.Should().Be(0);
 			var text = File.ReadAllText(nuProfilePath);
 			text.Should().Contain(";shell=nu] >>>");
+			text.Should().Contain("[appId=__repl_nu_dispatcher__;shell=nu] >>>");
 			text.Should().Contain("completion __complete --shell nu");
 			text.Should().Contain("completions.external.completer");
-			text.Should().Contain("const __repl_completion_command =");
-			text.Should().Contain("def _");
-			text.Should().NotContain("def --env");
+			text.Should().Contain("const __repl_completion_entries = [");
+			text.Should().Contain("def _repl_nu_dispatch_completion [spans: list<string>]");
+			text.Should().Contain("| where { |item| $item.command == $head }");
 			text.Should().Contain("| each { |line| { value: $line, description: \"\" } }");
 			text.Should().Contain("--no-interactive --no-logo");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies nushell install requires --force when a managed global dispatcher already exists for another app.")]
+	public void When_NuGlobalDispatcherExistsForAnotherApp_Then_InstallWithoutForceFails()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var nuProfilePath = Path.Combine(paths.RootPath, "config.nu");
+			var foreignEntry = BuildNuGlobalEntryLine("foreign-app", "foreign-tool");
+			var seed = string.Join(
+				Environment.NewLine,
+				"# >>> repl completion [appId=__repl_nu_dispatcher__;shell=nu] >>>",
+				foreignEntry,
+				"# <<< repl completion [appId=__repl_nu_dispatcher__;shell=nu] <<<",
+				string.Empty);
+			File.WriteAllText(nuProfilePath, seed);
+
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.NuProfilePath = nuProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+				options.ShellCompletion.PreferredShell = ShellKind.Nu;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "nushell", "--no-logo"]));
+
+			output.ExitCode.Should().Be(1);
+			output.Text.Should().Contain("--force");
+			var text = File.ReadAllText(nuProfilePath);
+			CountOccurrences(text, "# repl nu entry appId=").Should().Be(1);
+			text.Should().Contain("foreign-app");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies nushell install --force merges into global dispatcher and uninstall removes only current app entry.")]
+	public void When_NuInstallForceAndUninstall_Then_GlobalDispatcherPreservesForeignEntries()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var nuProfilePath = Path.Combine(paths.RootPath, "config.nu");
+			var foreignAppBlock = string.Join(
+				Environment.NewLine,
+				"# >>> repl completion [appId=foreign-app;shell=nu] >>>",
+				BuildNuAppCommandLine("foreign-tool"),
+				"# <<< repl completion [appId=foreign-app;shell=nu] <<<",
+				string.Empty);
+			var foreignGlobalBlock = string.Join(
+				Environment.NewLine,
+				"# >>> repl completion [appId=__repl_nu_dispatcher__;shell=nu] >>>",
+				BuildNuGlobalEntryLine("foreign-app", "foreign-tool"),
+				"# <<< repl completion [appId=__repl_nu_dispatcher__;shell=nu] <<<",
+				string.Empty);
+			File.WriteAllText(nuProfilePath, foreignAppBlock + Environment.NewLine + foreignGlobalBlock);
+
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.NuProfilePath = nuProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+				options.ShellCompletion.PreferredShell = ShellKind.Nu;
+			});
+
+			var install = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "nushell", "--force", "--no-logo"]));
+			install.ExitCode.Should().Be(0);
+			var afterInstall = File.ReadAllText(nuProfilePath);
+			CountOccurrences(afterInstall, "# repl nu entry appId=").Should().Be(2);
+			afterInstall.Should().Contain("foreign-app");
+
+			var uninstall = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "uninstall", "--shell", "nushell", "--no-logo"]));
+			uninstall.ExitCode.Should().Be(0);
+			var afterUninstall = File.ReadAllText(nuProfilePath);
+			CountOccurrences(afterUninstall, "# repl nu entry appId=").Should().Be(1);
+			afterUninstall.Should().Contain("foreign-app");
 		}
 		finally
 		{
@@ -681,6 +770,18 @@ public sealed class Given_ShellCompletionSetup
 		}
 
 		return source.Split([value], StringSplitOptions.None).Length - 1;
+	}
+
+	private static string BuildNuAppCommandLine(string commandName)
+	{
+		var commandB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(commandName));
+		return $"# repl nu command-b64={commandB64}";
+	}
+
+	private static string BuildNuGlobalEntryLine(string appId, string commandName)
+	{
+		var commandB64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(commandName));
+		return $"# repl nu entry appId={appId};command-b64={commandB64}";
 	}
 
 	private sealed class InMemoryHost(TextReader input, TextWriter output) : IReplHost

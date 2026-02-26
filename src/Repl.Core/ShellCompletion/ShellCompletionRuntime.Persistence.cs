@@ -1,12 +1,17 @@
 using System.Reflection;
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Repl.ShellCompletion;
 
 internal sealed partial class ShellCompletionRuntime
 {
-	private static readonly ConcurrentDictionary<string, SemaphoreSlim> PathMutationLocks = new(StringComparer.Ordinal);
+	private static readonly ConcurrentDictionary<string, SemaphoreSlim> PathMutationLocks = new(GetPathLockKeyComparer());
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Install flow keeps nu/non-nu branches explicit and readable.")]
 	private async ValueTask<ShellCompletionOperationResult> InstallShellCompletionAsync(
 		ShellKind shellKind,
 		ShellDetectionResult detection,
@@ -22,6 +27,17 @@ internal sealed partial class ShellCompletionRuntime
 			var mutationLock = await AcquirePathMutationLockAsync(profilePath, cancellationToken).ConfigureAwait(false);
 			try
 			{
+				if (shellKind == ShellKind.Nu)
+				{
+					return await InstallNuShellCompletionAsync(
+							profilePath,
+							appId,
+							commandName,
+							force,
+							cancellationToken)
+						.ConfigureAwait(false);
+				}
+
 				var existing = File.Exists(profilePath)
 					? await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false)
 					: string.Empty;
@@ -80,6 +96,15 @@ internal sealed partial class ShellCompletionRuntime
 			var mutationLock = await AcquirePathMutationLockAsync(profilePath, cancellationToken).ConfigureAwait(false);
 			try
 			{
+				if (shellKind == ShellKind.Nu)
+				{
+					return await UninstallNuShellCompletionAsync(
+							profilePath,
+							appId,
+							cancellationToken)
+						.ConfigureAwait(false);
+				}
+
 				if (!File.Exists(profilePath))
 				{
 					return new ShellCompletionOperationResult(
@@ -119,6 +144,132 @@ internal sealed partial class ShellCompletionRuntime
 				ProfilePath: profilePath,
 				Message: $"Failed to uninstall shell completion from '{profilePath}': {ex.Message}");
 		}
+	}
+
+	private static async ValueTask<ShellCompletionOperationResult> InstallNuShellCompletionAsync(
+		string profilePath,
+		string appId,
+		string commandName,
+		bool force,
+		CancellationToken cancellationToken)
+	{
+		var existing = File.Exists(profilePath)
+			? await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false)
+			: string.Empty;
+		var appAlreadyInstalled = ContainsShellCompletionManagedBlock(existing, ShellKind.Nu, appId);
+		var hasGlobalDispatcherBlock = ContainsShellCompletionManagedBlock(
+			existing,
+			ShellKind.Nu,
+			ShellCompletionConstants.NuDispatcherAppId);
+		var globalEntries = ParseNuGlobalDispatcherEntries(existing);
+		if ((globalEntries.Count > 0
+				|| hasGlobalDispatcherBlock && globalEntries.Count == 0)
+			&& !globalEntries.ContainsKey(appId)
+			&& !force)
+		{
+			return new ShellCompletionOperationResult(
+				Success: false,
+				Changed: false,
+				ProfilePath: profilePath,
+				Message:
+					"Nushell completion dispatcher is already managed for another app in this profile. "
+					+ "Use --force to merge this app into the shared dispatcher.");
+		}
+
+		globalEntries[appId] = commandName;
+		var appBlock = BuildShellCompletionManagedBlock(ShellKind.Nu, commandName, appId);
+		var updated = UpsertShellCompletionManagedBlock(existing, appBlock, ShellKind.Nu, appId);
+		updated = UpsertShellCompletionManagedBlock(
+			updated,
+			NuShellCompletionAdapter.BuildGlobalDispatcherManagedBlock(globalEntries),
+			ShellKind.Nu,
+			ShellCompletionConstants.NuDispatcherAppId);
+		if (!force
+			&& appAlreadyInstalled
+			&& string.Equals(updated, existing, StringComparison.Ordinal))
+		{
+			return new ShellCompletionOperationResult(
+				Success: true,
+				Changed: false,
+				ProfilePath: profilePath,
+				Message:
+					$"Shell completion is already installed for {FormatShellKind(ShellKind.Nu)} in '{profilePath}'. Use --force to rewrite. "
+					+ BuildShellReloadHint(ShellKind.Nu));
+		}
+
+		var directory = Path.GetDirectoryName(profilePath);
+		if (!string.IsNullOrWhiteSpace(directory))
+		{
+			Directory.CreateDirectory(directory);
+		}
+
+		await WriteTextFileAtomicallyAsync(profilePath, updated, cancellationToken).ConfigureAwait(false);
+		return new ShellCompletionOperationResult(
+			Success: true,
+			Changed: true,
+			ProfilePath: profilePath,
+			Message:
+				$"Installed shell completion for {FormatShellKind(ShellKind.Nu)} in '{profilePath}'. "
+				+ BuildShellReloadHint(ShellKind.Nu));
+	}
+
+	private static async ValueTask<ShellCompletionOperationResult> UninstallNuShellCompletionAsync(
+		string profilePath,
+		string appId,
+		CancellationToken cancellationToken)
+	{
+		if (!File.Exists(profilePath))
+		{
+			return new ShellCompletionOperationResult(
+				Success: true,
+				Changed: false,
+				ProfilePath: profilePath,
+				Message: $"Shell completion is not installed for {FormatShellKind(ShellKind.Nu)} (profile does not exist: '{profilePath}').");
+		}
+
+		var existing = await File.ReadAllTextAsync(profilePath, cancellationToken).ConfigureAwait(false);
+		if (!TryRemoveShellCompletionManagedBlock(existing, ShellKind.Nu, appId, out var updated))
+		{
+			return new ShellCompletionOperationResult(
+				Success: true,
+				Changed: false,
+				ProfilePath: profilePath,
+				Message: $"Shell completion block was not found in '{profilePath}'.");
+		}
+
+		var hadGlobalDispatcherBlock = ContainsShellCompletionManagedBlock(
+			updated,
+			ShellKind.Nu,
+			ShellCompletionConstants.NuDispatcherAppId);
+		var globalEntries = ParseNuGlobalDispatcherEntries(updated);
+		var hadParsedGlobalEntries = globalEntries.Count > 0;
+		_ = globalEntries.Remove(appId);
+		if (globalEntries.Count == 0)
+		{
+			if (hadParsedGlobalEntries || !hadGlobalDispatcherBlock)
+			{
+				updated = RemoveShellCompletionManagedBlocks(
+					updated,
+					ShellKind.Nu,
+					ShellCompletionConstants.NuDispatcherAppId,
+					out _);
+			}
+		}
+		else
+		{
+			updated = UpsertShellCompletionManagedBlock(
+				updated,
+				NuShellCompletionAdapter.BuildGlobalDispatcherManagedBlock(globalEntries),
+				ShellKind.Nu,
+				ShellCompletionConstants.NuDispatcherAppId);
+		}
+
+		await WriteTextFileAtomicallyAsync(profilePath, updated, cancellationToken).ConfigureAwait(false);
+		return new ShellCompletionOperationResult(
+			Success: true,
+			Changed: true,
+			ProfilePath: profilePath,
+			Message: $"Removed shell completion for {FormatShellKind(ShellKind.Nu)} from '{profilePath}'.");
 	}
 
 	private bool IsShellCompletionInstalled(ShellKind shellKind, ShellDetectionResult detection)
@@ -263,11 +414,42 @@ internal sealed partial class ShellCompletionRuntime
 		return PathMutationLocks.GetOrAdd(normalizedPath, static _ => new SemaphoreSlim(1, 1));
 	}
 
+	private static StringComparer GetPathLockKeyComparer() =>
+		OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
+
 	private static async ValueTask<SemaphoreSlim> AcquirePathMutationLockAsync(string path, CancellationToken cancellationToken)
 	{
 		var semaphore = GetPathMutationLock(path);
 		await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
 		return semaphore;
+	}
+
+	private static Dictionary<string, string> ParseNuGlobalDispatcherEntries(string profileContent)
+	{
+		var entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		if (!TryGetShellCompletionManagedBlockContent(
+			profileContent,
+			ShellKind.Nu,
+			ShellCompletionConstants.NuDispatcherAppId,
+			out var globalBlockContent))
+		{
+			return entries;
+		}
+
+		var lines = globalBlockContent.Split(["\r\n", "\n"], StringSplitOptions.None);
+		foreach (var line in lines)
+		{
+			if (!NuShellCompletionAdapter.TryParseGlobalEntryMetadataLine(line.Trim(), out var appId, out var commandName))
+			{
+				continue;
+			}
+
+			entries[appId] = commandName;
+		}
+
+		return entries;
 	}
 
 	private static string? ResolveExistingShellCompletionStateFilePath(string preferredPath)
@@ -279,6 +461,24 @@ internal sealed partial class ShellCompletionRuntime
 
 		var legacyPath = ResolveLegacyShellCompletionStateFilePath(preferredPath);
 		return !string.IsNullOrWhiteSpace(legacyPath) && File.Exists(legacyPath) ? legacyPath : null;
+	}
+
+	private static bool TryGetShellCompletionManagedBlockContent(
+		string content,
+		ShellKind shellKind,
+		string appId,
+		out string blockContent)
+	{
+		var startMarker = ShellCompletionScriptBuilder.BuildManagedBlockStartMarker(appId, shellKind);
+		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, shellKind);
+		if (!TryFindShellCompletionManagedBlock(content, startMarker, endMarker, out var start, out var end))
+		{
+			blockContent = string.Empty;
+			return false;
+		}
+
+		blockContent = content[start..end];
+		return true;
 	}
 
 	private static string? ResolveLegacyShellCompletionStateFilePath(string preferredPath)

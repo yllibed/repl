@@ -65,12 +65,40 @@ public sealed class Given_ShellCompletionRuntime
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies nushell script escapes command head using double-quoted literal when special characters are present.")]
-	public void When_CommandNameContainsQuotes_Then_NushellScriptUsesEscapedDoubleQuotedLiteral()
+	[Description("Regression guard: verifies nushell app block stores the command head in base64 metadata to support global dispatcher reconstruction.")]
+	public void When_CommandNameContainsQuotes_Then_NushellScriptStoresBase64Metadata()
 	{
 		var script = NuShellCompletionAdapter.Instance.BuildManagedBlock("my'app\"tool", appId: "test-app");
 
-		script.Should().Contain("const __repl_completion_command = \"my'app\\\"tool\"");
+		script.Should().Contain("# repl nu command-b64=");
+		script.Should().Contain(";shell=nu] >>>");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies path mutation lock key comparer is OS-aware so case-variant paths share a lock only on case-insensitive platforms.")]
+	public void When_ResolvingPathMutationLock_Then_PathCaseBehaviorIsPlatformAware()
+	{
+		var getLock = typeof(ShellCompletionRuntime).GetMethod(
+			"GetPathMutationLock",
+			BindingFlags.Static | BindingFlags.NonPublic);
+		getLock.Should().NotBeNull();
+
+		var root = Path.Combine(Path.GetTempPath(), "repl-shell-completion-runtime-lock-tests", Guid.NewGuid().ToString("N"));
+		var upperPath = Path.Combine(root, "StatePath.txt");
+		var lowerPath = Path.Combine(root, "statepath.txt");
+		var lockA = getLock!.Invoke(null, [upperPath]);
+		var lockB = getLock.Invoke(null, [lowerPath]);
+
+		lockA.Should().NotBeNull();
+		lockB.Should().NotBeNull();
+		if (OperatingSystem.IsWindows() || OperatingSystem.IsMacOS())
+		{
+			ReferenceEquals(lockA, lockB).Should().BeTrue();
+		}
+		else
+		{
+			ReferenceEquals(lockA, lockB).Should().BeFalse();
+		}
 	}
 
 	private static ShellCompletionRuntime CreateRuntime(

@@ -9,6 +9,7 @@ internal static class ShellCompletionConstants
 	public const string ManagedBlockEndPrefix = "# <<< repl completion [";
 	public const string ManagedBlockStartSuffix = "] >>>";
 	public const string ManagedBlockEndSuffix = "] <<<";
+	public const string NuDispatcherAppId = "__repl_nu_dispatcher__";
 	public const string StateFileName = "shell-completion-state.txt";
 	public const string LegacyStateFileName = "shell-completion-state.json";
 }
