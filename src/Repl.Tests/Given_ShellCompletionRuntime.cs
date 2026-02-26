@@ -37,6 +37,20 @@ public sealed class Given_ShellCompletionRuntime
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies nushell global dispatcher accepts variadic completer arguments for runtime compatibility across nushell versions.")]
+	public void When_BuildingNushellDispatcher_Then_DispatcherUsesVariadicArguments()
+	{
+		var script = NuShellCompletionAdapter.BuildGlobalDispatcherManagedBlock(
+			new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+			{
+				["sample-app"] = "sample",
+			});
+
+		script.Should().Contain("def _repl_nu_dispatch_completion [...args]");
+		script.Should().Contain("|...args| _repl_nu_dispatch_completion ...$args");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies path mutation lock key comparer is OS-aware so case-variant paths share a lock only on case-insensitive platforms.")]
 	public void When_ResolvingPathMutationLock_Then_PathCaseBehaviorIsPlatformAware()
 	{
