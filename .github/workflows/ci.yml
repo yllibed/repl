@@ -455,4 +455,10 @@ jobs:
         shell: pwsh
         run: |
           dotnet nuget push packages/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push packages/*.snupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+          $symbolPackages = Get-ChildItem -Path packages -Filter '*.snupkg' -File |
+            Where-Object { $_.Name -notmatch '^Repl\.\d' }
+
+          foreach ($snupkg in $symbolPackages) {
+            dotnet nuget push $snupkg.FullName --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+          }
