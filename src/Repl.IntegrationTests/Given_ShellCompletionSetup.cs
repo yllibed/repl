@@ -89,6 +89,8 @@ public sealed class Given_ShellCompletionSetup
 			text.Should().Contain(";shell=zsh] >>>");
 			text.Should().Contain("completion __complete --shell zsh");
 			text.Should().Contain("compdef");
+			text.Should().Contain("cursor=$((CURSOR > 0 ? CURSOR - 1 : 0))");
+			text.Should().NotContain("cursor=$((CURSOR - 1))");
 			text.Should().Contain("--no-interactive --no-logo");
 		}
 		finally
@@ -120,6 +122,10 @@ public sealed class Given_ShellCompletionSetup
 			text.Should().Contain(";shell=fish] >>>");
 			text.Should().Contain("completion __complete --shell fish");
 			text.Should().Contain("complete -c");
+			text.Should().Contain("set -l line (commandline -p)");
+			text.Should().Contain("set -l cursor (commandline -C)");
+			text.Should().NotContain("set -l line (commandline -cp)");
+			text.Should().NotContain("set -l cursor (string length -- $line)");
 			text.Should().Contain("--no-interactive --no-logo");
 		}
 		finally
@@ -151,6 +157,10 @@ public sealed class Given_ShellCompletionSetup
 			text.Should().Contain(";shell=nu] >>>");
 			text.Should().Contain("completion __complete --shell nu");
 			text.Should().Contain("completions.external.completer");
+			text.Should().Contain("const __repl_completion_command =");
+			text.Should().Contain("def _");
+			text.Should().NotContain("def --env");
+			text.Should().Contain("| each { |line| { value: $line, description: \"\" } }");
 			text.Should().Contain("--no-interactive --no-logo");
 		}
 		finally

@@ -150,7 +150,7 @@ _myapp_complete() {
   local candidate
   local -a reply
   line="$BUFFER"
-  cursor=$((CURSOR - 1))
+  cursor=$((CURSOR > 0 ? CURSOR - 1 : 0))
   reply=()
   while IFS= read -r candidate; do
     reply+=("$candidate")
@@ -167,8 +167,8 @@ Fish:
 
 ```fish
 function _myapp_complete
-  set -l line (commandline -cp)
-  set -l cursor (string length -- $line)
+  set -l line (commandline -p)
+  set -l cursor (commandline -C)
   myapp completion __complete --shell fish --line "$line" --cursor "$cursor" --no-interactive --no-logo
 end
 
@@ -178,13 +178,14 @@ complete -c myapp -f -a "(_myapp_complete)"
 Nushell:
 
 ```nu
-let __repl_completion_command = 'myapp'
-def --env _myapp_complete [spans: list<string>] {
+const __repl_completion_command = 'myapp'
+def _myapp_complete [spans: list<string>] {
   let line = ($spans | str join ' ')
   let cursor = ($line | str length)
   (
     ^$__repl_completion_command completion __complete --shell nu --line $line --cursor $cursor --no-interactive --no-logo
     | lines
+    | each { |line| { value: $line, description: "" } }
   )
 }
 

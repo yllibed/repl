@@ -41,7 +41,7 @@ internal sealed class ZshShellCompletionAdapter : IShellCompletionAdapter
 			  local candidate
 			  local -a reply
 			  line="$BUFFER"
-			  cursor=$((CURSOR - 1))
+			  cursor=$((CURSOR > 0 ? CURSOR - 1 : 0))
 			  reply=()
 			  while IFS= read -r candidate; do
 			    reply+=("$candidate")

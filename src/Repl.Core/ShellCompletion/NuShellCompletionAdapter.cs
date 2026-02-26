@@ -46,13 +46,14 @@ internal sealed class NuShellCompletionAdapter : IShellCompletionAdapter
 		var endMarker = ShellCompletionScriptBuilder.BuildManagedBlockEndMarker(appId, ShellKind.Nu);
 		return $$"""
 			{{startMarker}}
-			let __repl_completion_command = '{{escapedCommandName}}'
-			def --env {{functionName}} [spans: list<string>] {
+			const __repl_completion_command = '{{escapedCommandName}}'
+			def {{functionName}} [spans: list<string>] {
 			  let line = ($spans | str join ' ')
 			  let cursor = ($line | str length)
 			  (
 			    ^$__repl_completion_command {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell nu --line $line --cursor $cursor --no-interactive --no-logo
 			    | lines
+			    | each { |line| { value: $line, description: "" } }
 			  )
 			}
 

@@ -46,8 +46,8 @@ internal sealed class FishShellCompletionAdapter : IShellCompletionAdapter
 		return $$"""
 			{{startMarker}}
 			function {{functionName}}
-			  set -l line (commandline -cp)
-			  set -l cursor (string length -- $line)
+			  set -l line (commandline -p)
+			  set -l cursor (commandline -C)
 			  {{commandName}} {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell fish --line "$line" --cursor "$cursor" --no-interactive --no-logo
 			end
 
