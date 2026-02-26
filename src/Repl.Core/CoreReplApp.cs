@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -1039,34 +1040,81 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			: string.Join(' ', parts);
 	}
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Levenshtein implementation keeps pooling and fast-path logic explicit for readability.")]
 	private static int ComputeLevenshteinDistance(string source, string target)
 	{
-		var rows = source.Length + 1;
-		var cols = target.Length + 1;
-		var matrix = new int[rows, cols];
-
-		for (var i = 0; i < rows; i++)
+		if (string.Equals(source, target, StringComparison.Ordinal))
 		{
-			matrix[i, 0] = i;
+			return 0;
 		}
 
-		for (var j = 0; j < cols; j++)
+		if (source.Length == 0)
 		{
-			matrix[0, j] = j;
+			return target.Length;
 		}
 
-		for (var i = 1; i < rows; i++)
+		if (target.Length == 0)
 		{
-			for (var j = 1; j < cols; j++)
+			return source.Length;
+		}
+
+		if (target.Length > source.Length)
+		{
+			(source, target) = (target, source);
+		}
+
+		var width = target.Length + 1;
+		const int stackThreshold = 256;
+		int[]? rentedPrevious = null;
+		int[]? rentedCurrent = null;
+		Span<int> previousRow = width <= stackThreshold
+			? stackalloc int[width]
+			: (rentedPrevious = ArrayPool<int>.Shared.Rent(width)).AsSpan(0, width);
+		Span<int> currentRow = width <= stackThreshold
+			? stackalloc int[width]
+			: (rentedCurrent = ArrayPool<int>.Shared.Rent(width)).AsSpan(0, width);
+		try
+		{
+			for (var column = 0; column < width; column++)
 			{
-				var cost = source[i - 1] == target[j - 1] ? 0 : 1;
-				matrix[i, j] = Math.Min(
-					Math.Min(matrix[i - 1, j] + 1, matrix[i, j - 1] + 1),
-					matrix[i - 1, j - 1] + cost);
+				previousRow[column] = column;
+			}
+
+			for (var row = 1; row <= source.Length; row++)
+			{
+				currentRow[0] = row;
+				var sourceChar = source[row - 1];
+				for (var column = 1; column < width; column++)
+				{
+					var cost = sourceChar == target[column - 1] ? 0 : 1;
+					var deletion = previousRow[column] + 1;
+					var insertion = currentRow[column - 1] + 1;
+					var substitution = previousRow[column - 1] + cost;
+					currentRow[column] = Math.Min(Math.Min(deletion, insertion), substitution);
+				}
+
+				var nextPrevious = currentRow;
+				currentRow = previousRow;
+				previousRow = nextPrevious;
+			}
+
+			return previousRow[width - 1];
+		}
+		finally
+		{
+			if (rentedPrevious is not null)
+			{
+				ArrayPool<int>.Shared.Return(rentedPrevious);
+			}
+
+			if (rentedCurrent is not null)
+			{
+				ArrayPool<int>.Shared.Return(rentedCurrent);
 			}
 		}
-
-		return matrix[rows - 1, cols - 1];
 	}
 
 	private static object? ApplyNavigationResult(object? result, List<string>? scopeTokens)

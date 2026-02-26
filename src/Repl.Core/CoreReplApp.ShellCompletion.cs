@@ -23,20 +23,13 @@ public sealed partial class CoreReplApp
 			return [];
 		}
 
-		var priorTokenCount = state.PriorTokens.Length - 1;
-		string[] priorInvocationTokens;
-		if (priorTokenCount <= 0)
-		{
-			priorInvocationTokens = [];
-		}
-		else
-		{
-			priorInvocationTokens = new string[priorTokenCount];
-			Array.Copy(state.PriorTokens, sourceIndex: 1, priorInvocationTokens, destinationIndex: 0, priorTokenCount);
-		}
-
-		var parsed = InvocationOptionParser.Parse(priorInvocationTokens);
-		var commandPrefix = parsed.PositionalArguments.ToArray();
+		var parsed = state.PriorTokens.Length <= 1
+			? InvocationOptionParser.Parse(Array.Empty<string>())
+			: InvocationOptionParser.Parse(new ArraySegment<string>(
+				state.PriorTokens,
+				offset: 1,
+				count: state.PriorTokens.Length - 1));
+		var commandPrefix = parsed.PositionalArguments as string[] ?? [.. parsed.PositionalArguments];
 		var currentTokenPrefix = state.CurrentTokenPrefix;
 		var currentTokenIsOption = IsGlobalOptionToken(currentTokenPrefix);
 		var routeMatch = Resolve(commandPrefix, activeGraph.Routes);
@@ -45,24 +38,22 @@ public sealed partial class CoreReplApp
 		var candidates = new List<string>(capacity: 16);
 		if (!currentTokenIsOption)
 		{
-			foreach (var commandCandidate in CollectShellCommandCandidates(
+			AddShellCommandCandidates(
 				commandPrefix,
 				currentTokenPrefix,
 				activeGraph.Routes,
-				activeGraph.Contexts))
-			{
-				TryAddShellCompletionCandidate(commandCandidate, dedupe, candidates);
-			}
+				activeGraph.Contexts,
+				dedupe,
+				candidates);
 		}
 
 		if (currentTokenIsOption || (string.IsNullOrEmpty(currentTokenPrefix) && hasTerminalRoute))
 		{
-			foreach (var optionCandidate in CollectShellOptionCandidates(
+			AddShellOptionCandidates(
 				hasTerminalRoute ? routeMatch!.Route : null,
-				currentTokenPrefix))
-			{
-				TryAddShellCompletionCandidate(optionCandidate, dedupe, candidates);
-			}
+				currentTokenPrefix,
+				dedupe,
+				candidates);
 		}
 
 		candidates.Sort(StringComparer.OrdinalIgnoreCase);
@@ -82,11 +73,13 @@ public sealed partial class CoreReplApp
 		candidates.Add(candidate);
 	}
 
-	private IEnumerable<string> CollectShellCommandCandidates(
+	private void AddShellCommandCandidates(
 		string[] commandPrefix,
 		string currentTokenPrefix,
 		IReadOnlyList<RouteDefinition> routes,
-		IReadOnlyList<ContextDefinition> contexts)
+		IReadOnlyList<ContextDefinition> contexts,
+		HashSet<string> dedupe,
+		List<string> candidates)
 	{
 		var matchingRoutes = CollectVisibleMatchingRoutes(
 			commandPrefix,
@@ -102,35 +95,36 @@ public sealed partial class CoreReplApp
 				continue;
 			}
 
-			yield return literal.Value;
+			TryAddShellCompletionCandidate(literal.Value, dedupe, candidates);
 		}
 	}
 
-	private IEnumerable<string> CollectShellOptionCandidates(RouteDefinition? route, string currentTokenPrefix)
+	private void AddShellOptionCandidates(
+		RouteDefinition? route,
+		string currentTokenPrefix,
+		HashSet<string> dedupe,
+		List<string> candidates)
 	{
-		foreach (var option in CollectGlobalShellOptionCandidates(currentTokenPrefix))
-		{
-			yield return option;
-		}
+		AddGlobalShellOptionCandidates(currentTokenPrefix, dedupe, candidates);
 
 		if (route is null)
 		{
-			yield break;
+			return;
 		}
 
-		foreach (var option in CollectRouteShellOptionCandidates(route, currentTokenPrefix))
-		{
-			yield return option;
-		}
+		AddRouteShellOptionCandidates(route, currentTokenPrefix, dedupe, candidates);
 	}
 
-	private IEnumerable<string> CollectGlobalShellOptionCandidates(string currentTokenPrefix)
+	private void AddGlobalShellOptionCandidates(
+		string currentTokenPrefix,
+		HashSet<string> dedupe,
+		List<string> candidates)
 	{
 		foreach (var option in StaticShellGlobalOptions)
 		{
 			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
 			{
-				yield return option;
+				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
 		}
 
@@ -139,7 +133,7 @@ public sealed partial class CoreReplApp
 			var option = $"--{alias}";
 			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
 			{
-				yield return option;
+				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
 		}
 
@@ -148,12 +142,16 @@ public sealed partial class CoreReplApp
 			var option = $"--output:{format}";
 			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
 			{
-				yield return option;
+				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
 		}
 	}
 
-	private static IEnumerable<string> CollectRouteShellOptionCandidates(RouteDefinition route, string currentTokenPrefix)
+	private static void AddRouteShellOptionCandidates(
+		RouteDefinition route,
+		string currentTokenPrefix,
+		HashSet<string> dedupe,
+		List<string> candidates)
 	{
 		var routeParameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		foreach (var segment in route.Template.Segments)
@@ -179,7 +177,7 @@ public sealed partial class CoreReplApp
 			var option = $"--{parameter.Name}";
 			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
 			{
-				yield return option;
+				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
 		}
 	}
@@ -207,16 +205,31 @@ public sealed partial class CoreReplApp
 			return new ShellCompletionInputState(prior, prefix);
 		}
 
-		var trailingPrior = new List<string>(tokens.Count);
+		var trailingPriorCount = 0;
 		foreach (var token in tokens)
 		{
 			if (token.End <= cursor)
 			{
-				trailingPrior.Add(token.Value);
+				trailingPriorCount++;
 			}
 		}
 
-		return new ShellCompletionInputState([.. trailingPrior], CurrentTokenPrefix: string.Empty);
+		if (trailingPriorCount == 0)
+		{
+			return new ShellCompletionInputState([], CurrentTokenPrefix: string.Empty);
+		}
+
+		var trailingPrior = new string[trailingPriorCount];
+		var index = 0;
+		foreach (var token in tokens)
+		{
+			if (token.End <= cursor)
+			{
+				trailingPrior[index++] = token.Value;
+			}
+		}
+
+		return new ShellCompletionInputState(trailingPrior, CurrentTokenPrefix: string.Empty);
 	}
 
 	private readonly record struct ShellCompletionInputState(

@@ -9,17 +9,20 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 	private readonly Func<string> _resolveEntryAssemblyName;
 	private readonly Func<string> _resolveCommandName;
 	private readonly Func<string, int, string[]> _resolveCandidates;
+	private readonly Func<string, string?> _tryReadProfileContent;
 
 	public ShellCompletionRuntime(
 		ReplOptions options,
 		Func<string> resolveEntryAssemblyName,
 		Func<string> resolveCommandName,
-		Func<string, int, string[]> resolveCandidates)
+		Func<string, int, string[]> resolveCandidates,
+		Func<string, string?>? tryReadProfileContent = null)
 	{
 		_options = options ?? throw new ArgumentNullException(nameof(options));
 		_resolveEntryAssemblyName = resolveEntryAssemblyName ?? throw new ArgumentNullException(nameof(resolveEntryAssemblyName));
 		_resolveCommandName = resolveCommandName ?? throw new ArgumentNullException(nameof(resolveCommandName));
 		_resolveCandidates = resolveCandidates ?? throw new ArgumentNullException(nameof(resolveCandidates));
+		_tryReadProfileContent = tryReadProfileContent ?? TryReadProfileContentFromFile;
 	}
 
 	public object HandleBridgeRoute(string? shell, string? line, string? cursor)
@@ -308,11 +311,38 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 
 	private ShellCompletionStatusModel BuildShellCompletionStatusModel(ShellDetectionResult detection)
 	{
-		var bashInstalled = IsShellCompletionInstalled(ShellKind.Bash, detection);
-		var powershellInstalled = IsShellCompletionInstalled(ShellKind.PowerShell, detection);
-		var zshInstalled = IsShellCompletionInstalled(ShellKind.Zsh, detection);
-		var fishInstalled = IsShellCompletionInstalled(ShellKind.Fish, detection);
-		var nuInstalled = IsShellCompletionInstalled(ShellKind.Nu, detection);
+		var appId = ResolveShellCompletionAppId();
+		var bashProfilePath = ResolveShellProfilePath(ShellKind.Bash, detection);
+		var powershellProfilePath = ResolveShellProfilePath(ShellKind.PowerShell, detection);
+		var zshProfilePath = ResolveShellProfilePath(ShellKind.Zsh, detection);
+		var fishProfilePath = ResolveShellProfilePath(ShellKind.Fish, detection);
+		var nuProfilePath = ResolveShellProfilePath(ShellKind.Nu, detection);
+		var profileContentByPath = new Dictionary<string, string?>(GetPathLockKeyComparer());
+		var bashInstalled = IsShellCompletionInstalledFromPath(
+			ShellKind.Bash,
+			appId,
+			bashProfilePath,
+			profileContentByPath);
+		var powershellInstalled = IsShellCompletionInstalledFromPath(
+			ShellKind.PowerShell,
+			appId,
+			powershellProfilePath,
+			profileContentByPath);
+		var zshInstalled = IsShellCompletionInstalledFromPath(
+			ShellKind.Zsh,
+			appId,
+			zshProfilePath,
+			profileContentByPath);
+		var fishInstalled = IsShellCompletionInstalledFromPath(
+			ShellKind.Fish,
+			appId,
+			fishProfilePath,
+			profileContentByPath);
+		var nuInstalled = IsShellCompletionInstalledFromPath(
+			ShellKind.Nu,
+			appId,
+			nuProfilePath,
+			profileContentByPath);
 		return new ShellCompletionStatusModel
 		{
 			Enabled = _options.ShellCompletion.Enabled,
@@ -320,17 +350,50 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			DetectedShell = FormatShellKind(detection.Kind),
 			DetectionReason = detection.Reason,
 			Detected = $"{FormatShellKind(detection.Kind)} ({detection.Reason})",
-			BashProfilePath = ResolveShellProfilePath(ShellKind.Bash, detection),
+			BashProfilePath = bashProfilePath,
 			BashInstalled = bashInstalled,
-			PowerShellProfilePath = ResolveShellProfilePath(ShellKind.PowerShell, detection),
+			PowerShellProfilePath = powershellProfilePath,
 			PowerShellInstalled = powershellInstalled,
-			ZshProfilePath = ResolveShellProfilePath(ShellKind.Zsh, detection),
+			ZshProfilePath = zshProfilePath,
 			ZshInstalled = zshInstalled,
-			FishProfilePath = ResolveShellProfilePath(ShellKind.Fish, detection),
+			FishProfilePath = fishProfilePath,
 			FishInstalled = fishInstalled,
-			NuProfilePath = ResolveShellProfilePath(ShellKind.Nu, detection),
+			NuProfilePath = nuProfilePath,
 			NuInstalled = nuInstalled,
 		};
+	}
+
+	private bool IsShellCompletionInstalledFromPath(
+		ShellKind shellKind,
+		string appId,
+		string profilePath,
+		Dictionary<string, string?> profileContentByPath)
+	{
+		if (!profileContentByPath.TryGetValue(profilePath, out var content))
+		{
+			content = _tryReadProfileContent(profilePath);
+			profileContentByPath[profilePath] = content;
+		}
+
+		return !string.IsNullOrEmpty(content)
+			&& ContainsShellCompletionManagedBlock(content, shellKind, appId);
+	}
+
+	private static string? TryReadProfileContentFromFile(string profilePath)
+	{
+		if (!File.Exists(profilePath))
+		{
+			return null;
+		}
+
+		try
+		{
+			return File.ReadAllText(profilePath);
+		}
+		catch
+		{
+			return null;
+		}
 	}
 
 	private static bool TryResolveCompletionShell(

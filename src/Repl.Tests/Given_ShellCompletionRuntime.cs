@@ -101,9 +101,51 @@ public sealed class Given_ShellCompletionRuntime
 		}
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies completion status reads each distinct profile path once per status call.")]
+	public void When_StatusProfilesShareSamePath_Then_RuntimeReadsProfileContentOnce()
+	{
+		var profilePath = Path.Combine(Path.GetTempPath(), "repl-shell-completion-status-tests", $"{Guid.NewGuid():N}.profile");
+		Directory.CreateDirectory(Path.GetDirectoryName(profilePath)!);
+		File.WriteAllText(profilePath, string.Empty);
+		try
+		{
+			var readCount = 0;
+			var options = new ReplOptions();
+			options.ShellCompletion.BashProfilePath = profilePath;
+			options.ShellCompletion.PowerShellProfilePath = profilePath;
+			options.ShellCompletion.ZshProfilePath = profilePath;
+			options.ShellCompletion.FishProfilePath = profilePath;
+			options.ShellCompletion.NuProfilePath = profilePath;
+			var runtime = CreateRuntime(
+				options,
+				tryReadProfileContent: _ =>
+				{
+					readCount++;
+					return string.Empty;
+				});
+
+			_ = runtime.HandleStatusRoute();
+
+			readCount.Should().Be(1);
+		}
+		finally
+		{
+			try
+			{
+				File.Delete(profilePath);
+			}
+			catch
+			{
+				// Best-effort cleanup for temp test files.
+			}
+		}
+	}
+
 	private static ShellCompletionRuntime CreateRuntime(
 		ReplOptions? options = null,
-		Func<string, int, string[]>? resolveCandidates = null)
+		Func<string, int, string[]>? resolveCandidates = null,
+		Func<string, string?>? tryReadProfileContent = null)
 	{
 		options ??= new ReplOptions();
 		resolveCandidates ??= static (_, _) => [];
@@ -111,7 +153,8 @@ public sealed class Given_ShellCompletionRuntime
 			options,
 			resolveEntryAssemblyName: static () => Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? string.Empty,
 			resolveCommandName: static () => "app",
-			resolveCandidates: resolveCandidates);
+			resolveCandidates: resolveCandidates,
+			tryReadProfileContent: tryReadProfileContent);
 	}
 
 	private static object LoadState(ShellCompletionRuntime runtime)
