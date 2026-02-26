@@ -66,6 +66,46 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies completion install --silent emits no payload and returns success via exit code only.")]
+	public void When_CompletionInstallIsSilent_Then_OutputIsSuppressedAndExitCodeIndicatesSuccess()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+				options.ShellCompletion.PreferredShell = ShellKind.Bash;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--silent", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			output.Text.Should().BeNullOrWhiteSpace();
+			File.Exists(paths.ProfilePath).Should().BeTrue();
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies completion install --silent emits no payload and returns non-zero exit code on errors.")]
+	public void When_CompletionInstallIsSilentAndUnavailable_Then_OutputIsSuppressedAndExitCodeIndicatesFailure()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.ShellCompletion.Enabled = false);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--silent", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies generated PowerShell completion script uses -Native when available and falls back to non-native registration.")]
 	public void When_PowerShellCompletionScriptIsGenerated_Then_ItIncludesNativeFallback()
 	{
@@ -84,6 +124,7 @@ public sealed class Given_ShellCompletionSetup
 			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "powershell", "--no-logo"]));
 
 			output.ExitCode.Should().Be(0);
+			output.Text.Should().Contain(". $PROFILE");
 			var text = File.ReadAllText(powerShellProfilePath);
 			text.Should().Contain("Parameters.ContainsKey('Native')");
 			text.Should().Contain("$__replCompletionCommandNames = @(");
@@ -97,6 +138,25 @@ public sealed class Given_ShellCompletionSetup
 		{
 			TryDelete(paths.RootPath);
 		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies explicit completion help exposes subcommand descriptions for discoverability.")]
+	public void When_RequestingHelpForCompletionContext_Then_SubcommandsHaveDescriptions()
+	{
+		var sut = ReplApp.Create();
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("install");
+		output.Text.Should().Contain("Install shell completion into the selected shell profile.");
+		output.Text.Should().Contain("uninstall");
+		output.Text.Should().Contain("Remove shell completion from the selected shell profile.");
+		output.Text.Should().Contain("status");
+		output.Text.Should().Contain("Show completion setup status and managed profile locations.");
+		output.Text.Should().Contain("detect-shell");
+		output.Text.Should().Contain("Detect the current shell using environment and parent process signals.");
 	}
 
 	[TestMethod]

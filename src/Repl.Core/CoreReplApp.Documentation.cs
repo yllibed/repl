@@ -9,24 +9,37 @@ public sealed partial class CoreReplApp
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		var normalizedTargetPath = NormalizePath(targetPath);
-		var commands = SelectDocumentationCommands(
-			normalizedTargetPath,
+		var targetTokens = string.IsNullOrWhiteSpace(normalizedTargetPath)
+			? []
+			: normalizedTargetPath
+				.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		var discoverableRoutes = ResolveDiscoverableRoutes(
 			activeGraph.Routes,
 			activeGraph.Contexts,
+			targetTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var discoverableContexts = ResolveDiscoverableContexts(
+			activeGraph.Contexts,
+			targetTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var commands = SelectDocumentationCommands(
+			normalizedTargetPath,
+			discoverableRoutes,
+			discoverableContexts,
 			out var notFoundResult);
 		if (notFoundResult is not null)
 		{
 			return notFoundResult;
 		}
 
-		var contexts = SelectDocumentationContexts(normalizedTargetPath, commands, activeGraph.Contexts);
+		var contexts = SelectDocumentationContexts(normalizedTargetPath, commands, discoverableContexts);
 		var commandDocs = commands.Select(BuildDocumentationCommand).ToArray();
 		var contextDocs = contexts
 			.Select(context => new ReplDocContext(
 				Path: context.Template.Template,
 				Description: context.Description,
 				IsDynamic: context.Template.Segments.Any(segment => segment is DynamicRouteSegment),
-				IsHidden: false))
+				IsHidden: context.IsHidden))
 			.ToArray();
 		return new ReplDocumentationModel(
 			App: BuildDocumentationApp(),

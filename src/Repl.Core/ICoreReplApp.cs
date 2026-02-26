@@ -11,8 +11,8 @@ public interface ICoreReplApp : IReplMap
 	/// <param name="segment">Context segment template.</param>
 	/// <param name="configure">Mapping callback for nested routes.</param>
 	/// <param name="validation">Optional validator for scope entry.</param>
-	/// <returns>The same app contract for fluent chaining.</returns>
-	ICoreReplApp Context(string segment, Action<ICoreReplApp> configure, Delegate? validation = null);
+	/// <returns>A context builder for context-level metadata configuration.</returns>
+	IContextBuilder Context(string segment, Action<ICoreReplApp> configure, Delegate? validation = null);
 
 	/// <summary>
 	/// Maps a reusable module instance into the current route scope.

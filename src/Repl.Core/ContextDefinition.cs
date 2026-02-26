@@ -15,4 +15,6 @@ internal sealed class ContextDefinition(
 	public Delegate? Banner { get; set; }
 
 	public int ModuleId { get; } = moduleId;
+
+	public bool IsHidden { get; set; }
 }

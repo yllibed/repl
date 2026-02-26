@@ -140,6 +140,63 @@ public sealed class Given_ShellCompletion
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies hidden contexts are excluded from shell completion root suggestions.")]
+	public void When_ContextIsHidden_Then_ShellCompletionRootDoesNotExposeIt()
+	{
+		var sut = ReplApp.Create();
+		sut.Context("admin", admin =>
+		{
+			admin.Map("reset", () => "ok");
+		}).Hidden();
+		sut.Map("status", () => "ok");
+
+		const string line = "repl a";
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			"bash",
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+		]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().NotContain("admin");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies shell completion works inside a hidden context once it is addressed explicitly.")]
+	public void When_CompletingWithinExplicitHiddenContext_Then_ChildCommandsAreReturned()
+	{
+		var sut = ReplApp.Create();
+		sut.Context("admin", admin =>
+		{
+			admin.Map("reset", () => "ok");
+			admin.Map("status", () => "ok");
+		}).Hidden();
+
+		const string line = "repl admin ";
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			"powershell",
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+		]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("reset");
+		output.Text.Should().Contain("status");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies dynamic context values are not auto-completed in shell completion V1.")]
 	public void When_OnlyDynamicContextValueIsExpected_Then_NoCandidatesAreReturned()
 	{
@@ -170,36 +227,27 @@ public sealed class Given_ShellCompletion
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies invalid shell completion usage fails with exit code 2 and usage guidance on stderr.")]
-	public void When_ShellCompletionUsageIsInvalid_Then_ExitCodeTwoAndUsageAreReturned()
+	[Description("Regression guard: verifies invalid shell completion usage fails through REPL error rendering with usage guidance.")]
+	public void When_ShellCompletionUsageIsInvalid_Then_ErrorResultAndUsageAreReturned()
 	{
 		var sut = ReplApp.Create();
 		sut.Map("ping", () => "pong");
-		var previousError = Console.Error;
-		using var errorWriter = new StringWriter();
-		Console.SetError(errorWriter);
 
-		try
-		{
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(
-			[
-				"completion",
-				"__complete",
-				"--shell",
-				"bash",
-				"--line",
-				"repl ping",
-				"--cursor",
-				"invalid",
-			]));
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			"bash",
+			"--line",
+			"repl ping",
+			"--cursor",
+			"invalid",
+		]));
 
-			output.ExitCode.Should().Be(2);
-			errorWriter.ToString().Should().Contain("usage: completion __complete");
-		}
-		finally
-		{
-			Console.SetError(previousError);
-		}
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Error:");
+		output.Text.Should().Contain("usage: completion __complete");
 	}
 
 	[TestMethod]

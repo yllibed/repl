@@ -5,10 +5,11 @@ namespace Repl;
 
 public sealed partial class CoreReplApp
 {
-	private sealed class ScopedMap(CoreReplApp app, string prefix) : ICoreReplApp
+	private sealed class ScopedMap(CoreReplApp app, string prefix, ContextDefinition context) : ICoreReplApp
 	{
 		private readonly CoreReplApp _app = app;
 		private readonly string _prefix = prefix;
+		private readonly ContextDefinition _context = context;
 
 		public CommandBuilder Map(string route, Delegate handler)
 		{
@@ -20,7 +21,7 @@ public sealed partial class CoreReplApp
 			return _app.Map(fullRoute, handler);
 		}
 
-		public ICoreReplApp Context(string segment, Action<ICoreReplApp> configure, Delegate? validation = null)
+		public IContextBuilder Context(string segment, Action<ICoreReplApp> configure, Delegate? validation = null)
 		{
 			segment = string.IsNullOrWhiteSpace(segment)
 				? throw new ArgumentException("Segment cannot be empty.", nameof(segment))
@@ -29,10 +30,10 @@ public sealed partial class CoreReplApp
 
 			var childPrefix = string.Concat(_prefix, " ", segment).Trim();
 			var contextDescription = configure.Method.GetCustomAttribute<DescriptionAttribute>()?.Description;
-			_app.RegisterContext(childPrefix, validation, contextDescription);
-			var childMap = new ScopedMap(_app, childPrefix);
+			var childContext = _app.RegisterContext(childPrefix, validation, contextDescription);
+			var childMap = new ScopedMap(_app, childPrefix, childContext);
 			configure(childMap);
-			return this;
+			return new ContextBuilder(this, childContext);
 		}
 
 		public ScopedMap MapModule(IReplModule module)
@@ -52,7 +53,7 @@ public sealed partial class CoreReplApp
 			return this;
 		}
 
-		IReplMap IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation)
+		IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation)
 		{
 			segment = string.IsNullOrWhiteSpace(segment)
 				? throw new ArgumentException("Segment cannot be empty.", nameof(segment))
@@ -61,10 +62,10 @@ public sealed partial class CoreReplApp
 
 			var childPrefix = string.Concat(_prefix, " ", segment).Trim();
 			var contextDescription = configure.Method.GetCustomAttribute<DescriptionAttribute>()?.Description;
-			_app.RegisterContext(childPrefix, validation, contextDescription);
-			var childMap = new ScopedMap(_app, childPrefix);
+			var childContext = _app.RegisterContext(childPrefix, validation, contextDescription);
+			var childMap = new ScopedMap(_app, childPrefix, childContext);
 			configure(childMap);
-			return this;
+			return new ContextBuilder(this, childContext);
 		}
 
 		IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
@@ -106,12 +107,33 @@ public sealed partial class CoreReplApp
 		private void SetBannerOnContext(Delegate bannerProvider)
 		{
 			ArgumentNullException.ThrowIfNull(bannerProvider);
-			var context = _app._contexts.LastOrDefault(c =>
-				string.Equals(c.Template.Template, _prefix, StringComparison.OrdinalIgnoreCase));
-			if (context is not null)
-			{
-				context.Banner = bannerProvider;
-			}
+			_context.Banner = bannerProvider;
+		}
+	}
+
+	private sealed class ContextBuilder(IReplMap parentMap, ContextDefinition context) : IContextBuilder
+	{
+		private readonly IReplMap _parentMap = parentMap;
+		private readonly ContextDefinition _context = context;
+
+		public CommandBuilder Map(string route, Delegate handler) => _parentMap.Map(route, handler);
+
+		public IContextBuilder Context(string segment, Action<IReplMap> configure, Delegate? validation = null) =>
+			_parentMap.Context(segment, configure, validation);
+
+		public IReplMap MapModule(IReplModule module) => _parentMap.MapModule(module);
+
+		public IReplMap MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+			_parentMap.MapModule(module, isPresent);
+
+		public IReplMap WithBanner(Delegate bannerProvider) => _parentMap.WithBanner(bannerProvider);
+
+		public IReplMap WithBanner(string text) => _parentMap.WithBanner(text);
+
+		public IContextBuilder Hidden(bool isHidden = true)
+		{
+			_context.IsHidden = isHidden;
+			return this;
 		}
 	}
 }

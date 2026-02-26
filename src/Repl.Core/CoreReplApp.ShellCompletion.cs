@@ -22,96 +22,41 @@ public sealed partial class CoreReplApp
 	private const string ShellCompletionManagedBlockEndSuffix = "] <<<";
 	private const string ShellCompletionStateFileName = "shell-completion-state.json";
 
-	private int HandleShellCompletionCommand(IReadOnlyList<string> commandTokens)
+	private object HandleShellCompletionBridgeRoute(string? shell, string? line, string? cursor)
 	{
 		if (!ShellCompletionHostValidator.IsSupportedHostProcess(Environment.ProcessPath, ResolveEntryAssemblyName()))
 		{
-			Console.Error.WriteLine($"Error: {ShellCompletionHostValidator.UnsupportedHostMessage}");
-			return 1;
+			return Results.Error("shell_completion_unsupported_host", ShellCompletionHostValidator.UnsupportedHostMessage);
 		}
 
-		var parsed = InvocationOptionParser.Parse(commandTokens);
-		if (parsed.PositionalArguments.Count > 0)
+		if (string.IsNullOrWhiteSpace(shell)
+			|| !TryParseShellKind(shell, out var shellKind)
+			|| shellKind is not ShellKind.Bash and not ShellKind.PowerShell)
 		{
-			return WriteShellCompletionUsageError(
-				$"Error: {ShellCompletionBridgeCommandName} does not accept positional arguments.");
+			return CreateShellCompletionProtocolUsageError(
+				$"{ShellCompletionBridgeCommandName} requires --shell <bash|powershell>.");
 		}
 
-		var unsupportedOption = parsed.NamedOptions.Keys.FirstOrDefault(option =>
-			!string.Equals(option, "shell", StringComparison.OrdinalIgnoreCase)
-			&& !string.Equals(option, "line", StringComparison.OrdinalIgnoreCase)
-			&& !string.Equals(option, "cursor", StringComparison.OrdinalIgnoreCase));
-		if (!string.IsNullOrWhiteSpace(unsupportedOption))
+		if (line is null)
 		{
-			return WriteShellCompletionUsageError(
-				$"Error: unsupported option '--{unsupportedOption}' for {ShellCompletionBridgeCommandName}.");
+			return CreateShellCompletionProtocolUsageError(
+				$"{ShellCompletionBridgeCommandName} requires --line <input>.");
 		}
 
-		if (!TryGetSingleNamedOption(parsed.NamedOptions, "shell", out var shell)
-			|| !TryParseShellCompletionShell(shell))
-		{
-			return WriteShellCompletionUsageError(
-				$"Error: {ShellCompletionBridgeCommandName} requires --shell <bash|powershell>.");
-		}
-
-		if (!TryGetSingleNamedOption(parsed.NamedOptions, "line", out var line))
-		{
-			return WriteShellCompletionUsageError(
-				$"Error: {ShellCompletionBridgeCommandName} requires --line <input>.");
-		}
-
-		if (!TryGetSingleNamedOption(parsed.NamedOptions, "cursor", out var cursorText)
+		if (string.IsNullOrWhiteSpace(cursor)
 			|| !int.TryParse(
-				cursorText,
+				cursor,
 				NumberStyles.Integer,
 				CultureInfo.InvariantCulture,
-				out var cursor)
-			|| cursor < 0)
+				out var cursorPosition)
+			|| cursorPosition < 0)
 		{
-			return WriteShellCompletionUsageError(
-				$"Error: {ShellCompletionBridgeCommandName} requires --cursor <position> with a non-negative integer.");
+			return CreateShellCompletionProtocolUsageError(
+				$"{ShellCompletionBridgeCommandName} requires --cursor <position> with a non-negative integer.");
 		}
 
-		var candidates = ResolveShellCompletionCandidates(line, cursor);
-		foreach (var candidate in candidates)
-		{
-			ReplSessionIO.Output.WriteLine(candidate);
-		}
-
-		return 0;
-	}
-
-	private CommandExit HandleShellCompletionBridgeRoute(string? shell, string? line, string? cursor)
-	{
-		var commandTokens = new List<string>(capacity: 6);
-		if (!string.IsNullOrWhiteSpace(shell))
-		{
-			commandTokens.Add("--shell");
-			commandTokens.Add(shell);
-		}
-
-		if (line is not null)
-		{
-			commandTokens.Add("--line");
-			commandTokens.Add(line);
-		}
-
-		if (!string.IsNullOrWhiteSpace(cursor))
-		{
-			commandTokens.Add("--cursor");
-			commandTokens.Add(cursor);
-		}
-
-		var exitCode = HandleShellCompletionCommand(commandTokens);
-		return new CommandExit(exitCode);
-	}
-
-	private object HandleShellCompletionSetupRoute()
-	{
-		var availabilityError = ValidateShellCompletionManagementAvailability();
-		return availabilityError is not null
-			? availabilityError
-			: BuildShellCompletionSetupUsage();
+		var candidates = ResolveShellCompletionCandidates(line, cursorPosition);
+		return string.Join(Environment.NewLine, candidates);
 	}
 
 	private object HandleShellCompletionStatusRoute()
@@ -143,38 +88,27 @@ public sealed partial class CoreReplApp
 		};
 	}
 
-	private object HandleShellCompletionUnknownSubcommandRoute(string subCommand)
-	{
-		var availabilityError = ValidateShellCompletionManagementAvailability();
-		if (availabilityError is not null)
-		{
-			return availabilityError;
-		}
-
-		if (string.Equals(subCommand, "help", StringComparison.OrdinalIgnoreCase))
-		{
-			return BuildShellCompletionSetupUsage();
-		}
-
-		return Results.Validation(
-			$"Unknown completion subcommand '{subCommand}'.{Environment.NewLine}{BuildShellCompletionSetupUsage()}");
-	}
-
 	private async ValueTask<object> HandleShellCompletionInstallRouteAsync(
 		string? shell,
 		bool? force,
+		bool? silent,
 		CancellationToken cancellationToken)
 	{
+		var isSilent = silent ?? false;
 		var availabilityError = ValidateShellCompletionManagementAvailability();
 		if (availabilityError is not null)
 		{
-			return availabilityError;
+			return isSilent
+				? new CommandExit(1)
+				: availabilityError;
 		}
 
 		var detection = DetectShellKind();
 		if (!TryResolveCompletionShell(shell, detection, out var shellKind, out var shellError))
 		{
-			return Results.Validation(shellError);
+			return isSilent
+				? new CommandExit(1)
+				: Results.Validation(shellError);
 		}
 
 		var operation = await InstallShellCompletionAsync(
@@ -185,7 +119,9 @@ public sealed partial class CoreReplApp
 			.ConfigureAwait(false);
 		if (!operation.Success)
 		{
-			return Results.Error("shell_completion_install_failed", operation.Message);
+			return isSilent
+				? new CommandExit(1)
+				: Results.Error("shell_completion_install_failed", operation.Message);
 		}
 
 		var state = LoadShellCompletionState();
@@ -197,6 +133,11 @@ public sealed partial class CoreReplApp
 		}
 
 		TrySaveShellCompletionState(state);
+		if (isSilent)
+		{
+			return new CommandExit(0);
+		}
+
 		return new ShellCompletionInstallModel
 		{
 			Success = operation.Success,
@@ -209,30 +150,43 @@ public sealed partial class CoreReplApp
 
 	private async ValueTask<object> HandleShellCompletionUninstallRouteAsync(
 		string? shell,
+		bool? silent,
 		CancellationToken cancellationToken)
 	{
+		var isSilent = silent ?? false;
 		var availabilityError = ValidateShellCompletionManagementAvailability();
 		if (availabilityError is not null)
 		{
-			return availabilityError;
+			return isSilent
+				? new CommandExit(1)
+				: availabilityError;
 		}
 
 		var detection = DetectShellKind();
 		if (!TryResolveCompletionShell(shell, detection, out var shellKind, out var shellError))
 		{
-			return Results.Validation(shellError);
+			return isSilent
+				? new CommandExit(1)
+				: Results.Validation(shellError);
 		}
 
 		var operation = await UninstallShellCompletionAsync(shellKind, detection, cancellationToken).ConfigureAwait(false);
 		if (!operation.Success)
 		{
-			return Results.Error("shell_completion_uninstall_failed", operation.Message);
+			return isSilent
+				? new CommandExit(1)
+				: Results.Error("shell_completion_uninstall_failed", operation.Message);
 		}
 
 		var state = LoadShellCompletionState();
 		state.LastDetectedShell = detection.Kind.ToString();
 		state.InstalledShells.RemoveAll(item => string.Equals(item, shellKind.ToString(), StringComparison.OrdinalIgnoreCase));
 		TrySaveShellCompletionState(state);
+		if (isSilent)
+		{
+			return new CommandExit(0);
+		}
+
 		return new ShellCompletionUninstallModel
 		{
 			Success = operation.Success,
@@ -258,10 +212,10 @@ public sealed partial class CoreReplApp
 		var currentTokenPrefix = state.CurrentTokenPrefix;
 		var currentTokenIsOption = IsGlobalOptionToken(currentTokenPrefix);
 		var routeMatch = Resolve(commandPrefix, activeGraph.Routes);
-		var hasTerminalRoute = routeMatch is not null && routeMatch.RemainingTokens.Count == 0;
-		var commandCandidates = currentTokenIsOption
-			? []
-			: CollectShellCommandCandidates(commandPrefix, currentTokenPrefix, activeGraph.Routes);
+			var hasTerminalRoute = routeMatch is not null && routeMatch.RemainingTokens.Count == 0;
+			var commandCandidates = currentTokenIsOption
+				? []
+				: CollectShellCommandCandidates(commandPrefix, currentTokenPrefix, activeGraph.Routes, activeGraph.Contexts);
 		var optionCandidates = currentTokenIsOption || (string.IsNullOrEmpty(currentTokenPrefix) && hasTerminalRoute)
 			? CollectShellOptionCandidates(hasTerminalRoute ? routeMatch!.Route : null, currentTokenPrefix)
 			: [];
@@ -277,11 +231,16 @@ public sealed partial class CoreReplApp
 	private IEnumerable<string> CollectShellCommandCandidates(
 		string[] commandPrefix,
 		string currentTokenPrefix,
-		IReadOnlyList<RouteDefinition> routes)
+		IReadOnlyList<RouteDefinition> routes,
+		IReadOnlyList<ContextDefinition> contexts)
 	{
-		var matchingRoutes = CollectVisibleMatchingRoutes(commandPrefix, StringComparison.OrdinalIgnoreCase, routes);
-		foreach (var route in matchingRoutes)
-		{
+		var matchingRoutes = CollectVisibleMatchingRoutes(
+			commandPrefix,
+			StringComparison.OrdinalIgnoreCase,
+			routes,
+			contexts);
+			foreach (var route in matchingRoutes)
+			{
 			if (commandPrefix.Length >= route.Template.Segments.Count
 				|| route.Template.Segments[commandPrefix.Length] is not LiteralRouteSegment literal
 				|| !literal.Value.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
@@ -404,31 +363,10 @@ public sealed partial class CoreReplApp
 		string[] PriorTokens,
 		string CurrentTokenPrefix);
 
-	private static bool TryGetSingleNamedOption(
-		IReadOnlyDictionary<string, IReadOnlyList<string>> namedOptions,
-		string name,
-		out string value)
-	{
-		value = string.Empty;
-		if (!namedOptions.TryGetValue(name, out var values) || values.Count != 1)
-		{
-			return false;
-		}
-
-		value = values[0];
-		return true;
-	}
-
-	private static bool TryParseShellCompletionShell(string shell) =>
-		string.Equals(shell, "bash", StringComparison.OrdinalIgnoreCase)
-		|| string.Equals(shell, "powershell", StringComparison.OrdinalIgnoreCase);
-
-	private static int WriteShellCompletionUsageError(string message)
-	{
-		Console.Error.WriteLine(message);
-		Console.Error.WriteLine(ShellCompletionUsage);
-		return 2;
-	}
+	private static IReplResult CreateShellCompletionProtocolUsageError(string message) =>
+		Results.Error(
+			"shell_completion_protocol_usage",
+			$"{message}{Environment.NewLine}{ShellCompletionUsage}");
 
 	[SuppressMessage(
 		"Maintainability",
@@ -605,7 +543,9 @@ public sealed partial class CoreReplApp
 					Success: true,
 					Changed: false,
 					ProfilePath: profilePath,
-					Message: $"Shell completion is already installed for {FormatShellKind(shellKind)} in '{profilePath}'. Use --force to rewrite.");
+					Message:
+						$"Shell completion is already installed for {FormatShellKind(shellKind)} in '{profilePath}'. Use --force to rewrite. "
+						+ BuildShellReloadHint(shellKind));
 			}
 
 			var updated = UpsertShellCompletionManagedBlock(existing, block, shellKind, appId);
@@ -620,7 +560,9 @@ public sealed partial class CoreReplApp
 				Success: true,
 				Changed: true,
 				ProfilePath: profilePath,
-				Message: $"Installed shell completion for {FormatShellKind(shellKind)} in '{profilePath}'.");
+				Message:
+					$"Installed shell completion for {FormatShellKind(shellKind)} in '{profilePath}'. "
+					+ BuildShellReloadHint(shellKind));
 		}
 		catch (Exception ex)
 		{
@@ -1458,12 +1400,14 @@ public sealed partial class CoreReplApp
 		_ => "powershell",
 	};
 
-	private static string BuildShellCompletionSetupUsage() =>
-		$"usage: {ShellCompletionSetupCommandName} <install|uninstall|status|detect-shell> [options]{Environment.NewLine}"
-		+ $"  {ShellCompletionSetupCommandName} install [--shell bash|powershell] [--force]{Environment.NewLine}"
-		+ $"  {ShellCompletionSetupCommandName} uninstall [--shell bash|powershell]{Environment.NewLine}"
-		+ $"  {ShellCompletionSetupCommandName} status{Environment.NewLine}"
-		+ $"  {ShellCompletionSetupCommandName} detect-shell";
+	private static string BuildShellReloadHint(ShellKind shellKind) => shellKind switch
+	{
+		ShellKind.Bash =>
+			"Reload your shell profile (for example: 'source ~/.bashrc') or restart the shell to activate completions.",
+		ShellKind.PowerShell =>
+			"Reload your PowerShell profile (for example: '. $PROFILE') or restart the shell to activate completions.",
+		_ => "Restart the shell to activate completions.",
+	};
 
 	private static bool IsShellCompletionBridgeInvocation(IReadOnlyList<string> tokens) =>
 		tokens.Count >= 2

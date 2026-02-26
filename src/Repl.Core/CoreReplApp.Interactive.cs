@@ -635,7 +635,11 @@ public sealed partial class CoreReplApp
 			? StringComparison.Ordinal
 			: StringComparison.OrdinalIgnoreCase;
 		var state = ResolveAutocompleteState(request, scopeTokens, prefixComparison, activeGraph);
-		var matchingRoutes = CollectVisibleMatchingRoutes(state.CommandPrefix, prefixComparison, activeGraph.Routes);
+		var matchingRoutes = CollectVisibleMatchingRoutes(
+			state.CommandPrefix,
+			prefixComparison,
+			activeGraph.Routes,
+			activeGraph.Contexts);
 		var candidates = await CollectAutocompleteSuggestionsAsync(
 				matchingRoutes,
 				state.CommandPrefix,
@@ -655,12 +659,21 @@ public sealed partial class CoreReplApp
 				state.CurrentTokenPrefix,
 				_options.Interactive.Autocomplete.LiveHintMaxAlternatives)
 			: null;
+		var discoverableRoutes = ResolveDiscoverableRoutes(
+			activeGraph.Routes,
+			activeGraph.Contexts,
+			scopeTokens,
+			prefixComparison);
+		var discoverableContexts = ResolveDiscoverableContexts(
+			activeGraph.Contexts,
+			scopeTokens,
+			prefixComparison);
 		var tokenClassifications = BuildTokenClassifications(
 			request.Input,
 			scopeTokens,
 			prefixComparison,
-			activeGraph.Routes,
-			activeGraph.Contexts);
+			discoverableRoutes,
+			discoverableContexts);
 		return new ConsoleLineReader.AutocompleteResult(
 			state.ReplaceStart,
 			state.ReplaceLength,
@@ -868,6 +881,11 @@ public sealed partial class CoreReplApp
 		var segmentIndex = helpPathPrefix.Length;
 		foreach (var context in contexts)
 		{
+			if (IsContextSuppressedForDiscovery(context, helpPathPrefix, comparison))
+			{
+				continue;
+			}
+
 			if (!MatchesTemplatePrefix(context.Template, helpPathPrefix, comparison, _options.Parsing)
 				|| segmentIndex >= context.Template.Segments.Count)
 			{
@@ -887,6 +905,7 @@ public sealed partial class CoreReplApp
 		foreach (var route in routes)
 		{
 			if (route.Command.IsHidden
+				|| IsRouteSuppressedForDiscovery(route.Template, contexts, helpPathPrefix, comparison)
 				|| !MatchesTemplatePrefix(route.Template, helpPathPrefix, comparison, _options.Parsing)
 				|| segmentIndex >= route.Template.Segments.Count)
 			{
@@ -924,6 +943,10 @@ public sealed partial class CoreReplApp
 			Kind: ConsoleLineReader.AutocompleteSuggestionKind.Command));
 	}
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Token advancement logic keeps route/context suppression checks centralized.")]
 	private bool ShouldAdvanceToNextToken(
 		string[] commandPrefix,
 		string currentTokenPrefix,
@@ -944,7 +967,9 @@ public sealed partial class CoreReplApp
 		var hasDynamicOrContextMatch = false;
 		foreach (var route in routes)
 		{
-			if (route.Command.IsHidden || segmentIndex >= route.Template.Segments.Count)
+			if (route.Command.IsHidden
+				|| IsRouteSuppressedForDiscovery(route.Template, contexts, commandPrefix, comparison)
+				|| segmentIndex >= route.Template.Segments.Count)
 			{
 				continue;
 			}
@@ -970,6 +995,11 @@ public sealed partial class CoreReplApp
 
 		foreach (var context in contexts)
 		{
+			if (IsContextSuppressedForDiscovery(context, commandPrefix, comparison))
+			{
+				continue;
+			}
+
 			if (segmentIndex >= context.Template.Segments.Count
 				|| !MatchesContextPrefix(context.Template, commandPrefix, comparison, _options.Parsing))
 			{
@@ -1027,6 +1057,11 @@ public sealed partial class CoreReplApp
 		var segmentIndex = commandPrefix.Length;
 		foreach (var context in contexts)
 		{
+			if (IsContextSuppressedForDiscovery(context, commandPrefix, comparison))
+			{
+				continue;
+			}
+
 			if (!MatchesContextPrefix(context.Template, commandPrefix, comparison, _options.Parsing))
 			{
 				continue;
@@ -1122,11 +1157,13 @@ public sealed partial class CoreReplApp
 	private List<RouteDefinition> CollectVisibleMatchingRoutes(
 		string[] commandPrefix,
 		StringComparison prefixComparison,
-		IReadOnlyList<RouteDefinition> routes)
+		IReadOnlyList<RouteDefinition> routes,
+		IReadOnlyList<ContextDefinition> contexts)
 	{
 		var matches = routes
 			.Where(route =>
 				!route.Command.IsHidden
+				&& !IsRouteSuppressedForDiscovery(route.Template, contexts, commandPrefix, prefixComparison)
 				&& MatchesRoutePrefix(route.Template, commandPrefix, prefixComparison, _options.Parsing))
 			.ToList();
 		if (commandPrefix.Length == 0)
@@ -1403,6 +1440,10 @@ public sealed partial class CoreReplApp
 	private static bool IsGlobalOptionToken(string token) =>
 		token.StartsWith("--", StringComparison.Ordinal) && token.Length >= 2;
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Token classification intentionally keeps full precedence rules in one place.")]
 	private ConsoleLineReader.AutocompleteSuggestionKind ClassifyToken(
 		string[] prefixTokens,
 		string token,
@@ -1427,6 +1468,7 @@ public sealed partial class CoreReplApp
 		foreach (var route in routes)
 		{
 			if (route.Command.IsHidden
+				|| IsRouteSuppressedForDiscovery(route.Template, contexts, prefixTokens, comparison)
 				|| !TryClassifyTemplateSegment(
 					route.Template,
 					prefixTokens,
@@ -1443,6 +1485,8 @@ public sealed partial class CoreReplApp
 		}
 
 		var contextMatch = contexts.Any(context =>
+			!IsContextSuppressedForDiscovery(context, prefixTokens, comparison)
+			&&
 			TryClassifyTemplateSegment(
 				context.Template,
 				prefixTokens,

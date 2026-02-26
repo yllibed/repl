@@ -5,7 +5,7 @@ namespace Repl;
 
 public sealed partial class CoreReplApp
 {
-	private void RegisterContext(string template, Delegate? validation, string? description)
+	private ContextDefinition RegisterContext(string template, Delegate? validation, string? description)
 	{
 		var parsedTemplate = RouteTemplateParser.Parse(template, _options.Parsing);
 		var moduleId = ResolveCurrentMappingModuleId();
@@ -16,7 +16,9 @@ public sealed partial class CoreReplApp
 				.Select(context => context.Template)
 		);
 
-		_contexts.Add(new ContextDefinition(parsedTemplate, validation, description, moduleId));
+		var context = new ContextDefinition(parsedTemplate, validation, description, moduleId);
+		_contexts.Add(context);
+		return context;
 	}
 
 	private async ValueTask<IReplResult?> ValidateContextsForPathAsync(
@@ -213,8 +215,13 @@ public sealed partial class CoreReplApp
 	private IReplResult CreateUnknownCommandResult(IReadOnlyList<string> tokens)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
+		var discoverableRoutes = ResolveDiscoverableRoutes(
+			activeGraph.Routes,
+			activeGraph.Contexts,
+			tokens,
+			StringComparison.OrdinalIgnoreCase);
 		var input = string.Join(' ', tokens);
-		var visibleRoutes = activeGraph.Routes
+		var visibleRoutes = discoverableRoutes
 			.Where(route => !route.Command.IsHidden)
 			.Select(route => route.Template.Template)
 			.Distinct(StringComparer.OrdinalIgnoreCase)
@@ -412,7 +419,17 @@ public sealed partial class CoreReplApp
 		IReadOnlyList<RouteDefinition> routes,
 		IReadOnlyList<ContextDefinition> contexts)
 	{
-		var literals = EnumeratePrefixTemplates(routes, contexts)
+		var prefixTokens = tokens.Take(index).ToArray();
+		var discoverableRoutes = ResolveDiscoverableRoutes(
+			routes,
+			contexts,
+			prefixTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var discoverableContexts = ResolveDiscoverableContexts(
+			contexts,
+			prefixTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var literals = EnumeratePrefixTemplates(discoverableRoutes, discoverableContexts)
 			.Where(template => !template.IsHidden)
 			.SelectMany(template => GetCandidateLiterals(template, tokens, index))
 			.Where(candidate => !string.IsNullOrWhiteSpace(candidate))
@@ -433,8 +450,85 @@ public sealed partial class CoreReplApp
 
 		foreach (var context in contexts)
 		{
-			yield return new PrefixTemplate(context.Template, IsHidden: false, Aliases: []);
+			yield return new PrefixTemplate(context.Template, context.IsHidden, Aliases: []);
 		}
+	}
+
+	private RouteDefinition[] ResolveDiscoverableRoutes(
+		IReadOnlyList<RouteDefinition> routes,
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		StringComparison comparison) =>
+		[.. routes.Where(route =>
+			!IsRouteSuppressedForDiscovery(route.Template, contexts, scopeTokens, comparison)),];
+
+	private ContextDefinition[] ResolveDiscoverableContexts(
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		StringComparison comparison) =>
+		[.. contexts.Where(context =>
+			!IsContextSuppressedForDiscovery(context, scopeTokens, comparison)),];
+
+	private bool IsRouteSuppressedForDiscovery(
+		RouteTemplate routeTemplate,
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		StringComparison comparison)
+	{
+		foreach (var context in contexts)
+		{
+			if (!context.IsHidden
+				|| !IsTemplatePrefix(context.Template, routeTemplate)
+				|| !IsContextSuppressedForDiscovery(context, scopeTokens, comparison))
+			{
+				continue;
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	private bool IsContextSuppressedForDiscovery(
+		ContextDefinition context,
+		IReadOnlyList<string> scopeTokens,
+		StringComparison comparison)
+	{
+		if (!context.IsHidden)
+		{
+			return false;
+		}
+
+		return !IsScopeWithinTemplate(scopeTokens, context.Template, comparison);
+	}
+
+	private bool IsScopeWithinTemplate(
+		IReadOnlyList<string> scopeTokens,
+		RouteTemplate template,
+		StringComparison comparison)
+	{
+		if (scopeTokens.Count < template.Segments.Count)
+		{
+			return false;
+		}
+
+		for (var i = 0; i < template.Segments.Count; i++)
+		{
+			var scopeToken = scopeTokens[i];
+			var segment = template.Segments[i];
+			switch (segment)
+			{
+				case LiteralRouteSegment literal
+					when !string.Equals(literal.Value, scopeToken, comparison):
+					return false;
+				case DynamicRouteSegment dynamic
+					when !RouteConstraintEvaluator.IsMatch(dynamic, scopeToken, _options.Parsing):
+					return false;
+			}
+		}
+
+		return true;
 	}
 
 	private IReadOnlyList<string> GetCandidateLiterals(PrefixTemplate template, string[] tokens, int index)

@@ -92,25 +92,23 @@ public sealed class ReplApp : IReplApp
 	/// <summary>
 	/// Creates a top-level context segment and configures nested routes.
 	/// </summary>
-	public ReplApp Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
+	public IContextBuilder Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
 	{
 		ArgumentNullException.ThrowIfNull(configure);
-		_core.Context(
+		return _core.Context(
 			segment,
 			scoped => configure(new ScopedReplApp(scoped, _services)),
 			validation);
-		return this;
 	}
 
 	/// <summary>
 	/// Creates a top-level context segment and configures nested routes.
 	/// Compatibility overload for <see cref="IReplMap"/> callbacks.
 	/// </summary>
-	public ReplApp Context(string segment, Action<IReplMap> configure, Delegate? validation = null)
+	public IContextBuilder Context(string segment, Action<IReplMap> configure, Delegate? validation = null)
 	{
 		ArgumentNullException.ThrowIfNull(configure);
-		_core.Context(segment, configure, validation);
-		return this;
+		return _core.Context(segment, configure, validation);
 	}
 
 	/// <summary>
@@ -384,13 +382,13 @@ public sealed class ReplApp : IReplApp
 
 	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens) => _core.Resolve(inputTokens);
 
-	ICoreReplApp ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
+	IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 		Context(segment, scoped => configure(scoped), validation);
 
-	IReplApp IReplApp.Context(string segment, Action<IReplApp> configure, Delegate? validation) =>
+	IContextBuilder IReplApp.Context(string segment, Action<IReplApp> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
 
-	IReplMap IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
+	IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
 
 	ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);
@@ -608,14 +606,13 @@ public sealed class ReplApp : IReplApp
 
 		public CommandBuilder Map(string route, Delegate handler) => _map.Map(route, handler);
 
-		public IReplApp Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
+		public IContextBuilder Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
 		{
 			ArgumentNullException.ThrowIfNull(configure);
-			_map.Context(
+			return _map.Context(
 				segment,
 				scoped => configure(new ScopedReplApp(scoped, _services)),
 				validation);
-			return this;
 		}
 
 		public IReplApp MapModule<TModule>()
@@ -644,10 +641,10 @@ public sealed class ReplApp : IReplApp
 			return this;
 		}
 
-		ICoreReplApp ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
+		IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 			Context(segment, scoped => configure(scoped), validation);
 
-		IReplMap IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
+		IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
 			((IReplMap)_map).Context(segment, configure, validation);
 
 		ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);

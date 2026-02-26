@@ -28,6 +28,42 @@ public sealed class Given_HelpDiscovery
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies hidden context is excluded from root discovery while unrelated commands remain visible.")]
+	public void When_RequestingRootHelp_Then_HiddenContextsAreExcluded()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("status", () => "ok").WithDescription("Show status");
+		sut.Context("admin", admin =>
+		{
+			admin.Map("reset", () => "done").WithDescription("Reset state");
+		}).Hidden();
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("status");
+		output.Text.Should().NotContain("admin");
+		output.Text.Should().NotContain("reset");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies explicit help target on hidden context still works so hidden scopes remain routable.")]
+	public void When_RequestingHelpForHiddenContextPath_Then_HelpIsRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Context("admin", admin =>
+		{
+			admin.Map("reset", () => "done").WithDescription("Reset state");
+		}).Hidden();
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["admin", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("reset");
+		output.Text.Should().Contain("Reset state");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies requesting command help so that usage and description are rendered.")]
 	public void When_RequestingCommandHelp_Then_UsageAndDescriptionAreRendered()
 	{
@@ -78,13 +114,13 @@ public sealed class Given_HelpDiscovery
 	[Description("Regression guard: verifies context has description attribute so that help uses context description.")]
 	public void When_ContextHasDescriptionAttribute_Then_HelpUsesContextDescription()
 	{
-		var sut = ReplApp.Create()
-			.Context("contact",
-				[System.ComponentModel.Description("Manage contacts")]
-				(IReplMap context) =>
-				{
-					context.Map("list", () => "ok");
-				});
+		var sut = ReplApp.Create();
+		sut.Context("contact",
+			[System.ComponentModel.Description("Manage contacts")]
+			(IReplMap context) =>
+			{
+				context.Map("list", () => "ok");
+			});
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help"]));
 

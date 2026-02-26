@@ -38,7 +38,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		_moduleMappingScope.Push(0);
 		MapModule(
 			new ShellCompletionModule(this),
-			static context => context.Channel is ReplRuntimeChannel.Cli);
+			static context => context.Channel is ReplRuntimeChannel.Cli or ReplRuntimeChannel.Interactive);
 	}
 
 	/// <summary>
@@ -199,37 +199,37 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	/// <param name="segment">Context segment.</param>
 	/// <param name="configure">Nested configuration callback.</param>
 	/// <param name="validation">Optional scope validation delegate.</param>
-	/// <returns>The same app instance.</returns>
-	public CoreReplApp Context(string segment, Action<ICoreReplApp> configure, Delegate? validation = null)
+	/// <returns>A context builder for context-level metadata configuration.</returns>
+	public IContextBuilder Context(string segment, Action<ICoreReplApp> configure, Delegate? validation = null)
 	{
 		segment = string.IsNullOrWhiteSpace(segment)
 			? throw new ArgumentException("Segment cannot be empty.", nameof(segment))
 			: segment;
 		ArgumentNullException.ThrowIfNull(configure);
 		var contextDescription = configure.Method.GetCustomAttribute<DescriptionAttribute>()?.Description;
-		RegisterContext(segment, validation, contextDescription);
+		var context = RegisterContext(segment, validation, contextDescription);
 
-		var scopedMap = new ScopedMap(this, segment);
+		var scopedMap = new ScopedMap(this, segment, context);
 		configure(scopedMap);
-		return this;
+		return new ContextBuilder(this, context);
 	}
 
 	/// <summary>
 	/// Creates a top-level context segment and configures nested routes.
 	/// Compatibility overload for <see cref="IReplMap"/> callbacks.
 	/// </summary>
-	public CoreReplApp Context(string segment, Action<IReplMap> configure, Delegate? validation = null)
+	public IContextBuilder Context(string segment, Action<IReplMap> configure, Delegate? validation = null)
 	{
 		segment = string.IsNullOrWhiteSpace(segment)
 			? throw new ArgumentException("Segment cannot be empty.", nameof(segment))
 			: segment;
 		ArgumentNullException.ThrowIfNull(configure);
 		var contextDescription = configure.Method.GetCustomAttribute<DescriptionAttribute>()?.Description;
-		RegisterContext(segment, validation, contextDescription);
+		var context = RegisterContext(segment, validation, contextDescription);
 
-		var scopedMap = new ScopedMap(this, segment);
+		var scopedMap = new ScopedMap(this, segment, context);
 		configure(scopedMap);
-		return this;
+		return new ContextBuilder(this, context);
 	}
 
 	/// <summary>
@@ -296,7 +296,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return this;
 	}
 
-	ICoreReplApp ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
+	IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
 
 	ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);
@@ -308,7 +308,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	ICoreReplApp ICoreReplApp.WithBanner(string text) => WithBanner(text);
 
-	IReplMap IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
+	IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
 
 	IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
@@ -936,6 +936,15 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		CancellationToken cancellationToken)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
+		var discoverableRoutes = ResolveDiscoverableRoutes(
+			activeGraph.Routes,
+			activeGraph.Contexts,
+			globalOptions.RemainingTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var discoverableContexts = ResolveDiscoverableContexts(
+			activeGraph.Contexts,
+			globalOptions.RemainingTokens,
+			StringComparison.OrdinalIgnoreCase);
 		var requestedFormat = string.IsNullOrWhiteSpace(globalOptions.OutputFormat)
 			? _options.Output.DefaultFormat
 			: globalOptions.OutputFormat;
@@ -946,7 +955,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			return true;
 		}
 
-		var machineHelp = HelpTextBuilder.BuildModel(activeGraph.Routes, activeGraph.Contexts, globalOptions.RemainingTokens, _options.Parsing);
+		var machineHelp = HelpTextBuilder.BuildModel(
+			discoverableRoutes,
+			discoverableContexts,
+			globalOptions.RemainingTokens,
+			_options.Parsing);
 		return await RenderOutputAsync(machineHelp, requestedFormat, cancellationToken).ConfigureAwait(false);
 	}
 
@@ -1100,10 +1113,19 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private string BuildHumanHelp(IReadOnlyList<string> scopeTokens)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
-		var settings = _options.Output.ResolveHumanRenderSettings();
-		return HelpTextBuilder.Build(
+		var discoverableRoutes = ResolveDiscoverableRoutes(
 			activeGraph.Routes,
 			activeGraph.Contexts,
+			scopeTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var discoverableContexts = ResolveDiscoverableContexts(
+			activeGraph.Contexts,
+			scopeTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var settings = _options.Output.ResolveHumanRenderSettings();
+		return HelpTextBuilder.Build(
+			discoverableRoutes,
+			discoverableContexts,
 			scopeTokens,
 			_options.Parsing,
 			_options.AmbientCommands,
