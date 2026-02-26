@@ -47,6 +47,75 @@ jobs:
           --no-build
           --no-restore
 
+  shell-completion-real-shells:
+    name: Shell Completion Smoke (Real Shells)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+          dotnet-quality: ga
+
+      - name: Install shell dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y fish zsh jq
+
+          if ! command -v pwsh >/dev/null 2>&1; then
+            sudo apt-get install -y powershell
+          fi
+
+          if ! command -v nu >/dev/null 2>&1; then
+            release_json="$(curl -fsSL https://api.github.com/repos/nushell/nushell/releases/latest)"
+            nu_url="$(printf '%s' "$release_json" | jq -r '.assets[] | select(.name | endswith("x86_64-unknown-linux-gnu.tar.gz")) | .browser_download_url' | head -n 1)"
+            if [[ -z "$nu_url" || "$nu_url" == "null" ]]; then
+              echo "Failed to resolve a Nushell Linux release asset URL." >&2
+              exit 1
+            fi
+
+            tmp_dir="$(mktemp -d)"
+            trap 'rm -rf "$tmp_dir"' EXIT
+            curl -fsSL "$nu_url" -o "$tmp_dir/nu.tar.gz"
+            tar -xzf "$tmp_dir/nu.tar.gz" -C "$tmp_dir"
+            nu_binary="$(find "$tmp_dir" -type f -name nu | head -n 1)"
+            if [[ -z "$nu_binary" ]]; then
+              echo "Failed to locate extracted nushell binary." >&2
+              exit 1
+            fi
+
+            sudo install -m 0755 "$nu_binary" /usr/local/bin/nu
+          fi
+
+          bash --version | head -n 1
+          zsh --version
+          fish --version
+          pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+          nu --version
+
+      - name: Restore
+        run: dotnet restore src/Repl.slnx --force
+
+      - name: Build shell completion test host
+        run: >-
+          dotnet build src/Repl.ShellCompletionTestHost/Repl.ShellCompletionTestHost.csproj
+          -c Release
+          -warnaserror
+          --no-restore
+
+      - name: Shell completion smoke checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ./eng/ci/shell-completion-real-shell-smoke.sh ./src/Repl.ShellCompletionTestHost/bin/Release/net10.0/Repl.ShellCompletionTestHost
+
   build-test-pack:
     name: Build, Test, Pack
     runs-on: ubuntu-latest
@@ -79,16 +148,17 @@ jobs:
           fi
 
       - name: Test
-        run: >-
-          dotnet test --solution src/Repl.slnx
-          -c Release
-          --no-build
-          --no-restore
-          --results-directory TestResults
-          --
-          --report-trx
-          --coverage
-          --coverage-output-format cobertura
+        shell: bash
+        run: |
+          dotnet test --solution src/Repl.slnx \
+            -c Release \
+            --no-build \
+            --no-restore \
+            --results-directory TestResults \
+            -- \
+            --report-trx \
+            --coverage \
+            --coverage-output-format cobertura
 
       - name: Test report
         if: always()

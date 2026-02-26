@@ -11,20 +11,20 @@ public sealed class Given_ContextValidationAndDeeplinking
 	public void When_ContextValidationFails_Then_HandlerIsNotInvokedAndExitCodeIsNonZero()
 	{
 		var handlerCalled = false;
-		var sut = ReplApp.Create()
-			.Context("contact", contact =>
-			{
-				contact.Context("{id:int}",
-					scope =>
+		var sut = ReplApp.Create();
+		sut.Context("contact", contact =>
+		{
+			contact.Context("{id:int}",
+				scope =>
+				{
+					scope.Map("show", (int id) =>
 					{
-						scope.Map("show", (int id) =>
-						{
-							handlerCalled = true;
-							return id;
-						});
-					},
-					validation: (int id) => id == 42);
-			});
+						handlerCalled = true;
+						return id;
+					});
+				},
+				validation: (int id) => id == 42);
+		});
 
 		var exitCode = sut.Run(["contact", "99", "show"]);
 
@@ -37,20 +37,20 @@ public sealed class Given_ContextValidationAndDeeplinking
 	public void When_ContextValidationPasses_Then_HandlerIsInvoked()
 	{
 		var handlerCalled = false;
-		var sut = ReplApp.Create()
-			.Context("contact", contact =>
-			{
-				contact.Context("{id:int}",
-					scope =>
+		var sut = ReplApp.Create();
+		sut.Context("contact", contact =>
+		{
+			contact.Context("{id:int}",
+				scope =>
+				{
+					scope.Map("show", (int id) =>
 					{
-						scope.Map("show", (int id) =>
-						{
-							handlerCalled = true;
-							return id;
-						});
-					},
-					validation: (int id) => id == 42);
-			});
+						handlerCalled = true;
+						return id;
+					});
+				},
+				validation: (int id) => id == 42);
+		});
 
 		var exitCode = sut.Run(["contact", "42", "show"]);
 
@@ -62,15 +62,15 @@ public sealed class Given_ContextValidationAndDeeplinking
 	[Description("Regression guard: verifies command is incomplete and no interactive is set so that scoped help is rendered.")]
 	public void When_CommandIsIncompleteAndNoInteractiveIsSet_Then_ScopedHelpIsRendered()
 	{
-		var sut = ReplApp.Create()
-			.Context("contact", contact =>
+		var sut = ReplApp.Create();
+		sut.Context("contact", contact =>
+		{
+			contact.Context("{id:int}", scope =>
 			{
-				contact.Context("{id:int}", scope =>
-				{
-					scope.Map("show", (int id) => id)
-						.WithDescription("Show one contact");
-				});
+				scope.Map("show", (int id) => id)
+					.WithDescription("Show one contact");
 			});
+		});
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "42", "--no-interactive"]));
 
@@ -82,14 +82,14 @@ public sealed class Given_ContextValidationAndDeeplinking
 	[Description("Regression guard: verifies command is incomplete and interactive is allowed so that deeplink returns success.")]
 	public void When_CommandIsIncompleteAndInteractiveIsAllowed_Then_DeeplinkReturnsSuccess()
 	{
-		var sut = ReplApp.Create()
-			.Context("contact", contact =>
+		var sut = ReplApp.Create();
+		sut.Context("contact", contact =>
+		{
+			contact.Context("{id:int}", scope =>
 			{
-				contact.Context("{id:int}", scope =>
-				{
-					scope.Map("show", (int id) => id);
-				});
+				scope.Map("show", (int id) => id);
 			});
+		});
 
 		var output = ConsoleCaptureHelper.CaptureWithInput("exit\n", () => sut.Run(["contact", "42"]));
 
@@ -101,13 +101,13 @@ public sealed class Given_ContextValidationAndDeeplinking
 	[Description("Regression guard: verifies context validation fails so that framework validation message is rendered.")]
 	public void When_ContextValidationFails_Then_FrameworkValidationMessageIsRendered()
 	{
-		var sut = ReplApp.Create()
-			.Context("contact", contact =>
-			{
-				contact.Context("{id:int}",
-					scope => scope.Map("show", (int id) => id),
-					validation: (int id) => id == 42);
-			});
+		var sut = ReplApp.Create();
+		sut.Context("contact", contact =>
+		{
+			contact.Context("{id:int}",
+				scope => scope.Map("show", (int id) => id),
+				validation: (int id) => id == 42);
+		});
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "99", "show"]));
 
@@ -120,13 +120,13 @@ public sealed class Given_ContextValidationAndDeeplinking
 	[Description("Regression guard: verifies context validation returns string so that message is rendered as validation failure.")]
 	public void When_ContextValidationReturnsString_Then_MessageIsRenderedAsValidationFailure()
 	{
-		var sut = ReplApp.Create()
-			.Context("contact", contact =>
-			{
-				contact.Context("{id:int}",
-					scope => scope.Map("show", (int id) => id),
-					validation: (int id) => id == 42 ? string.Empty : "Contact not found.");
-			});
+		var sut = ReplApp.Create();
+		sut.Context("contact", contact =>
+		{
+			contact.Context("{id:int}",
+				scope => scope.Map("show", (int id) => id),
+				validation: (int id) => id == 42 ? string.Empty : "Contact not found.");
+		});
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "99", "show"]));
 
@@ -139,14 +139,14 @@ public sealed class Given_ContextValidationAndDeeplinking
 	public void When_InteractiveScopedLiteralCommandAndDynamicContextExist_Then_LiteralCommandExecutes()
 	{
 		var sut = ReplApp.Create()
-			.UseDefaultInteractive()
-			.Context("contact", contact =>
-			{
-				contact.Map("list", () => "ok");
-				contact.Context("{name}",
-					scope => scope.Map("show", (string name) => name),
-					validation: (string name) => string.Equals(name, "Carl de Billy", StringComparison.OrdinalIgnoreCase));
-			});
+			.UseDefaultInteractive();
+		sut.Context("contact", contact =>
+		{
+			contact.Map("list", () => "ok");
+			contact.Context("{name}",
+				scope => scope.Map("show", (string name) => name),
+				validation: (string name) => string.Equals(name, "Carl de Billy", StringComparison.OrdinalIgnoreCase));
+		});
 
 		var output = ConsoleCaptureHelper.CaptureWithInput("contact\n\"Carl de Billy\" show\nlist\nexit\n", () => sut.Run([]));
 

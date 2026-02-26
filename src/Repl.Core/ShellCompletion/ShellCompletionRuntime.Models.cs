@@ -1,0 +1,152 @@
+using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
+
+namespace Repl.ShellCompletion;
+
+internal sealed partial class ShellCompletionRuntime
+{
+	private sealed class ShellCompletionStatusModel
+	{
+		[Display(Order = 1)]
+		public bool Enabled { get; init; }
+
+		[Display(Name = "Setup mode", Order = 2)]
+		public string SetupMode { get; init; } = string.Empty;
+
+		[Display(Name = "Detected shell", Order = 3)]
+		public string Detected { get; init; } = string.Empty;
+
+		[Display(Name = "Bash profile", Order = 4)]
+		public string BashProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "Bash profile exists", Order = 5)]
+		public bool BashProfileExists { get; init; }
+
+		[Display(Name = "Bash installed", Order = 6)]
+		public bool BashInstalled { get; init; }
+
+		[Display(Name = "PowerShell profile", Order = 7)]
+		public string PowerShellProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "PowerShell profile exists", Order = 8)]
+		public bool PowerShellProfileExists { get; init; }
+
+		[Display(Name = "PowerShell installed", Order = 9)]
+		public bool PowerShellInstalled { get; init; }
+
+		[Display(Name = "Zsh profile", Order = 10)]
+		public string ZshProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "Zsh profile exists", Order = 11)]
+		public bool ZshProfileExists { get; init; }
+
+		[Display(Name = "Zsh installed", Order = 12)]
+		public bool ZshInstalled { get; init; }
+
+		[Display(Name = "Fish profile", Order = 13)]
+		public string FishProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "Fish profile exists", Order = 14)]
+		public bool FishProfileExists { get; init; }
+
+		[Display(Name = "Fish installed", Order = 15)]
+		public bool FishInstalled { get; init; }
+
+		[Display(Name = "Nushell profile", Order = 16)]
+		public string NuProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "Nushell profile exists", Order = 17)]
+		public bool NuProfileExists { get; init; }
+
+		[Display(Name = "Nushell installed", Order = 18)]
+		public bool NuInstalled { get; init; }
+
+		[Browsable(false)]
+		public string DetectedShell { get; init; } = string.Empty;
+
+		[Browsable(false)]
+		public string DetectionReason { get; init; } = string.Empty;
+	}
+
+	private sealed class ShellCompletionDetectShellModel
+	{
+		[Display(Name = "Detected shell", Order = 1)]
+		public string Detected { get; init; } = string.Empty;
+
+		[Browsable(false)]
+		public string DetectedShell { get; init; } = string.Empty;
+
+		[Browsable(false)]
+		public string DetectionReason { get; init; } = string.Empty;
+	}
+
+	private sealed class ShellCompletionInstallModel
+	{
+		[Display(Order = 1)]
+		public bool Success { get; init; }
+
+		[Display(Order = 2)]
+		public bool Changed { get; init; }
+
+		[Display(Order = 3)]
+		public string Shell { get; init; } = string.Empty;
+
+		[Display(Name = "Profile path", Order = 4)]
+		public string ProfilePath { get; init; } = string.Empty;
+
+		[Display(Order = 5)]
+		public string Message { get; init; } = string.Empty;
+	}
+
+	private sealed class ShellCompletionUninstallModel
+	{
+		[Display(Order = 1)]
+		public bool Success { get; init; }
+
+		[Display(Order = 2)]
+		public bool Changed { get; init; }
+
+		[Display(Order = 3)]
+		public string Shell { get; init; } = string.Empty;
+
+		[Display(Name = "Profile path", Order = 4)]
+		public string ProfilePath { get; init; } = string.Empty;
+
+		[Display(Order = 5)]
+		public string Message { get; init; } = string.Empty;
+	}
+
+	private readonly record struct ShellCompletionOperationResult(
+		bool Success,
+		bool Changed,
+		string ProfilePath,
+		string Message);
+
+	private readonly record struct ShellDetectionResult(
+		ShellKind Kind,
+		string Reason,
+		bool ParentLooksLikeWindowsPowerShell = false);
+
+	private readonly record struct ShellSignal(
+		int PowershellScore,
+		int BashScore,
+		int ZshScore,
+		int FishScore,
+		int NuScore,
+		bool HasKnownUnsupported,
+		string Reason,
+		bool ParentLooksLikeWindowsPowerShell);
+
+	private readonly record struct ShellProfileProbe(
+		bool Exists,
+		string? Content);
+
+	private sealed class ShellCompletionState
+	{
+		public bool PromptShown { get; set; }
+
+		public string? LastDetectedShell { get; set; }
+
+		public List<string> InstalledShells { get; set; } = [];
+	}
+}

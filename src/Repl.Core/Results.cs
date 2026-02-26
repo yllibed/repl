@@ -84,4 +84,13 @@ public static class Results
 	/// <returns>A cancelled result.</returns>
 	public static IReplResult Cancelled(string message) =>
 		new ReplResult("cancelled", Code: null, Message: message, Details: null);
+
+	/// <summary>
+	/// Creates an explicit process exit result with an optional payload to render.
+	/// </summary>
+	/// <param name="code">Process exit code.</param>
+	/// <param name="payload">Optional payload rendered through configured output format.</param>
+	/// <returns>An explicit exit result.</returns>
+	public static IExitResult Exit(int code, object? payload = null) =>
+		new ExitResult(code, payload);
 }

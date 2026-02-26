@@ -22,6 +22,27 @@ public sealed class Given_DocumentationExport
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies aggregate documentation export excludes hidden contexts and their command trees.")]
+	public void When_ExportingAggregateDocumentation_Then_HiddenContextsAreExcluded()
+	{
+		var sut = ReplApp.Create()
+			.UseDocumentationExport();
+		sut.Context("admin", admin =>
+		{
+			admin.Map("reset", () => "done");
+		}).Hidden();
+		sut.Map("status", () => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["doc", "export", "--json", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("\"path\": \"status\"");
+		output.Text.Should().NotContain("\"path\": \"admin\"");
+		output.Text.Should().NotContain("admin reset");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies hidden command is explicitly targeted so that exact-path export includes hidden node.")]
 	public void When_ExportingExactHiddenCommand_Then_HiddenCommandIsIncluded()
 	{
@@ -36,6 +57,26 @@ public sealed class Given_DocumentationExport
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("\"path\": \"contact debug dump-state\"");
 		output.Text.Should().Contain("\"isHidden\": true");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies hidden context is explicitly targeted so exact-path export includes the hidden context metadata.")]
+	public void When_ExportingExactHiddenContext_Then_HiddenContextIsIncluded()
+	{
+		var sut = ReplApp.Create()
+			.UseDocumentationExport();
+		sut.Context("admin", admin =>
+		{
+			admin.Map("reset", () => "done");
+		}).Hidden();
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["doc", "export", "admin", "--json", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("\"path\": \"admin\"");
+		output.Text.Should().Contain("\"isHidden\": true");
+		output.Text.Should().Contain("\"path\": \"admin reset\"");
 	}
 
 	[TestMethod]

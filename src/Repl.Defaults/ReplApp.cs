@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using System.Linq.Expressions;
+using System.Reflection;
 
 namespace Repl;
 
@@ -84,6 +86,11 @@ public sealed class ReplApp : IReplApp
 	}
 
 	/// <summary>
+	/// Invalidates active routing cache so module presence predicates are re-evaluated on next resolution.
+	/// </summary>
+	public void InvalidateRouting() => _core.InvalidateRouting();
+
+	/// <summary>
 	/// Maps a route and command handler.
 	/// </summary>
 	public CommandBuilder Map(string route, Delegate handler) => _core.Map(route, handler);
@@ -91,25 +98,23 @@ public sealed class ReplApp : IReplApp
 	/// <summary>
 	/// Creates a top-level context segment and configures nested routes.
 	/// </summary>
-	public ReplApp Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
+	public IContextBuilder Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
 	{
 		ArgumentNullException.ThrowIfNull(configure);
-		_core.Context(
+		return _core.Context(
 			segment,
 			scoped => configure(new ScopedReplApp(scoped, _services)),
 			validation);
-		return this;
 	}
 
 	/// <summary>
 	/// Creates a top-level context segment and configures nested routes.
 	/// Compatibility overload for <see cref="IReplMap"/> callbacks.
 	/// </summary>
-	public ReplApp Context(string segment, Action<IReplMap> configure, Delegate? validation = null)
+	public IContextBuilder Context(string segment, Action<IReplMap> configure, Delegate? validation = null)
 	{
 		ArgumentNullException.ThrowIfNull(configure);
-		_core.Context(segment, configure, validation);
-		return this;
+		return _core.Context(segment, configure, validation);
 	}
 
 	/// <summary>
@@ -128,6 +133,26 @@ public sealed class ReplApp : IReplApp
 	public ReplApp MapModule(IReplModule module)
 	{
 		_core.MapModule(module);
+		return this;
+	}
+
+	/// <summary>
+	/// Maps a module instance with a runtime presence predicate.
+	/// </summary>
+	public ReplApp MapModule(
+		IReplModule module,
+		Func<ModulePresenceContext, bool> isPresent)
+	{
+		_core.MapModule(module, isPresent);
+		return this;
+	}
+
+	/// <summary>
+	/// Maps a module instance with an injectable runtime presence predicate.
+	/// </summary>
+	public ReplApp MapModule(IReplModule module, Delegate isPresent)
+	{
+		_core.MapModule(module, AdaptModulePresencePredicate(isPresent));
 		return this;
 	}
 
@@ -363,22 +388,33 @@ public sealed class ReplApp : IReplApp
 
 	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens) => _core.Resolve(inputTokens);
 
-	ICoreReplApp ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
+	IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 		Context(segment, scoped => configure(scoped), validation);
 
-	IReplApp IReplApp.Context(string segment, Action<IReplApp> configure, Delegate? validation) =>
+	IContextBuilder IReplApp.Context(string segment, Action<IReplApp> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
 
-	IReplMap IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
+	IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
 		Context(segment, configure, validation);
 
 	ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);
+
+	ICoreReplApp ICoreReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+		MapModule(module, isPresent);
 
 	ICoreReplApp ICoreReplApp.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
 
 	ICoreReplApp ICoreReplApp.WithBanner(string text) => WithBanner(text);
 
+	void ICoreReplApp.InvalidateRouting() => InvalidateRouting();
+
 	IReplApp IReplApp.MapModule(IReplModule module) => MapModule(module);
+
+	IReplApp IReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+		MapModule(module, isPresent);
+
+	IReplApp IReplApp.MapModule(IReplModule module, Delegate isPresent) =>
+		MapModule(module, isPresent);
 
 	IReplApp IReplApp.MapModule<TModule>() => MapModule<TModule>();
 
@@ -386,7 +422,12 @@ public sealed class ReplApp : IReplApp
 
 	IReplApp IReplApp.WithBanner(string text) => WithBanner(text);
 
+	void IReplApp.InvalidateRouting() => InvalidateRouting();
+
 	IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
+
+	IReplMap IReplMap.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+		MapModule(module, isPresent);
 
 	IReplMap IReplMap.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
 
@@ -399,6 +440,145 @@ public sealed class ReplApp : IReplApp
 		return provider.GetService<TModule>()
 			?? throw new InvalidOperationException(
 				$"Unable to resolve module '{typeof(TModule).FullName}'. Register it in services or call MapModule(IReplModule).");
+	}
+
+	private static Func<ModulePresenceContext, bool> AdaptModulePresencePredicate(Delegate isPresent)
+	{
+		ArgumentNullException.ThrowIfNull(isPresent);
+		var parameters = isPresent.Method.GetParameters();
+		ValidateModulePresencePredicateSignature(isPresent, parameters);
+		var argumentResolvers = parameters
+			.Select(parameter => BuildModulePresenceArgumentResolver(parameter, isPresent))
+			.ToArray();
+		var invoker = CompileModulePresencePredicateInvoker(isPresent, parameters);
+
+		return context =>
+		{
+			var arguments = new object?[argumentResolvers.Length];
+			for (var i = 0; i < argumentResolvers.Length; i++)
+			{
+				arguments[i] = argumentResolvers[i](context);
+			}
+
+			try
+			{
+				return invoker(arguments);
+			}
+			catch (Exception ex)
+			{
+				throw new InvalidOperationException(
+					$"Failed to evaluate module presence predicate '{FormatDelegateMethod(isPresent)}': {ex.Message}",
+					ex);
+			}
+		};
+	}
+
+	private static Func<ModulePresenceContext, object?> BuildModulePresenceArgumentResolver(
+		ParameterInfo parameter,
+		Delegate isPresent)
+	{
+		if (parameter.ParameterType == typeof(ModulePresenceContext))
+		{
+			return static context => context;
+		}
+
+		if (parameter.ParameterType == typeof(ReplRuntimeChannel))
+		{
+			return static context => context.Channel;
+		}
+
+		if (parameter.ParameterType == typeof(IReplSessionState))
+		{
+			return static context => context.SessionState;
+		}
+
+		if (parameter.ParameterType == typeof(IReplSessionInfo))
+		{
+			return static context => context.SessionInfo;
+		}
+
+		return context => ResolveModulePresenceServiceArgument(parameter, context, isPresent);
+	}
+
+	private static object? ResolveModulePresenceServiceArgument(
+		ParameterInfo parameter,
+		ModulePresenceContext context,
+		Delegate isPresent)
+	{
+		var resolved = context.ServiceProvider.GetService(parameter.ParameterType);
+		if (resolved is not null)
+		{
+			return resolved;
+		}
+
+		if (parameter.HasDefaultValue)
+		{
+			return parameter.DefaultValue;
+		}
+
+		if (!parameter.ParameterType.IsValueType
+			|| Nullable.GetUnderlyingType(parameter.ParameterType) is not null)
+		{
+			return null;
+		}
+
+		throw new InvalidOperationException(
+			$"Unable to resolve module presence predicate parameter '{parameter.Name}' ({parameter.ParameterType.Name}) in '{FormatDelegateMethod(isPresent)}'.");
+	}
+
+	private static Func<object?[], bool> CompileModulePresencePredicateInvoker(Delegate isPresent, ParameterInfo[] parameters)
+	{
+		var argumentsParameter = Expression.Parameter(typeof(object[]), "arguments");
+		var callArguments = new Expression[parameters.Length];
+		for (var i = 0; i < parameters.Length; i++)
+		{
+			var argumentIndex = Expression.Constant(i);
+			var argumentValue = Expression.ArrayIndex(argumentsParameter, argumentIndex);
+			callArguments[i] = Expression.Convert(argumentValue, parameters[i].ParameterType);
+		}
+
+		Expression call = isPresent.Target is null
+			? Expression.Call(isPresent.Method, callArguments)
+			: Expression.Call(Expression.Constant(isPresent.Target), isPresent.Method, callArguments);
+		return Expression.Lambda<Func<object?[], bool>>(call, argumentsParameter).Compile();
+	}
+
+	private static void ValidateModulePresencePredicateSignature(Delegate isPresent, ParameterInfo[] parameters)
+	{
+		if (isPresent.Method.ReturnType != typeof(bool))
+		{
+			throw new InvalidOperationException(
+				$"Module presence predicate '{FormatDelegateMethod(isPresent)}' must return bool.");
+		}
+
+		if (isPresent.Method.ContainsGenericParameters)
+		{
+			throw new InvalidOperationException(
+				$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot use open generic parameters.");
+		}
+
+		foreach (var parameter in parameters)
+		{
+			if (parameter.ParameterType.IsByRef || parameter.IsOut)
+			{
+				throw new InvalidOperationException(
+					$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot declare ref/out parameter '{parameter.Name}'.");
+			}
+
+			if (parameter.ParameterType == typeof(IServiceProvider))
+			{
+				throw new InvalidOperationException(
+					$"Module presence predicate '{FormatDelegateMethod(isPresent)}' cannot declare IServiceProvider. Use ModulePresenceContext, IReplSessionState, or IReplSessionInfo.");
+			}
+		}
+	}
+
+	private static string FormatDelegateMethod(Delegate value)
+	{
+		var method = value.Method;
+		return method.DeclaringType is { } declaringType
+			? $"{declaringType.FullName}.{method.Name}"
+			: method.Name;
 	}
 
 	private SessionOverlayServiceProvider CreateSessionOverlay(IServiceProvider external)
@@ -439,6 +619,8 @@ public sealed class ReplApp : IReplApp
 
 	private static void EnsureDefaultServices(IServiceCollection services, CoreReplApp core)
 	{
+		services.TryAddSingleton(core);
+		services.TryAddSingleton<ICoreReplApp>(core);
 		services.TryAddSingleton<IReplSessionState, DefaultsSessionState>();
 		services.TryAddSingleton<IHistoryProvider, InMemoryHistoryProvider>();
 		services.TryAddSingleton(TimeProvider.System);
@@ -458,14 +640,13 @@ public sealed class ReplApp : IReplApp
 
 		public CommandBuilder Map(string route, Delegate handler) => _map.Map(route, handler);
 
-		public IReplApp Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
+		public IContextBuilder Context(string segment, Action<IReplApp> configure, Delegate? validation = null)
 		{
 			ArgumentNullException.ThrowIfNull(configure);
-			_map.Context(
+			return _map.Context(
 				segment,
 				scoped => configure(new ScopedReplApp(scoped, _services)),
 				validation);
-			return this;
 		}
 
 		public IReplApp MapModule<TModule>()
@@ -480,13 +661,32 @@ public sealed class ReplApp : IReplApp
 			return this;
 		}
 
-		ICoreReplApp ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
+		public IReplApp MapModule(
+			IReplModule module,
+			Func<ModulePresenceContext, bool> isPresent)
+		{
+			_map.MapModule(module, isPresent);
+			return this;
+		}
+
+		public IReplApp MapModule(IReplModule module, Delegate isPresent)
+		{
+			_map.MapModule(module, AdaptModulePresencePredicate(isPresent));
+			return this;
+		}
+
+		public void InvalidateRouting() => _map.InvalidateRouting();
+
+		IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 			Context(segment, scoped => configure(scoped), validation);
 
-		IReplMap IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
+		IContextBuilder IReplMap.Context(string segment, Action<IReplMap> configure, Delegate? validation) =>
 			((IReplMap)_map).Context(segment, configure, validation);
 
 		ICoreReplApp ICoreReplApp.MapModule(IReplModule module) => MapModule(module);
+
+		ICoreReplApp ICoreReplApp.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+			MapModule(module, isPresent);
 
 		ICoreReplApp ICoreReplApp.WithBanner(Delegate bannerProvider)
 		{
@@ -512,6 +712,8 @@ public sealed class ReplApp : IReplApp
 			return this;
 		}
 
+		void ICoreReplApp.InvalidateRouting() => InvalidateRouting();
+
 		IReplApp IReplApp.WithBanner(string text)
 		{
 			_map.WithBanner(text);
@@ -525,5 +727,8 @@ public sealed class ReplApp : IReplApp
 		}
 
 		IReplMap IReplMap.MapModule(IReplModule module) => MapModule(module);
+
+		IReplMap IReplMap.MapModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent) =>
+			MapModule(module, isPresent);
 	}
 }
