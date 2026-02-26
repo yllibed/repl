@@ -80,6 +80,20 @@ run_fish_smoke() {
   "$command_name" completion install --shell fish --force --no-logo
 
   REPL_FISH_PROFILE="$profile_path" fish -c '
+function commandline
+  if test (count $argv) -eq 1
+    switch $argv[1]
+      case -p
+        printf "%s" "$REPL_CMD_NAME c"
+        return 0
+      case -C
+        string length -- "$REPL_CMD_NAME c"
+        return 0
+    end
+  end
+
+  builtin commandline $argv
+end
 source $REPL_FISH_PROFILE
 set -l matches (complete --do-complete "$REPL_CMD_NAME c")
 printf "%s\n" $matches | string match -r "^contact" >/dev/null
