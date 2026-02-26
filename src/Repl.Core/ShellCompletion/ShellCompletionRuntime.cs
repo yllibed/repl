@@ -34,7 +34,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			|| !IsShellCompletionSupportedShell(shellKind))
 		{
 			return CreateShellCompletionProtocolUsageError(
-				$"{ShellCompletionConstants.BridgeCommandName} requires --shell <bash|powershell|zsh>.");
+				$"{ShellCompletionConstants.BridgeCommandName} requires --shell <{BuildSupportedShellList()}>.");
 		}
 
 		if (line is null)
@@ -311,6 +311,8 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		var bashInstalled = IsShellCompletionInstalled(ShellKind.Bash, detection);
 		var powershellInstalled = IsShellCompletionInstalled(ShellKind.PowerShell, detection);
 		var zshInstalled = IsShellCompletionInstalled(ShellKind.Zsh, detection);
+		var fishInstalled = IsShellCompletionInstalled(ShellKind.Fish, detection);
+		var nuInstalled = IsShellCompletionInstalled(ShellKind.Nu, detection);
 		return new ShellCompletionStatusModel
 		{
 			Enabled = _options.ShellCompletion.Enabled,
@@ -324,6 +326,10 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			PowerShellInstalled = powershellInstalled,
 			ZshProfilePath = ResolveShellProfilePath(ShellKind.Zsh, detection),
 			ZshInstalled = zshInstalled,
+			FishProfilePath = ResolveShellProfilePath(ShellKind.Fish, detection),
+			FishInstalled = fishInstalled,
+			NuProfilePath = ResolveShellProfilePath(ShellKind.Nu, detection),
+			NuInstalled = nuInstalled,
 		};
 	}
 
@@ -339,7 +345,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		{
 			if (!TryParseShellKind(shellOption, out shellKind) || !IsShellCompletionSupportedShell(shellKind))
 			{
-				error = "option --shell must be one of bash|powershell|zsh.";
+				error = $"option --shell must be one of {BuildSupportedShellList()}.";
 				return false;
 			}
 
@@ -352,7 +358,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			return true;
 		}
 
-		error = "could not detect a supported shell. Specify --shell bash|powershell|zsh.";
+		error = $"could not detect a supported shell. Specify --shell {BuildSupportedShellList()}.";
 		return false;
 	}
 
@@ -391,8 +397,14 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		return "Restart the shell to activate completions.";
 	}
 
+	private static string BuildSupportedShellList() =>
+		ShellCompletionAdapterRegistry.BuildSupportedShellList();
+
 	private static IReplResult CreateShellCompletionProtocolUsageError(string message) =>
 		Results.Error(
 			"shell_completion_protocol_usage",
-			$"{message}{Environment.NewLine}{ShellCompletionConstants.Usage}");
+			$"{message}{Environment.NewLine}{BuildShellBridgeUsage()}");
+
+	private static string BuildShellBridgeUsage() =>
+		$"usage: {ShellCompletionConstants.SetupCommandName} {ShellCompletionConstants.ProtocolSubcommandName} --shell <{BuildSupportedShellList()}> --line <input> --cursor <position>";
 }

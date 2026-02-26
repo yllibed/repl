@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Runtime.InteropServices;
 
@@ -26,7 +27,9 @@ internal sealed partial class ShellCompletionRuntime
 		var powershellScore = environment.PowershellScore + parent.PowershellScore;
 		var bashScore = environment.BashScore + parent.BashScore;
 		var zshScore = environment.ZshScore + parent.ZshScore;
-		if (powershellScore == 0 && bashScore == 0 && zshScore == 0)
+		var fishScore = environment.FishScore + parent.FishScore;
+		var nuScore = environment.NuScore + parent.NuScore;
+		if (powershellScore == 0 && bashScore == 0 && zshScore == 0 && fishScore == 0 && nuScore == 0)
 		{
 			return environment.HasKnownUnsupported
 				? new ShellDetectionResult(ShellKind.Unsupported, environment.Reason)
@@ -38,6 +41,8 @@ internal sealed partial class ShellCompletionRuntime
 			(Shell: ShellKind.PowerShell, Score: powershellScore),
 			(Shell: ShellKind.Bash, Score: bashScore),
 			(Shell: ShellKind.Zsh, Score: zshScore),
+			(Shell: ShellKind.Fish, Score: fishScore),
+			(Shell: ShellKind.Nu, Score: nuScore),
 		};
 		var best = scoreByShell.OrderByDescending(static item => item.Score).First();
 		var hasTie = scoreByShell
@@ -70,11 +75,17 @@ internal sealed partial class ShellCompletionRuntime
 			: $"{environmentReason}; {parentReason}";
 	}
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Environment-based shell signal gathering is intentionally grouped in one place.")]
 	private static ShellSignal DetectShellFromEnvironment()
 	{
 		var shellVar = Environment.GetEnvironmentVariable("SHELL") ?? string.Empty;
 		var bashVersion = Environment.GetEnvironmentVariable("BASH_VERSION");
 		var zshVersion = Environment.GetEnvironmentVariable("ZSH_VERSION");
+		var fishVersion = Environment.GetEnvironmentVariable("FISH_VERSION");
+		var nuVersion = Environment.GetEnvironmentVariable("NU_VERSION");
 		var psModulePath = Environment.GetEnvironmentVariable("PSModulePath");
 		var psDistribution = Environment.GetEnvironmentVariable("POWERSHELL_DISTRIBUTION_CHANNEL");
 		var powershellHint = !string.IsNullOrWhiteSpace(psDistribution)
@@ -86,10 +97,19 @@ internal sealed partial class ShellCompletionRuntime
 		var zshHint = !string.IsNullOrWhiteSpace(zshVersion)
 			|| shellVar.EndsWith("zsh", StringComparison.OrdinalIgnoreCase)
 			|| shellVar.EndsWith("zsh.exe", StringComparison.OrdinalIgnoreCase);
-		var unsupportedHint = shellVar.EndsWith("fish", StringComparison.OrdinalIgnoreCase)
-			|| shellVar.EndsWith("sh", StringComparison.OrdinalIgnoreCase)
+		var fishHint = !string.IsNullOrWhiteSpace(fishVersion)
+			|| shellVar.EndsWith("fish", StringComparison.OrdinalIgnoreCase)
+			|| shellVar.EndsWith("fish.exe", StringComparison.OrdinalIgnoreCase);
+		var nuHint = !string.IsNullOrWhiteSpace(nuVersion)
+			|| shellVar.EndsWith("nu", StringComparison.OrdinalIgnoreCase)
+			|| shellVar.EndsWith("nu.exe", StringComparison.OrdinalIgnoreCase)
+			|| shellVar.EndsWith("nushell", StringComparison.OrdinalIgnoreCase)
+			|| shellVar.EndsWith("nushell.exe", StringComparison.OrdinalIgnoreCase);
+		var unsupportedHint = shellVar.EndsWith("sh", StringComparison.OrdinalIgnoreCase)
 				&& !bashHint
-				&& !zshHint;
+				&& !zshHint
+				&& !fishHint
+				&& !nuHint;
 		var reason = string.Empty;
 		if (powershellHint)
 		{
@@ -103,6 +123,14 @@ internal sealed partial class ShellCompletionRuntime
 		{
 			reason = "env suggests zsh";
 		}
+		else if (fishHint)
+		{
+			reason = "env suggests fish";
+		}
+		else if (nuHint)
+		{
+			reason = "env suggests nushell";
+		}
 		else if (unsupportedHint)
 		{
 			reason = $"env shell '{shellVar}' is currently unsupported";
@@ -112,6 +140,8 @@ internal sealed partial class ShellCompletionRuntime
 			PowershellScore: powershellHint ? 3 : 0,
 			BashScore: bashHint ? 3 : 0,
 			ZshScore: zshHint ? 3 : 0,
+			FishScore: fishHint ? 3 : 0,
+			NuScore: nuHint ? 3 : 0,
 			HasKnownUnsupported: unsupportedHint,
 			Reason: reason,
 			ParentLooksLikeWindowsPowerShell: false);
@@ -122,7 +152,7 @@ internal sealed partial class ShellCompletionRuntime
 		var names = GetParentProcessNames();
 		if (names.Length == 0)
 		{
-			return new ShellSignal(0, 0, 0, HasKnownUnsupported: false, Reason: string.Empty, ParentLooksLikeWindowsPowerShell: false);
+			return new ShellSignal(0, 0, 0, 0, 0, HasKnownUnsupported: false, Reason: string.Empty, ParentLooksLikeWindowsPowerShell: false);
 		}
 
 		var powershellHint = names.Any(name =>
@@ -134,6 +164,14 @@ internal sealed partial class ShellCompletionRuntime
 		var zshHint = names.Any(name =>
 			string.Equals(name, "zsh", StringComparison.OrdinalIgnoreCase)
 			|| string.Equals(name, "zsh.exe", StringComparison.OrdinalIgnoreCase));
+		var fishHint = names.Any(name =>
+			string.Equals(name, "fish", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(name, "fish.exe", StringComparison.OrdinalIgnoreCase));
+		var nuHint = names.Any(name =>
+			string.Equals(name, "nu", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(name, "nu.exe", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(name, "nushell", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(name, "nushell.exe", StringComparison.OrdinalIgnoreCase));
 		var legacyPowerShell = names.Any(name =>
 			string.Equals(name, "powershell", StringComparison.OrdinalIgnoreCase));
 		var reason = powershellHint
@@ -142,11 +180,17 @@ internal sealed partial class ShellCompletionRuntime
 				? "parent process suggests bash"
 				: zshHint
 					? "parent process suggests zsh"
+					: fishHint
+						? "parent process suggests fish"
+						: nuHint
+							? "parent process suggests nushell"
 					: $"parent process chain: {string.Join(" -> ", names)}";
 		return new ShellSignal(
 			PowershellScore: powershellHint ? 2 : 0,
 			BashScore: bashHint ? 2 : 0,
 			ZshScore: zshHint ? 2 : 0,
+			FishScore: fishHint ? 2 : 0,
+			NuScore: nuHint ? 2 : 0,
 			HasKnownUnsupported: false,
 			Reason: reason,
 			ParentLooksLikeWindowsPowerShell: legacyPowerShell);

@@ -46,4 +46,14 @@ public sealed class ShellCompletionOptions
 	/// Gets or sets an optional custom zsh profile path.
 	/// </summary>
 	public string? ZshProfilePath { get; set; }
+
+	/// <summary>
+	/// Gets or sets an optional custom fish profile path.
+	/// </summary>
+	public string? FishProfilePath { get; set; }
+
+	/// <summary>
+	/// Gets or sets an optional custom nushell profile path.
+	/// </summary>
+	public string? NuProfilePath { get; set; }
 }

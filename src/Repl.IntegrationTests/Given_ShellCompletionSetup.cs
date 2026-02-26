@@ -98,6 +98,68 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies generated fish completion script uses complete registration and fish bridge shell token.")]
+	public void When_FishCompletionScriptIsGenerated_Then_ItUsesCompleteAndFishBridge()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var fishProfilePath = Path.Combine(paths.RootPath, "config.fish");
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.FishProfilePath = fishProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+				options.ShellCompletion.PreferredShell = ShellKind.Fish;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "fish", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			var text = File.ReadAllText(fishProfilePath);
+			text.Should().Contain(";shell=fish] >>>");
+			text.Should().Contain("completion __complete --shell fish");
+			text.Should().Contain("complete -c");
+			text.Should().Contain("--no-interactive --no-logo");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies generated nushell completion script configures external completer and uses nu bridge shell token.")]
+	public void When_NuCompletionScriptIsGenerated_Then_ItUsesExternalCompleterAndNuBridge()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var nuProfilePath = Path.Combine(paths.RootPath, "config.nu");
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.NuProfilePath = nuProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+				options.ShellCompletion.PreferredShell = ShellKind.Nu;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "nushell", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			var text = File.ReadAllText(nuProfilePath);
+			text.Should().Contain(";shell=nu] >>>");
+			text.Should().Contain("completion __complete --shell nu");
+			text.Should().Contain("completions.external.completer");
+			text.Should().Contain("--no-interactive --no-logo");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies completion install --silent emits no payload and returns success via exit code only.")]
 	public void When_CompletionInstallIsSilent_Then_OutputIsSuppressedAndExitCodeIndicatesSuccess()
 	{
@@ -422,6 +484,34 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies detect-shell supports fish preferred override for deterministic app configuration.")]
+	public void When_DetectShellIsCalledWithPreferredFish_Then_OutputUsesOverride()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.Fish);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Detected shell: fish");
+		output.Text.Should().Contain("preferred override");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies detect-shell supports nushell preferred override for deterministic app configuration.")]
+	public void When_DetectShellIsCalledWithPreferredNu_Then_OutputUsesOverride()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.Nu);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Detected shell: nu");
+		output.Text.Should().Contain("preferred override");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies completion status supports structured JSON output through global output alias routing.")]
 	public void When_CompletionStatusIsRequestedWithJsonAlias_Then_OutputIsStructuredJson()
 	{
@@ -477,6 +567,68 @@ public sealed class Given_ShellCompletionSetup
 			root.GetProperty("detectedShell").GetString().Should().Be("zsh");
 			root.GetProperty("zshProfilePath").GetString().Should().Be(zshProfilePath);
 			root.GetProperty("zshInstalled").GetBoolean().Should().BeFalse();
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies completion status JSON includes fish profile path and install status fields.")]
+	public void When_CompletionStatusIsRequestedWithFishPreferred_Then_StatusContainsFishFields()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var fishProfilePath = Path.Combine(paths.RootPath, "config.fish");
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.PreferredShell = ShellKind.Fish;
+				options.ShellCompletion.FishProfilePath = fishProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			using var payload = JsonDocument.Parse(output.Text);
+			var root = payload.RootElement;
+			root.GetProperty("detectedShell").GetString().Should().Be("fish");
+			root.GetProperty("fishProfilePath").GetString().Should().Be(fishProfilePath);
+			root.GetProperty("fishInstalled").GetBoolean().Should().BeFalse();
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies completion status JSON includes nushell profile path and install status fields.")]
+	public void When_CompletionStatusIsRequestedWithNuPreferred_Then_StatusContainsNuFields()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var nuProfilePath = Path.Combine(paths.RootPath, "config.nu");
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.PreferredShell = ShellKind.Nu;
+				options.ShellCompletion.NuProfilePath = nuProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			using var payload = JsonDocument.Parse(output.Text);
+			var root = payload.RootElement;
+			root.GetProperty("detectedShell").GetString().Should().Be("nu");
+			root.GetProperty("nuProfilePath").GetString().Should().Be(nuProfilePath);
+			root.GetProperty("nuInstalled").GetBoolean().Should().BeFalse();
 		}
 		finally
 		{

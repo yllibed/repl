@@ -34,6 +34,18 @@ internal sealed partial class ShellCompletionRuntime
 		[Display(Name = "Zsh installed", Order = 9)]
 		public bool ZshInstalled { get; init; }
 
+		[Display(Name = "Fish profile", Order = 10)]
+		public string FishProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "Fish installed", Order = 11)]
+		public bool FishInstalled { get; init; }
+
+		[Display(Name = "Nushell profile", Order = 12)]
+		public string NuProfilePath { get; init; } = string.Empty;
+
+		[Display(Name = "Nushell installed", Order = 13)]
+		public bool NuInstalled { get; init; }
+
 		[Browsable(false)]
 		public string DetectedShell { get; init; } = string.Empty;
 
@@ -104,6 +116,8 @@ internal sealed partial class ShellCompletionRuntime
 		int PowershellScore,
 		int BashScore,
 		int ZshScore,
+		int FishScore,
+		int NuScore,
 		bool HasKnownUnsupported,
 		string Reason,
 		bool ParentLooksLikeWindowsPowerShell);

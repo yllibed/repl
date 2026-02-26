@@ -29,4 +29,14 @@ public enum ShellKind
 	/// Z shell (<c>zsh</c>).
 	/// </summary>
 	Zsh = 4,
+
+	/// <summary>
+	/// Fish shell.
+	/// </summary>
+	Fish = 5,
+
+	/// <summary>
+	/// Nushell (<c>nu</c>).
+	/// </summary>
+	Nu = 6,
 }

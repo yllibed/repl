@@ -1,4 +1,4 @@
-# Shell Completion (Bash + PowerShell + Zsh)
+# Shell Completion (Bash + PowerShell + Zsh + Fish + Nushell)
 
 This page describes shell completion support in Repl Toolkit, including setup modes and install commands.
 
@@ -7,7 +7,7 @@ This page describes shell completion support in Repl Toolkit, including setup mo
 Completion resolution is done by a bridge command:
 
 ```text
-completion __complete --shell <bash|powershell|zsh> --line <input> --cursor <position>
+completion __complete --shell <bash|powershell|zsh|fish|nu> --line <input> --cursor <position>
 ```
 
 The shell passes current line + cursor, and Repl returns candidates on `stdout` (one per line).
@@ -30,7 +30,7 @@ Shell completion behavior is configured through `ReplOptions.ShellCompletion`:
 - `PreferredShell` (optional override)
 - `PromptOnce` (default: `true`)
 - `StateFilePath` (optional)
-- `BashProfilePath` / `PowerShellProfilePath` / `ZshProfilePath` (optional overrides)
+- `BashProfilePath` / `PowerShellProfilePath` / `ZshProfilePath` / `FishProfilePath` / `NuProfilePath` (optional overrides)
 
 `SetupMode` values:
 
@@ -45,8 +45,8 @@ Shell completion behavior is configured through `ReplOptions.ShellCompletion`:
 The management surface is:
 
 ```text
-completion install [--shell bash|powershell|zsh] [--force] [--silent]
-completion uninstall [--shell bash|powershell|zsh] [--silent]
+completion install [--shell bash|powershell|zsh|fish|nu] [--force] [--silent]
+completion uninstall [--shell bash|powershell|zsh|fish|nu] [--silent]
 completion status
 completion detect-shell
 ```
@@ -74,7 +74,7 @@ Shell detection is best-effort and uses weighted signals:
 
 1. `PreferredShell` override (highest priority).
 2. Environment variables (for example `BASH_VERSION`, `SHELL`, `PSModulePath`).
-3. Parent/grand-parent process names as validation (`bash`, `zsh`, `pwsh`, `powershell`).
+3. Parent/grand-parent process names as validation (`bash`, `zsh`, `fish`, `nu`, `nushell`, `pwsh`, `powershell`).
 
 If signals are conflicting or weak, result is `unknown` (no auto-install in `Auto` mode).
 
@@ -93,8 +93,8 @@ Not included:
 
 Install/uninstall is idempotent through namespaced markers:
 
-- `# >>> repl completion [appId=<app-id>;shell=<bash|powershell|zsh>] >>>`
-- `# <<< repl completion [appId=<app-id>;shell=<bash|powershell|zsh>] <<<`
+- `# >>> repl completion [appId=<app-id>;shell=<bash|powershell|zsh|fish|nu>] >>>`
+- `# <<< repl completion [appId=<app-id>;shell=<bash|powershell|zsh|fish|nu>] <<<`
 
 Update/remove targets only the block matching the current app and shell.
 
@@ -161,4 +161,36 @@ _myapp_complete() {
 }
 
 compdef _myapp_complete myapp
+```
+
+Fish:
+
+```fish
+function _myapp_complete
+  set -l line (commandline -cp)
+  set -l cursor (string length -- $line)
+  myapp completion __complete --shell fish --line "$line" --cursor "$cursor" --no-interactive --no-logo
+end
+
+complete -c myapp -f -a "(_myapp_complete)"
+```
+
+Nushell:
+
+```nu
+let __repl_completion_command = 'myapp'
+def --env _myapp_complete [spans: list<string>] {
+  let line = ($spans | str join ' ')
+  let cursor = ($line | str length)
+  (
+    ^$__repl_completion_command completion __complete --shell nu --line $line --cursor $cursor --no-interactive --no-logo
+    | lines
+  )
+}
+
+$env.config = (
+  $env.config
+  | upsert completions.external.enable true
+  | upsert completions.external.completer { |spans| _myapp_complete $spans }
+)
 ```
