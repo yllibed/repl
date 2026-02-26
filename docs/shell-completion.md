@@ -65,9 +65,42 @@ Notes:
 
 - `completion install` writes a managed block in the shell profile.
 - `completion uninstall` removes only the managed block.
-- `completion status` prints mode, detection, profile paths, and install status.
+- `completion status` prints mode, detection, profile paths, profile existence, and install status.
 - `completion detect-shell` prints detected shell and detection reason.
 - for Nushell, a shared global dispatcher block is managed in addition to per-app blocks. If another app already manages it, use `--force` to merge.
+
+## Status output (anonymized example)
+
+Human output:
+
+```text
+Enabled                : True
+Setup mode             : Manual
+Detected shell         : powershell (env suggests PowerShell; parent process chain: <process-a> -> <process-b>)
+Bash profile           : <home>/.bashrc
+Bash profile exists    : True
+Bash installed         : False
+PowerShell profile     : <documents>/PowerShell/Microsoft.PowerShell_profile.ps1
+PowerShell profile exists: True
+PowerShell installed   : False
+Zsh profile            : <home>/.zshrc
+Zsh profile exists     : False
+Zsh installed          : False
+Fish profile           : <config>/fish/config.fish
+Fish profile exists    : False
+Fish installed         : False
+Nushell profile        : <config>/nushell/config.nu
+Nushell profile exists : False
+Nushell installed      : False
+```
+
+JSON output includes these per-shell fields:
+
+- `bashProfilePath`, `bashProfileExists`, `bashInstalled`
+- `powerShellProfilePath`, `powerShellProfileExists`, `powerShellInstalled`
+- `zshProfilePath`, `zshProfileExists`, `zshInstalled`
+- `fishProfilePath`, `fishProfileExists`, `fishInstalled`
+- `nuProfilePath`, `nuProfileExists`, `nuInstalled`
 
 ## Detection strategy
 

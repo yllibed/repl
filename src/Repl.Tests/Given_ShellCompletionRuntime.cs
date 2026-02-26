@@ -142,6 +142,43 @@ public sealed class Given_ShellCompletionRuntime
 		}
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies completion status reports per-shell profile file existence.")]
+	public void When_StatusIsRequested_Then_ProfileExistsFieldsReflectFilesystem()
+	{
+		var root = Path.Combine(Path.GetTempPath(), "repl-shell-completion-status-exists-tests", Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		var existingProfilePath = Path.Combine(root, ".bashrc");
+		var missingProfilePath = Path.Combine(root, "missing.profile");
+		File.WriteAllText(existingProfilePath, string.Empty);
+		try
+		{
+			var options = new ReplOptions();
+			options.ShellCompletion.PreferredShell = ShellKind.Bash;
+			options.ShellCompletion.BashProfilePath = existingProfilePath;
+			options.ShellCompletion.PowerShellProfilePath = missingProfilePath;
+			var runtime = CreateRuntime(
+				options,
+				tryReadProfileContent: _ => string.Empty);
+
+			var status = runtime.HandleStatusRoute();
+
+			ReadObjectBool(status, "BashProfileExists").Should().BeTrue();
+			ReadObjectBool(status, "PowerShellProfileExists").Should().BeFalse();
+		}
+		finally
+		{
+			try
+			{
+				Directory.Delete(root, recursive: true);
+			}
+			catch
+			{
+				// Best-effort cleanup for temp test directories.
+			}
+		}
+	}
+
 	private static ShellCompletionRuntime CreateRuntime(
 		ReplOptions? options = null,
 		Func<string, int, string[]>? resolveCandidates = null,
@@ -185,5 +222,12 @@ public sealed class Given_ShellCompletionRuntime
 		var property = state.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
 		property.Should().NotBeNull();
 		return ((IEnumerable<string>)property!.GetValue(state)!).ToArray();
+	}
+
+	private static bool ReadObjectBool(object value, string name)
+	{
+		var property = value.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+		property.Should().NotBeNull();
+		return (bool)property!.GetValue(value)!;
 	}
 }

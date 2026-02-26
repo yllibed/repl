@@ -619,6 +619,7 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
+			File.WriteAllText(paths.ProfilePath, "# bash profile");
 			var sut = ReplApp.Create();
 			sut.Options(options =>
 			{
@@ -637,6 +638,8 @@ public sealed class Given_ShellCompletionSetup
 			root.GetProperty("setupMode").GetString().Should().NotBeNullOrWhiteSpace();
 			root.GetProperty("detectedShell").GetString().Should().Be("powershell");
 			root.GetProperty("detectionReason").GetString().Should().Contain("preferred override");
+			root.GetProperty("bashProfileExists").GetBoolean().Should().BeTrue();
+			root.GetProperty("powerShellProfileExists").GetBoolean().Should().BeFalse();
 		}
 		finally
 		{
@@ -667,6 +670,7 @@ public sealed class Given_ShellCompletionSetup
 			var root = payload.RootElement;
 			root.GetProperty("detectedShell").GetString().Should().Be("zsh");
 			root.GetProperty("zshProfilePath").GetString().Should().Be(zshProfilePath);
+			root.GetProperty("zshProfileExists").GetBoolean().Should().BeFalse();
 			root.GetProperty("zshInstalled").GetBoolean().Should().BeFalse();
 		}
 		finally
@@ -698,6 +702,7 @@ public sealed class Given_ShellCompletionSetup
 			var root = payload.RootElement;
 			root.GetProperty("detectedShell").GetString().Should().Be("fish");
 			root.GetProperty("fishProfilePath").GetString().Should().Be(fishProfilePath);
+			root.GetProperty("fishProfileExists").GetBoolean().Should().BeFalse();
 			root.GetProperty("fishInstalled").GetBoolean().Should().BeFalse();
 		}
 		finally
@@ -729,6 +734,7 @@ public sealed class Given_ShellCompletionSetup
 			var root = payload.RootElement;
 			root.GetProperty("detectedShell").GetString().Should().Be("nu");
 			root.GetProperty("nuProfilePath").GetString().Should().Be(nuProfilePath);
+			root.GetProperty("nuProfileExists").GetBoolean().Should().BeFalse();
 			root.GetProperty("nuInstalled").GetBoolean().Should().BeFalse();
 		}
 		finally

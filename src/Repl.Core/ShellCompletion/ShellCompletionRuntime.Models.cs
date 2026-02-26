@@ -19,31 +19,46 @@ internal sealed partial class ShellCompletionRuntime
 		[Display(Name = "Bash profile", Order = 4)]
 		public string BashProfilePath { get; init; } = string.Empty;
 
-		[Display(Name = "Bash installed", Order = 5)]
+		[Display(Name = "Bash profile exists", Order = 5)]
+		public bool BashProfileExists { get; init; }
+
+		[Display(Name = "Bash installed", Order = 6)]
 		public bool BashInstalled { get; init; }
 
-		[Display(Name = "PowerShell profile", Order = 6)]
+		[Display(Name = "PowerShell profile", Order = 7)]
 		public string PowerShellProfilePath { get; init; } = string.Empty;
 
-		[Display(Name = "PowerShell installed", Order = 7)]
+		[Display(Name = "PowerShell profile exists", Order = 8)]
+		public bool PowerShellProfileExists { get; init; }
+
+		[Display(Name = "PowerShell installed", Order = 9)]
 		public bool PowerShellInstalled { get; init; }
 
-		[Display(Name = "Zsh profile", Order = 8)]
+		[Display(Name = "Zsh profile", Order = 10)]
 		public string ZshProfilePath { get; init; } = string.Empty;
 
-		[Display(Name = "Zsh installed", Order = 9)]
+		[Display(Name = "Zsh profile exists", Order = 11)]
+		public bool ZshProfileExists { get; init; }
+
+		[Display(Name = "Zsh installed", Order = 12)]
 		public bool ZshInstalled { get; init; }
 
-		[Display(Name = "Fish profile", Order = 10)]
+		[Display(Name = "Fish profile", Order = 13)]
 		public string FishProfilePath { get; init; } = string.Empty;
 
-		[Display(Name = "Fish installed", Order = 11)]
+		[Display(Name = "Fish profile exists", Order = 14)]
+		public bool FishProfileExists { get; init; }
+
+		[Display(Name = "Fish installed", Order = 15)]
 		public bool FishInstalled { get; init; }
 
-		[Display(Name = "Nushell profile", Order = 12)]
+		[Display(Name = "Nushell profile", Order = 16)]
 		public string NuProfilePath { get; init; } = string.Empty;
 
-		[Display(Name = "Nushell installed", Order = 13)]
+		[Display(Name = "Nushell profile exists", Order = 17)]
+		public bool NuProfileExists { get; init; }
+
+		[Display(Name = "Nushell installed", Order = 18)]
 		public bool NuInstalled { get; init; }
 
 		[Browsable(false)]
@@ -121,6 +136,10 @@ internal sealed partial class ShellCompletionRuntime
 		bool HasKnownUnsupported,
 		string Reason,
 		bool ParentLooksLikeWindowsPowerShell);
+
+	private readonly record struct ShellProfileProbe(
+		bool Exists,
+		string? Content);
 
 	private sealed class ShellCompletionState
 	{

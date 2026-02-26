@@ -317,32 +317,32 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		var zshProfilePath = ResolveShellProfilePath(ShellKind.Zsh, detection);
 		var fishProfilePath = ResolveShellProfilePath(ShellKind.Fish, detection);
 		var nuProfilePath = ResolveShellProfilePath(ShellKind.Nu, detection);
-		var profileContentByPath = new Dictionary<string, string?>(GetPathLockKeyComparer());
-		var bashInstalled = IsShellCompletionInstalledFromPath(
+		var profileProbeByPath = new Dictionary<string, ShellProfileProbe>(GetPathLockKeyComparer());
+		var bashProfile = ProbeShellProfilePath(bashProfilePath, profileProbeByPath);
+		var powershellProfile = ProbeShellProfilePath(powershellProfilePath, profileProbeByPath);
+		var zshProfile = ProbeShellProfilePath(zshProfilePath, profileProbeByPath);
+		var fishProfile = ProbeShellProfilePath(fishProfilePath, profileProbeByPath);
+		var nuProfile = ProbeShellProfilePath(nuProfilePath, profileProbeByPath);
+		var bashInstalled = IsShellCompletionInstalledFromProbe(
 			ShellKind.Bash,
 			appId,
-			bashProfilePath,
-			profileContentByPath);
-		var powershellInstalled = IsShellCompletionInstalledFromPath(
+			bashProfile);
+		var powershellInstalled = IsShellCompletionInstalledFromProbe(
 			ShellKind.PowerShell,
 			appId,
-			powershellProfilePath,
-			profileContentByPath);
-		var zshInstalled = IsShellCompletionInstalledFromPath(
+			powershellProfile);
+		var zshInstalled = IsShellCompletionInstalledFromProbe(
 			ShellKind.Zsh,
 			appId,
-			zshProfilePath,
-			profileContentByPath);
-		var fishInstalled = IsShellCompletionInstalledFromPath(
+			zshProfile);
+		var fishInstalled = IsShellCompletionInstalledFromProbe(
 			ShellKind.Fish,
 			appId,
-			fishProfilePath,
-			profileContentByPath);
-		var nuInstalled = IsShellCompletionInstalledFromPath(
+			fishProfile);
+		var nuInstalled = IsShellCompletionInstalledFromProbe(
 			ShellKind.Nu,
 			appId,
-			nuProfilePath,
-			profileContentByPath);
+			nuProfile);
 		return new ShellCompletionStatusModel
 		{
 			Enabled = _options.ShellCompletion.Enabled,
@@ -351,32 +351,47 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			DetectionReason = detection.Reason,
 			Detected = $"{FormatShellKind(detection.Kind)} ({detection.Reason})",
 			BashProfilePath = bashProfilePath,
+			BashProfileExists = bashProfile.Exists,
 			BashInstalled = bashInstalled,
 			PowerShellProfilePath = powershellProfilePath,
+			PowerShellProfileExists = powershellProfile.Exists,
 			PowerShellInstalled = powershellInstalled,
 			ZshProfilePath = zshProfilePath,
+			ZshProfileExists = zshProfile.Exists,
 			ZshInstalled = zshInstalled,
 			FishProfilePath = fishProfilePath,
+			FishProfileExists = fishProfile.Exists,
 			FishInstalled = fishInstalled,
 			NuProfilePath = nuProfilePath,
+			NuProfileExists = nuProfile.Exists,
 			NuInstalled = nuInstalled,
 		};
 	}
 
-	private bool IsShellCompletionInstalledFromPath(
+	private static bool IsShellCompletionInstalledFromProbe(
 		ShellKind shellKind,
 		string appId,
-		string profilePath,
-		Dictionary<string, string?> profileContentByPath)
+		ShellProfileProbe profileProbe)
 	{
-		if (!profileContentByPath.TryGetValue(profilePath, out var content))
+		return profileProbe.Exists
+			&& !string.IsNullOrEmpty(profileProbe.Content)
+			&& ContainsShellCompletionManagedBlock(profileProbe.Content, shellKind, appId);
+	}
+
+	private ShellProfileProbe ProbeShellProfilePath(
+		string profilePath,
+		Dictionary<string, ShellProfileProbe> profileProbeByPath)
+	{
+		if (profileProbeByPath.TryGetValue(profilePath, out var existing))
 		{
-			content = _tryReadProfileContent(profilePath);
-			profileContentByPath[profilePath] = content;
+			return existing;
 		}
 
-		return !string.IsNullOrEmpty(content)
-			&& ContainsShellCompletionManagedBlock(content, shellKind, appId);
+		var exists = File.Exists(profilePath);
+		var content = exists ? _tryReadProfileContent(profilePath) : null;
+		var probe = new ShellProfileProbe(exists, content);
+		profileProbeByPath[profilePath] = probe;
+		return probe;
 	}
 
 	private static string? TryReadProfileContentFromFile(string profilePath)
