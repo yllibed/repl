@@ -113,6 +113,32 @@ public sealed class Given_ResultSemantics
 		output.Text.Should().Contain("\"kind\": \"error\"");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies explicit exit result without payload so that exit code is respected and no output is rendered.")]
+	public void When_HandlerReturnsExitWithoutPayload_Then_ExitCodeIsRespectedAndOutputIsEmpty()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("exit2", () => Results.Exit(2));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["exit2", "--no-logo"]));
+
+		output.ExitCode.Should().Be(2);
+		output.Text.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies explicit exit result with payload so that payload is rendered while exit code remains explicit.")]
+	public void When_HandlerReturnsExitWithPayload_Then_PayloadIsRenderedAndExitCodeIsRespected()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("exit-with-payload", () => Results.Exit(2, Results.Error("E_CUSTOM", "custom failure")));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["exit-with-payload", "--no-logo"]));
+
+		output.ExitCode.Should().Be(2);
+		output.Text.Should().Contain("Error: custom failure");
+	}
+
 	private sealed record ValidationDetails(string Field, string Reason);
 }
 

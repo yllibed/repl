@@ -869,9 +869,9 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	private static int ComputeExitCode(object? result)
 	{
-		if (result is CommandExit commandExit)
+		if (result is IExitResult exitResult)
 		{
-			return commandExit.ExitCode;
+			return exitResult.ExitCode;
 		}
 
 		if (result is not IReplResult replResult)
@@ -899,9 +899,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		CancellationToken cancellationToken,
 		bool isInteractive = false)
 	{
-		if (result is CommandExit)
+		if (result is IExitResult exitResult)
 		{
-			return true;
+			if (exitResult.Payload is null)
+			{
+				return true;
+			}
+
+			result = exitResult.Payload;
 		}
 
 		var format = string.IsNullOrWhiteSpace(requestedFormat)
@@ -1167,8 +1172,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private readonly record struct InvocationRuntimeState(
 		IServiceProvider ServiceProvider,
 		bool IsInteractiveSession);
-
-	private readonly record struct CommandExit(int ExitCode);
 
 	private enum AmbientCommandOutcome
 	{

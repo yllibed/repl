@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
 
 namespace Repl.ShellCompletion;
 
@@ -100,7 +99,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (availabilityError is not null)
 		{
 			return isSilent
-				? CreateCommandExit(1)
+				? Results.Exit(1)
 				: availabilityError;
 		}
 
@@ -108,7 +107,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (!TryResolveCompletionShell(shell, detection, out var shellKind, out var shellError))
 		{
 			return isSilent
-				? CreateCommandExit(1)
+				? Results.Exit(1)
 				: Results.Validation(shellError);
 		}
 
@@ -121,7 +120,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (!operation.Success)
 		{
 			return isSilent
-				? CreateCommandExit(1)
+				? Results.Exit(1)
 				: Results.Error("shell_completion_install_failed", operation.Message);
 		}
 
@@ -136,7 +135,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		TrySaveShellCompletionState(state);
 		if (isSilent)
 		{
-			return CreateCommandExit(0);
+			return Results.Exit(0);
 		}
 
 		return new ShellCompletionInstallModel
@@ -159,7 +158,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (availabilityError is not null)
 		{
 			return isSilent
-				? CreateCommandExit(1)
+				? Results.Exit(1)
 				: availabilityError;
 		}
 
@@ -167,7 +166,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (!TryResolveCompletionShell(shell, detection, out var shellKind, out var shellError))
 		{
 			return isSilent
-				? CreateCommandExit(1)
+				? Results.Exit(1)
 				: Results.Validation(shellError);
 		}
 
@@ -175,7 +174,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (!operation.Success)
 		{
 			return isSilent
-				? CreateCommandExit(1)
+				? Results.Exit(1)
 				: Results.Error("shell_completion_uninstall_failed", operation.Message);
 		}
 
@@ -185,7 +184,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		TrySaveShellCompletionState(state);
 		if (isSilent)
 		{
-			return CreateCommandExit(0);
+			return Results.Exit(0);
 		}
 
 		return new ShellCompletionUninstallModel
@@ -396,14 +395,4 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		Results.Error(
 			"shell_completion_protocol_usage",
 			$"{message}{Environment.NewLine}{ShellCompletionConstants.Usage}");
-
-	private static object CreateCommandExit(int exitCode) =>
-		typeof(CoreReplApp)
-			.GetNestedType("CommandExit", BindingFlags.NonPublic)!
-			.GetConstructor(
-				BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-				binder: null,
-				new[] { typeof(int) },
-				modifiers: null)!
-			.Invoke(new object[] { exitCode });
 }
