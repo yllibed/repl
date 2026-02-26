@@ -18,8 +18,15 @@ public sealed class Given_ShellCompletionHostValidator
 	[Description("Regression guard: verifies native executable host process is accepted for completion setup generation.")]
 	public void When_ProcessPathIsNativeExecutable_Then_HostIsSupported()
 	{
+		var executableName = OperatingSystem.IsWindows()
+			? "CoreBasicsSample.exe"
+			: "CoreBasicsSample";
+		var processPath = Path.Combine(
+			OperatingSystem.IsWindows() ? "C:\\" : "/",
+			"apps",
+			executableName);
 		ShellCompletionHostValidator.IsSupportedHostProcess(
-				"C:\\apps\\CoreBasicsSample.exe",
+				processPath,
 				entryAssemblyName: "CoreBasicsSample")
 			.Should()
 			.BeTrue();

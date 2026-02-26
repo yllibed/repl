@@ -1,5 +1,6 @@
-using System.Text.Json;
+using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace Repl.IntegrationTests;
 
@@ -14,15 +15,8 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			var output = RunSetup(["completion", "install", "--shell", "bash", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			File.Exists(paths.ProfilePath).Should().BeTrue();
@@ -45,15 +39,8 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			var output = RunSetup(["completion", "install", "--shell", "bash", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			var text = File.ReadAllText(paths.ProfilePath);
@@ -76,15 +63,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var zshProfilePath = Path.Combine(paths.RootPath, ".zshrc");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.ZshProfilePath = zshProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Zsh;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "zsh", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Zsh, zshProfilePath: zshProfilePath);
+			var output = RunSetup(["completion", "install", "--shell", "zsh", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			output.Text.Should().Contain("source ~/.zshrc");
@@ -92,8 +72,8 @@ public sealed class Given_ShellCompletionSetup
 			text.Should().Contain(";shell=zsh] >>>");
 			text.Should().Contain("completion __complete --shell zsh");
 			text.Should().Contain("compdef");
-			text.Should().Contain("cursor=$((CURSOR > 0 ? CURSOR - 1 : 0))");
-			text.Should().NotContain("cursor=$((CURSOR - 1))");
+			text.Should().Contain("cursor=\"$CURSOR\"");
+			text.Should().NotContain("cursor=$((CURSOR > 0 ? CURSOR - 1 : 0))");
 			text.Should().Contain("--no-interactive --no-logo");
 		}
 		finally
@@ -110,15 +90,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var fishProfilePath = Path.Combine(paths.RootPath, "config.fish");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.FishProfilePath = fishProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Fish;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "fish", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Fish, fishProfilePath: fishProfilePath);
+			var output = RunSetup(["completion", "install", "--shell", "fish", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			var text = File.ReadAllText(fishProfilePath);
@@ -145,15 +118,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var nuProfilePath = Path.Combine(paths.RootPath, "config.nu");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.NuProfilePath = nuProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Nu;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "nushell", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Nu, nuProfilePath: nuProfilePath);
+			var output = RunSetup(["completion", "install", "--shell", "nushell", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			var text = File.ReadAllText(nuProfilePath);
@@ -190,15 +156,8 @@ public sealed class Given_ShellCompletionSetup
 				string.Empty);
 			File.WriteAllText(nuProfilePath, seed);
 
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.NuProfilePath = nuProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Nu;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "nushell", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Nu, nuProfilePath: nuProfilePath);
+			var output = RunSetup(["completion", "install", "--shell", "nushell", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(1);
 			output.Text.Should().Contain("--force");
@@ -234,21 +193,14 @@ public sealed class Given_ShellCompletionSetup
 				string.Empty);
 			File.WriteAllText(nuProfilePath, foreignAppBlock + Environment.NewLine + foreignGlobalBlock);
 
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.NuProfilePath = nuProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Nu;
-			});
-
-			var install = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "nushell", "--force", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Nu, nuProfilePath: nuProfilePath);
+			var install = RunSetup(["completion", "install", "--shell", "nushell", "--force", "--no-logo"], environment);
 			install.ExitCode.Should().Be(0);
 			var afterInstall = File.ReadAllText(nuProfilePath);
 			CountOccurrences(afterInstall, "# repl nu entry appId=").Should().Be(2);
 			afterInstall.Should().Contain("foreign-app");
 
-			var uninstall = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "uninstall", "--shell", "nushell", "--no-logo"]));
+			var uninstall = RunSetup(["completion", "uninstall", "--shell", "nushell", "--no-logo"], environment);
 			uninstall.ExitCode.Should().Be(0);
 			var afterUninstall = File.ReadAllText(nuProfilePath);
 			CountOccurrences(afterUninstall, "# repl nu entry appId=").Should().Be(1);
@@ -267,15 +219,8 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--silent", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			var output = RunSetup(["completion", "install", "--shell", "bash", "--silent", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			output.Text.Should().BeNullOrWhiteSpace();
@@ -291,10 +236,12 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies completion install --silent emits no payload and returns non-zero exit code on errors.")]
 	public void When_CompletionInstallIsSilentAndUnavailable_Then_OutputIsSuppressedAndExitCodeIndicatesFailure()
 	{
-		var sut = ReplApp.Create();
-		sut.Options(options => options.ShellCompletion.Enabled = false);
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--silent", "--no-logo"]));
+		var output = RunSetup(
+			["completion", "install", "--shell", "bash", "--silent", "--no-logo"],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_SHELL_COMPLETION_ENABLED"] = bool.FalseString,
+			});
 
 		output.ExitCode.Should().Be(1);
 		output.Text.Should().BeNullOrWhiteSpace();
@@ -308,15 +255,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var powerShellProfilePath = Path.Combine(paths.RootPath, "Microsoft.PowerShell_profile.ps1");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.PowerShellProfilePath = powerShellProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.PowerShell;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "powershell", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.PowerShell, powerShellProfilePath: powerShellProfilePath);
+			var output = RunSetup(["completion", "install", "--shell", "powershell", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			output.Text.Should().Contain(". $PROFILE");
@@ -339,9 +279,7 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies explicit completion help exposes subcommand descriptions for discoverability.")]
 	public void When_RequestingHelpForCompletionContext_Then_SubcommandsHaveDescriptions()
 	{
-		var sut = ReplApp.Create();
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "--help", "--no-logo"]));
+		var output = RunSetup(["completion", "--help", "--no-logo"]);
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("install");
@@ -361,16 +299,9 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-			});
-
-			_ = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--no-logo"]));
-			var uninstall = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "uninstall", "--shell", "bash", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			_ = RunSetup(["completion", "install", "--shell", "bash", "--no-logo"], environment);
+			var uninstall = RunSetup(["completion", "uninstall", "--shell", "bash", "--no-logo"], environment);
 
 			uninstall.ExitCode.Should().Be(0);
 			var text = File.Exists(paths.ProfilePath) ? File.ReadAllText(paths.ProfilePath) : string.Empty;
@@ -397,22 +328,15 @@ public sealed class Given_ShellCompletionSetup
 				string.Empty);
 			File.WriteAllText(paths.ProfilePath, foreignBlock);
 
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-			});
-
-			var install = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "bash", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			var install = RunSetup(["completion", "install", "--shell", "bash", "--no-logo"], environment);
 			install.ExitCode.Should().Be(0);
 			var afterInstall = File.ReadAllText(paths.ProfilePath);
 			afterInstall.Should().Contain("foreign_marker_keep_me");
 			afterInstall.Should().Contain("completion __complete --shell bash");
 			CountOccurrences(afterInstall, "# >>> repl completion [appId=").Should().Be(2);
 
-			var uninstall = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "uninstall", "--shell", "bash", "--no-logo"]));
+			var uninstall = RunSetup(["completion", "uninstall", "--shell", "bash", "--no-logo"], environment);
 			uninstall.ExitCode.Should().Be(0);
 			var afterUninstall = File.ReadAllText(paths.ProfilePath);
 			afterUninstall.Should().Contain("foreign_marker_keep_me");
@@ -432,16 +356,12 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create().UseDefaultInteractive();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.SetupMode = ShellCompletionSetupMode.Manual;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.CaptureWithInput("exit\n", () => sut.Run([]));
+			var environment = CreateEnvironment(
+				paths,
+				preferredShell: ShellKind.Bash,
+				setupMode: ShellCompletionSetupMode.Manual,
+				useDefaultInteractive: true);
+			var output = RunSetup([], environment, "exit\n");
 
 			output.ExitCode.Should().Be(0);
 			File.Exists(paths.ProfilePath).Should().BeFalse();
@@ -459,16 +379,12 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create().UseDefaultInteractive();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.SetupMode = ShellCompletionSetupMode.Auto;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.CaptureWithInput("exit\n", () => sut.Run([]));
+			var environment = CreateEnvironment(
+				paths,
+				preferredShell: ShellKind.Bash,
+				setupMode: ShellCompletionSetupMode.Auto,
+				useDefaultInteractive: true);
+			var output = RunSetup([], environment, "exit\n");
 
 			output.ExitCode.Should().Be(0);
 			File.Exists(paths.ProfilePath).Should().BeTrue();
@@ -487,17 +403,11 @@ public sealed class Given_ShellCompletionSetup
 		var paths = CreateTempPaths();
 		try
 		{
-			var sut = ReplApp.Create();
-			sut.Map("ping", () => "pong");
-			sut.Options(options =>
-			{
-				options.ShellCompletion.SetupMode = ShellCompletionSetupMode.Auto;
-				options.ShellCompletion.PreferredShell = ShellKind.Bash;
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["ping", "--no-logo"]));
+			var environment = CreateEnvironment(
+				paths,
+				preferredShell: ShellKind.Bash,
+				setupMode: ShellCompletionSetupMode.Auto);
+			var output = RunSetup(["ping", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			output.Text.Should().Contain("pong");
@@ -513,10 +423,12 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies completion management commands are blocked when shell completion feature is disabled.")]
 	public void When_ShellCompletionFeatureIsDisabled_Then_CompletionManagementReturnsError()
 	{
-		var sut = ReplApp.Create();
-		sut.Options(options => options.ShellCompletion.Enabled = false);
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--no-logo"]));
+		var output = RunSetup(
+			["completion", "status", "--no-logo"],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_SHELL_COMPLETION_ENABLED"] = bool.FalseString,
+			});
 
 		output.ExitCode.Should().Be(1);
 		output.Text.Should().Contain("shell completion setup is disabled");
@@ -526,15 +438,13 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies completion management commands do not exist in interactive mode and are resolved as unknown commands.")]
 	public void When_CompletionCommandIsInvokedInInteractiveMode_Then_CommandIsUnknown()
 	{
-		var sut = ReplApp.Create().UseDefaultInteractive();
-		sut.Context("client {id}", client =>
-		{
-			client.Map("show", (Func<string, string>)(id => id));
-		});
-
-		var output = ConsoleCaptureHelper.CaptureWithInput(
-			"client 42\ncompletion status\nexit\n",
-			() => sut.Run([]));
+		var output = RunSetup(
+			[],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_USE_DEFAULT_INTERACTIVE"] = bool.TrueString,
+			},
+			"client 42\ncompletion status\nexit\n");
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Unknown command");
@@ -560,10 +470,12 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies detect-shell honors preferred shell override for deterministic app configuration.")]
 	public void When_DetectShellIsCalledWithPreferredShell_Then_OutputUsesOverride()
 	{
-		var sut = ReplApp.Create();
-		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.PowerShell);
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+		var output = RunSetup(
+			["completion", "detect-shell", "--no-logo"],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_SHELL_COMPLETION_PREFERRED_SHELL"] = nameof(ShellKind.PowerShell),
+			});
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Detected shell: powershell");
@@ -574,10 +486,12 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies detect-shell supports zsh preferred override for deterministic app configuration.")]
 	public void When_DetectShellIsCalledWithPreferredZsh_Then_OutputUsesOverride()
 	{
-		var sut = ReplApp.Create();
-		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.Zsh);
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+		var output = RunSetup(
+			["completion", "detect-shell", "--no-logo"],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_SHELL_COMPLETION_PREFERRED_SHELL"] = nameof(ShellKind.Zsh),
+			});
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Detected shell: zsh");
@@ -588,10 +502,12 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies detect-shell supports fish preferred override for deterministic app configuration.")]
 	public void When_DetectShellIsCalledWithPreferredFish_Then_OutputUsesOverride()
 	{
-		var sut = ReplApp.Create();
-		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.Fish);
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+		var output = RunSetup(
+			["completion", "detect-shell", "--no-logo"],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_SHELL_COMPLETION_PREFERRED_SHELL"] = nameof(ShellKind.Fish),
+			});
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Detected shell: fish");
@@ -602,10 +518,12 @@ public sealed class Given_ShellCompletionSetup
 	[Description("Regression guard: verifies detect-shell supports nushell preferred override for deterministic app configuration.")]
 	public void When_DetectShellIsCalledWithPreferredNu_Then_OutputUsesOverride()
 	{
-		var sut = ReplApp.Create();
-		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.Nu);
-
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+		var output = RunSetup(
+			["completion", "detect-shell", "--no-logo"],
+			new Dictionary<string, string?>(StringComparer.Ordinal)
+			{
+				["REPL_TEST_SHELL_COMPLETION_PREFERRED_SHELL"] = nameof(ShellKind.Nu),
+			});
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Detected shell: nu");
@@ -620,16 +538,9 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			File.WriteAllText(paths.ProfilePath, "# bash profile");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.PreferredShell = ShellKind.PowerShell;
-				options.ShellCompletion.BashProfilePath = paths.ProfilePath;
-				options.ShellCompletion.PowerShellProfilePath = Path.Combine(paths.RootPath, "Microsoft.PowerShell_profile.ps1");
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+			var powerShellProfilePath = Path.Combine(paths.RootPath, "Microsoft.PowerShell_profile.ps1");
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.PowerShell, powerShellProfilePath: powerShellProfilePath);
+			var output = RunSetup(["completion", "status", "--json", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			using var payload = JsonDocument.Parse(output.Text);
@@ -655,15 +566,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var zshProfilePath = Path.Combine(paths.RootPath, ".zshrc");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.PreferredShell = ShellKind.Zsh;
-				options.ShellCompletion.ZshProfilePath = zshProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Zsh, zshProfilePath: zshProfilePath);
+			var output = RunSetup(["completion", "status", "--json", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			using var payload = JsonDocument.Parse(output.Text);
@@ -687,15 +591,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var fishProfilePath = Path.Combine(paths.RootPath, "config.fish");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.PreferredShell = ShellKind.Fish;
-				options.ShellCompletion.FishProfilePath = fishProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Fish, fishProfilePath: fishProfilePath);
+			var output = RunSetup(["completion", "status", "--json", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			using var payload = JsonDocument.Parse(output.Text);
@@ -719,15 +616,8 @@ public sealed class Given_ShellCompletionSetup
 		try
 		{
 			var nuProfilePath = Path.Combine(paths.RootPath, "config.nu");
-			var sut = ReplApp.Create();
-			sut.Options(options =>
-			{
-				options.ShellCompletion.PreferredShell = ShellKind.Nu;
-				options.ShellCompletion.NuProfilePath = nuProfilePath;
-				options.ShellCompletion.StateFilePath = paths.StatePath;
-			});
-
-			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Nu, nuProfilePath: nuProfilePath);
+			var output = RunSetup(["completion", "status", "--json", "--no-logo"], environment);
 
 			output.ExitCode.Should().Be(0);
 			using var payload = JsonDocument.Parse(output.Text);
@@ -743,9 +633,60 @@ public sealed class Given_ShellCompletionSetup
 		}
 	}
 
+	private static (int ExitCode, string Text) RunSetup(
+		IReadOnlyList<string> args,
+		IReadOnlyDictionary<string, string?>? environment = null,
+		string? standardInput = null) =>
+		ShellCompletionTestHostRunner.Run("setup", args, environment, standardInput);
+
+	private static Dictionary<string, string?> CreateEnvironment(
+		(string RootPath, string ProfilePath, string StatePath) paths,
+		ShellKind? preferredShell = null,
+		ShellCompletionSetupMode? setupMode = null,
+		bool? enabled = null,
+		bool useDefaultInteractive = false,
+		string? bashProfilePath = null,
+		string? powerShellProfilePath = null,
+		string? zshProfilePath = null,
+		string? fishProfilePath = null,
+		string? nuProfilePath = null)
+	{
+		var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
+		{
+			["REPL_TEST_SHELL_COMPLETION_STATE_FILE_PATH"] = paths.StatePath,
+			["REPL_TEST_SHELL_COMPLETION_BASH_PROFILE_PATH"] = bashProfilePath ?? paths.ProfilePath,
+			["REPL_TEST_SHELL_COMPLETION_POWERSHELL_PROFILE_PATH"] = powerShellProfilePath ?? Path.Combine(paths.RootPath, "Microsoft.PowerShell_profile.ps1"),
+			["REPL_TEST_SHELL_COMPLETION_ZSH_PROFILE_PATH"] = zshProfilePath ?? Path.Combine(paths.RootPath, ".zshrc"),
+			["REPL_TEST_SHELL_COMPLETION_FISH_PROFILE_PATH"] = fishProfilePath ?? Path.Combine(paths.RootPath, "config.fish"),
+			["REPL_TEST_SHELL_COMPLETION_NU_PROFILE_PATH"] = nuProfilePath ?? Path.Combine(paths.RootPath, "config.nu"),
+		};
+
+		if (preferredShell is not null)
+		{
+			environment["REPL_TEST_SHELL_COMPLETION_PREFERRED_SHELL"] = preferredShell.Value.ToString();
+		}
+
+		if (setupMode is not null)
+		{
+			environment["REPL_TEST_SHELL_COMPLETION_SETUP_MODE"] = setupMode.Value.ToString();
+		}
+
+		if (enabled is not null)
+		{
+			environment["REPL_TEST_SHELL_COMPLETION_ENABLED"] = enabled.Value.ToString();
+		}
+
+		if (useDefaultInteractive)
+		{
+			environment["REPL_TEST_USE_DEFAULT_INTERACTIVE"] = bool.TrueString;
+		}
+
+		return environment;
+	}
+
 	private static (string RootPath, string ProfilePath, string StatePath) CreateTempPaths()
 	{
-		var root = Path.Combine(Path.GetTempPath(), "repl-shell-completion-tests", Guid.NewGuid().ToString("N"));
+		var root = Path.Combine(Path.GetTempPath(), "repl-shell-completion-tests", Guid.NewGuid().ToString("N", CultureInfo.InvariantCulture));
 		Directory.CreateDirectory(root);
 		return (
 			RootPath: root,

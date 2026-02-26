@@ -329,7 +329,7 @@ internal sealed partial class ShellCompletionRuntime
 		return Path.Combine(configRoot, appName, ShellCompletionConstants.StateFileName);
 	}
 
-	private ShellCompletionState LoadShellCompletionState()
+	private async ValueTask<ShellCompletionState> LoadShellCompletionStateAsync(CancellationToken cancellationToken)
 	{
 		var path = ResolveExistingShellCompletionStateFilePath(ResolveShellCompletionStateFilePath());
 		try
@@ -340,7 +340,7 @@ internal sealed partial class ShellCompletionRuntime
 			}
 
 			var state = new ShellCompletionState();
-			var lines = File.ReadAllLines(path);
+			var lines = await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false);
 			foreach (var line in lines)
 			{
 				if (line.StartsWith("promptShown=", StringComparison.OrdinalIgnoreCase))
@@ -373,15 +373,13 @@ internal sealed partial class ShellCompletionRuntime
 		}
 	}
 
-	private void TrySaveShellCompletionState(ShellCompletionState state)
+	private async ValueTask TrySaveShellCompletionStateAsync(ShellCompletionState state, CancellationToken cancellationToken)
 	{
 		var path = ResolveShellCompletionStateFilePath();
-		var mutationLock = GetPathMutationLock(path);
-		var lockTaken = false;
+		SemaphoreSlim? mutationLock = null;
 		try
 		{
-			mutationLock.Wait();
-			lockTaken = true;
+			mutationLock = await AcquirePathMutationLockAsync(path, cancellationToken).ConfigureAwait(false);
 			var directory = Path.GetDirectoryName(path);
 			if (!string.IsNullOrWhiteSpace(directory))
 			{
@@ -393,7 +391,7 @@ internal sealed partial class ShellCompletionRuntime
 				$"promptShown={(state.PromptShown ? "true" : "false")}",
 				$"lastDetectedShell={state.LastDetectedShell ?? string.Empty}",
 				$"installedShells={string.Join(',', state.InstalledShells)}");
-			WriteTextFileAtomically(path, content);
+			await WriteTextFileAtomicallyAsync(path, content, cancellationToken).ConfigureAwait(false);
 		}
 		catch
 		{
@@ -401,7 +399,7 @@ internal sealed partial class ShellCompletionRuntime
 		}
 		finally
 		{
-			if (lockTaken)
+			if (mutationLock is not null)
 			{
 				mutationLock.Release();
 			}
@@ -454,13 +452,9 @@ internal sealed partial class ShellCompletionRuntime
 
 	private static string? ResolveExistingShellCompletionStateFilePath(string preferredPath)
 	{
-		if (File.Exists(preferredPath))
-		{
-			return preferredPath;
-		}
-
-		var legacyPath = ResolveLegacyShellCompletionStateFilePath(preferredPath);
-		return !string.IsNullOrWhiteSpace(legacyPath) && File.Exists(legacyPath) ? legacyPath : null;
+		return File.Exists(preferredPath)
+			? preferredPath
+			: null;
 	}
 
 	private static bool TryGetShellCompletionManagedBlockContent(
@@ -479,27 +473,6 @@ internal sealed partial class ShellCompletionRuntime
 
 		blockContent = content[start..end];
 		return true;
-	}
-
-	private static string? ResolveLegacyShellCompletionStateFilePath(string preferredPath)
-	{
-		var fileName = Path.GetFileName(preferredPath);
-		if (string.IsNullOrWhiteSpace(fileName))
-		{
-			return null;
-		}
-
-		var directory = Path.GetDirectoryName(preferredPath);
-		if (string.Equals(fileName, ShellCompletionConstants.StateFileName, StringComparison.OrdinalIgnoreCase))
-		{
-			return string.IsNullOrWhiteSpace(directory)
-				? ShellCompletionConstants.LegacyStateFileName
-				: Path.Combine(directory, ShellCompletionConstants.LegacyStateFileName);
-		}
-
-		return fileName.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)
-			? Path.ChangeExtension(preferredPath, ".json")
-			: null;
 	}
 
 	private static async Task WriteTextFileAtomicallyAsync(
@@ -539,42 +512,6 @@ internal sealed partial class ShellCompletionRuntime
 			}
 		}
 	}
-
-	private static void WriteTextFileAtomically(string path, string content)
-	{
-		var directory = Path.GetDirectoryName(path);
-		if (!string.IsNullOrWhiteSpace(directory))
-		{
-			Directory.CreateDirectory(directory);
-		}
-
-		var tempDirectory = string.IsNullOrWhiteSpace(directory)
-			? Directory.GetCurrentDirectory()
-			: directory;
-		var tempPath = Path.Combine(
-			tempDirectory,
-			$".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
-		try
-		{
-			File.WriteAllText(tempPath, content);
-			File.Move(tempPath, path, overwrite: true);
-		}
-		finally
-		{
-			try
-			{
-				if (File.Exists(tempPath))
-				{
-					File.Delete(tempPath);
-				}
-			}
-			catch
-			{
-				// Best-effort temp cleanup only.
-			}
-		}
-	}
-
 
 	private static bool ContainsShellCompletionManagedBlock(string content, ShellKind shellKind, string appId)
 	{

@@ -27,44 +27,6 @@ public sealed class Given_ShellCompletionRuntime
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies legacy .json state file is loaded when new default state file is absent.")]
-	public void When_NewStateFileIsMissing_Then_LegacyJsonStateFileIsLoaded()
-	{
-		var root = Path.Combine(Path.GetTempPath(), "repl-shell-completion-runtime-tests", Guid.NewGuid().ToString("N"));
-		Directory.CreateDirectory(root);
-		try
-		{
-			var statePath = Path.Combine(root, ShellCompletionConstants.StateFileName);
-			var legacyStatePath = Path.Combine(root, ShellCompletionConstants.LegacyStateFileName);
-			File.WriteAllLines(legacyStatePath, [
-				"promptShown=true",
-				"lastDetectedShell=bash",
-				"installedShells=bash,nu",
-			]);
-
-			var options = new ReplOptions();
-			options.ShellCompletion.StateFilePath = statePath;
-			var runtime = CreateRuntime(options);
-			var state = LoadState(runtime);
-
-			ReadStateBool(state, "PromptShown").Should().BeTrue();
-			ReadStateString(state, "LastDetectedShell").Should().Be("bash");
-			ReadStateList(state, "InstalledShells").Should().ContainInOrder("bash", "nu");
-		}
-		finally
-		{
-			try
-			{
-				Directory.Delete(root, recursive: true);
-			}
-			catch
-			{
-				// Best-effort cleanup for temp test directories.
-			}
-		}
-	}
-
-	[TestMethod]
 	[Description("Regression guard: verifies nushell app block stores the command head in base64 metadata to support global dispatcher reconstruction.")]
 	public void When_CommandNameContainsQuotes_Then_NushellScriptStoresBase64Metadata()
 	{
@@ -192,36 +154,6 @@ public sealed class Given_ShellCompletionRuntime
 			resolveCommandName: static () => "app",
 			resolveCandidates: resolveCandidates,
 			tryReadProfileContent: tryReadProfileContent);
-	}
-
-	private static object LoadState(ShellCompletionRuntime runtime)
-	{
-		var method = typeof(ShellCompletionRuntime).GetMethod(
-			"LoadShellCompletionState",
-			BindingFlags.Instance | BindingFlags.NonPublic);
-		method.Should().NotBeNull();
-		return method!.Invoke(obj: runtime, parameters: null)!;
-	}
-
-	private static bool ReadStateBool(object state, string name)
-	{
-		var property = state.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
-		property.Should().NotBeNull();
-		return (bool)property!.GetValue(state)!;
-	}
-
-	private static string? ReadStateString(object state, string name)
-	{
-		var property = state.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
-		property.Should().NotBeNull();
-		return property!.GetValue(state) as string;
-	}
-
-	private static string[] ReadStateList(object state, string name)
-	{
-		var property = state.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
-		property.Should().NotBeNull();
-		return ((IEnumerable<string>)property!.GetValue(state)!).ToArray();
 	}
 
 	private static bool ReadObjectBool(object value, string name)

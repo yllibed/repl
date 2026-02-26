@@ -6,6 +6,7 @@
 	<Project Path="Repl.WebSocket/Repl.WebSocket.csproj" />
 	<Project Path="Repl.Telnet/Repl.Telnet.csproj" />
 	<Project Path="Repl.Testing/Repl.Testing.csproj" />
+	<Project Path="Repl.ShellCompletionTestHost/Repl.ShellCompletionTestHost.csproj" />
 	<Project Path="Repl.Tests/Repl.Tests.csproj" />
 	<Project Path="Repl.IntegrationTests/Repl.IntegrationTests.csproj" />
 	<Project Path="Repl.ProtocolTests/Repl.ProtocolTests.csproj" />

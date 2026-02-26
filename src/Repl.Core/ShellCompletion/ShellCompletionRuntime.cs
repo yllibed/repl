@@ -127,7 +127,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 				: Results.Error("shell_completion_install_failed", operation.Message);
 		}
 
-		var state = LoadShellCompletionState();
+		var state = await LoadShellCompletionStateAsync(cancellationToken).ConfigureAwait(false);
 		state.LastDetectedShell = detection.Kind.ToString();
 		TryAddInstalledShell(state, shellKind);
 		if (_options.ShellCompletion.SetupMode == ShellCompletionSetupMode.Prompt)
@@ -135,7 +135,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			state.PromptShown = true;
 		}
 
-		TrySaveShellCompletionState(state);
+		await TrySaveShellCompletionStateAsync(state, cancellationToken).ConfigureAwait(false);
 		if (isSilent)
 		{
 			return Results.Exit(0);
@@ -181,10 +181,10 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 				: Results.Error("shell_completion_uninstall_failed", operation.Message);
 		}
 
-		var state = LoadShellCompletionState();
+		var state = await LoadShellCompletionStateAsync(cancellationToken).ConfigureAwait(false);
 		state.LastDetectedShell = detection.Kind.ToString();
 		state.InstalledShells.RemoveAll(item => string.Equals(item, shellKind.ToString(), StringComparison.OrdinalIgnoreCase));
-		TrySaveShellCompletionState(state);
+		await TrySaveShellCompletionStateAsync(state, cancellationToken).ConfigureAwait(false);
 		if (isSilent)
 		{
 			return Results.Exit(0);
@@ -223,7 +223,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			return;
 		}
 
-		var state = LoadShellCompletionState();
+		var state = await LoadShellCompletionStateAsync(cancellationToken).ConfigureAwait(false);
 		state.LastDetectedShell = detection.Kind.ToString();
 		if (_options.ShellCompletion.SetupMode == ShellCompletionSetupMode.Prompt)
 		{
@@ -235,7 +235,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			if (IsShellCompletionInstalled(detection.Kind, detection))
 			{
 				state.PromptShown = true;
-				TrySaveShellCompletionState(state);
+				await TrySaveShellCompletionStateAsync(state, cancellationToken).ConfigureAwait(false);
 				return;
 			}
 
@@ -257,7 +257,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			}
 
 			state.PromptShown = true;
-			TrySaveShellCompletionState(state);
+			await TrySaveShellCompletionStateAsync(state, cancellationToken).ConfigureAwait(false);
 			if (!installRequested)
 			{
 				return;
@@ -271,7 +271,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		if (IsShellCompletionInstalled(detection.Kind, detection))
 		{
 			state.PromptShown = true;
-			TrySaveShellCompletionState(state);
+			await TrySaveShellCompletionStateAsync(state, cancellationToken).ConfigureAwait(false);
 			return;
 		}
 
@@ -281,7 +281,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		{
 			state.PromptShown = true;
 			TryAddInstalledShell(state, detection.Kind);
-			TrySaveShellCompletionState(state);
+			await TrySaveShellCompletionStateAsync(state, cancellationToken).ConfigureAwait(false);
 		}
 	}
 
