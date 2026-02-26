@@ -108,14 +108,14 @@ run_powershell_smoke() {
 
   "$command_name" completion install --shell powershell --force --no-logo
 
-  REPL_PWSH_PROFILE="$profile_path" pwsh -NoLogo -NoProfile -Command @'
+  REPL_PWSH_PROFILE="$profile_path" pwsh -NoLogo -NoProfile -File - <<'PWSH'
 . $env:REPL_PWSH_PROFILE
 $line = "$env:REPL_CMD_NAME c"
 $result = TabExpansion2 -InputScript $line -CursorColumn $line.Length
 if (-not ($result.CompletionMatches | Where-Object { $_.CompletionText -eq 'contact' })) {
   throw 'PowerShell completion did not return expected candidate.'
 }
-'@
+PWSH
 }
 
 run_nu_smoke() {
