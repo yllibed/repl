@@ -24,4 +24,9 @@ public enum ShellKind
 	/// PowerShell shell (<c>pwsh</c> or Windows PowerShell).
 	/// </summary>
 	PowerShell = 3,
+
+	/// <summary>
+	/// Z shell (<c>zsh</c>).
+	/// </summary>
+	Zsh = 4,
 }

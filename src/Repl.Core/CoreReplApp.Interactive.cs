@@ -37,7 +37,7 @@ public sealed partial class CoreReplApp
 		var scopeTokens = initialScopeTokens.ToList();
 		var historyProvider = serviceProvider.GetService(typeof(IHistoryProvider)) as IHistoryProvider;
 		string? lastHistoryEntry = null;
-		await TryHandleShellCompletionStartupAsync(serviceProvider, cancellationToken).ConfigureAwait(false);
+		await _shellCompletionRuntime.HandleStartupAsync(serviceProvider, cancellationToken).ConfigureAwait(false);
 		while (true)
 		{
 			cancellationToken.ThrowIfCancellationRequested();

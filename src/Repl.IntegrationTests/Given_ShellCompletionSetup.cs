@@ -66,6 +66,38 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies generated zsh completion script uses compdef and the zsh bridge shell token.")]
+	public void When_ZshCompletionScriptIsGenerated_Then_ItUsesCompdefAndZshBridge()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var zshProfilePath = Path.Combine(paths.RootPath, ".zshrc");
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.ZshProfilePath = zshProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+				options.ShellCompletion.PreferredShell = ShellKind.Zsh;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "install", "--shell", "zsh", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			output.Text.Should().Contain("source ~/.zshrc");
+			var text = File.ReadAllText(zshProfilePath);
+			text.Should().Contain(";shell=zsh] >>>");
+			text.Should().Contain("completion __complete --shell zsh");
+			text.Should().Contain("compdef");
+			text.Should().Contain("--no-interactive --no-logo");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies completion install --silent emits no payload and returns success via exit code only.")]
 	public void When_CompletionInstallIsSilent_Then_OutputIsSuppressedAndExitCodeIndicatesSuccess()
 	{
@@ -376,6 +408,20 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies detect-shell supports zsh preferred override for deterministic app configuration.")]
+	public void When_DetectShellIsCalledWithPreferredZsh_Then_OutputUsesOverride()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.ShellCompletion.PreferredShell = ShellKind.Zsh);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "detect-shell", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Detected shell: zsh");
+		output.Text.Should().Contain("preferred override");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies completion status supports structured JSON output through global output alias routing.")]
 	public void When_CompletionStatusIsRequestedWithJsonAlias_Then_OutputIsStructuredJson()
 	{
@@ -400,6 +446,37 @@ public sealed class Given_ShellCompletionSetup
 			root.GetProperty("setupMode").GetString().Should().NotBeNullOrWhiteSpace();
 			root.GetProperty("detectedShell").GetString().Should().Be("powershell");
 			root.GetProperty("detectionReason").GetString().Should().Contain("preferred override");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies completion status JSON includes zsh profile path and install status fields.")]
+	public void When_CompletionStatusIsRequestedWithZshPreferred_Then_StatusContainsZshFields()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var zshProfilePath = Path.Combine(paths.RootPath, ".zshrc");
+			var sut = ReplApp.Create();
+			sut.Options(options =>
+			{
+				options.ShellCompletion.PreferredShell = ShellKind.Zsh;
+				options.ShellCompletion.ZshProfilePath = zshProfilePath;
+				options.ShellCompletion.StateFilePath = paths.StatePath;
+			});
+
+			var output = ConsoleCaptureHelper.Capture(() => sut.Run(["completion", "status", "--json", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			using var payload = JsonDocument.Parse(output.Text);
+			var root = payload.RootElement;
+			root.GetProperty("detectedShell").GetString().Should().Be("zsh");
+			root.GetProperty("zshProfilePath").GetString().Should().Be(zshProfilePath);
+			root.GetProperty("zshInstalled").GetBoolean().Should().BeFalse();
 		}
 		finally
 		{

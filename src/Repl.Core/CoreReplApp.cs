@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
+using Repl.ShellCompletion;
 
 namespace Repl;
 
@@ -22,6 +23,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private int _nextModuleId = 1;
 	private readonly AsyncLocal<InvocationRuntimeState?> _runtimeState = new();
 	private readonly DefaultServiceProvider _services;
+	private readonly ShellCompletionRuntime _shellCompletionRuntime;
 	private string? _description;
 	private Delegate? _banner;
 	private readonly AsyncLocal<bool> _bannerRendered = new();
@@ -34,10 +36,15 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		_options.Output.SetHostAnsiSupportResolver(() => _options.Capabilities.SupportsAnsi);
 		_services = CreateDefaultServiceProvider();
+		_shellCompletionRuntime = new ShellCompletionRuntime(
+			_options,
+			ResolveEntryAssemblyName,
+			ResolveShellCompletionCommandName,
+			ResolveShellCompletionCandidates);
 		_moduleRegistrations.Add(new ModuleRegistration(ModuleId: 0, IsPresent: static _ => true));
 		_moduleMappingScope.Push(0);
 		MapModule(
-			new ShellCompletionModule(this),
+			new ShellCompletionModule(_shellCompletionRuntime),
 			static context => context.Channel is ReplRuntimeChannel.Cli or ReplRuntimeChannel.Interactive);
 	}
 
@@ -386,7 +393,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output);
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
-			if (!IsShellCompletionBridgeInvocation(globalOptions.RemainingTokens))
+			if (!_shellCompletionRuntime.IsBridgeInvocation(globalOptions.RemainingTokens))
 			{
 				await TryRenderBannerAsync(globalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
 			}

@@ -1,4 +1,4 @@
-# Shell Completion (Bash + PowerShell)
+# Shell Completion (Bash + PowerShell + Zsh)
 
 This page describes shell completion support in Repl Toolkit, including setup modes and install commands.
 
@@ -7,15 +7,14 @@ This page describes shell completion support in Repl Toolkit, including setup mo
 Completion resolution is done by a bridge command:
 
 ```text
-completion __complete --shell <bash|powershell> --line <input> --cursor <position>
+completion __complete --shell <bash|powershell|zsh> --line <input> --cursor <position>
 ```
 
 The shell passes current line + cursor, and Repl returns candidates on `stdout` (one per line).
 `completion __complete` is mapped in the regular command graph through the shell-completion module (CLI channel only).
 
-The module exposes a real `completion` route scope:
+The module exposes a real `completion` context scope:
 
-- `completion` (usage/help entry point)
 - `completion install`
 - `completion uninstall`
 - `completion status`
@@ -31,7 +30,7 @@ Shell completion behavior is configured through `ReplOptions.ShellCompletion`:
 - `PreferredShell` (optional override)
 - `PromptOnce` (default: `true`)
 - `StateFilePath` (optional)
-- `BashProfilePath` / `PowerShellProfilePath` (optional overrides)
+- `BashProfilePath` / `PowerShellProfilePath` / `ZshProfilePath` (optional overrides)
 
 `SetupMode` values:
 
@@ -46,8 +45,8 @@ Shell completion behavior is configured through `ReplOptions.ShellCompletion`:
 The management surface is:
 
 ```text
-completion install [--shell bash|powershell] [--force]
-completion uninstall [--shell bash|powershell]
+completion install [--shell bash|powershell|zsh] [--force] [--silent]
+completion uninstall [--shell bash|powershell|zsh] [--silent]
 completion status
 completion detect-shell
 ```
@@ -75,7 +74,7 @@ Shell detection is best-effort and uses weighted signals:
 
 1. `PreferredShell` override (highest priority).
 2. Environment variables (for example `BASH_VERSION`, `SHELL`, `PSModulePath`).
-3. Parent/grand-parent process names as validation (`bash`, `pwsh`, `powershell`).
+3. Parent/grand-parent process names as validation (`bash`, `zsh`, `pwsh`, `powershell`).
 
 If signals are conflicting or weak, result is `unknown` (no auto-install in `Auto` mode).
 
@@ -89,14 +88,13 @@ Not included:
 
 - Dynamic data values (contexts/arguments).
 - `WithCompletion(...)` providers through shell completion.
-- zsh/fish integration.
 
 ## Managed profile blocks
 
 Install/uninstall is idempotent through namespaced markers:
 
-- `# >>> repl completion [appId=<app-id>;shell=<bash|powershell>] >>>`
-- `# <<< repl completion [appId=<app-id>;shell=<bash|powershell>] <<<`
+- `# >>> repl completion [appId=<app-id>;shell=<bash|powershell|zsh>] >>>`
+- `# <<< repl completion [appId=<app-id>;shell=<bash|powershell|zsh>] <<<`
 
 Update/remove targets only the block matching the current app and shell.
 
@@ -142,4 +140,25 @@ if ((Get-Command Register-ArgumentCompleter).Parameters.ContainsKey('Native')) {
 } else {
     Register-ArgumentCompleter -CommandName $__replCompletionCommandNames -ScriptBlock $__replCompleter
 }
+```
+
+Zsh:
+
+```zsh
+_myapp_complete() {
+  local line cursor
+  local candidate
+  local -a reply
+  line="$BUFFER"
+  cursor=$((CURSOR - 1))
+  reply=()
+  while IFS= read -r candidate; do
+    reply+=("$candidate")
+  done < <(myapp completion __complete --shell zsh --line "$line" --cursor "$cursor" --no-interactive --no-logo)
+  if (( ${#reply[@]} > 0 )); then
+    compadd -- "${reply[@]}"
+  fi
+}
+
+compdef _myapp_complete myapp
 ```

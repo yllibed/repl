@@ -33,6 +33,32 @@ public sealed class Given_ShellCompletion
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies zsh shell completion on root prefix so that literal command candidates are returned.")]
+	public void When_CompletingRootPrefixInZsh_Then_LiteralCommandsAreReturned()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("contact list", () => "ok");
+		sut.Map("config set", () => "ok");
+
+		const string line = "repl c";
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			"zsh",
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+		]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("config");
+		output.Text.Should().Contain("contact");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies PowerShell completion for nested command path so that next literal segments are returned.")]
 	public void When_CompletingNestedPathInPowerShell_Then_NextLiteralsAreReturned()
 	{
@@ -248,6 +274,7 @@ public sealed class Given_ShellCompletion
 		output.ExitCode.Should().Be(1);
 		output.Text.Should().Contain("Error:");
 		output.Text.Should().Contain("usage: completion __complete");
+		output.Text.Should().Contain("bash|powershell|zsh");
 	}
 
 	[TestMethod]

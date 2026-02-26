@@ -41,4 +41,9 @@ public sealed class ShellCompletionOptions
 	/// Gets or sets an optional custom PowerShell profile path.
 	/// </summary>
 	public string? PowerShellProfilePath { get; set; }
+
+	/// <summary>
+	/// Gets or sets an optional custom zsh profile path.
+	/// </summary>
+	public string? ZshProfilePath { get; set; }
 }
