@@ -260,11 +260,11 @@ Package details:
 
 ## Shell completion (configurable)
 
-Repl Toolkit includes a shell completion bridge for Bash and PowerShell.
+Repl Toolkit includes a shell completion bridge for Bash, PowerShell, Zsh, Fish, and Nushell.
 
 Quick setup commands:
-- `completion install [--shell bash|powershell] [--force]`
-- `completion uninstall [--shell bash|powershell]`
+- `completion install [--shell bash|powershell|zsh|fish|nu] [--force]`
+- `completion uninstall [--shell bash|powershell|zsh|fish|nu]`
 - `completion status`
 
 `completion ...` commands are CLI-only (not available in interactive or hosted session modes).

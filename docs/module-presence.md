@@ -63,9 +63,11 @@ Note: `CoreReplApp` exposes the typed predicate overload `Func<ModulePresenceCon
 
 ## Runtime behavior
 
-- Predicates are evaluated from an active routing cache.
+- Predicates are evaluated when the active routing graph is resolved (routing, help, completion/autocomplete paths).
+- Resolved presence is cached in the active routing graph.
 - Module presence can change during the same interactive session, but cache invalidation is explicit.
 - If a module is not present, its routes/contexts are treated as absent.
+- In `ReplApp` (Defaults), injectable predicate delegates are adapted to compiled invokers (not per-call `DynamicInvoke`).
 
 When the state that drives module presence changes, call:
 
@@ -103,6 +105,8 @@ In `Interactive` and `Session`, that module surface is absent.
 
 ## Guidelines
 
-- Keep predicates fast and side-effect free.
+- Keep predicates fast, side-effect free, and allocation-light.
+- Avoid I/O or network calls inside predicates.
+- Prefer reading precomputed state from session/app services instead of recalculating expensive checks in predicates.
 - Put state checks in session/app services, not in globals.
 - Prefer module-level switching for coherent experiences.
