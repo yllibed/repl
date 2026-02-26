@@ -239,8 +239,8 @@ def _repl_nu_dispatch_completion [spans: list<string>] {
 $env.config = (
   $env.config
   | upsert completions.external.enable true
-  | upsert completions.external.completer { |spans| _repl_nu_dispatch_completion $spans }
 )
+$env.config.completions.external.completer = { |spans| _repl_nu_dispatch_completion $spans }
 ```
 
 ## Compatibility notes

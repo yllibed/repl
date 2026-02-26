@@ -106,8 +106,8 @@ internal sealed class NuShellCompletionAdapter : IShellCompletionAdapter
 			$env.config = (
 			  $env.config
 			  | upsert completions.external.enable true
-			  | upsert completions.external.completer { |spans| _repl_nu_dispatch_completion $spans }
 			)
+			$env.config.completions.external.completer = { |spans| _repl_nu_dispatch_completion $spans }
 			{{endMarker}}
 			""";
 	}

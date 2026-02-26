@@ -48,6 +48,8 @@ public sealed class Given_ShellCompletionRuntime
 
 		script.Should().Contain("def _repl_nu_dispatch_completion [spans: list<string>]");
 		script.Should().Contain("|spans| _repl_nu_dispatch_completion $spans");
+		script.Should().Contain("$env.config.completions.external.completer = { |spans| _repl_nu_dispatch_completion $spans }");
+		script.Should().NotContain("| upsert completions.external.completer { |spans| _repl_nu_dispatch_completion $spans }");
 	}
 
 	[TestMethod]
