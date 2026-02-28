@@ -181,6 +181,28 @@ public sealed class Given_ProtocolPassthrough
 		output.Text.Should().Contain("local");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies CLI protocol passthrough does not report a hosted session through IReplIoContext.")]
+	public void When_HandlerRequestsIoContextInCliProtocolPassthrough_Then_IsHostedSessionIsFalse()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+				"io protocol-check",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine(io.IsHostedSession ? "hosted" : "local");
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(
+			() => sut.Run(["io", "protocol-check", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().Contain("local");
+		output.StdErr.Should().NotContain("hosted");
+	}
+
 	private sealed class InMemoryHost(TextReader input, TextWriter output) : IReplHost
 	{
 		public TextReader Input { get; } = input;

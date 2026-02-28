@@ -21,7 +21,8 @@ public interface IReplIoContext
 	TextWriter Error { get; }
 
 	/// <summary>
-	/// Gets a value indicating whether execution is currently running in a hosted session.
+	/// Gets a value indicating whether execution is currently running in a real hosted transport session.
+	/// This is false for local CLI execution, including protocol passthrough scopes.
 	/// </summary>
 	bool IsHostedSession { get; }
 

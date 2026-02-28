@@ -515,7 +515,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		CancellationToken cancellationToken)
 	{
 		if (match.Route.Command.IsProtocolPassthrough
-			&& ReplSessionIO.IsSessionActive
+			&& ReplSessionIO.IsHostedSession
 			&& !match.Route.Command.SupportsHostedProtocolPassthrough)
 		{
 			_ = await RenderOutputAsync(
@@ -576,7 +576,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			Console.In,
 			ansiMode: AnsiMode.Never,
 			commandOutput: Console.Out,
-			error: Console.Error);
+			error: Console.Error,
+			isHostedSession: false);
 		return await ExecuteMatchedCommandAsync(
 				match,
 				globalOptions,

@@ -26,6 +26,7 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<TextWriter?> s_commandOutput = new();
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
+	private static readonly AsyncLocal<bool> s_isHostedSession = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
 
@@ -57,6 +58,11 @@ internal static class ReplSessionIO
 	/// Gets a value indicating whether a hosted session is active on the current async context.
 	/// </summary>
 	public static bool IsSessionActive => s_output.Value is not null && !string.IsNullOrWhiteSpace(s_sessionId.Value);
+
+	/// <summary>
+	/// Gets a value indicating whether execution is currently running in a real hosted transport session.
+	/// </summary>
+	public static bool IsHostedSession => s_isHostedSession.Value;
 
 	/// <summary>
 	/// Gets the current hosted session identifier, when available.
@@ -198,7 +204,8 @@ internal static class ReplSessionIO
 		AnsiMode ansiMode = AnsiMode.Auto,
 		string? sessionId = null,
 		TextWriter? commandOutput = null,
-		TextWriter? error = null)
+		TextWriter? error = null,
+		bool isHostedSession = true)
 	{
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(input);
@@ -208,6 +215,7 @@ internal static class ReplSessionIO
 		var previousCommandOutput = s_commandOutput.Value;
 		var previousInput = s_input.Value;
 		var previousKeyReader = s_keyReader.Value;
+		var previousIsHostedSession = s_isHostedSession.Value;
 		var previousSessionId = s_sessionId.Value;
 
 		var resolvedSessionId = string.IsNullOrWhiteSpace(sessionId)
@@ -220,6 +228,7 @@ internal static class ReplSessionIO
 		s_error.Value = error ?? output;
 		s_commandOutput.Value = commandOutput ?? output;
 		s_input.Value = input;
+		s_isHostedSession.Value = isHostedSession;
 		s_sessionId.Value = resolvedSessionId;
 
 		if (ansiMode == AnsiMode.Always)
@@ -249,6 +258,7 @@ internal static class ReplSessionIO
 			previousCommandOutput,
 			previousInput,
 			previousKeyReader,
+			previousIsHostedSession,
 			previousSessionId,
 			removeSessionOnDispose: string.IsNullOrWhiteSpace(sessionId),
 			sessionIdToRemove: resolvedSessionId);
@@ -322,6 +332,7 @@ internal static class ReplSessionIO
 		TextWriter? previousCommandOutput,
 		TextReader? previousInput,
 		IReplKeyReader? previousKeyReader,
+		bool previousIsHostedSession,
 		string? previousSessionId,
 		bool removeSessionOnDispose,
 		string sessionIdToRemove) : IDisposable
@@ -333,6 +344,7 @@ internal static class ReplSessionIO
 			s_commandOutput.Value = previousCommandOutput;
 			s_input.Value = previousInput;
 			s_keyReader.Value = previousKeyReader;
+			s_isHostedSession.Value = previousIsHostedSession;
 			s_sessionId.Value = previousSessionId;
 
 			if (removeSessionOnDispose)

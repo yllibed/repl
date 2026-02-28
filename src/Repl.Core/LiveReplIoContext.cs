@@ -11,7 +11,7 @@ internal sealed class LiveReplIoContext : IReplIoContext
 
 	public TextWriter Error => ReplSessionIO.Error;
 
-	public bool IsHostedSession => ReplSessionIO.IsSessionActive;
+	public bool IsHostedSession => ReplSessionIO.IsHostedSession;
 
 	public string? SessionId => ReplSessionIO.CurrentSessionId;
 }
