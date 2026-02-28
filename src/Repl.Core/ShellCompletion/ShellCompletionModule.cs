@@ -19,6 +19,7 @@ internal sealed class ShellCompletionModule(IShellCompletionRuntime runtime) : I
 					var result = runtime.HandleBridgeRoute(shell, line, cursor);
 					if (result is not string payload)
 					{
+						// Error/validation results are rendered by the framework (stderr in passthrough mode).
 						return result;
 					}
 

@@ -407,7 +407,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
-			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions))
+			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions);
+			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedRouteResolution?.Match))
 			{
 				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
 			}
@@ -430,7 +431,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				return preExecutionExitCode.Value;
 			}
 
-			var resolution = ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
+			var resolution = preResolvedRouteResolution
+				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
 			var match = resolution.Match;
 				if (match is null)
 				{
@@ -456,15 +458,26 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		}
 	}
 
-	private bool ShouldSuppressGlobalBanner(GlobalInvocationOptions globalOptions)
+	private static bool ShouldSuppressGlobalBanner(
+		GlobalInvocationOptions globalOptions,
+		RouteMatch? preResolvedMatch)
 	{
 		if (globalOptions.HelpRequested || globalOptions.RemainingTokens.Count == 0)
 		{
 			return false;
 		}
 
-		var match = Resolve(globalOptions.RemainingTokens);
-		return match?.Route.Command.IsProtocolPassthrough == true;
+		return preResolvedMatch?.Route.Command.IsProtocolPassthrough == true;
+	}
+
+	private RouteResolver.RouteResolutionResult? TryPreResolveRouteForBanner(GlobalInvocationOptions globalOptions)
+	{
+		if (globalOptions.HelpRequested || globalOptions.RemainingTokens.Count == 0)
+		{
+			return null;
+		}
+
+		return ResolveWithDiagnostics(globalOptions.RemainingTokens);
 	}
 
 	private async ValueTask<int?> TryHandlePreExecutionAsync(
@@ -503,7 +516,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		if (match.Route.Command.IsProtocolPassthrough
 			&& ReplSessionIO.IsSessionActive
-			&& !SupportsHostedProtocolPassthrough(match.Route.Command.Handler))
+			&& !match.Route.Command.SupportsHostedProtocolPassthrough)
 		{
 			_ = await RenderOutputAsync(
 					Results.Error(
@@ -571,26 +584,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				scopeTokens: null,
 				cancellationToken)
 			.ConfigureAwait(false);
-	}
-
-	private static bool SupportsHostedProtocolPassthrough(Delegate handler)
-	{
-		foreach (var parameter in handler.Method.GetParameters())
-		{
-			if (parameter.ParameterType != typeof(IReplIoContext))
-			{
-				continue;
-			}
-
-			if (parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0)
-			{
-				continue;
-			}
-
-			return true;
-		}
-
-		return false;
 	}
 
 	private async ValueTask<int> HandleEmptyInvocationAsync(

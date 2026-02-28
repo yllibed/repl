@@ -43,6 +43,9 @@ internal static class ReplSessionIO
 	/// Gets the handler output writer. In protocol passthrough mode this can remain bound to stdout
 	/// while framework output is redirected to stderr.
 	/// </summary>
+	/// <remarks>
+	/// Falls back to <see cref="Output"/>, which itself falls back to <see cref="Console.Out"/>.
+	/// </remarks>
 	public static TextWriter CommandOutput => s_commandOutput.Value ?? Output;
 
 	/// <summary>
@@ -213,6 +216,7 @@ internal static class ReplSessionIO
 
 		EnsureSession(resolvedSessionId);
 		s_output.Value = output;
+		// Default to the active session output for hosted flows unless a separate error writer is supplied.
 		s_error.Value = error ?? output;
 		s_commandOutput.Value = commandOutput ?? output;
 		s_input.Value = input;

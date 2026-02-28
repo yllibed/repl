@@ -74,6 +74,20 @@ public sealed class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies shell completion bridge protocol errors are rendered by framework on stderr in passthrough mode.")]
+	public void When_CompletionBridgeUsageIsInvalid_Then_ErrorIsWrittenToStderr()
+	{
+		var sut = ReplApp.Create();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(
+			() => sut.Run(["completion", "__complete", "--shell", "bash", "--line", "repl ping", "--cursor", "invalid"]));
+
+		output.ExitCode.Should().Be(1);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("usage: completion __complete");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies protocol passthrough keeps explicit exit results silent while preserving the exit code.")]
 	public void When_ProtocolPassthroughReturnsExitWithoutPayload_Then_ExitCodeIsPropagatedWithoutFrameworkOutput()
 	{
