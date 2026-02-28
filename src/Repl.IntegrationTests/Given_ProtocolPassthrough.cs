@@ -30,6 +30,24 @@ public sealed class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies ambiguous prefixes still render the banner when ambiguity occurs before route execution, even with dynamic passthrough routes present.")]
+	public void When_AmbiguousPrefixOverlapsDynamicPassthroughRoute_Then_BannerIsNotSuppressed()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map("mcp {operation}", static (string operation) => Results.Exit(0))
+			.AsProtocolPassthrough();
+		sut.Map("mcp list", () => "list");
+		sut.Map("mcp load", () => "load");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["mcp", "l"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Test banner");
+		output.Text.Should().Contain("Ambiguous command prefix 'l'.");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies IReplIoContext output stays on stdout in CLI protocol passthrough while framework output remains redirected.")]
 	public void When_ProtocolPassthroughHandlerUsesIoContext_Then_OutputIsWrittenToStdOut()
 	{

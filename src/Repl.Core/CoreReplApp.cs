@@ -407,29 +407,27 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
+				var ambiguousExitCode = await TryHandleAmbiguousPrefixAsync(
+						prefixResolution,
+						globalOptions,
+						resolvedGlobalOptions,
+						serviceProvider,
+						cancellationToken)
+					.ConfigureAwait(false);
+				if (ambiguousExitCode is not null) return ambiguousExitCode.Value;
+
 			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions);
 			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedRouteResolution?.Match))
 			{
 				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
 			}
 
-			if (prefixResolution.IsAmbiguous)
-			{
-				var ambiguous = CreateAmbiguousPrefixResult(prefixResolution);
-				_ = await RenderOutputAsync(ambiguous, globalOptions.OutputFormat, cancellationToken)
+				var preExecutionExitCode = await TryHandlePreExecutionAsync(
+						resolvedGlobalOptions,
+						serviceProvider,
+						cancellationToken)
 					.ConfigureAwait(false);
-				return 1;
-			}
-
-			var preExecutionExitCode = await TryHandlePreExecutionAsync(
-					resolvedGlobalOptions,
-					serviceProvider,
-					cancellationToken)
-				.ConfigureAwait(false);
-			if (preExecutionExitCode is not null)
-			{
-				return preExecutionExitCode.Value;
-			}
+				if (preExecutionExitCode is not null) return preExecutionExitCode.Value;
 
 			var resolution = preResolvedRouteResolution
 				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
@@ -456,6 +454,29 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		{
 			_options.Interaction.SetObserver(observer: null);
 		}
+	}
+
+	private async ValueTask<int?> TryHandleAmbiguousPrefixAsync(
+		PrefixResolutionResult prefixResolution,
+		GlobalInvocationOptions globalOptions,
+		GlobalInvocationOptions resolvedGlobalOptions,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		if (!prefixResolution.IsAmbiguous)
+		{
+			return null;
+		}
+
+		if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedMatch: null))
+		{
+			await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
+		}
+
+		var ambiguous = CreateAmbiguousPrefixResult(prefixResolution);
+		_ = await RenderOutputAsync(ambiguous, globalOptions.OutputFormat, cancellationToken)
+			.ConfigureAwait(false);
+		return 1;
 	}
 
 	private static bool ShouldSuppressGlobalBanner(
