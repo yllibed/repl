@@ -74,6 +74,21 @@ public sealed class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies framework-rendered handler return values are emitted on stderr in protocol passthrough mode.")]
+	public void When_ProtocolPassthroughHandlerReturnsPlainValue_Then_ValueIsRenderedToStderr()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp info", () => "server-version-1.0")
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "info"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("server-version-1.0");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies shell completion bridge protocol errors are rendered by framework on stderr in passthrough mode.")]
 	public void When_CompletionBridgeUsageIsInvalid_Then_ErrorIsWrittenToStderr()
 	{
@@ -99,6 +114,37 @@ public sealed class Given_ProtocolPassthrough
 		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start"]));
 
 		output.ExitCode.Should().Be(7);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --json still applies to framework-rendered payloads and is emitted on stderr in passthrough mode.")]
+	public void When_ProtocolPassthroughReturnsPayloadWithJsonFormat_Then_PayloadIsRenderedToStderrAsJson()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp status", () => new Dictionary<string, object>(StringComparer.Ordinal) { ["status"] = "ready" })
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "status", "--json"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("\"status\"");
+		output.StdErr.Should().Contain("ready");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --json remains inert for Results.Exit without payload in passthrough mode.")]
+	public void When_ProtocolPassthroughReturnsExitWithoutPayloadWithJsonFormat_Then_NoFrameworkOutputIsRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp start", () => Results.Exit(0))
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start", "--json"]));
+
+		output.ExitCode.Should().Be(0);
 		output.StdOut.Should().BeNullOrWhiteSpace();
 		output.StdErr.Should().BeNullOrWhiteSpace();
 	}
@@ -166,6 +212,32 @@ public sealed class Given_ProtocolPassthrough
 
 		exitCode.Should().Be(0);
 		output.ToString().Should().Contain("zmodem-start");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies hosted protocol passthrough reports IsHostedSession=true through IReplIoContext.")]
+	public void When_ProtocolPassthroughRunsInHostedSessionWithIoContext_Then_IsHostedSessionIsTrue()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+				"transfer check",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine(io.IsHostedSession ? "hosted" : "local");
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = sut.Run(
+			["transfer", "check"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(0);
+		output.ToString().Should().Contain("hosted");
 	}
 
 	[TestMethod]

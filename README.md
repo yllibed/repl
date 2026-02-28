@@ -185,9 +185,10 @@ app.Context("mcp", mcp =>
 In passthrough mode, repl keeps `stdout` available for protocol messages and sends framework diagnostics to `stderr`.
 If the handler requests `IReplIoContext`, write protocol payloads through `io.Output` (stdout in local CLI passthrough).
 Requesting `IReplIoContext` is optional for local CLI handlers that already use `Console.*` directly, but recommended for explicit stream control, better testability, and hosted-session support.
+Framework-rendered handler return payloads (if any) are also written to `stderr` in passthrough mode, so protocol handlers should usually return `Results.Exit(code)` after writing protocol output.
 This is a strong fit for MCP-style stdio servers where the protocol stream must stay pristine.
 Typical shape is `mytool mcp start` in passthrough mode, while `mytool start` stays a normal CLI command.
-It also maps well to DAP/CGI-style stdio flows; socket-first variants (for example FastCGI/FastAGI) usually do not require passthrough.
+It also maps well to DAP/CGI-style stdio flows; socket-first variants (for example FastCGI) usually do not require passthrough.
 Use this mode directly in local CLI/console runs. For hosted terminal sessions (`IReplHost` / remote transports), handlers should request `IReplIoContext`; console-bound toolings that use `Console.*` directly remain CLI-only.
 
 One-shot CLI:

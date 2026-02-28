@@ -78,11 +78,11 @@ Common protocol families that fit this mode:
 - MCP over stdio
 - LSP / JSON-RPC over stdio
 - DAP over stdio
-- CGI-style process protocols (stdin/stdout contract), including AGI-style integrations
+- CGI-style process protocols (stdin/stdout contract)
 
 Not typical passthrough targets:
 
-- socket-first variants such as FastCGI/FastAGI (their protocol stream is on TCP, not app `stdout`)
+- socket-first variants such as FastCGI (their protocol stream is on TCP, not app `stdout`)
 
 Execution scope note:
 
@@ -99,5 +99,11 @@ In protocol passthrough mode:
 
 - global and command banners are suppressed
 - repl/framework diagnostics are written to `stderr`
+- framework-rendered handler return payloads (if any) are also written to `stderr`
 - `stdout` remains reserved for protocol payloads
 - interactive follow-up is skipped after command execution
+
+Practical guidance:
+
+- for protocol commands, prefer writing protocol bytes/messages directly to `io.Output` (or `Console.Out` when SDK-bound)
+- return `Results.Exit(code)` to keep framework rendering silent
