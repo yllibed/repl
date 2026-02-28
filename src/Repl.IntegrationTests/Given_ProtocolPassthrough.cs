@@ -30,6 +30,31 @@ public sealed class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies IReplIoContext output stays on stdout in CLI protocol passthrough while framework output remains redirected.")]
+	public void When_ProtocolPassthroughHandlerUsesIoContext_Then_OutputIsWrittenToStdOut()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map(
+				"mcp start",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine("rpc-ready");
+					return Results.Exit(0);
+				})
+			.WithBanner("Command banner")
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().Contain("rpc-ready");
+		output.StdOut.Should().NotContain("Test banner");
+		output.StdOut.Should().NotContain("Command banner");
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies protocol passthrough routes repl diagnostics to stderr while keeping stdout clean.")]
 	public void When_ProtocolPassthroughHandlerFails_Then_ReplDiagnosticsAreWrittenToStderr()
 	{

@@ -4,9 +4,9 @@ internal sealed class LiveReplIoContext : IReplIoContext
 {
 	public TextReader Input => ReplSessionIO.Input;
 
-	public TextWriter Output => ReplSessionIO.Output;
+	public TextWriter Output => ReplSessionIO.CommandOutput;
 
-	public TextWriter Error => ReplSessionIO.IsSessionActive ? ReplSessionIO.Output : Console.Error;
+	public TextWriter Error => ReplSessionIO.Error;
 
 	public bool IsHostedSession => ReplSessionIO.IsSessionActive;
 

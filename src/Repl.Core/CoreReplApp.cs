@@ -458,11 +458,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	private bool ShouldSuppressGlobalBanner(GlobalInvocationOptions globalOptions)
 	{
-		if (_shellCompletionRuntime.IsBridgeInvocation(globalOptions.RemainingTokens))
-		{
-			return true;
-		}
-
 		if (globalOptions.HelpRequested || globalOptions.RemainingTokens.Count == 0)
 		{
 			return false;
@@ -566,7 +561,9 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		using var protocolScope = ReplSessionIO.SetSession(
 			Console.Error,
 			Console.In,
-			ansiMode: AnsiMode.Never);
+			ansiMode: AnsiMode.Never,
+			commandOutput: Console.Out,
+			error: Console.Error);
 		return await ExecuteMatchedCommandAsync(
 				match,
 				globalOptions,

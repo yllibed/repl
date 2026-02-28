@@ -89,6 +89,12 @@ Execution scope note:
 - protocol passthrough works out of the box for **local CLI/console execution**
 - hosted terminal sessions (`IReplHost` / remote transports) require handlers to request `IReplIoContext`; console-bound toolings that use `Console.*` directly remain CLI-only
 
+Why `IReplIoContext` is optional:
+
+- many protocol SDKs (for example some MCP/JSON-RPC stacks) read/write `Console.*` directly; these handlers can still work in local CLI passthrough without extra plumbing
+- requesting `IReplIoContext` is the recommended low-level path when you want explicit stream control, easier testing, or hosted-session support
+- in local CLI passthrough, `io.Output` is the protocol stream (`stdout`), while framework diagnostics remain on `stderr`
+
 In protocol passthrough mode:
 
 - global and command banners are suppressed

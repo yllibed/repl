@@ -13,6 +13,12 @@ completion __complete --shell <bash|powershell|zsh|fish|nu> --line <input> --cur
 The shell passes current line + cursor, and Repl returns candidates on `stdout` (one per line).
 `completion __complete` is mapped in the regular command graph through the shell-completion module (CLI channel only).
 The bridge route is marked as protocol passthrough, so repl suppresses banners and routes framework diagnostics to `stderr`.
+The bridge handler writes candidates through `IReplIoContext.Output`, which remains bound to the protocol stream (`stdout`) in local CLI passthrough.
+
+`IReplIoContext` is optional in general protocol commands:
+
+- optional for local CLI commands that already use `Console.*` directly
+- recommended when handlers need explicit stream injection, deterministic tests, or hosted-session compatibility
 
 The module exposes a real `completion` context scope:
 

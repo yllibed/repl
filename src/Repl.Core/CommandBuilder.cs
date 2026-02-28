@@ -154,6 +154,8 @@ public sealed class CommandBuilder
 	/// <summary>
 	/// Marks this command as protocol passthrough.
 	/// In this mode, repl diagnostics are routed to stderr and interactive stdin reads are skipped.
+	/// When handlers request <see cref="IReplIoContext"/>, <see cref="IReplIoContext.Output"/> remains the protocol stream
+	/// (stdout in local CLI passthrough), while framework output stays on stderr.
 	/// For hosted sessions, handlers should request <see cref="IReplIoContext"/> to access transport streams explicitly.
 	/// </summary>
 	/// <returns>The same builder instance.</returns>

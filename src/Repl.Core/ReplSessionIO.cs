@@ -22,6 +22,8 @@ internal static class ReplSessionIO
 		DateTimeOffset LastUpdatedUtc);
 
 	private static readonly AsyncLocal<TextWriter?> s_output = new();
+	private static readonly AsyncLocal<TextWriter?> s_error = new();
+	private static readonly AsyncLocal<TextWriter?> s_commandOutput = new();
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
@@ -31,6 +33,17 @@ internal static class ReplSessionIO
 	/// Gets the current session output writer, or <see cref="Console.Out"/> when no session is active.
 	/// </summary>
 	public static TextWriter Output => s_output.Value ?? Console.Out;
+
+	/// <summary>
+	/// Gets the current session error writer, or <see cref="Console.Error"/> when no session is active.
+	/// </summary>
+	public static TextWriter Error => s_error.Value ?? Console.Error;
+
+	/// <summary>
+	/// Gets the handler output writer. In protocol passthrough mode this can remain bound to stdout
+	/// while framework output is redirected to stderr.
+	/// </summary>
+	public static TextWriter CommandOutput => s_commandOutput.Value ?? Output;
 
 	/// <summary>
 	/// Gets the current session input reader, or <see cref="Console.In"/> when no session is active.
@@ -180,12 +193,16 @@ internal static class ReplSessionIO
 		TextWriter output,
 		TextReader input,
 		AnsiMode ansiMode = AnsiMode.Auto,
-		string? sessionId = null)
+		string? sessionId = null,
+		TextWriter? commandOutput = null,
+		TextWriter? error = null)
 	{
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(input);
 
 		var previousOutput = s_output.Value;
+		var previousError = s_error.Value;
+		var previousCommandOutput = s_commandOutput.Value;
 		var previousInput = s_input.Value;
 		var previousKeyReader = s_keyReader.Value;
 		var previousSessionId = s_sessionId.Value;
@@ -196,6 +213,8 @@ internal static class ReplSessionIO
 
 		EnsureSession(resolvedSessionId);
 		s_output.Value = output;
+		s_error.Value = error ?? output;
+		s_commandOutput.Value = commandOutput ?? output;
 		s_input.Value = input;
 		s_sessionId.Value = resolvedSessionId;
 
@@ -222,6 +241,8 @@ internal static class ReplSessionIO
 
 		return new SessionScope(
 			previousOutput,
+			previousError,
+			previousCommandOutput,
 			previousInput,
 			previousKeyReader,
 			previousSessionId,
@@ -293,6 +314,8 @@ internal static class ReplSessionIO
 
 	private sealed class SessionScope(
 		TextWriter? previousOutput,
+		TextWriter? previousError,
+		TextWriter? previousCommandOutput,
 		TextReader? previousInput,
 		IReplKeyReader? previousKeyReader,
 		string? previousSessionId,
@@ -302,6 +325,8 @@ internal static class ReplSessionIO
 		public void Dispose()
 		{
 			s_output.Value = previousOutput;
+			s_error.Value = previousError;
+			s_commandOutput.Value = previousCommandOutput;
 			s_input.Value = previousInput;
 			s_keyReader.Value = previousKeyReader;
 			s_sessionId.Value = previousSessionId;
