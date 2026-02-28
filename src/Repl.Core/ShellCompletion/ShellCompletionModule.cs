@@ -16,6 +16,7 @@ internal sealed class ShellCompletionModule(IShellCompletionRuntime runtime) : I
 				ShellCompletionConstants.ProtocolSubcommandName,
 				(string? shell, string? line, string? cursor) => runtime.HandleBridgeRoute(shell, line, cursor))
 				.WithDescription("Internal completion bridge used by shell integrations.")
+				.AsProtocolPassthrough()
 				.Hidden();
 			completion.Map(
 				"install",

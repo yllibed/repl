@@ -12,6 +12,7 @@ completion __complete --shell <bash|powershell|zsh|fish|nu> --line <input> --cur
 
 The shell passes current line + cursor, and Repl returns candidates on `stdout` (one per line).
 `completion __complete` is mapped in the regular command graph through the shell-completion module (CLI channel only).
+The bridge route is marked as protocol passthrough, so repl suppresses banners and routes framework diagnostics to `stderr`.
 
 The module exposes a real `completion` context scope:
 

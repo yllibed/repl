@@ -50,6 +50,11 @@ public sealed class CommandBuilder
 	public IReadOnlyDictionary<string, CompletionDelegate> Completions => _completions;
 
 	/// <summary>
+	/// Gets a value indicating whether this command reserves stdin/stdout for a protocol handler.
+	/// </summary>
+	public bool IsProtocolPassthrough { get; private set; }
+
+	/// <summary>
 	/// Gets the banner delegate rendered before command execution.
 	/// </summary>
 	public Delegate? Banner { get; private set; }
@@ -143,6 +148,18 @@ public sealed class CommandBuilder
 	public CommandBuilder Hidden(bool isHidden = true)
 	{
 		IsHidden = isHidden;
+		return this;
+	}
+
+	/// <summary>
+	/// Marks this command as protocol passthrough.
+	/// In this mode, repl diagnostics are routed to stderr and interactive stdin reads are skipped.
+	/// For hosted sessions, handlers should request <see cref="IReplIoContext"/> to access transport streams explicitly.
+	/// </summary>
+	/// <returns>The same builder instance.</returns>
+	public CommandBuilder AsProtocolPassthrough()
+	{
+		IsProtocolPassthrough = true;
 		return this;
 	}
 }

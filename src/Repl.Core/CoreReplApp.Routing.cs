@@ -294,6 +294,11 @@ public sealed partial class CoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		if (command.IsProtocolPassthrough)
+		{
+			return;
+		}
+
 		if (command.Banner is { } banner && ShouldRenderBanner(outputFormat))
 		{
 			await InvokeBannerAsync(banner, serviceProvider, cancellationToken).ConfigureAwait(false);

@@ -405,11 +405,13 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output);
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
-			if (!_shellCompletionRuntime.IsBridgeInvocation(globalOptions.RemainingTokens))
-			{
-				await TryRenderBannerAsync(globalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
-			}
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
+			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
+			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions))
+			{
+				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
+			}
+
 			if (prefixResolution.IsAmbiguous)
 			{
 				var ambiguous = CreateAmbiguousPrefixResult(prefixResolution);
@@ -418,7 +420,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				return 1;
 			}
 
-			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
 			var preExecutionExitCode = await TryHandlePreExecutionAsync(
 					resolvedGlobalOptions,
 					serviceProvider,
@@ -455,6 +456,22 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		}
 	}
 
+	private bool ShouldSuppressGlobalBanner(GlobalInvocationOptions globalOptions)
+	{
+		if (_shellCompletionRuntime.IsBridgeInvocation(globalOptions.RemainingTokens))
+		{
+			return true;
+		}
+
+		if (globalOptions.HelpRequested || globalOptions.RemainingTokens.Count == 0)
+		{
+			return false;
+		}
+
+		var match = Resolve(globalOptions.RemainingTokens);
+		return match?.Route.Command.IsProtocolPassthrough == true;
+	}
+
 	private async ValueTask<int?> TryHandlePreExecutionAsync(
 		GlobalInvocationOptions options,
 		IServiceProvider serviceProvider,
@@ -489,13 +506,35 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		var exitCode = await ExecuteMatchedCommandAsync(
-				match,
-				globalOptions,
-				serviceProvider,
-				scopeTokens: null,
-				cancellationToken)
-			.ConfigureAwait(false);
+		if (match.Route.Command.IsProtocolPassthrough
+			&& ReplSessionIO.IsSessionActive
+			&& !SupportsHostedProtocolPassthrough(match.Route.Command.Handler))
+		{
+			_ = await RenderOutputAsync(
+					Results.Error(
+						"protocol_passthrough_hosted_not_supported",
+						$"Command '{match.Route.Template.Template}' is protocol passthrough and requires a handler parameter of type IReplIoContext in hosted sessions."),
+					globalOptions.OutputFormat,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return 1;
+		}
+
+		var exitCode = match.Route.Command.IsProtocolPassthrough
+			? await ExecuteProtocolPassthroughCommandAsync(match, globalOptions, serviceProvider, cancellationToken)
+				.ConfigureAwait(false)
+			: await ExecuteMatchedCommandAsync(
+					match,
+					globalOptions,
+					serviceProvider,
+					scopeTokens: null,
+					cancellationToken)
+				.ConfigureAwait(false);
+		if (match.Route.Command.IsProtocolPassthrough)
+		{
+			return exitCode;
+		}
+
 		if (exitCode != 0 || !ShouldEnterInteractive(globalOptions, allowAuto: false))
 		{
 			return exitCode;
@@ -505,6 +544,56 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
 		var interactiveScope = GetDeepestContextScopePath(matchedPathTokens);
 		return await RunInteractiveSessionAsync(interactiveScope, serviceProvider, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<int> ExecuteProtocolPassthroughCommandAsync(
+		RouteMatch match,
+		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		if (ReplSessionIO.IsSessionActive)
+		{
+			return await ExecuteMatchedCommandAsync(
+					match,
+					globalOptions,
+					serviceProvider,
+					scopeTokens: null,
+					cancellationToken)
+				.ConfigureAwait(false);
+		}
+
+		using var protocolScope = ReplSessionIO.SetSession(
+			Console.Error,
+			Console.In,
+			ansiMode: AnsiMode.Never);
+		return await ExecuteMatchedCommandAsync(
+				match,
+				globalOptions,
+				serviceProvider,
+				scopeTokens: null,
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	private static bool SupportsHostedProtocolPassthrough(Delegate handler)
+	{
+		foreach (var parameter in handler.Method.GetParameters())
+		{
+			if (parameter.ParameterType != typeof(IReplIoContext))
+			{
+				continue;
+			}
+
+			if (parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0)
+			{
+				continue;
+			}
+
+			return true;
+		}
+
+		return false;
 	}
 
 	private async ValueTask<int> HandleEmptyInvocationAsync(
@@ -1183,6 +1272,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			[typeof(IHistoryProvider)] = _options.Interactive.HistoryProvider ?? new InMemoryHistoryProvider(),
 			[typeof(IReplKeyReader)] = new ConsoleKeyReader(),
 			[typeof(IReplSessionInfo)] = new LiveSessionInfo(),
+			[typeof(IReplIoContext)] = new LiveReplIoContext(),
 			[typeof(TimeProvider)] = TimeProvider.System,
 		};
 		return new DefaultServiceProvider(defaults);

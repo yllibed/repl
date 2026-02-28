@@ -21,6 +21,29 @@ internal static class ConsoleCaptureHelper
 		}
 	}
 
+	public static (int ExitCode, string StdOut, string StdErr) CaptureStdOutAndErr(Func<int> action)
+	{
+		ArgumentNullException.ThrowIfNull(action);
+
+		var previousOut = Console.Out;
+		var previousErr = Console.Error;
+		using var stdout = new StringWriter();
+		using var stderr = new StringWriter();
+		Console.SetOut(stdout);
+		Console.SetError(stderr);
+
+		try
+		{
+			var exitCode = action();
+			return (exitCode, stdout.ToString(), stderr.ToString());
+		}
+		finally
+		{
+			Console.SetOut(previousOut);
+			Console.SetError(previousErr);
+		}
+	}
+
 	public static (int ExitCode, string Text) CaptureWithInput(string input, Func<int> action)
 	{
 		ArgumentNullException.ThrowIfNull(input);
@@ -41,6 +64,36 @@ internal static class ConsoleCaptureHelper
 		finally
 		{
 			Console.SetOut(previousOut);
+			Console.SetIn(previousIn);
+		}
+	}
+
+	public static (int ExitCode, string StdOut, string StdErr) CaptureWithInputStdOutAndErr(
+		string input,
+		Func<int> action)
+	{
+		ArgumentNullException.ThrowIfNull(input);
+		ArgumentNullException.ThrowIfNull(action);
+
+		var previousOut = Console.Out;
+		var previousErr = Console.Error;
+		var previousIn = Console.In;
+		using var stdout = new StringWriter();
+		using var stderr = new StringWriter();
+		using var reader = new StringReader(input);
+		Console.SetOut(stdout);
+		Console.SetError(stderr);
+		Console.SetIn(reader);
+
+		try
+		{
+			var exitCode = action();
+			return (exitCode, stdout.ToString(), stderr.ToString());
+		}
+		finally
+		{
+			Console.SetOut(previousOut);
+			Console.SetError(previousErr);
 			Console.SetIn(previousIn);
 		}
 	}

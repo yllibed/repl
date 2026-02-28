@@ -185,6 +185,7 @@ public sealed partial class CoreReplApp
 		|| parameterType == typeof(CoreReplApp)
 		|| parameterType == typeof(IReplSessionState)
 		|| parameterType == typeof(IReplInteractionChannel)
+		|| parameterType == typeof(IReplIoContext)
 		|| parameterType == typeof(IReplKeyReader);
 
 	private static bool IsRequiredParameter(ParameterInfo parameter)
