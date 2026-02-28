@@ -22,8 +22,11 @@ internal static class ReplSessionIO
 		DateTimeOffset LastUpdatedUtc);
 
 	private static readonly AsyncLocal<TextWriter?> s_output = new();
+	private static readonly AsyncLocal<TextWriter?> s_error = new();
+	private static readonly AsyncLocal<TextWriter?> s_commandOutput = new();
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
+	private static readonly AsyncLocal<bool> s_isHostedSession = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
 
@@ -31,6 +34,20 @@ internal static class ReplSessionIO
 	/// Gets the current session output writer, or <see cref="Console.Out"/> when no session is active.
 	/// </summary>
 	public static TextWriter Output => s_output.Value ?? Console.Out;
+
+	/// <summary>
+	/// Gets the current session error writer, or <see cref="Console.Error"/> when no session is active.
+	/// </summary>
+	public static TextWriter Error => s_error.Value ?? Console.Error;
+
+	/// <summary>
+	/// Gets the handler output writer. In protocol passthrough mode this can remain bound to stdout
+	/// while framework output is redirected to stderr.
+	/// </summary>
+	/// <remarks>
+	/// Falls back to <see cref="Output"/>, which itself falls back to <see cref="Console.Out"/>.
+	/// </remarks>
+	public static TextWriter CommandOutput => s_commandOutput.Value ?? Output;
 
 	/// <summary>
 	/// Gets the current session input reader, or <see cref="Console.In"/> when no session is active.
@@ -41,6 +58,11 @@ internal static class ReplSessionIO
 	/// Gets a value indicating whether a hosted session is active on the current async context.
 	/// </summary>
 	public static bool IsSessionActive => s_output.Value is not null && !string.IsNullOrWhiteSpace(s_sessionId.Value);
+
+	/// <summary>
+	/// Gets a value indicating whether execution is currently running in a real hosted transport session.
+	/// </summary>
+	public static bool IsHostedSession => s_isHostedSession.Value;
 
 	/// <summary>
 	/// Gets the current hosted session identifier, when available.
@@ -180,14 +202,20 @@ internal static class ReplSessionIO
 		TextWriter output,
 		TextReader input,
 		AnsiMode ansiMode = AnsiMode.Auto,
-		string? sessionId = null)
+		string? sessionId = null,
+		TextWriter? commandOutput = null,
+		TextWriter? error = null,
+		bool isHostedSession = true)
 	{
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(input);
 
 		var previousOutput = s_output.Value;
+		var previousError = s_error.Value;
+		var previousCommandOutput = s_commandOutput.Value;
 		var previousInput = s_input.Value;
 		var previousKeyReader = s_keyReader.Value;
+		var previousIsHostedSession = s_isHostedSession.Value;
 		var previousSessionId = s_sessionId.Value;
 
 		var resolvedSessionId = string.IsNullOrWhiteSpace(sessionId)
@@ -196,7 +224,11 @@ internal static class ReplSessionIO
 
 		EnsureSession(resolvedSessionId);
 		s_output.Value = output;
+		// Default to the active session output for hosted flows unless a separate error writer is supplied.
+		s_error.Value = error ?? output;
+		s_commandOutput.Value = commandOutput ?? output;
 		s_input.Value = input;
+		s_isHostedSession.Value = isHostedSession;
 		s_sessionId.Value = resolvedSessionId;
 
 		if (ansiMode == AnsiMode.Always)
@@ -222,8 +254,11 @@ internal static class ReplSessionIO
 
 		return new SessionScope(
 			previousOutput,
+			previousError,
+			previousCommandOutput,
 			previousInput,
 			previousKeyReader,
+			previousIsHostedSession,
 			previousSessionId,
 			removeSessionOnDispose: string.IsNullOrWhiteSpace(sessionId),
 			sessionIdToRemove: resolvedSessionId);
@@ -293,8 +328,11 @@ internal static class ReplSessionIO
 
 	private sealed class SessionScope(
 		TextWriter? previousOutput,
+		TextWriter? previousError,
+		TextWriter? previousCommandOutput,
 		TextReader? previousInput,
 		IReplKeyReader? previousKeyReader,
+		bool previousIsHostedSession,
 		string? previousSessionId,
 		bool removeSessionOnDispose,
 		string sessionIdToRemove) : IDisposable
@@ -302,8 +340,11 @@ internal static class ReplSessionIO
 		public void Dispose()
 		{
 			s_output.Value = previousOutput;
+			s_error.Value = previousError;
+			s_commandOutput.Value = previousCommandOutput;
 			s_input.Value = previousInput;
 			s_keyReader.Value = previousKeyReader;
+			s_isHostedSession.Value = previousIsHostedSession;
 			s_sessionId.Value = previousSessionId;
 
 			if (removeSessionOnDispose)

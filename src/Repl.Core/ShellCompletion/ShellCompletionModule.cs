@@ -14,8 +14,24 @@ internal sealed class ShellCompletionModule(IShellCompletionRuntime runtime) : I
 		{
 			completion.Map(
 				ShellCompletionConstants.ProtocolSubcommandName,
-				(string? shell, string? line, string? cursor) => runtime.HandleBridgeRoute(shell, line, cursor))
+				async (string? shell, string? line, string? cursor, IReplIoContext io) =>
+				{
+					var result = runtime.HandleBridgeRoute(shell, line, cursor);
+					if (result is not string payload)
+					{
+						// Error/validation results are rendered by the framework (stderr in passthrough mode).
+						return result;
+					}
+
+					if (!string.IsNullOrEmpty(payload))
+					{
+						await io.Output.WriteLineAsync(payload).ConfigureAwait(false);
+					}
+
+					return Results.Exit(0);
+				})
 				.WithDescription("Internal completion bridge used by shell integrations.")
+				.AsProtocolPassthrough()
 				.Hidden();
 			completion.Map(
 				"install",

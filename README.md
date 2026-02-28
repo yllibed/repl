@@ -168,6 +168,29 @@ app.Context("client", client =>
 return app.Run(args);
 ```
 
+For stdio protocol handlers (MCP/LSP/JSON-RPC, DAP, CGI-style gateways), mark the route as protocol passthrough:
+
+```csharp
+app.Context("mcp", mcp =>
+{
+    mcp.Map("start", async (IMcpServer server, CancellationToken ct) =>
+    {
+        var exitCode = await server.RunAsync(ct);
+        return Results.Exit(exitCode);
+    })
+    .AsProtocolPassthrough();
+});
+```
+
+In passthrough mode, repl keeps `stdout` available for protocol messages and sends framework diagnostics to `stderr`.
+If the handler requests `IReplIoContext`, write protocol payloads through `io.Output` (stdout in local CLI passthrough).
+Requesting `IReplIoContext` is optional for local CLI handlers that already use `Console.*` directly, but recommended for explicit stream control, better testability, and hosted-session support.
+Framework-rendered handler return payloads (if any) are also written to `stderr` in passthrough mode, so protocol handlers should usually return `Results.Exit(code)` after writing protocol output.
+This is a strong fit for MCP-style stdio servers where the protocol stream must stay pristine.
+Typical shape is `mytool mcp start` in passthrough mode, while `mytool start` stays a normal CLI command.
+It also maps well to DAP/CGI-style stdio flows; socket-first variants (for example FastCGI) usually do not require passthrough.
+Use this mode directly in local CLI/console runs. For hosted terminal sessions (`IReplHost` / remote transports), handlers should request `IReplIoContext`; console-bound toolings that use `Console.*` directly remain CLI-only.
+
 One-shot CLI:
 
 ```text
@@ -213,6 +236,7 @@ ws-7c650a64   websocket  [::1]:60288  301x31   xterm-256color  1m 34s     1s
 - **Output pipeline** with transformers and aliases  
   (`--output:<format>`, `--json`, `--yaml`, `--markdown`, …)
 - **Typed result model** (`Results.Ok/Error/Validation/NotFound/Cancelled`, etc.)
+- **Protocol passthrough mode** for stdio transports (`AsProtocolPassthrough()`), keeping `stdout` reserved for protocol payloads
 - **Typed interactions**: prompts, progress, status, timeouts, cancellation
 - **Session model + metadata** (transport, terminal identity, window size, ANSI capabilities, etc.)
 - **Hosting primitives** for running sessions over streams, sockets, or custom carriers
@@ -254,6 +278,7 @@ Package details:
 ## Getting started
 
 - Architecture blueprint: [`docs/architecture.md`](docs/architecture.md)
+- Command reference: [`docs/commands.md`](docs/commands.md)
 - Terminal/session metadata: [`docs/terminal-metadata.md`](docs/terminal-metadata.md)
 - Testing toolkit: [`docs/testing-toolkit.md`](docs/testing-toolkit.md)
 - Conditional module presence: [`docs/module-presence.md`](docs/module-presence.md)

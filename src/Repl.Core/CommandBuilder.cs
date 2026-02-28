@@ -17,6 +17,7 @@ public sealed class CommandBuilder
 	{
 		Route = route;
 		Handler = handler;
+		SupportsHostedProtocolPassthrough = ComputeSupportsHostedProtocolPassthrough(handler);
 	}
 
 	/// <summary>
@@ -48,6 +49,16 @@ public sealed class CommandBuilder
 	/// Gets parameter completion providers keyed by target name.
 	/// </summary>
 	public IReadOnlyDictionary<string, CompletionDelegate> Completions => _completions;
+
+	/// <summary>
+	/// Gets a value indicating whether this command reserves stdin/stdout for a protocol handler.
+	/// </summary>
+	public bool IsProtocolPassthrough { get; private set; }
+
+	/// <summary>
+	/// Gets a value indicating whether the handler can run protocol passthrough in hosted sessions.
+	/// </summary>
+	internal bool SupportsHostedProtocolPassthrough { get; }
 
 	/// <summary>
 	/// Gets the banner delegate rendered before command execution.
@@ -144,5 +155,40 @@ public sealed class CommandBuilder
 	{
 		IsHidden = isHidden;
 		return this;
+	}
+
+	/// <summary>
+	/// Marks this command as protocol passthrough.
+	/// In this mode, repl diagnostics are routed to stderr and interactive stdin reads are skipped.
+	/// When handlers request <see cref="IReplIoContext"/>, <see cref="IReplIoContext.Output"/> remains the protocol stream
+	/// (stdout in local CLI passthrough), while framework output stays on stderr.
+	/// For hosted sessions, handlers should request <see cref="IReplIoContext"/> to access transport streams explicitly.
+	/// </summary>
+	/// <returns>The same builder instance.</returns>
+	public CommandBuilder AsProtocolPassthrough()
+	{
+		IsProtocolPassthrough = true;
+		return this;
+	}
+
+	private static bool ComputeSupportsHostedProtocolPassthrough(Delegate handler)
+	{
+		foreach (var parameter in handler.Method.GetParameters())
+		{
+			if (parameter.ParameterType != typeof(IReplIoContext))
+			{
+				continue;
+			}
+
+			// [FromContext] binds route/context values and is not stream injection.
+			if (parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0)
+			{
+				continue;
+			}
+
+			return true;
+		}
+
+		return false;
 	}
 }

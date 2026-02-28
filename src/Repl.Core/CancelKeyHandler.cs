@@ -59,8 +59,8 @@ internal sealed class CancelKeyHandler : IDisposable
 				e.Cancel = true;
 				_commandCts.Cancel();
 				_lastCancelPress = now;
-				Console.Error.WriteLine();
-				Console.Error.WriteLine("Press Ctrl+C again to exit.");
+				ReplSessionIO.Error.WriteLine();
+				ReplSessionIO.Error.WriteLine("Press Ctrl+C again to exit.");
 				return;
 			}
 

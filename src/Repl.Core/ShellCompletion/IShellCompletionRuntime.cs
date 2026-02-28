@@ -22,6 +22,4 @@ internal interface IShellCompletionRuntime
 	ValueTask HandleStartupAsync(
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken);
-
-	bool IsBridgeInvocation(IReadOnlyList<string> tokens);
 }

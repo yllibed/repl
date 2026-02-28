@@ -1,0 +1,340 @@
+namespace Repl.IntegrationTests;
+
+[TestClass]
+[DoNotParallelize]
+public sealed class Given_ProtocolPassthrough
+{
+	[TestMethod]
+	[Description("Regression guard: verifies protocol passthrough suppresses banners so stdout only contains handler protocol output.")]
+	public void When_CommandIsProtocolPassthrough_Then_GlobalAndCommandBannersAreSuppressed()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map(
+				"mcp start",
+				() =>
+				{
+					Console.Out.WriteLine("rpc-ready");
+					return Results.Exit(0);
+				})
+			.WithBanner("Command banner")
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().Contain("rpc-ready");
+		output.StdOut.Should().NotContain("Test banner");
+		output.StdOut.Should().NotContain("Command banner");
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies ambiguous prefixes still render the banner when ambiguity occurs before route execution, even with dynamic passthrough routes present.")]
+	public void When_AmbiguousPrefixOverlapsDynamicPassthroughRoute_Then_BannerIsNotSuppressed()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map("mcp {operation}", static (string operation) => Results.Exit(0))
+			.AsProtocolPassthrough();
+		sut.Map("mcp list", () => "list");
+		sut.Map("mcp load", () => "load");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["mcp", "l"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Test banner");
+		output.Text.Should().Contain("Ambiguous command prefix 'l'.");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies IReplIoContext output stays on stdout in CLI protocol passthrough while framework output remains redirected.")]
+	public void When_ProtocolPassthroughHandlerUsesIoContext_Then_OutputIsWrittenToStdOut()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map(
+				"mcp start",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine("rpc-ready");
+					return Results.Exit(0);
+				})
+			.WithBanner("Command banner")
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().Contain("rpc-ready");
+		output.StdOut.Should().NotContain("Test banner");
+		output.StdOut.Should().NotContain("Command banner");
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies protocol passthrough routes repl diagnostics to stderr while keeping stdout clean.")]
+	public void When_ProtocolPassthroughHandlerFails_Then_ReplDiagnosticsAreWrittenToStderr()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map(
+				"mcp start",
+				static string () => throw new InvalidOperationException("invalid start"))
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start"]));
+
+		output.ExitCode.Should().Be(1);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("Validation: invalid start");
+		output.StdErr.Should().NotContain("Test banner");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies framework-rendered handler return values are emitted on stderr in protocol passthrough mode.")]
+	public void When_ProtocolPassthroughHandlerReturnsPlainValue_Then_ValueIsRenderedToStderr()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp info", () => "server-version-1.0")
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "info"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("server-version-1.0");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies shell completion bridge protocol errors are rendered by framework on stderr in passthrough mode.")]
+	public void When_CompletionBridgeUsageIsInvalid_Then_ErrorIsWrittenToStderr()
+	{
+		var sut = ReplApp.Create();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(
+			() => sut.Run(["completion", "__complete", "--shell", "bash", "--line", "repl ping", "--cursor", "invalid"]));
+
+		output.ExitCode.Should().Be(1);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("usage: completion __complete");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies protocol passthrough keeps explicit exit results silent while preserving the exit code.")]
+	public void When_ProtocolPassthroughReturnsExitWithoutPayload_Then_ExitCodeIsPropagatedWithoutFrameworkOutput()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map("mcp start", () => Results.Exit(7))
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start"]));
+
+		output.ExitCode.Should().Be(7);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --json still applies to framework-rendered payloads and is emitted on stderr in passthrough mode.")]
+	public void When_ProtocolPassthroughReturnsPayloadWithJsonFormat_Then_PayloadIsRenderedToStderrAsJson()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp status", () => new Dictionary<string, object>(StringComparer.Ordinal) { ["status"] = "ready" })
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "status", "--json"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("\"status\"");
+		output.StdErr.Should().Contain("ready");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --json remains inert for Results.Exit without payload in passthrough mode.")]
+	public void When_ProtocolPassthroughReturnsExitWithoutPayloadWithJsonFormat_Then_NoFrameworkOutputIsRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp start", () => Results.Exit(0))
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start", "--json"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies protocol passthrough ignores interactive follow-up so stdin remains available to the handler lifecycle.")]
+	public void When_ProtocolPassthroughIsInvokedWithInteractiveFlag_Then_InteractiveLoopIsNotStarted()
+	{
+		var sut = ReplApp.Create()
+			.WithDescription("Test banner");
+		sut.Map("mcp start", () => Results.Exit(0))
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureWithInputStdOutAndErr(
+			"exit\n",
+			() => sut.Run(["mcp", "start", "--interactive"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies protocol passthrough fails fast in hosted sessions when handler is console-bound.")]
+	public void When_ProtocolPassthroughRunsInHostedSessionWithoutIoContext_Then_RuntimeReturnsExplicitError()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("mcp start", () => Results.Exit(0))
+			.AsProtocolPassthrough();
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = sut.Run(
+			["mcp", "start"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(1);
+		output.ToString().Should().Contain("protocol passthrough");
+		output.ToString().Should().Contain("IReplIoContext");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies hosted protocol passthrough works when handler requests IReplIoContext streams explicitly.")]
+	public void When_ProtocolPassthroughRunsInHostedSessionWithIoContext_Then_HandlerCanWriteToSessionStream()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+				"transfer send",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine("zmodem-start");
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = sut.Run(
+			["transfer", "send"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(0);
+		output.ToString().Should().Contain("zmodem-start");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies hosted protocol passthrough reports IsHostedSession=true through IReplIoContext.")]
+	public void When_ProtocolPassthroughRunsInHostedSessionWithIoContext_Then_IsHostedSessionIsTrue()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+				"transfer check",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine(io.IsHostedSession ? "hosted" : "local");
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = sut.Run(
+			["transfer", "check"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(0);
+		output.ToString().Should().Contain("hosted");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies IReplIoContext is injectable in normal CLI execution.")]
+	public void When_HandlerRequestsIoContextInCli_Then_RuntimeInjectsConsoleContext()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("io check", (IReplIoContext io) => io.IsHostedSession ? "hosted" : "local");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["io", "check", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("local");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies CLI protocol passthrough does not report a hosted session through IReplIoContext.")]
+	public void When_HandlerRequestsIoContextInCliProtocolPassthrough_Then_IsHostedSessionIsFalse()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+				"io protocol-check",
+				(IReplIoContext io) =>
+				{
+					io.Output.WriteLine(io.IsHostedSession ? "hosted" : "local");
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(
+			() => sut.Run(["io", "protocol-check", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().Contain("local");
+		output.StdErr.Should().NotContain("hosted");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies local CLI protocol passthrough keeps CLI channel semantics so CLI-only context validation still executes.")]
+	public void When_CliProtocolPassthroughRuns_Then_CliOnlyContextValidationIsNotBypassed()
+	{
+		var sut = ReplApp.Create();
+		sut.MapModule(
+			new CliOnlyValidatedPassthroughModule(),
+			static context => context.Channel == ReplRuntimeChannel.Cli);
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(
+			() => sut.Run(["mcp", "start", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("Validation: context gate failed");
+	}
+
+	private sealed class InMemoryHost(TextReader input, TextWriter output) : IReplHost
+	{
+		public TextReader Input { get; } = input;
+
+		public TextWriter Output { get; } = output;
+	}
+
+	private sealed class CliOnlyValidatedPassthroughModule : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+			map.Context(
+				"mcp",
+				mcp =>
+				{
+					mcp.Map(
+							"start",
+							(IReplIoContext io) =>
+							{
+								io.Output.WriteLine("should-not-run");
+								return Results.Exit(0);
+							})
+						.AsProtocolPassthrough();
+				},
+				() => Results.Validation("context gate failed"));
+		}
+	}
+}

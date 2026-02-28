@@ -589,6 +589,7 @@ public sealed class ReplApp : IReplApp
 			[typeof(IHistoryProvider)] = new InMemoryHistoryProvider(),
 			[typeof(TimeProvider)] = TimeProvider.System,
 			[typeof(IReplKeyReader)] = new ConsoleKeyReader(),
+			[typeof(IReplIoContext)] = new LiveReplIoContext(),
 		};
 
 		var channel = new DefaultsInteractionChannel(
@@ -631,6 +632,7 @@ public sealed class ReplApp : IReplApp
 				sp.GetService<TimeProvider>())));
 		services.TryAddSingleton<IReplKeyReader, ConsoleKeyReader>();
 		services.TryAddSingleton<IReplSessionInfo, LiveSessionInfo>();
+		services.TryAddSingleton<IReplIoContext, LiveReplIoContext>();
 	}
 
 	private sealed class ScopedReplApp(ICoreReplApp map, IServiceCollection services) : IReplApp

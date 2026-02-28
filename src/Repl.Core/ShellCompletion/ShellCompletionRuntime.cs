@@ -285,11 +285,6 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 		}
 	}
 
-	public bool IsBridgeInvocation(IReadOnlyList<string> tokens) =>
-		tokens.Count >= 2
-		&& string.Equals(tokens[0], ShellCompletionConstants.SetupCommandName, StringComparison.OrdinalIgnoreCase)
-		&& string.Equals(tokens[1], ShellCompletionConstants.ProtocolSubcommandName, StringComparison.OrdinalIgnoreCase);
-
 	private IReplResult? ValidateShellCompletionManagementAvailability()
 	{
 		if (!_options.ShellCompletion.Enabled)
