@@ -653,7 +653,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	private ReplRuntimeChannel ResolveCurrentRuntimeChannel()
 	{
-		if (ReplSessionIO.IsSessionActive)
+		if (ReplSessionIO.IsHostedSession)
 		{
 			return ReplRuntimeChannel.Session;
 		}

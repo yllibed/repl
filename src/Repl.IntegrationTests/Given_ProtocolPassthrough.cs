@@ -293,10 +293,48 @@ public sealed class Given_ProtocolPassthrough
 		output.StdErr.Should().NotContain("hosted");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies local CLI protocol passthrough keeps CLI channel semantics so CLI-only context validation still executes.")]
+	public void When_CliProtocolPassthroughRuns_Then_CliOnlyContextValidationIsNotBypassed()
+	{
+		var sut = ReplApp.Create();
+		sut.MapModule(
+			new CliOnlyValidatedPassthroughModule(),
+			static context => context.Channel == ReplRuntimeChannel.Cli);
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(
+			() => sut.Run(["mcp", "start", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.StdOut.Should().BeNullOrWhiteSpace();
+		output.StdErr.Should().Contain("Validation: context gate failed");
+	}
+
 	private sealed class InMemoryHost(TextReader input, TextWriter output) : IReplHost
 	{
 		public TextReader Input { get; } = input;
 
 		public TextWriter Output { get; } = output;
+	}
+
+	private sealed class CliOnlyValidatedPassthroughModule : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+			map.Context(
+				"mcp",
+				mcp =>
+				{
+					mcp.Map(
+							"start",
+							(IReplIoContext io) =>
+							{
+								io.Output.WriteLine("should-not-run");
+								return Results.Exit(0);
+							})
+						.AsProtocolPassthrough();
+				},
+				() => Results.Validation("context gate failed"));
+		}
 	}
 }
