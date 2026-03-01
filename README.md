@@ -282,6 +282,7 @@ Package details:
 
 - Architecture blueprint: [`docs/architecture.md`](docs/architecture.md)
 - Command reference: [`docs/commands.md`](docs/commands.md)
+- Parameter system notes: [`docs/parameter-system.md`](docs/parameter-system.md)
 - Terminal/session metadata: [`docs/terminal-metadata.md`](docs/terminal-metadata.md)
 - Testing toolkit: [`docs/testing-toolkit.md`](docs/testing-toolkit.md)
 - Conditional module presence: [`docs/module-presence.md`](docs/module-presence.md)

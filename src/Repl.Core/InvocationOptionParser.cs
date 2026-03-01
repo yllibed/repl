@@ -85,13 +85,11 @@ internal static class InvocationOptionParser
 				optionValue = effectiveTokens[index];
 			}
 
-			var suggestion = knownOptions is null
-				? null
-				: TryResolveSuggestion(optionName, knownOptions, ignoreCase);
 			if (knownOptions is not null
 				&& !knownOptions.Contains(optionName)
 				&& !options.AllowUnknownOptions)
 			{
+				var suggestion = TryResolveSuggestion(optionName, knownOptions, ignoreCase);
 				var message = suggestion is null
 					? $"Unknown option '--{optionName}'."
 					: $"Unknown option '--{optionName}'. Did you mean '--{suggestion}'?";
@@ -145,8 +143,15 @@ internal static class InvocationOptionParser
 			}
 
 			var content = File.ReadAllText(path);
-			var responseTokens = ResponseFileTokenizer.Tokenize(content);
-			expanded.AddRange(responseTokens);
+			var tokenization = ResponseFileTokenizer.Tokenize(content);
+			expanded.AddRange(tokenization.Tokens);
+			if (tokenization.HasTrailingEscape)
+			{
+				diagnostics.Add(new ParseDiagnostic(
+					ParseDiagnosticSeverity.Warning,
+					$"Response file '{path}' ends with a trailing escape character '\\'.",
+					Token: token));
+			}
 		}
 
 		return expanded;

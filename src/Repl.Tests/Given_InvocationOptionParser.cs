@@ -120,4 +120,144 @@ public sealed class Given_InvocationOptionParser
 		parsed.Diagnostics.Should().ContainSingle();
 		parsed.Diagnostics[0].Message.Should().Contain("Response file");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies an empty inline option name with equals syntax is rejected so malformed '--=value' tokens cannot silently bind.")]
+	public void When_ParsingEqualsWithEmptyOptionName_Then_DiagnosticErrorIsProduced()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = false,
+		};
+
+		var parsed = InvocationOptionParser.Parse(
+			["--=value"],
+			parsingOptions,
+			knownOptionNames: ["output"]);
+
+		parsed.HasErrors.Should().BeTrue();
+		parsed.Diagnostics.Should().ContainSingle();
+		parsed.Diagnostics[0].Message.Should().Contain("Unknown option '--'");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies an empty inline option name with colon syntax is rejected so malformed '--:value' tokens cannot silently bind.")]
+	public void When_ParsingColonWithEmptyOptionName_Then_DiagnosticErrorIsProduced()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = false,
+		};
+
+		var parsed = InvocationOptionParser.Parse(
+			["--:value"],
+			parsingOptions,
+			knownOptionNames: ["output"]);
+
+		parsed.HasErrors.Should().BeTrue();
+		parsed.Diagnostics.Should().ContainSingle();
+		parsed.Diagnostics[0].Message.Should().Contain("Unknown option '--'");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a standalone '@' token is treated as positional input so non-response-file literals are preserved.")]
+	public void When_TokenIsStandaloneAtSign_Then_TokenRemainsPositional()
+	{
+		var parsed = InvocationOptionParser.Parse(
+			["@","plain"],
+			new ParsingOptions { AllowUnknownOptions = true, AllowResponseFiles = true },
+			knownOptionNames: []);
+
+		parsed.HasErrors.Should().BeFalse();
+		parsed.PositionalArguments.Should().Equal("@", "plain");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies empty response files expand to no tokens so @file indirection is a no-op when file content is empty.")]
+	public void When_ResponseFileIsEmpty_Then_NoTokensAreInjected()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = true,
+			AllowResponseFiles = true,
+		};
+		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-empty-{Guid.NewGuid():N}.rsp");
+		File.WriteAllText(responseFile, string.Empty);
+
+		try
+		{
+			var parsed = InvocationOptionParser.Parse(
+				[$"@{responseFile}"],
+				parsingOptions,
+				knownOptionNames: []);
+
+			parsed.HasErrors.Should().BeFalse();
+			parsed.NamedOptions.Should().BeEmpty();
+			parsed.PositionalArguments.Should().BeEmpty();
+		}
+		finally
+		{
+			File.Delete(responseFile);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies UTF-8 BOM response files parse correctly so first token is not polluted by BOM bytes.")]
+	public void When_ResponseFileHasUtf8Bom_Then_FirstTokenParsesNormally()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = false,
+			AllowResponseFiles = true,
+		};
+		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-bom-{Guid.NewGuid():N}.rsp");
+		var contentBytes = new byte[] { 0xEF, 0xBB, 0xBF }
+			.Concat(System.Text.Encoding.UTF8.GetBytes("--output json"))
+			.ToArray();
+		File.WriteAllBytes(responseFile, contentBytes);
+
+		try
+		{
+			var parsed = InvocationOptionParser.Parse(
+				[$"@{responseFile}"],
+				parsingOptions,
+				knownOptionNames: ["output"]);
+
+			parsed.HasErrors.Should().BeFalse();
+			parsed.NamedOptions.Should().ContainKey("output");
+			parsed.NamedOptions["output"].Should().ContainSingle().Which.Should().Be("json");
+		}
+		finally
+		{
+			File.Delete(responseFile);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies trailing escape in response files emits a warning so silent token corruption is surfaced to callers.")]
+	public void When_ResponseFileEndsWithEscape_Then_WarningDiagnosticIsProduced()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = true,
+			AllowResponseFiles = true,
+		};
+		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-escape-{Guid.NewGuid():N}.rsp");
+		File.WriteAllText(responseFile, "value\\");
+
+		try
+		{
+			var parsed = InvocationOptionParser.Parse(
+				[$"@{responseFile}"],
+				parsingOptions,
+				knownOptionNames: []);
+
+			parsed.Diagnostics.Should().ContainSingle();
+			parsed.Diagnostics[0].Severity.Should().Be(ParseDiagnosticSeverity.Warning);
+		}
+		finally
+		{
+			File.Delete(responseFile);
+		}
+	}
 }

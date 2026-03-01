@@ -30,6 +30,57 @@ Global parsing notes:
 - use `--` to stop option parsing and force remaining tokens to positional arguments
 - response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported
 
+## Parse diagnostics model
+
+Command option parsing returns structured diagnostics through the internal `OptionParsingResult` model:
+
+- `Diagnostics`: list of `ParseDiagnostic`
+- `HasErrors`: true when any diagnostic has `Severity = Error`
+- `ParseDiagnostic` fields:
+  - `Severity`: `Error` or `Warning`
+  - `Message`: user-facing explanation
+  - `Token`: source token when available
+  - `Suggestion`: optional typo hint (for example `--output`)
+
+Runtime behavior:
+
+- when at least one parsing error is present, command execution stops and the first error is rendered as a validation result
+- warnings do not block execution
+
+## Response file examples
+
+`@file.rsp` is expanded before command option parsing.
+
+Example file:
+
+```text
+--output json
+# comments are ignored outside quoted sections
+"two words"
+```
+
+Command:
+
+```text
+myapp echo @args.rsp
+```
+
+Notes:
+
+- quotes and escapes are supported by the response-file tokenizer
+- a standalone `@` token is treated as a normal positional token
+- in interactive sessions, response-file expansion is disabled by default
+- response-file paths are read from the local filesystem as provided; treat `@file` input as trusted CLI input
+
+## Supported parameter conversions
+
+Handler parameters support native conversion for:
+
+- `FileInfo` from string path tokens (for example `--path ./file.txt`)
+- `DirectoryInfo` from string path tokens (for example `--path ./folder`)
+
+Path existence is not validated at parse time; handlers decide validation policy.
+
 ## Ambient commands
 
 These commands are handled by the runtime (not by your mapped routes):

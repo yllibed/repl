@@ -25,27 +25,38 @@ internal static class GlobalOptionParser
 		var customGlobalValues = new Dictionary<string, List<string>>(tokenComparer);
 		var customTokenMap = BuildCustomTokenMap(parsingOptions.GlobalOptions, tokenComparer);
 		var options = new GlobalInvocationOptions(remaining);
+		var optionComparison = parsingOptions.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparison.OrdinalIgnoreCase
+			: StringComparison.Ordinal;
 
 		for (var index = 0; index < args.Count; index++)
 		{
 			var argument = args[index];
-			switch (argument)
+			if (string.Equals(argument, "--help", optionComparison))
 			{
-				case "--help":
-					options = options with { HelpRequested = true };
-					continue;
-				case "--interactive":
-					options = options with { InteractiveForced = true };
-					continue;
-				case "--no-interactive":
-					options = options with { InteractivePrevented = true };
-					continue;
-				case "--no-logo":
-					options = options with { LogoSuppressed = true };
-					continue;
+				options = options with { HelpRequested = true };
+				continue;
 			}
 
-			if (argument.StartsWith("--output:", StringComparison.OrdinalIgnoreCase))
+			if (string.Equals(argument, "--interactive", optionComparison))
+			{
+				options = options with { InteractiveForced = true };
+				continue;
+			}
+
+			if (string.Equals(argument, "--no-interactive", optionComparison))
+			{
+				options = options with { InteractivePrevented = true };
+				continue;
+			}
+
+			if (string.Equals(argument, "--no-logo", optionComparison))
+			{
+				options = options with { LogoSuppressed = true };
+				continue;
+			}
+
+			if (argument.StartsWith("--output:", optionComparison))
 			{
 				options = options with { OutputFormat = argument["--output:".Length..] };
 				continue;
@@ -163,7 +174,7 @@ internal static class GlobalOptionParser
 		var value = inlineValue;
 		if (value is null
 			&& index + 1 < args.Count
-			&& !args[index + 1].StartsWith('-'))
+			&& (!args[index + 1].StartsWith('-') || IsSignedNumericLiteral(args[index + 1])))
 		{
 			index++;
 			value = args[index];
@@ -206,6 +217,20 @@ internal static class GlobalOptionParser
 		}
 
 		return true;
+	}
+
+	private static bool IsSignedNumericLiteral(string token)
+	{
+		if (token.Length < 2 || token[0] != '-')
+		{
+			return false;
+		}
+
+		return double.TryParse(
+			token,
+			System.Globalization.NumberStyles.Float,
+			System.Globalization.CultureInfo.InvariantCulture,
+			out _);
 	}
 
 	private static bool TrySplitToken(

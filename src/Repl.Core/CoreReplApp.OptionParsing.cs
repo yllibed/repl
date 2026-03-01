@@ -4,13 +4,15 @@ public sealed partial class CoreReplApp
 {
 	private static HashSet<string> ResolveKnownHandlerOptionNames(
 		Delegate handler,
-		IEnumerable<string> routeValueNames)
+		IEnumerable<string> routeValueNames,
+		StringComparer comparer)
 	{
 		ArgumentNullException.ThrowIfNull(handler);
 		ArgumentNullException.ThrowIfNull(routeValueNames);
+		ArgumentNullException.ThrowIfNull(comparer);
 
 		var routeNames = new HashSet<string>(routeValueNames, StringComparer.OrdinalIgnoreCase);
-		var optionNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var optionNames = new HashSet<string>(comparer);
 		foreach (var parameter in handler.Method.GetParameters())
 		{
 			if (string.IsNullOrWhiteSpace(parameter.Name)

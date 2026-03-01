@@ -4,7 +4,7 @@ namespace Repl;
 
 internal static class ResponseFileTokenizer
 {
-	public static IReadOnlyList<string> Tokenize(string content)
+	public static ResponseFileTokenizationResult Tokenize(string content)
 	{
 		ArgumentNullException.ThrowIfNull(content);
 
@@ -63,7 +63,7 @@ internal static class ResponseFileTokenizer
 		}
 
 		FinalizeToken(tokens, current);
-		return tokens;
+		return new ResponseFileTokenizationResult(tokens, HasTrailingEscape: escaping);
 	}
 
 	private static void FinalizeToken(List<string> tokens, StringBuilder current)

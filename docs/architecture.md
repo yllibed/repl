@@ -70,6 +70,12 @@
 	- Transport-native signaling (DTTERM push, Telnet NAWS/TERMINAL-TYPE) is preferred.
 	- `@@repl:*` control messages and out-of-band metadata are supported extension patterns.
 
+## Related docs
+
+- Command reference: `docs/commands.md`
+- Parameter system: `docs/parameter-system.md`
+- Shell completion: `docs/shell-completion.md`
+
 ## Branching and versioning
 
 - NBGV (`version.json`) drives package/release versioning.

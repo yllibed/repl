@@ -925,7 +925,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		_options.Interaction.SetPrefilledAnswers(globalOptions.PromptAnswers);
-		var knownOptionNames = ResolveKnownHandlerOptionNames(match.Route.Command.Handler, match.Values.Keys);
+		var commandParsingOptions = BuildEffectiveCommandParsingOptions();
+		var optionComparer = commandParsingOptions.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
+		var knownOptionNames = ResolveKnownHandlerOptionNames(
+			match.Route.Command.Handler,
+			match.Values.Keys,
+			optionComparer);
 		if (TryFindGlobalCommandOptionCollision(globalOptions, knownOptionNames, out var collidingOption))
 		{
 			_ = await RenderOutputAsync(
@@ -936,7 +943,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			return 1;
 		}
 
-		var commandParsingOptions = BuildEffectiveCommandParsingOptions();
 		var parsedOptions = InvocationOptionParser.Parse(
 			match.RemainingTokens,
 			commandParsingOptions,
