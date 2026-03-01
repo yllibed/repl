@@ -63,4 +63,61 @@ public sealed class Given_InvocationOptionParser
 		parsed.NamedOptions.Should().ContainKey("output");
 		parsed.NamedOptions["output"].Should().ContainSingle().Which.Should().Be("json");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies response-file tokens are expanded with quoting and comments so complex CLI invocations stay readable and deterministic.")]
+	public void When_ResponseFileIsProvided_Then_TokensAreExpanded()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = false,
+			AllowResponseFiles = true,
+		};
+		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-{Guid.NewGuid():N}.rsp");
+		File.WriteAllText(
+			responseFile,
+			"""
+			--output json
+			# comment line
+			"two words"
+			""");
+
+		try
+		{
+			var parsed = InvocationOptionParser.Parse(
+				[$"@{responseFile}"],
+				parsingOptions,
+				knownOptionNames: ["output"]);
+
+			parsed.HasErrors.Should().BeFalse();
+			parsed.NamedOptions.Should().ContainKey("output");
+			parsed.NamedOptions["output"].Should().ContainSingle().Which.Should().Be("json");
+			parsed.PositionalArguments.Should().ContainSingle().Which.Should().Be("two words");
+		}
+		finally
+		{
+			File.Delete(responseFile);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies missing response files are surfaced as parser diagnostics so users get actionable feedback on invalid @file inputs.")]
+	public void When_ResponseFileDoesNotExist_Then_DiagnosticErrorIsProduced()
+	{
+		var parsingOptions = new ParsingOptions
+		{
+			AllowUnknownOptions = true,
+			AllowResponseFiles = true,
+		};
+		var missingFile = Path.Combine(Path.GetTempPath(), $"repl-parser-missing-{Guid.NewGuid():N}.rsp");
+
+		var parsed = InvocationOptionParser.Parse(
+			[$"@{missingFile}"],
+			parsingOptions,
+			knownOptionNames: []);
+
+		parsed.HasErrors.Should().BeTrue();
+		parsed.Diagnostics.Should().ContainSingle();
+		parsed.Diagnostics[0].Message.Should().Contain("Response file");
+	}
 }

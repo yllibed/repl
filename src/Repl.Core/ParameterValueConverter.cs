@@ -61,6 +61,8 @@ internal static class ParameterValueConverter
 			_ when nonNullableType == typeof(bool) => bool.Parse(value),
 			_ when nonNullableType == typeof(Guid) => Guid.Parse(value),
 			_ when nonNullableType == typeof(Uri) => new Uri(value, UriKind.RelativeOrAbsolute),
+			_ when nonNullableType == typeof(FileInfo) => new FileInfo(value),
+			_ when nonNullableType == typeof(DirectoryInfo) => new DirectoryInfo(value),
 			_ when nonNullableType == typeof(double) => double.Parse(
 				NormalizeNumericLiteral(value),
 				NumberStyles.Float | NumberStyles.AllowThousands,

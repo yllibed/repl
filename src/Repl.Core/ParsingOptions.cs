@@ -43,6 +43,16 @@ public sealed class ParsingOptions
 	public bool AllowUnknownOptions { get; set; }
 
 	/// <summary>
+	/// Gets or sets option-name case-sensitivity mode.
+	/// </summary>
+	public ReplCaseSensitivity OptionCaseSensitivity { get; set; } = ReplCaseSensitivity.CaseSensitive;
+
+	/// <summary>
+	/// Gets or sets a value indicating whether response files (for example: <c>@args.rsp</c>) are expanded.
+	/// </summary>
+	public bool AllowResponseFiles { get; set; } = true;
+
+	/// <summary>
 	/// Gets or sets the culture mode used for numeric conversions.
 	/// </summary>
 	public NumericParsingCulture NumericCulture { get; set; } = NumericParsingCulture.Invariant;

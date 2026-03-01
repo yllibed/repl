@@ -17,10 +17,13 @@ internal static class GlobalOptionParser
 		ArgumentNullException.ThrowIfNull(outputOptions);
 		ArgumentNullException.ThrowIfNull(parsingOptions);
 
+		var tokenComparer = parsingOptions.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
 		var remaining = new List<string>(args.Count);
 		var promptAnswers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-		var customGlobalValues = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-		var customTokenMap = BuildCustomTokenMap(parsingOptions.GlobalOptions);
+		var customGlobalValues = new Dictionary<string, List<string>>(tokenComparer);
+		var customTokenMap = BuildCustomTokenMap(parsingOptions.GlobalOptions, tokenComparer);
 		var options = new GlobalInvocationOptions(remaining);
 
 		for (var index = 0; index < args.Count; index++)
@@ -129,9 +132,10 @@ internal static class GlobalOptionParser
 	}
 
 	private static Dictionary<string, string> BuildCustomTokenMap(
-		IReadOnlyDictionary<string, GlobalOptionDefinition> definitions)
+		IReadOnlyDictionary<string, GlobalOptionDefinition> definitions,
+		StringComparer comparer)
 	{
-		var tokenMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		var tokenMap = new Dictionary<string, string>(comparer);
 		foreach (var definition in definitions.Values)
 		{
 			tokenMap[definition.CanonicalToken] = definition.Name;

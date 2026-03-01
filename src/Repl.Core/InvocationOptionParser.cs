@@ -28,17 +28,24 @@ internal static class InvocationOptionParser
 		ArgumentNullException.ThrowIfNull(tokens);
 		ArgumentNullException.ThrowIfNull(options);
 
-		var namedOptions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-		var positionalArguments = new List<string>(tokens.Count);
 		var diagnostics = new List<ParseDiagnostic>();
+		var ignoreCase = options.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
+		var tokenComparer = ignoreCase
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
+		var effectiveTokens = options.AllowResponseFiles
+			? ExpandResponseFiles(tokens, diagnostics)
+			: tokens;
+		var namedOptions = new Dictionary<string, List<string>>(tokenComparer);
+		var positionalArguments = new List<string>(tokens.Count);
 		var knownOptions = knownOptionNames is null
 			? null
-			: new HashSet<string>(knownOptionNames, StringComparer.OrdinalIgnoreCase);
+			: new HashSet<string>(knownOptionNames, tokenComparer);
 		var parseAsPositional = false;
 
-		for (var index = 0; index < tokens.Count; index++)
+		for (var index = 0; index < effectiveTokens.Count; index++)
 		{
-			var token = tokens[index];
+			var token = effectiveTokens[index];
 			if (parseAsPositional)
 			{
 				positionalArguments.Add(token);
@@ -71,16 +78,16 @@ internal static class InvocationOptionParser
 				optionName = parts[0];
 				optionValue = parts[1];
 			}
-			else if (index + 1 < tokens.Count
-				&& !tokens[index + 1].StartsWith("--", StringComparison.Ordinal))
+			else if (index + 1 < effectiveTokens.Count
+				&& !effectiveTokens[index + 1].StartsWith("--", StringComparison.Ordinal))
 			{
 				index++;
-				optionValue = tokens[index];
+				optionValue = effectiveTokens[index];
 			}
 
 			var suggestion = knownOptions is null
 				? null
-				: TryResolveSuggestion(optionName, knownOptions);
+				: TryResolveSuggestion(optionName, knownOptions, ignoreCase);
 			if (knownOptions is not null
 				&& !knownOptions.Contains(optionName)
 				&& !options.AllowUnknownOptions)
@@ -108,18 +115,56 @@ internal static class InvocationOptionParser
 		var readonlyNamedOptions = namedOptions.ToDictionary(
 			pair => pair.Key,
 			pair => (IReadOnlyList<string>)pair.Value,
-			StringComparer.OrdinalIgnoreCase);
+			tokenComparer);
 
 		return new OptionParsingResult(readonlyNamedOptions, positionalArguments, diagnostics);
 	}
 
-	private static string? TryResolveSuggestion(string optionName, IReadOnlyCollection<string> knownOptions)
+	private static List<string> ExpandResponseFiles(
+		IReadOnlyList<string> tokens,
+		List<ParseDiagnostic> diagnostics)
+	{
+		var expanded = new List<string>(tokens.Count);
+		foreach (var token in tokens)
+		{
+			if (!token.StartsWith('@') || token.Length == 1)
+			{
+				expanded.Add(token);
+				continue;
+			}
+
+			var path = token[1..];
+			if (!File.Exists(path))
+			{
+				diagnostics.Add(new ParseDiagnostic(
+					ParseDiagnosticSeverity.Error,
+					$"Response file '{path}' was not found.",
+					Token: token));
+				expanded.Add(token);
+				continue;
+			}
+
+			var content = File.ReadAllText(path);
+			var responseTokens = ResponseFileTokenizer.Tokenize(content);
+			expanded.AddRange(responseTokens);
+		}
+
+		return expanded;
+	}
+
+	private static string? TryResolveSuggestion(
+		string optionName,
+		IReadOnlyCollection<string> knownOptions,
+		bool ignoreCase)
 	{
 		var bestDistance = int.MaxValue;
 		string? bestMatch = null;
 		foreach (var candidate in knownOptions)
 		{
-			var distance = ComputeLevenshteinDistance(optionName, candidate);
+			var distance = ComputeLevenshteinDistance(
+				optionName,
+				candidate,
+				ignoreCase);
 			if (distance >= bestDistance)
 			{
 				continue;
@@ -132,9 +177,10 @@ internal static class InvocationOptionParser
 		return bestDistance <= 2 ? bestMatch : null;
 	}
 
-	private static int ComputeLevenshteinDistance(string source, string target)
+	private static int ComputeLevenshteinDistance(string source, string target, bool ignoreCase)
 	{
-		if (string.Equals(source, target, StringComparison.OrdinalIgnoreCase))
+		var comparison = ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+		if (string.Equals(source, target, comparison))
 		{
 			return 0;
 		}
@@ -166,7 +212,15 @@ internal static class InvocationOptionParser
 			current[0] = row;
 			for (var column = 1; column <= target.Length; column++)
 			{
-				var cost = char.ToLowerInvariant(source[row - 1]) == char.ToLowerInvariant(target[column - 1]) ? 0 : 1;
+				var sourceChar = source[row - 1];
+				var targetChar = target[column - 1];
+				if (ignoreCase)
+				{
+					sourceChar = char.ToLowerInvariant(sourceChar);
+					targetChar = char.ToLowerInvariant(targetChar);
+				}
+
+				var cost = sourceChar == targetChar ? 0 : 1;
 				var deletion = previous[column] + 1;
 				var insertion = current[column - 1] + 1;
 				var substitution = previous[column - 1] + cost;
