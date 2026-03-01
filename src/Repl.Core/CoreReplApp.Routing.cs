@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using Repl.Internal.Options;
 
 namespace Repl;
 
@@ -178,6 +179,8 @@ public sealed partial class CoreReplApp
 			contextMatch.RouteValues,
 			new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
 			[],
+			OptionSchema.Empty,
+			_options.Parsing.OptionCaseSensitivity,
 			[],
 			_options.Parsing.NumericFormatProvider,
 			serviceProvider,
@@ -327,6 +330,8 @@ public sealed partial class CoreReplApp
 			routeValues: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
 			namedOptions: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
 			positionalArguments: [],
+			optionSchema: OptionSchema.Empty,
+			optionCaseSensitivity: _options.Parsing.OptionCaseSensitivity,
 			contextValues: [ReplSessionIO.Output],
 			numericFormatProvider: _options.Parsing.NumericFormatProvider,
 			serviceProvider: serviceProvider,

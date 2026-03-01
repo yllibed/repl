@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Repl.ShellCompletion;
+using Repl.Internal.Options;
 
 namespace Repl;
 
@@ -153,7 +154,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				.Select(existingRoute => existingRoute.Template));
 
 		_commands.Add(command);
-		var routeDefinition = new RouteDefinition(template, command, moduleId);
+		var optionSchema = OptionSchemaBuilder.Build(template, command, _options.Parsing);
+		var routeDefinition = new RouteDefinition(template, command, moduleId, optionSchema);
 		_routes.Add(routeDefinition);
 		InvalidateRouting();
 		return command;
@@ -403,7 +405,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		_options.Interaction.SetObserver(observer: ExecutionObserver);
 		try
 		{
-			var globalOptions = GlobalOptionParser.Parse(args, _options.Output);
+			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
@@ -925,12 +927,43 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		_options.Interaction.SetPrefilledAnswers(globalOptions.PromptAnswers);
-		var parsedOptions = InvocationOptionParser.Parse(match.RemainingTokens);
+		var commandParsingOptions = BuildEffectiveCommandParsingOptions();
+		var optionComparer = commandParsingOptions.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
+		var knownOptionNames = new HashSet<string>(match.Route.OptionSchema.Parameters.Keys, optionComparer);
+		if (TryFindGlobalCommandOptionCollision(globalOptions, knownOptionNames, out var collidingOption))
+		{
+			_ = await RenderOutputAsync(
+					Results.Validation($"Ambiguous option '{collidingOption}'. It is defined as both global and command option."),
+					globalOptions.OutputFormat,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return 1;
+		}
+
+		var parsedOptions = InvocationOptionParser.Parse(
+			match.RemainingTokens,
+			match.Route.OptionSchema,
+			commandParsingOptions);
+		if (parsedOptions.HasErrors)
+		{
+			var firstError = parsedOptions.Diagnostics
+				.First(diagnostic => diagnostic.Severity == ParseDiagnosticSeverity.Error);
+			_ = await RenderOutputAsync(
+					Results.Validation(firstError.Message),
+					globalOptions.OutputFormat,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return 1;
+		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
 		var bindingContext = CreateInvocationBindingContext(
 			match,
 			parsedOptions,
+			globalOptions,
+			commandParsingOptions,
 			matchedPathTokens,
 			activeGraph.Contexts,
 			serviceProvider,
@@ -1422,16 +1455,23 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private InvocationBindingContext CreateInvocationBindingContext(
 		RouteMatch match,
 		OptionParsingResult parsedOptions,
+		GlobalInvocationOptions globalOptions,
+		ParsingOptions commandParsingOptions,
 		string[] matchedPathTokens,
 		IReadOnlyList<ContextDefinition> contexts,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
 		var contextValues = BuildContextHierarchyValues(match.Route.Template, matchedPathTokens, contexts);
+		var mergedNamedOptions = MergeNamedOptions(
+			parsedOptions.NamedOptions,
+			globalOptions.CustomGlobalNamedOptions);
 		return new InvocationBindingContext(
 			match.Values,
-			parsedOptions.NamedOptions,
+			mergedNamedOptions,
 			parsedOptions.PositionalArguments,
+			match.Route.OptionSchema,
+			commandParsingOptions.OptionCaseSensitivity,
 			contextValues,
 			_options.Parsing.NumericFormatProvider,
 			serviceProvider,

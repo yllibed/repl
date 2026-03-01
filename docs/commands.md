@@ -20,6 +20,89 @@ These flags are parsed before route execution:
 - `--output:<format>`
 - output aliases mapped by `OutputOptions.Aliases` (defaults include `--json`, `--xml`, `--yaml`, `--yml`, `--markdown`)
 - `--answer:<name>[=value]` for non-interactive prompt answers
+- custom global options registered via `options.Parsing.AddGlobalOption<T>(...)`
+
+Global parsing notes:
+
+- unknown command options are validation errors by default (`options.Parsing.AllowUnknownOptions = false`)
+- option name matching is case-sensitive by default (`options.Parsing.OptionCaseSensitivity = CaseSensitive`)
+- option value syntaxes accepted by command parsing: `--name value`, `--name=value`, `--name:value`
+- use `--` to stop option parsing and force remaining tokens to positional arguments
+- response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported
+
+## Declaring command options
+
+Handler parameters can declare explicit option behavior with attributes:
+
+- `[ReplOption]` for named options
+- `[ReplArgument]` for positional behavior
+- `[ReplValueAlias]` for token-to-value injection
+- `[ReplEnumFlag]` on enum members for enum-token aliases
+
+Example:
+
+```csharp
+using Repl.Parameters;
+
+app.Map(
+    "render",
+    ([ReplOption(Aliases = ["-m"])] RenderMode mode = RenderMode.Fast,
+     [ReplOption(ReverseAliases = ["--no-verbose"])] bool verbose = false) =>
+        $"{mode}:{verbose}");
+```
+
+Root help now includes a dedicated `Global Options:` section with built-ins plus custom options registered through `options.Parsing.AddGlobalOption<T>(...)`.
+
+## Parse diagnostics model
+
+Command option parsing returns structured diagnostics through the internal `OptionParsingResult` model:
+
+- `Diagnostics`: list of `ParseDiagnostic`
+- `HasErrors`: true when any diagnostic has `Severity = Error`
+- `ParseDiagnostic` fields:
+  - `Severity`: `Error` or `Warning`
+  - `Message`: user-facing explanation
+  - `Token`: source token when available
+  - `Suggestion`: optional typo hint (for example `--output`)
+
+Runtime behavior:
+
+- when at least one parsing error is present, command execution stops and the first error is rendered as a validation result
+- warnings do not block execution
+
+## Response file examples
+
+`@file.rsp` is expanded before command option parsing.
+
+Example file:
+
+```text
+--output json
+# comments are ignored outside quoted sections
+"two words"
+```
+
+Command:
+
+```text
+myapp echo @args.rsp
+```
+
+Notes:
+
+- quotes and escapes are supported by the response-file tokenizer
+- a standalone `@` token is treated as a normal positional token
+- in interactive sessions, response-file expansion is disabled by default
+- response-file paths are read from the local filesystem as provided; treat `@file` input as trusted CLI input
+
+## Supported parameter conversions
+
+Handler parameters support native conversion for:
+
+- `FileInfo` from string path tokens (for example `--path ./file.txt`)
+- `DirectoryInfo` from string path tokens (for example `--path ./folder`)
+
+Path existence is not validated at parse time; handlers decide validation policy.
 
 ## Ambient commands
 

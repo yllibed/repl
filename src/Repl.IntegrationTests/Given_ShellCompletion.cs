@@ -118,8 +118,13 @@ public sealed class Given_ShellCompletion
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies option completion on resolved command route so that static handler options are suggested.")]
-	public void When_CompletingCommandOptionPrefix_Then_StaticRouteOptionsAreReturned()
+	[DataRow("bash")]
+	[DataRow("powershell")]
+	[DataRow("zsh")]
+	[DataRow("fish")]
+	[DataRow("nu")]
+	[Description("Regression guard: verifies option completion on resolved command routes across all supported shells so static typed parameters and flags remain discoverable.")]
+	public void When_CompletingCommandOptionPrefix_Then_StaticRouteOptionsAreReturnedForAllShells(string shell)
 	{
 		const string line = "repl contact show 42 --v";
 		var output = Run(
@@ -127,7 +132,7 @@ public sealed class Given_ShellCompletion
 			"completion",
 			"__complete",
 			"--shell",
-			"bash",
+			shell,
 			"--line",
 			line,
 			"--cursor",
@@ -140,8 +145,39 @@ public sealed class Given_ShellCompletion
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies global option completion so that known static global options are suggested.")]
-	public void When_CompletingGlobalOptionPrefix_Then_GlobalOptionsAreReturned()
+	[DataRow("bash")]
+	[DataRow("powershell")]
+	[DataRow("zsh")]
+	[DataRow("fish")]
+	[DataRow("nu")]
+	[Description("Regression guard: verifies named value-parameter option completion across all supported shells so typed option parameters remain discoverable.")]
+	public void When_CompletingValueOptionPrefix_Then_NamedValueOptionIsReturnedForAllShells(string shell)
+	{
+		const string line = "repl contact show 42 --l";
+		var output = Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			shell,
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+		]);
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("--label");
+	}
+
+	[TestMethod]
+	[DataRow("bash")]
+	[DataRow("powershell")]
+	[DataRow("zsh")]
+	[DataRow("fish")]
+	[DataRow("nu")]
+	[Description("Regression guard: verifies global option completion across all supported shells so built-in global flags stay consistently discoverable.")]
+	public void When_CompletingGlobalOptionPrefix_Then_GlobalOptionsAreReturnedForAllShells(string shell)
 	{
 		const string line = "repl --no";
 		var output = Run(
@@ -149,7 +185,7 @@ public sealed class Given_ShellCompletion
 			"completion",
 			"__complete",
 			"--shell",
-			"powershell",
+			shell,
 			"--line",
 			line,
 			"--cursor",
@@ -159,6 +195,33 @@ public sealed class Given_ShellCompletion
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("--no-interactive");
 		output.Text.Should().Contain("--no-logo");
+	}
+
+	[TestMethod]
+	[DataRow("bash")]
+	[DataRow("powershell")]
+	[DataRow("zsh")]
+	[DataRow("fish")]
+	[DataRow("nu")]
+	[Description("Regression guard: verifies enum option value completion across all supported shells so declared enum values remain discoverable everywhere.")]
+	public void When_CompletingEnumOptionValue_Then_EnumValuesAreReturnedForAllShells(string shell)
+	{
+		const string line = "repl render --mode ";
+		var output = Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			shell,
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+		]);
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Fast");
+		output.Text.Should().Contain("Slow");
 	}
 
 	[TestMethod]

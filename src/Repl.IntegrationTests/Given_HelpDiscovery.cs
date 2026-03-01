@@ -359,7 +359,7 @@ public sealed class Given_HelpDiscovery
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["send", "--help", "--no-logo"]));
 
 		output.ExitCode.Should().Be(0);
-		output.Text.Should().Contain("Parameters:");
+		output.Text.Should().Contain("Arguments:");
 		output.Text.Should().Contain("<message>");
 		output.Text.Should().Contain("Message to send to all watching sessions");
 	}
@@ -376,8 +376,32 @@ public sealed class Given_HelpDiscovery
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Usage: ping <host>");
-		output.Text.Should().NotContain("Parameters:");
+		output.Text.Should().NotContain("Arguments:");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies command help renders schema-derived options with aliases and enum placeholders so documentation matches parser capabilities.")]
+	public void When_RequestingCommandHelpWithDeclaredOptions_Then_OptionsSectionIncludesAliasesAndEnumValues()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+			"render",
+			([ReplOption(Aliases = ["-m"])] HelpMode mode = HelpMode.Fast,
+				[ReplOption(ReverseAliases = ["--no-verbose"])] bool verbose = false) => $"{mode}:{verbose}");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["render", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Options:");
+		output.Text.Should().Contain("--mode, -m <Fast|Slow>");
+		output.Text.Should().Contain("--verbose, --no-verbose");
 	}
 
 	private static string SendHandler([ComponentDescriptionAttribute("Message to send to all watching sessions")] string message) => message;
+
+	private enum HelpMode
+	{
+		Fast,
+		Slow,
+	}
 }

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Reflection;
+using Repl.Internal.Options;
 
 namespace Repl;
 
@@ -150,11 +151,7 @@ public sealed partial class CoreReplApp
 				&& parameter.ParameterType != typeof(CancellationToken)
 				&& !routeParameterNames.Contains(parameter.Name!)
 				&& !IsFrameworkInjectedParameter(parameter.ParameterType))
-			.Select(parameter => new ReplDocOption(
-				Name: parameter.Name!,
-				Type: GetFriendlyTypeName(parameter.ParameterType),
-				Required: IsRequiredParameter(parameter),
-				Description: parameter.GetCustomAttribute<DescriptionAttribute>()?.Description))
+			.Select(parameter => BuildDocumentationOption(route.OptionSchema, parameter))
 			.ToArray();
 
 		return new ReplDocCommand(
@@ -233,6 +230,11 @@ public sealed partial class CoreReplApp
 			return $"{GetFriendlyTypeName(underlying)}?";
 		}
 
+		if (type.IsEnum)
+		{
+			return string.Join('|', Enum.GetNames(type));
+		}
+
 		if (!type.IsGenericType)
 		{
 			return type.Name.ToLowerInvariant() switch
@@ -255,5 +257,45 @@ public sealed partial class CoreReplApp
 		var genericName = type.Name[..type.Name.IndexOf('`')];
 		var genericArgs = string.Join(", ", type.GetGenericArguments().Select(GetFriendlyTypeName));
 		return $"{genericName}<{genericArgs}>";
+	}
+
+	private static ReplDocOption BuildDocumentationOption(OptionSchema schema, ParameterInfo parameter)
+	{
+		var entries = schema.Entries
+			.Where(entry => string.Equals(entry.ParameterName, parameter.Name, StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+		var aliases = entries
+			.Where(entry => entry.TokenKind is OptionSchemaTokenKind.NamedOption or OptionSchemaTokenKind.BoolFlag)
+			.Select(entry => entry.Token)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		var reverseAliases = entries
+			.Where(entry => entry.TokenKind == OptionSchemaTokenKind.ReverseFlag)
+			.Select(entry => entry.Token)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		var valueAliases = entries
+			.Where(entry => entry.TokenKind is OptionSchemaTokenKind.ValueAlias or OptionSchemaTokenKind.EnumAlias)
+			.Select(entry => new ReplDocValueAlias(entry.Token, entry.InjectedValue ?? string.Empty))
+			.GroupBy(alias => alias.Token, StringComparer.OrdinalIgnoreCase)
+			.Select(group => group.First())
+			.ToArray();
+		var effectiveType = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
+		var enumValues = effectiveType.IsEnum
+			? Enum.GetNames(effectiveType)
+			: [];
+		var defaultValue = parameter.HasDefaultValue && parameter.DefaultValue is not null
+			? parameter.DefaultValue.ToString()
+			: null;
+		return new ReplDocOption(
+			Name: parameter.Name!,
+			Type: GetFriendlyTypeName(parameter.ParameterType),
+			Required: IsRequiredParameter(parameter),
+			Description: parameter.GetCustomAttribute<DescriptionAttribute>()?.Description,
+			Aliases: aliases,
+			ReverseAliases: reverseAliases,
+			ValueAliases: valueAliases,
+			EnumValues: enumValues,
+			DefaultValue: defaultValue);
 	}
 }

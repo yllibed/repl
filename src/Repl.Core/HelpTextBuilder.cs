@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Reflection;
 using System.Text;
+using Repl.Internal.Options;
 
 namespace Repl;
 
@@ -11,6 +12,15 @@ internal static class HelpTextBuilder
 	private static readonly string[] ExitRow = ["exit", "Leave interactive mode."];
 	private static readonly string[] HistoryRow = ["history [--limit <n>]", "Show recent interactive commands."];
 	private static readonly string[] CompleteRow = ["complete --target <name> [--input <text>] <path>", "Resolve completions."];
+	private static readonly string[][] BuiltInGlobalOptionRows =
+	[
+		["--help", "Show help for current scope or command."],
+		["--interactive", "Force interactive mode."],
+		["--no-interactive", "Prevent interactive mode."],
+		["--no-logo", "Disable banner rendering."],
+		["--output:<format>", "Set output format (for example json, yaml, xml, markdown)."],
+		["--answer:<name>[=value]", "Provide prompt answers in non-interactive execution."],
+	];
 
 	public static HelpDocumentModel BuildModel(
 		IReadOnlyList<RouteDefinition> routes,
@@ -252,10 +262,11 @@ internal static class HelpTextBuilder
 		var aliases = route.Command.Aliases.Count == 0
 			? string.Empty
 			: $"{Environment.NewLine}Aliases: {string.Join(", ", route.Command.Aliases)}";
-		var paramSection = BuildParameterSection(route, useAnsi, palette);
+		var argumentSection = BuildArgumentSection(route, useAnsi, palette);
+		var optionSection = BuildOptionSection(route, useAnsi, palette);
 		if (!useAnsi)
 		{
-			return $"Usage: {displayTemplate}{Environment.NewLine}Description: {description}{aliases}{paramSection}";
+			return $"Usage: {displayTemplate}{Environment.NewLine}Description: {description}{aliases}{argumentSection}{optionSection}";
 		}
 
 		var usage = $"{AnsiText.Apply("Usage:", palette.SectionStyle)} {AnsiText.Apply(displayTemplate, palette.CommandStyle)}";
@@ -263,10 +274,10 @@ internal static class HelpTextBuilder
 		var aliasText = route.Command.Aliases.Count == 0
 			? string.Empty
 			: $"{Environment.NewLine}{AnsiText.Apply("Aliases:", palette.SectionStyle)} {AnsiText.Apply(string.Join(", ", route.Command.Aliases), palette.CommandStyle)}";
-		return $"{usage}{Environment.NewLine}{desc}{aliasText}{paramSection}";
+		return $"{usage}{Environment.NewLine}{desc}{aliasText}{argumentSection}{optionSection}";
 	}
 
-	private static string BuildParameterSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
+	private static string BuildArgumentSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
 	{
 		var dynamicSegments = route.Template.Segments.OfType<DynamicRouteSegment>().ToList();
 		if (dynamicSegments.Count == 0)
@@ -296,8 +307,8 @@ internal static class HelpTextBuilder
 		var builder = new StringBuilder();
 		builder.AppendLine();
 		builder.Append(useAnsi
-			? AnsiText.Apply("Parameters:", palette.SectionStyle)
-			: "Parameters:");
+			? AnsiText.Apply("Arguments:", palette.SectionStyle)
+			: "Arguments:");
 		foreach (var row in rows)
 		{
 			builder.AppendLine();
@@ -307,6 +318,130 @@ internal static class HelpTextBuilder
 		}
 
 		return builder.ToString();
+	}
+
+	private static string BuildOptionSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
+	{
+		var parameters = route.Command.Handler.Method.GetParameters()
+			.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name))
+			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
+		var optionRows = route.OptionSchema.Parameters.Values
+			.Where(parameter => parameter.Mode != ReplParameterMode.ArgumentOnly)
+			.Select(parameter => BuildOptionRow(route.OptionSchema, parameter, parameters))
+			.Where(row => row is not null)
+			.Select(row => row!)
+			.ToArray();
+		if (optionRows.Length == 0)
+		{
+			return string.Empty;
+		}
+
+		var builder = new StringBuilder();
+		builder.AppendLine();
+		builder.Append(useAnsi
+			? AnsiText.Apply("Options:", palette.SectionStyle)
+			: "Options:");
+		foreach (var row in optionRows)
+		{
+			builder.AppendLine();
+			builder.Append(useAnsi
+				? $"  {AnsiText.Apply(row[0], palette.CommandStyle)}  {AnsiText.Apply(row[1], palette.DescriptionStyle)}"
+				: $"  {row[0]}  {row[1]}");
+		}
+
+		return builder.ToString();
+	}
+
+	private static string[]? BuildOptionRow(
+		OptionSchema schema,
+		OptionSchemaParameter schemaParameter,
+		Dictionary<string, ParameterInfo> parameters)
+	{
+		if (!parameters.TryGetValue(schemaParameter.Name, out var parameter))
+		{
+			return null;
+		}
+
+		var entries = schema.Entries
+			.Where(entry =>
+				string.Equals(entry.ParameterName, schemaParameter.Name, StringComparison.OrdinalIgnoreCase)
+				&& entry.TokenKind is OptionSchemaTokenKind.NamedOption
+					or OptionSchemaTokenKind.BoolFlag
+					or OptionSchemaTokenKind.ReverseFlag
+					or OptionSchemaTokenKind.ValueAlias
+					or OptionSchemaTokenKind.EnumAlias)
+			.ToArray();
+		if (entries.Length == 0)
+		{
+			return null;
+		}
+
+		var visibleTokens = entries
+			.Select(entry => entry.Token)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		var tokenDisplay = string.Join(", ", visibleTokens);
+		var placeholder = ResolveOptionPlaceholder(parameter.ParameterType);
+		var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
+		var defaultValue = parameter.HasDefaultValue && parameter.DefaultValue is not null
+			? $" [default: {parameter.DefaultValue}]"
+			: string.Empty;
+		var left = string.IsNullOrWhiteSpace(placeholder)
+			? tokenDisplay
+			: $"{tokenDisplay} {placeholder}";
+		var right = $"{description}{defaultValue}".Trim();
+		return [left, right];
+	}
+
+	private static string ResolveOptionPlaceholder(Type parameterType)
+	{
+		var effectiveType = Nullable.GetUnderlyingType(parameterType) ?? parameterType;
+		if (effectiveType == typeof(bool))
+		{
+			return string.Empty;
+		}
+
+		if (effectiveType.IsEnum)
+		{
+			return $"<{string.Join('|', Enum.GetNames(effectiveType))}>";
+		}
+
+		return $"<{GetTypePlaceholderName(effectiveType)}>";
+	}
+
+	private static string GetTypePlaceholderName(Type type)
+	{
+		if (type == typeof(string))
+		{
+			return "string";
+		}
+
+		if (type == typeof(int))
+		{
+			return "int";
+		}
+
+		if (type == typeof(long))
+		{
+			return "long";
+		}
+
+		if (type == typeof(Guid))
+		{
+			return "guid";
+		}
+
+		if (type == typeof(FileInfo))
+		{
+			return "file";
+		}
+
+		if (type == typeof(DirectoryInfo))
+		{
+			return "directory";
+		}
+
+		return type.Name.ToLowerInvariant();
 	}
 
 	private static string BuildScopeHelp(
@@ -344,6 +479,14 @@ internal static class HelpTextBuilder
 
 			AppendSectionLine(builder, "Scopes:", useAnsi, palette);
 			AppendIndentedRows(builder, scopeRows, renderWidth, GetCommandRowsStyle(useAnsi, palette));
+		}
+
+		var globalOptionRows = BuildGlobalOptionRows(parsingOptions);
+		if (globalOptionRows.Length > 0)
+		{
+			builder.AppendLine();
+			AppendSectionLine(builder, "Global Options:", useAnsi, palette);
+			AppendIndentedRows(builder, globalOptionRows, renderWidth, GetCommandRowsStyle(useAnsi, palette));
 		}
 
 		builder.AppendLine();
@@ -501,6 +644,25 @@ internal static class HelpTextBuilder
 		}
 
 		return [.. rows];
+	}
+
+	private static string[][] BuildGlobalOptionRows(ParsingOptions parsingOptions)
+	{
+		ArgumentNullException.ThrowIfNull(parsingOptions);
+		var customRows = parsingOptions.GlobalOptions.Values
+			.OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
+			.Select(option =>
+			{
+					var aliases = option.Aliases.Count == 0
+						? string.Empty
+						: $", {string.Join(", ", option.Aliases)}";
+				return new[]
+				{
+					$"{option.CanonicalToken}{aliases}",
+					"Custom global option.",
+				};
+			});
+		return [.. BuiltInGlobalOptionRows.Concat(customRows)];
 	}
 
 	private static TextTableStyle GetCommandRowsStyle(bool useAnsi, AnsiPalette palette)

@@ -15,4 +15,7 @@ internal sealed record GlobalInvocationOptions(
 
 	public IReadOnlyDictionary<string, string> PromptAnswers { get; init; } =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+	public IReadOnlyDictionary<string, IReadOnlyList<string>> CustomGlobalNamedOptions { get; init; } =
+		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 }

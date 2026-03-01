@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Repl.IntegrationTests;
 
 [TestClass]
@@ -84,6 +86,32 @@ public sealed class Given_Completions
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Autocomplete mode set to Off");
 		output.Text.Should().Contain("override=Off");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies shell completion suggests custom global options so app-registered globals remain discoverable from tab completion.")]
+	public void When_CompletingGlobalPrefix_Then_CustomGlobalOptionsAreSuggested()
+	{
+		var sut = ReplApp.Create()
+			.Options(options => options.Parsing.AddGlobalOption<string>("tenant", aliases: ["-t"]));
+		sut.Map("ping", () => "pong");
+		const string line = "repl --te";
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			"bash",
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+			"--no-logo",
+		]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("--tenant");
 	}
 }
 

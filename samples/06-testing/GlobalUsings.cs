@@ -1,5 +1,6 @@
 global using AwesomeAssertions;
 global using Microsoft.VisualStudio.TestTools.UnitTesting;
+global using Repl.Interaction;
 global using Repl;
 global using Repl.Testing;
 global using System;

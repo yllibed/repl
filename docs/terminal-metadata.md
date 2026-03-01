@@ -2,6 +2,14 @@
 
 This file is the canonical behavior document for terminal/session metadata in Repl Toolkit.
 
+## Public API Namespace
+
+Terminal control and capability contracts are exposed from `Repl.Terminal`:
+
+```csharp
+using Repl.Terminal;
+```
+
 ## Boundary model (A-D) with real OSI references
 
 | Alias | Real OSI layer(s) | Scope in this project | Notes |

@@ -1,4 +1,6 @@
 using System.Globalization;
+using Repl.Parameters;
+using Repl.ShellCompletion;
 
 namespace Repl.ShellCompletionTestHost;
 
@@ -50,6 +52,10 @@ internal static class Program
 					ValueTask.FromResult<IReadOnlyList<string>>([$"{input}A", $"{input}B"]));
 
 		app.Map("config set", () => "ok");
+		app.Map(
+			"render",
+			([ReplOption(Aliases = ["-m"])] CompletionRenderMode mode = CompletionRenderMode.Fast) =>
+				mode.ToString());
 		app.Map("send", () => "ok");
 		app.Map("secret ping", () => "ok").Hidden();
 		app.Map("ping", () => "pong");
@@ -69,6 +75,12 @@ internal static class Program
 					(Func<string, string>)(id => id));
 			});
 		});
+	}
+
+	private enum CompletionRenderMode
+	{
+		Fast,
+		Slow,
 	}
 
 	private static void ConfigureShellCompletionOptions(ReplApp app)
