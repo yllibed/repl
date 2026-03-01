@@ -30,6 +30,25 @@ Global parsing notes:
 - use `--` to stop option parsing and force remaining tokens to positional arguments
 - response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported
 
+## Declaring command options
+
+Handler parameters can declare explicit option behavior with attributes:
+
+- `[ReplOption]` for named options
+- `[ReplArgument]` for positional behavior
+- `[ReplValueAlias]` for token-to-value injection
+- `[ReplEnumFlag]` on enum members for enum-token aliases
+
+Example:
+
+```csharp
+app.Map(
+    "render",
+    ([ReplOption(Aliases = ["-m"])] RenderMode mode = RenderMode.Fast,
+     [ReplOption(ReverseAliases = ["--no-verbose"])] bool verbose = false) =>
+        $"{mode}:{verbose}");
+```
+
 ## Parse diagnostics model
 
 Command option parsing returns structured diagnostics through the internal `OptionParsingResult` model:

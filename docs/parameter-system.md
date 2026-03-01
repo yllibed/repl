@@ -15,6 +15,50 @@ This document describes Repl Toolkit's parameter/option model and key design dec
 - option parsing is case-sensitive by default, configurable via `ParsingOptions.OptionCaseSensitivity`
 - response files are supported with `@file.rsp` (non-recursive)
 - custom global options can be registered via `ParsingOptions.AddGlobalOption<T>(...)`
+- signed numeric literals (`-1`, `-0.5`, `-1e3`) are treated as positional values, not options
+
+## Public declaration API
+
+Application-facing parameter DSL:
+
+- `ReplOptionAttribute`
+  - canonical `Name`
+  - explicit `Aliases` (full tokens, for example `-m`, `--mode`)
+  - explicit `ReverseAliases` (for example `--no-verbose`)
+  - `Mode` (`OptionOnly`, `ArgumentOnly`, `OptionAndPositional`)
+  - optional per-parameter `CaseSensitivity`
+  - optional `Arity`
+- `ReplArgumentAttribute`
+  - optional positional `Position`
+  - `Mode`
+- `ReplValueAliasAttribute`
+  - maps a token to an injected parameter value (for example `--json` -> `output=json`)
+- `ReplEnumFlagAttribute`
+  - maps enum members to explicit alias tokens
+
+Supporting enums:
+
+- `ReplCaseSensitivity`
+- `ReplParameterMode`
+- `ReplArity`
+
+## Internal architecture boundary
+
+The option engine internals are intentionally not public:
+
+- schema model and runtime parser internals live under `src/Repl.Core/Internal/Options`
+- these internals are consumed by command parsing, help rendering, shell completion, and documentation export
+- only the declaration DSL above is public for application code
+
+## Help/completion/doc consistency
+
+Command option metadata is generated from one internal schema per route.
+This same schema drives:
+
+- runtime parsing and diagnostics
+- command help option sections
+- shell option completion candidates
+- exported documentation option metadata
 
 ## System.CommandLine comparison
 
