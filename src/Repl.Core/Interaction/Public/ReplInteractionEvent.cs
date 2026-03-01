@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Interaction;
 
 /// <summary>
 /// Base semantic interaction event emitted during command execution.

@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Interaction;
 
 /// <summary>
 /// Provides bidirectional interaction during command execution.

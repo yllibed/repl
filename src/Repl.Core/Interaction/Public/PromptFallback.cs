@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Interaction;
 
 /// <summary>
 /// Defines fallback policy for unanswered prompts.

@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Interaction;
 
 /// <summary>
 /// Extensible options for Ask prompts. Groups <see cref="CancellationToken"/>

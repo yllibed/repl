@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Interaction;
 
 /// <summary>
 /// Renders semantic interaction events to an output target.
