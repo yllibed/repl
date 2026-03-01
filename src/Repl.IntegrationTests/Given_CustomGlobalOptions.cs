@@ -31,4 +31,19 @@ public sealed class Given_CustomGlobalOptions
 		output.ExitCode.Should().Be(1);
 		output.Text.Should().Contain("Ambiguous option '--tenant'");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies root help includes custom global options so registered global flags remain discoverable to users.")]
+	public void When_RequestingRootHelp_Then_CustomGlobalOptionIsListedInGlobalOptionsSection()
+	{
+		var sut = ReplApp.Create()
+			.Options(options => options.Parsing.AddGlobalOption<string>("tenant", aliases: ["-t"]));
+		sut.Map("ping", () => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Global Options:");
+		output.Text.Should().Contain("--tenant, -t");
+	}
 }

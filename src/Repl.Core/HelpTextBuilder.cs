@@ -12,6 +12,15 @@ internal static class HelpTextBuilder
 	private static readonly string[] ExitRow = ["exit", "Leave interactive mode."];
 	private static readonly string[] HistoryRow = ["history [--limit <n>]", "Show recent interactive commands."];
 	private static readonly string[] CompleteRow = ["complete --target <name> [--input <text>] <path>", "Resolve completions."];
+	private static readonly string[][] BuiltInGlobalOptionRows =
+	[
+		["--help", "Show help for current scope or command."],
+		["--interactive", "Force interactive mode."],
+		["--no-interactive", "Prevent interactive mode."],
+		["--no-logo", "Disable banner rendering."],
+		["--output:<format>", "Set output format (for example json, yaml, xml, markdown)."],
+		["--answer:<name>[=value]", "Provide prompt answers in non-interactive execution."],
+	];
 
 	public static HelpDocumentModel BuildModel(
 		IReadOnlyList<RouteDefinition> routes,
@@ -472,6 +481,14 @@ internal static class HelpTextBuilder
 			AppendIndentedRows(builder, scopeRows, renderWidth, GetCommandRowsStyle(useAnsi, palette));
 		}
 
+		var globalOptionRows = BuildGlobalOptionRows(parsingOptions);
+		if (globalOptionRows.Length > 0)
+		{
+			builder.AppendLine();
+			AppendSectionLine(builder, "Global Options:", useAnsi, palette);
+			AppendIndentedRows(builder, globalOptionRows, renderWidth, GetCommandRowsStyle(useAnsi, palette));
+		}
+
 		builder.AppendLine();
 		AppendSectionLine(builder, "Global Commands:", useAnsi, palette);
 		AppendIndentedRows(builder, BuildGlobalCommandRows(ambientOptions), renderWidth, GetCommandRowsStyle(useAnsi, palette));
@@ -627,6 +644,25 @@ internal static class HelpTextBuilder
 		}
 
 		return [.. rows];
+	}
+
+	private static string[][] BuildGlobalOptionRows(ParsingOptions parsingOptions)
+	{
+		ArgumentNullException.ThrowIfNull(parsingOptions);
+		var customRows = parsingOptions.GlobalOptions.Values
+			.OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
+			.Select(option =>
+			{
+					var aliases = option.Aliases.Count == 0
+						? string.Empty
+						: $", {string.Join(", ", option.Aliases)}";
+				return new[]
+				{
+					$"{option.CanonicalToken}{aliases}",
+					"Custom global option.",
+				};
+			});
+		return [.. BuiltInGlobalOptionRows.Concat(customRows)];
 	}
 
 	private static TextTableStyle GetCommandRowsStyle(bool useAnsi, AnsiPalette palette)
