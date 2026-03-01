@@ -34,6 +34,8 @@ public sealed class ParsingOptions
 	];
 	private readonly Dictionary<string, Func<string, bool>> _customRouteConstraints =
 		new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, GlobalOptionDefinition> _globalOptions =
+		new(StringComparer.OrdinalIgnoreCase);
 
 	/// <summary>
 	/// Gets or sets a value indicating whether unknown options are allowed.
@@ -44,6 +46,8 @@ public sealed class ParsingOptions
 	/// Gets or sets the culture mode used for numeric conversions.
 	/// </summary>
 	public NumericParsingCulture NumericCulture { get; set; } = NumericParsingCulture.Invariant;
+
+	internal IReadOnlyDictionary<string, GlobalOptionDefinition> GlobalOptions => _globalOptions;
 
 	internal IFormatProvider NumericFormatProvider => NumericCulture == NumericParsingCulture.Current
 		? CultureInfo.CurrentCulture
@@ -78,4 +82,52 @@ public sealed class ParsingOptions
 
 	internal bool TryGetRouteConstraint(string name, out Func<string, bool> predicate) =>
 		_customRouteConstraints.TryGetValue(name, out predicate!);
+
+	/// <summary>
+	/// Registers a custom global option consumed before command routing.
+	/// </summary>
+	/// <typeparam name="T">Declared value type (metadata only for now).</typeparam>
+	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
+	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
+	/// <param name="defaultValue">Optional default value metadata.</param>
+	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default)
+	{
+		name = string.IsNullOrWhiteSpace(name)
+			? throw new ArgumentException("Global option name cannot be empty.", nameof(name))
+			: name.Trim();
+
+		var normalizedCanonical = NormalizeLongToken(name);
+		if (_globalOptions.ContainsKey(name))
+		{
+			throw new InvalidOperationException($"A global option named '{name}' is already registered.");
+		}
+
+		var normalizedAliases = (aliases ?? [])
+			.Where(alias => !string.IsNullOrWhiteSpace(alias))
+			.Select(alias => NormalizeAliasToken(alias.Trim()))
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.Where(alias => !string.Equals(alias, normalizedCanonical, StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+
+		_globalOptions[name] = new GlobalOptionDefinition(
+			Name: name,
+			CanonicalToken: normalizedCanonical,
+			Aliases: normalizedAliases,
+			DefaultValue: defaultValue?.ToString());
+	}
+
+	private static string NormalizeLongToken(string name) =>
+		name.StartsWith("--", StringComparison.Ordinal)
+			? name
+			: $"--{name}";
+
+	private static string NormalizeAliasToken(string alias)
+	{
+		if (alias.StartsWith("--", StringComparison.Ordinal) || alias.StartsWith('-'))
+		{
+			return alias;
+		}
+
+		return $"--{alias}";
+	}
 }

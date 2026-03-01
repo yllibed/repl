@@ -149,7 +149,7 @@ public sealed partial class CoreReplApp
 		}
 
 		var invocationTokens = scopeTokens.Concat(inputTokens).ToArray();
-		var globalOptions = GlobalOptionParser.Parse(invocationTokens, _options.Output);
+		var globalOptions = GlobalOptionParser.Parse(invocationTokens, _options.Output, _options.Parsing);
 		var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 		if (prefixResolution.IsAmbiguous)
 		{

@@ -403,7 +403,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		_options.Interaction.SetObserver(observer: ExecutionObserver);
 		try
 		{
-			var globalOptions = GlobalOptionParser.Parse(args, _options.Output);
+			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
@@ -926,6 +926,16 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var activeGraph = ResolveActiveRoutingGraph();
 		_options.Interaction.SetPrefilledAnswers(globalOptions.PromptAnswers);
 		var knownOptionNames = ResolveKnownHandlerOptionNames(match.Route.Command.Handler, match.Values.Keys);
+		if (TryFindGlobalCommandOptionCollision(globalOptions, knownOptionNames, out var collidingOption))
+		{
+			_ = await RenderOutputAsync(
+					Results.Validation($"Ambiguous option '{collidingOption}'. It is defined as both global and command option."),
+					globalOptions.OutputFormat,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return 1;
+		}
+
 		var parsedOptions = InvocationOptionParser.Parse(match.RemainingTokens, _options.Parsing, knownOptionNames);
 		if (parsedOptions.HasErrors)
 		{
@@ -943,6 +953,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var bindingContext = CreateInvocationBindingContext(
 			match,
 			parsedOptions,
+			globalOptions,
 			matchedPathTokens,
 			activeGraph.Contexts,
 			serviceProvider,
@@ -1434,15 +1445,19 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private InvocationBindingContext CreateInvocationBindingContext(
 		RouteMatch match,
 		OptionParsingResult parsedOptions,
+		GlobalInvocationOptions globalOptions,
 		string[] matchedPathTokens,
 		IReadOnlyList<ContextDefinition> contexts,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
 		var contextValues = BuildContextHierarchyValues(match.Route.Template, matchedPathTokens, contexts);
+		var mergedNamedOptions = MergeNamedOptions(
+			parsedOptions.NamedOptions,
+			globalOptions.CustomGlobalNamedOptions);
 		return new InvocationBindingContext(
 			match.Values,
-			parsedOptions.NamedOptions,
+			mergedNamedOptions,
 			parsedOptions.PositionalArguments,
 			contextValues,
 			_options.Parsing.NumericFormatProvider,
