@@ -153,7 +153,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				.Select(existingRoute => existingRoute.Template));
 
 		_commands.Add(command);
-		var routeDefinition = new RouteDefinition(template, command, moduleId);
+		var optionSchema = OptionSchemaBuilder.Build(template, command, _options.Parsing);
+		var routeDefinition = new RouteDefinition(template, command, moduleId, optionSchema);
 		_routes.Add(routeDefinition);
 		InvalidateRouting();
 		return command;
@@ -929,10 +930,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var optionComparer = commandParsingOptions.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
 			? StringComparer.OrdinalIgnoreCase
 			: StringComparer.Ordinal;
-		var knownOptionNames = ResolveKnownHandlerOptionNames(
-			match.Route.Command.Handler,
-			match.Values.Keys,
-			optionComparer);
+		var knownOptionNames = new HashSet<string>(match.Route.OptionSchema.Parameters.Keys, optionComparer);
 		if (TryFindGlobalCommandOptionCollision(globalOptions, knownOptionNames, out var collidingOption))
 		{
 			_ = await RenderOutputAsync(
@@ -945,8 +943,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 		var parsedOptions = InvocationOptionParser.Parse(
 			match.RemainingTokens,
-			commandParsingOptions,
-			knownOptionNames);
+			match.Route.OptionSchema,
+			commandParsingOptions);
 		if (parsedOptions.HasErrors)
 		{
 			var firstError = parsedOptions.Diagnostics
@@ -964,6 +962,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			match,
 			parsedOptions,
 			globalOptions,
+			commandParsingOptions,
 			matchedPathTokens,
 			activeGraph.Contexts,
 			serviceProvider,
@@ -1456,6 +1455,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		RouteMatch match,
 		OptionParsingResult parsedOptions,
 		GlobalInvocationOptions globalOptions,
+		ParsingOptions commandParsingOptions,
 		string[] matchedPathTokens,
 		IReadOnlyList<ContextDefinition> contexts,
 		IServiceProvider serviceProvider,
@@ -1469,6 +1469,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			match.Values,
 			mergedNamedOptions,
 			parsedOptions.PositionalArguments,
+			match.Route.OptionSchema,
+			commandParsingOptions.OptionCaseSensitivity,
 			contextValues,
 			_options.Parsing.NumericFormatProvider,
 			serviceProvider,

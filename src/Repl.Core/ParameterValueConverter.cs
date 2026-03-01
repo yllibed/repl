@@ -4,7 +4,11 @@ namespace Repl;
 
 internal static class ParameterValueConverter
 {
-	public static object? ConvertSingle(string? value, Type targetType, IFormatProvider numericFormatProvider)
+	public static object? ConvertSingle(
+		string? value,
+		Type targetType,
+		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase = true)
 	{
 		ArgumentNullException.ThrowIfNull(targetType);
 		ArgumentNullException.ThrowIfNull(numericFormatProvider);
@@ -22,7 +26,7 @@ internal static class ParameterValueConverter
 
 		if (nonNullableType.IsEnum)
 		{
-			return Enum.Parse(nonNullableType, value, ignoreCase: true);
+			return Enum.Parse(nonNullableType, value, ignoreCase: enumIgnoreCase);
 		}
 
 		return Convert.ChangeType(value, nonNullableType, numericFormatProvider);

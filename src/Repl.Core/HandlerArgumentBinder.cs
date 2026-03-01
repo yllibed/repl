@@ -22,11 +22,19 @@ internal static class HandlerArgumentBinder
 		return values;
 	}
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Binding precedence must stay explicit to preserve predictable runtime behavior.")]
 	private static object? BindParameter(
 		System.Reflection.ParameterInfo parameter,
 		InvocationBindingContext context,
 		ref int positionalIndex)
 	{
+		var parameterName = parameter.Name ?? string.Empty;
+		var bindingMode = ResolveBindingMode(parameter, context.OptionSchema);
+		var enumIgnoreCase = ResolveEnumIgnoreCase(parameterName, context);
+
 		if (parameter.ParameterType == typeof(CancellationToken))
 		{
 			return context.CancellationToken;
@@ -43,28 +51,44 @@ internal static class HandlerArgumentBinder
 				$"Unable to bind parameter '{parameter.Name}' ({parameter.ParameterType.Name}).");
 		}
 
-		if (context.RouteValues.TryGetValue(parameter.Name ?? string.Empty, out var routeValue))
+		if (context.RouteValues.TryGetValue(parameterName, out var routeValue))
 		{
 			return ParameterValueConverter.ConvertSingle(
 				routeValue,
 				parameter.ParameterType,
-				context.NumericFormatProvider);
+				context.NumericFormatProvider,
+				enumIgnoreCase);
 		}
 
-		if (context.NamedOptions.TryGetValue(parameter.Name ?? string.Empty, out var namedValues))
+		if (bindingMode != ReplParameterMode.ArgumentOnly
+			&& context.NamedOptions.TryGetValue(parameterName, out var namedValues))
 		{
-			return ConvertManyOrSingle(namedValues, parameter.ParameterType, context.NumericFormatProvider);
-		}
+			if (bindingMode == ReplParameterMode.OptionAndPositional
+				&& CanConsumePositional(parameter, context.PositionalArguments, positionalIndex))
+			{
+				throw new InvalidOperationException(
+					$"Parameter '{parameterName}' cannot receive both named and positional values in the same invocation.");
+			}
+
+				return ConvertManyOrSingle(
+					parameter,
+					namedValues,
+					parameter.ParameterType,
+					context.NumericFormatProvider,
+					enumIgnoreCase);
+			}
 
 		if (TryResolveFromContextOrServices(parameter, context, out var resolved))
 		{
 			return resolved;
 		}
 
-		if (TryConsumePositional(
+		if (bindingMode != ReplParameterMode.OptionOnly
+			&& TryConsumePositional(
 			parameter,
 			context.PositionalArguments,
 			context.NumericFormatProvider,
+			enumIgnoreCase,
 			ref positionalIndex,
 			out var positionalValue))
 		{
@@ -289,6 +313,7 @@ internal static class HandlerArgumentBinder
 		System.Reflection.ParameterInfo parameter,
 		IReadOnlyList<string> positionalArguments,
 		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase,
 		ref int positionalIndex,
 		out object? value)
 	{
@@ -303,7 +328,7 @@ internal static class HandlerArgumentBinder
 			}
 
 			positionalIndex = positionalArguments.Count;
-			value = ConvertMany(remaining, targetType, elementType, numericFormatProvider);
+			value = ConvertMany(remaining, targetType, elementType, numericFormatProvider, enumIgnoreCase);
 			return true;
 		}
 
@@ -316,35 +341,46 @@ internal static class HandlerArgumentBinder
 		value = ParameterValueConverter.ConvertSingle(
 			positionalArguments[positionalIndex],
 			targetType,
-			numericFormatProvider);
+			numericFormatProvider,
+			enumIgnoreCase);
 		positionalIndex++;
 		return true;
 	}
 
 	private static object? ConvertManyOrSingle(
+		System.Reflection.ParameterInfo parameter,
 		IReadOnlyList<string> values,
 		Type targetType,
-		IFormatProvider numericFormatProvider)
+		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase)
 	{
 		if (!TryGetCollectionElementType(targetType, out var elementType))
 		{
+			if (values.Count > 1)
+			{
+				throw new InvalidOperationException(
+					$"Parameter '{parameter.Name}' received multiple values but does not support repeated occurrences.");
+			}
+
 			return ParameterValueConverter.ConvertSingle(
 				values.Count == 0 ? null : values[0],
 				targetType,
-				numericFormatProvider);
+				numericFormatProvider,
+				enumIgnoreCase);
 		}
 
-		return ConvertMany(values, targetType, elementType, numericFormatProvider);
+		return ConvertMany(values, targetType, elementType, numericFormatProvider, enumIgnoreCase);
 	}
 
 	private static object ConvertMany(
 		IEnumerable<string> values,
 		Type targetType,
 		Type elementType,
-		IFormatProvider numericFormatProvider)
+		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase)
 	{
 		var converted = values
-			.Select(value => ParameterValueConverter.ConvertSingle(value, elementType, numericFormatProvider))
+			.Select(value => ParameterValueConverter.ConvertSingle(value, elementType, numericFormatProvider, enumIgnoreCase))
 			.ToArray();
 
 		if (targetType.IsArray)
@@ -366,6 +402,54 @@ internal static class HandlerArgumentBinder
 		}
 
 		return list;
+	}
+
+	private static bool CanConsumePositional(
+		System.Reflection.ParameterInfo parameter,
+		IReadOnlyList<string> positionalArguments,
+		int positionalIndex)
+	{
+		if (TryGetCollectionElementType(parameter.ParameterType, out _))
+		{
+			return positionalIndex < positionalArguments.Count;
+		}
+
+		return positionalIndex < positionalArguments.Count;
+	}
+
+	private static ReplParameterMode ResolveBindingMode(
+		System.Reflection.ParameterInfo parameter,
+		OptionSchema optionSchema)
+	{
+		if (!string.IsNullOrWhiteSpace(parameter.Name)
+			&& optionSchema.TryGetParameter(parameter.Name!, out var schemaParameter))
+		{
+			return schemaParameter.Mode;
+		}
+
+		var optionAttribute = parameter.GetCustomAttributes(typeof(ReplOptionAttribute), inherit: true)
+			.Cast<ReplOptionAttribute>()
+			.SingleOrDefault();
+		if (optionAttribute is not null)
+		{
+			return optionAttribute.Mode;
+		}
+
+		var argumentAttribute = parameter.GetCustomAttributes(typeof(ReplArgumentAttribute), inherit: true)
+			.Cast<ReplArgumentAttribute>()
+			.SingleOrDefault();
+		return argumentAttribute?.Mode ?? ReplParameterMode.OptionAndPositional;
+	}
+
+	private static bool ResolveEnumIgnoreCase(string parameterName, InvocationBindingContext context)
+	{
+		if (!context.OptionSchema.TryGetParameter(parameterName, out var schemaParameter))
+		{
+			return context.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
+		}
+
+		var effectiveCaseSensitivity = schemaParameter.CaseSensitivity ?? context.OptionCaseSensitivity;
+		return effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 	}
 
 	private static bool TryGetCollectionElementType(Type parameterType, out Type elementType)
