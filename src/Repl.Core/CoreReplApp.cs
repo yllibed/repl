@@ -936,7 +936,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			return 1;
 		}
 
-		var parsedOptions = InvocationOptionParser.Parse(match.RemainingTokens, _options.Parsing, knownOptionNames);
+		var commandParsingOptions = BuildEffectiveCommandParsingOptions();
+		var parsedOptions = InvocationOptionParser.Parse(
+			match.RemainingTokens,
+			commandParsingOptions,
+			knownOptionNames);
 		if (parsedOptions.HasErrors)
 		{
 			var firstError = parsedOptions.Diagnostics

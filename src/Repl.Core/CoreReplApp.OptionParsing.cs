@@ -78,4 +78,15 @@ public sealed partial class CoreReplApp
 
 		return merged;
 	}
+
+	private ParsingOptions BuildEffectiveCommandParsingOptions()
+	{
+		var isInteractiveSession = _runtimeState.Value?.IsInteractiveSession == true;
+		return new ParsingOptions
+		{
+			AllowUnknownOptions = _options.Parsing.AllowUnknownOptions,
+			OptionCaseSensitivity = _options.Parsing.OptionCaseSensitivity,
+			AllowResponseFiles = isInteractiveSession ? false : _options.Parsing.AllowResponseFiles,
+		};
+	}
 }
