@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Autocomplete;
 
 /// <summary>
 /// Defines high-level autocomplete interaction style.

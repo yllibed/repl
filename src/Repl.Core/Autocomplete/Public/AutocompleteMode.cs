@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Autocomplete;
 
 /// <summary>
 /// Configures interactive autocomplete behavior.
