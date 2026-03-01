@@ -20,6 +20,15 @@ These flags are parsed before route execution:
 - `--output:<format>`
 - output aliases mapped by `OutputOptions.Aliases` (defaults include `--json`, `--xml`, `--yaml`, `--yml`, `--markdown`)
 - `--answer:<name>[=value]` for non-interactive prompt answers
+- custom global options registered via `options.Parsing.AddGlobalOption<T>(...)`
+
+Global parsing notes:
+
+- unknown command options are validation errors by default (`options.Parsing.AllowUnknownOptions = false`)
+- option name matching is case-sensitive by default (`options.Parsing.OptionCaseSensitivity = CaseSensitive`)
+- option value syntaxes accepted by command parsing: `--name value`, `--name=value`, `--name:value`
+- use `--` to stop option parsing and force remaining tokens to positional arguments
+- response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported
 
 ## Ambient commands
 

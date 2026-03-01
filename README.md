@@ -233,8 +233,11 @@ ws-7c650a64   websocket  [::1]:60288  301x31   xterm-256color  1m 34s     1s
 - **Hierarchical contexts** (scopes) with validation and navigation results (`NavigateUp`, `NavigateTo`)
 - **Routing constraints** (`{id:int}`, `{when:date}`, `{x:guid}`…) plus custom constraints
 - **Parsing and binding** for named options, positional args, route values, and injected services
+- **Strict option validation by default** (unknown options fail fast; configurable)
+- **Response files** with `@file.rsp` expansion for complex invocations
 - **Output pipeline** with transformers and aliases  
   (`--output:<format>`, `--json`, `--yaml`, `--markdown`, …)
+- **Extensible global options** via `options.Parsing.AddGlobalOption<T>(...)`
 - **Typed result model** (`Results.Ok/Error/Validation/NotFound/Cancelled`, etc.)
 - **Protocol passthrough mode** for stdio transports (`AsProtocolPassthrough()`), keeping `stdout` reserved for protocol payloads
 - **Typed interactions**: prompts, progress, status, timeouts, cancellation
