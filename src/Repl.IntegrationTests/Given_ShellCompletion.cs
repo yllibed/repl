@@ -162,6 +162,28 @@ public sealed class Given_ShellCompletion
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies enum option value completion is suggested after an option token so users can discover allowed enum values.")]
+	public void When_CompletingEnumOptionValue_Then_EnumValuesAreReturned()
+	{
+		const string line = "repl render --mode ";
+		var output = Run(
+		[
+			"completion",
+			"__complete",
+			"--shell",
+			"bash",
+			"--line",
+			line,
+			"--cursor",
+			line.Length.ToString(CultureInfo.InvariantCulture),
+		]);
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Fast");
+		output.Text.Should().Contain("Slow");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies hidden commands are excluded from shell completion suggestions.")]
 	public void When_CommandIsHidden_Then_ShellCompletionDoesNotExposeIt()
 	{

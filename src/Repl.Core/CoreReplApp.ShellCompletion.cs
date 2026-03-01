@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using Repl.Internal.Options;
 
 namespace Repl;
 
@@ -36,6 +37,19 @@ public sealed partial class CoreReplApp
 		var hasTerminalRoute = routeMatch is not null && routeMatch.RemainingTokens.Count == 0;
 		var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		var candidates = new List<string>(capacity: 16);
+		if (!currentTokenIsOption
+			&& hasTerminalRoute
+			&& TryAddRouteEnumValueCandidates(
+				routeMatch!.Route,
+				state.PriorTokens,
+				currentTokenPrefix,
+				dedupe,
+				candidates))
+		{
+			candidates.Sort(StringComparer.OrdinalIgnoreCase);
+			return [.. candidates];
+		}
+
 		if (!currentTokenIsOption)
 		{
 			AddShellCommandCandidates(
@@ -58,6 +72,92 @@ public sealed partial class CoreReplApp
 
 		candidates.Sort(StringComparer.OrdinalIgnoreCase);
 		return [.. candidates];
+	}
+
+	private bool TryAddRouteEnumValueCandidates(
+		RouteDefinition route,
+		string[] priorTokens,
+		string currentTokenPrefix,
+		HashSet<string> dedupe,
+		List<string> candidates)
+	{
+		if (!TryResolvePendingRouteOption(route, priorTokens, out var entry))
+		{
+			return false;
+		}
+
+		if (!route.OptionSchema.TryGetParameter(entry.ParameterName, out var parameter))
+		{
+			return false;
+		}
+
+		var enumType = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
+		if (!enumType.IsEnum)
+		{
+			return false;
+		}
+
+		var effectiveCaseSensitivity = parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity;
+		var comparison = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparison.OrdinalIgnoreCase
+			: StringComparison.Ordinal;
+		var beforeCount = candidates.Count;
+		foreach (var enumName in Enum.GetNames(enumType))
+		{
+			if (enumName.StartsWith(currentTokenPrefix, comparison))
+			{
+				TryAddShellCompletionCandidate(enumName, dedupe, candidates);
+			}
+		}
+
+		return candidates.Count > beforeCount;
+	}
+
+	private bool TryResolvePendingRouteOption(
+		RouteDefinition route,
+		string[] priorTokens,
+		out OptionSchemaEntry entry)
+	{
+		entry = default!;
+		if (priorTokens.Length <= 1)
+		{
+			return false;
+		}
+
+		var commandTokens = priorTokens[1..];
+		if (commandTokens.Length == 0)
+		{
+			return false;
+		}
+
+		var previousToken = commandTokens[^1];
+		if (!IsGlobalOptionToken(previousToken))
+		{
+			return false;
+		}
+
+		var separatorIndex = previousToken.IndexOfAny(['=', ':']);
+		if (separatorIndex >= 0)
+		{
+			return false;
+		}
+
+		var matches = route.OptionSchema.ResolveToken(previousToken, _options.Parsing.OptionCaseSensitivity);
+		var distinct = matches
+			.DistinctBy(candidate => (candidate.ParameterName, candidate.TokenKind, candidate.InjectedValue), ShellOptionSchemaEntryComparer.Instance)
+			.ToArray();
+		if (distinct.Length != 1)
+		{
+			return false;
+		}
+
+		if (distinct[0].TokenKind is not (OptionSchemaTokenKind.NamedOption or OptionSchemaTokenKind.BoolFlag))
+		{
+			return false;
+		}
+
+		entry = distinct[0];
+		return true;
 	}
 
 	private static void TryAddShellCompletionCandidate(
@@ -303,5 +403,26 @@ public sealed partial class CoreReplApp
 			Environment.GetCommandLineArgs(),
 			Environment.ProcessPath,
 			app.Name);
+	}
+
+	private sealed class ShellOptionSchemaEntryComparer : IEqualityComparer<(string ParameterName, OptionSchemaTokenKind TokenKind, string? InjectedValue)>
+	{
+		public static ShellOptionSchemaEntryComparer Instance { get; } = new();
+
+		public bool Equals(
+			(string ParameterName, OptionSchemaTokenKind TokenKind, string? InjectedValue) x,
+			(string ParameterName, OptionSchemaTokenKind TokenKind, string? InjectedValue) y) =>
+			string.Equals(x.ParameterName, y.ParameterName, StringComparison.OrdinalIgnoreCase)
+			&& x.TokenKind == y.TokenKind
+			&& string.Equals(x.InjectedValue, y.InjectedValue, StringComparison.Ordinal);
+
+		public int GetHashCode((string ParameterName, OptionSchemaTokenKind TokenKind, string? InjectedValue) obj)
+		{
+			var parameterHash = StringComparer.OrdinalIgnoreCase.GetHashCode(obj.ParameterName);
+			var injectedHash = obj.InjectedValue is null
+				? 0
+				: StringComparer.Ordinal.GetHashCode(obj.InjectedValue);
+			return HashCode.Combine(parameterHash, (int)obj.TokenKind, injectedHash);
+		}
 	}
 }
