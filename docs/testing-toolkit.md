@@ -12,6 +12,8 @@ It is test-framework-agnostic and assertion-library-agnostic.
 
 ```csharp
 using Repl.Testing;
+using Repl.Interaction;
+using Repl.Terminal;
 
 await using var host = ReplTestHost.Create(() =>
 {
