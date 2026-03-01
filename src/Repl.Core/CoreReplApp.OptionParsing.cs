@@ -56,7 +56,7 @@ public sealed partial class CoreReplApp
 		{
 			AllowUnknownOptions = _options.Parsing.AllowUnknownOptions,
 			OptionCaseSensitivity = _options.Parsing.OptionCaseSensitivity,
-			AllowResponseFiles = isInteractiveSession ? false : _options.Parsing.AllowResponseFiles,
+			AllowResponseFiles = !isInteractiveSession && _options.Parsing.AllowResponseFiles,
 		};
 	}
 }
