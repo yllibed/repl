@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using Repl.Internal.Options;
 
 namespace Repl;
 

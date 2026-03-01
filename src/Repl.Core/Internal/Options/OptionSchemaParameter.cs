@@ -1,4 +1,6 @@
-namespace Repl;
+using Repl;
+
+namespace Repl.Internal.Options;
 
 internal sealed record OptionSchemaParameter(
 	string Name,

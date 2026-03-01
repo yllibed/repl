@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using Repl.ShellCompletion;
+using Repl.Internal.Options;
 
 namespace Repl;
 

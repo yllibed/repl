@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Internal.Options;
 
 internal sealed class OptionSchema
 {

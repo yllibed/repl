@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Repl.Internal.Options;
 
 namespace Repl;
 

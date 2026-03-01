@@ -120,9 +120,12 @@ public sealed partial class CoreReplApp
 		HashSet<string> dedupe,
 		List<string> candidates)
 	{
+		var comparison = _options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparison.OrdinalIgnoreCase
+			: StringComparison.Ordinal;
 		foreach (var option in StaticShellGlobalOptions)
 		{
-			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
+			if (option.StartsWith(currentTokenPrefix, comparison))
 			{
 				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
@@ -131,7 +134,7 @@ public sealed partial class CoreReplApp
 		foreach (var alias in _options.Output.Aliases.Keys)
 		{
 			var option = $"--{alias}";
-			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
+			if (option.StartsWith(currentTokenPrefix, comparison))
 			{
 				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
@@ -140,44 +143,43 @@ public sealed partial class CoreReplApp
 		foreach (var format in _options.Output.Transformers.Keys)
 		{
 			var option = $"--output:{format}";
-			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
+			if (option.StartsWith(currentTokenPrefix, comparison))
 			{
 				TryAddShellCompletionCandidate(option, dedupe, candidates);
 			}
 		}
+
+		foreach (var custom in _options.Parsing.GlobalOptions.Values)
+		{
+			if (custom.CanonicalToken.StartsWith(currentTokenPrefix, comparison))
+			{
+				TryAddShellCompletionCandidate(custom.CanonicalToken, dedupe, candidates);
+			}
+
+			foreach (var alias in custom.Aliases)
+			{
+				if (alias.StartsWith(currentTokenPrefix, comparison))
+				{
+					TryAddShellCompletionCandidate(alias, dedupe, candidates);
+				}
+			}
+		}
 	}
 
-	private static void AddRouteShellOptionCandidates(
+	private void AddRouteShellOptionCandidates(
 		RouteDefinition route,
 		string currentTokenPrefix,
 		HashSet<string> dedupe,
 		List<string> candidates)
 	{
-		var routeParameterNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		foreach (var segment in route.Template.Segments)
+		var comparison = _options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparison.OrdinalIgnoreCase
+			: StringComparison.Ordinal;
+		foreach (var token in route.OptionSchema.KnownTokens)
 		{
-			if (segment is DynamicRouteSegment dynamicSegment)
+			if (token.StartsWith(currentTokenPrefix, comparison))
 			{
-				routeParameterNames.Add(dynamicSegment.Name);
-			}
-		}
-
-		foreach (var parameter in route.Command.Handler.Method.GetParameters())
-		{
-			if (string.IsNullOrWhiteSpace(parameter.Name)
-				|| parameter.ParameterType == typeof(CancellationToken)
-				|| routeParameterNames.Contains(parameter.Name)
-				|| IsFrameworkInjectedParameter(parameter.ParameterType)
-				|| parameter.GetCustomAttribute<FromContextAttribute>() is not null
-				|| parameter.GetCustomAttribute<FromServicesAttribute>() is not null)
-			{
-				continue;
-			}
-
-			var option = $"--{parameter.Name}";
-			if (option.StartsWith(currentTokenPrefix, StringComparison.OrdinalIgnoreCase))
-			{
-				TryAddShellCompletionCandidate(option, dedupe, candidates);
+				TryAddShellCompletionCandidate(token, dedupe, candidates);
 			}
 		}
 	}

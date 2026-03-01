@@ -1,6 +1,7 @@
 using System.Reflection;
+using Repl;
 
-namespace Repl;
+namespace Repl.Internal.Options;
 
 internal static class OptionSchemaBuilder
 {
@@ -119,7 +120,7 @@ internal static class OptionSchemaBuilder
 	{
 		foreach (var alias in optionAttribute?.Aliases ?? [])
 		{
-				ValidateOptionToken(alias, parameter.Name!);
+			ValidateOptionToken(alias, parameter.Name!);
 			entries.Add(new OptionSchemaEntry(
 				alias,
 				parameter.Name!,
@@ -136,7 +137,7 @@ internal static class OptionSchemaBuilder
 	{
 		foreach (var reverseAlias in optionAttribute?.ReverseAliases ?? [])
 		{
-				ValidateOptionToken(reverseAlias, parameter.Name!);
+			ValidateOptionToken(reverseAlias, parameter.Name!);
 			entries.Add(new OptionSchemaEntry(
 				reverseAlias,
 				parameter.Name!,
@@ -154,7 +155,7 @@ internal static class OptionSchemaBuilder
 	{
 		foreach (var valueAlias in parameter.GetCustomAttributes<ReplValueAliasAttribute>(inherit: true))
 		{
-				ValidateOptionToken(valueAlias.Token, parameter.Name!);
+			ValidateOptionToken(valueAlias.Token, parameter.Name!);
 			entries.Add(new OptionSchemaEntry(
 				valueAlias.Token,
 				parameter.Name!,

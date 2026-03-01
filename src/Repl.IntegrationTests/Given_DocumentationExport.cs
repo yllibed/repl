@@ -127,4 +127,35 @@ public sealed class Given_DocumentationExport
 		output.Text.Should().Contain("\"type\": \"date\"");
 		output.Text.Should().Contain("\"type\": \"timespan\"");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies option metadata export includes aliases, reverse aliases, enum values, and defaults so external tooling can reconstruct invocation UX.")]
+	public void When_ExportingDocumentationAsJson_Then_OptionMetadataIncludesSchemaDetails()
+	{
+		var sut = ReplApp.Create()
+			.UseDocumentationExport();
+		sut.Map(
+			"render",
+			([ReplOption(Aliases = ["-m"])] ExportMode mode = ExportMode.Fast,
+				[ReplOption(ReverseAliases = ["--no-verbose"])] bool verbose = false) => $"{mode}:{verbose}");
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["doc", "export", "--json", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("\"aliases\": [");
+		output.Text.Should().Contain("\"-m\"");
+		output.Text.Should().Contain("\"reverseAliases\": [");
+		output.Text.Should().Contain("\"--no-verbose\"");
+		output.Text.Should().Contain("\"enumValues\": [");
+		output.Text.Should().Contain("\"Fast\"");
+		output.Text.Should().Contain("\"Slow\"");
+		output.Text.Should().Contain("\"defaultValue\": \"Fast\"");
+	}
+
+	private enum ExportMode
+	{
+		Fast,
+		Slow,
+	}
 }

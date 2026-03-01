@@ -1,3 +1,5 @@
+using Repl.Internal.Options;
+
 namespace Repl;
 
 internal sealed class InvocationBindingContext(
