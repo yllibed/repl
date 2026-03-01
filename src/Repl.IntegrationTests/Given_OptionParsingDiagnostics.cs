@@ -31,4 +31,31 @@ public sealed class Given_OptionParsingDiagnostics
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("hello");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies command option matching is case-sensitive by default so accidental casing drift is caught early.")]
+	public void When_OptionNameCaseDiffersAndDefaultSensitivity_Then_ValidationErrorIsReturned()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("echo", (string text) => text);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "--Text", "hello", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Unknown option '--Text'");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies case-insensitive parsing mode accepts option-name casing variants so apps can opt into compatibility behavior.")]
+	public void When_OptionNameCaseDiffersAndCaseInsensitiveMode_Then_CommandExecutes()
+	{
+		var sut = ReplApp.Create()
+			.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive);
+		sut.Map("echo", (string text) => text);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "--Text", "hello", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("hello");
+	}
 }
