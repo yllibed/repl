@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Rendering;
 
 /// <summary>
 /// Defines ANSI rendering behavior.

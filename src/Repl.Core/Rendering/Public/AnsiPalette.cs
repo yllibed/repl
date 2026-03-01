@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Rendering;
 
 /// <summary>
 /// Semantic ANSI style palette used by human-oriented renderers.

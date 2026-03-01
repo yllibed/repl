@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Rendering;
 
 /// <summary>
 /// Produces ANSI palettes for a given terminal theme mode.
