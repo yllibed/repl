@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Parameters;
 
 /// <summary>
 /// Configures named option metadata for a handler parameter.

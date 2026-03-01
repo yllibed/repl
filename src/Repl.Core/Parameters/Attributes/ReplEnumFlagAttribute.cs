@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Parameters;
 
 /// <summary>
 /// Declares alias tokens on enum members for flag-like option aliases.

@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Parameters;
 
 /// <summary>
 /// Declares option value cardinality.

@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Parameters;
 
 /// <summary>
 /// Controls whether a handler parameter accepts named options, positional arguments, or both.

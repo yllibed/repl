@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Parameters;
 
 /// <summary>
 /// Case-sensitivity behavior for option-token matching.
