@@ -925,7 +925,19 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		_options.Interaction.SetPrefilledAnswers(globalOptions.PromptAnswers);
-		var parsedOptions = InvocationOptionParser.Parse(match.RemainingTokens);
+		var knownOptionNames = ResolveKnownHandlerOptionNames(match.Route.Command.Handler, match.Values.Keys);
+		var parsedOptions = InvocationOptionParser.Parse(match.RemainingTokens, _options.Parsing, knownOptionNames);
+		if (parsedOptions.HasErrors)
+		{
+			var firstError = parsedOptions.Diagnostics
+				.First(diagnostic => diagnostic.Severity == ParseDiagnosticSeverity.Error);
+			_ = await RenderOutputAsync(
+					Results.Validation(firstError.Message),
+					globalOptions.OutputFormat,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return 1;
+		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
 		var bindingContext = CreateInvocationBindingContext(
