@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Documentation;
 
 /// <summary>
 /// Options for the opt-in documentation export ambient command.

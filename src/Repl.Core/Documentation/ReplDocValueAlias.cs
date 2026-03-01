@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Documentation;
 
 /// <summary>
 /// Value-alias metadata for documentation.

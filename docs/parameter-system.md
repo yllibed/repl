@@ -57,6 +57,14 @@ The option engine internals are intentionally not public:
 - these internals are consumed by command parsing, help rendering, shell completion, and documentation export
 - only the declaration DSL above is public for application code
 
+Documentation-export contracts are also separated from the root namespace:
+
+- `DocumentationExportOptions`
+- `ReplDocumentationModel`
+- `ReplDoc*` records
+
+These types now live under `Repl.Documentation`.
+
 ## Help/completion/doc consistency
 
 Command option metadata is generated from one internal schema per route.
