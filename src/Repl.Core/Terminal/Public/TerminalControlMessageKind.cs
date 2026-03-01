@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Terminal;
 
 /// <summary>
 /// Indicates the kind of terminal control message received from a remote client.

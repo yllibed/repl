@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Terminal;
 
 /// <summary>
 /// Parsed remote terminal metadata/control payload.

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace Repl;
+namespace Repl.Terminal;
 
 /// <summary>
 /// Parses and formats lightweight terminal control messages transported over text channels.

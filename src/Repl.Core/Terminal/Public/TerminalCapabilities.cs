@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Terminal;
 
 /// <summary>
 /// Capability flags reported or inferred for the active terminal session.
