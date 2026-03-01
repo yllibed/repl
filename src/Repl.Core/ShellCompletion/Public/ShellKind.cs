@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.ShellCompletion;
 
 /// <summary>
 /// Shell kind used by shell completion setup and detection logic.

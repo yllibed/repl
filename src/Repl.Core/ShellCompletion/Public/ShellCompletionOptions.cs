@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.ShellCompletion;
 
 /// <summary>
 /// Shell completion setup options.

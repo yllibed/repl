@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.ShellCompletion;
 
 /// <summary>
 /// Configures how shell completion installation is handled at runtime.

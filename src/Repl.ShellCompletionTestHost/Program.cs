@@ -1,5 +1,6 @@
 using System.Globalization;
 using Repl.Parameters;
+using Repl.ShellCompletion;
 
 namespace Repl.ShellCompletionTestHost;
 
