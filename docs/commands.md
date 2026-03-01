@@ -42,12 +42,16 @@ Handler parameters can declare explicit option behavior with attributes:
 Example:
 
 ```csharp
+using Repl.Parameters;
+
 app.Map(
     "render",
     ([ReplOption(Aliases = ["-m"])] RenderMode mode = RenderMode.Fast,
      [ReplOption(ReverseAliases = ["--no-verbose"])] bool verbose = false) =>
         $"{mode}:{verbose}");
 ```
+
+Root help now includes a dedicated `Global Options:` section with built-ins plus custom options registered through `options.Parsing.AddGlobalOption<T>(...)`.
 
 ## Parse diagnostics model
 

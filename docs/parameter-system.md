@@ -42,6 +42,13 @@ Supporting enums:
 - `ReplParameterMode`
 - `ReplArity`
 
+These public types live under `Repl.Parameters`.
+Typical app code starts with:
+
+```csharp
+using Repl.Parameters;
+```
+
 ## Internal architecture boundary
 
 The option engine internals are intentionally not public:
