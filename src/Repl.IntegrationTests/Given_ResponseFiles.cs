@@ -10,7 +10,7 @@ public sealed class Given_ResponseFiles
 	{
 		var sut = ReplApp.Create();
 		sut.Map("echo", (string text) => text);
-		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-response-{Guid.NewGuid():N}.rsp");
+		var responseFile = Path.Join(Path.GetTempPath(), $"repl-response-{Guid.NewGuid():N}.rsp");
 		File.WriteAllText(responseFile, "--text hello-from-rsp");
 
 		try
@@ -32,7 +32,7 @@ public sealed class Given_ResponseFiles
 	{
 		var sut = ReplApp.Create().UseDefaultInteractive();
 		sut.Map("echo", (string text) => text);
-		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-response-{Guid.NewGuid():N}.rsp");
+		var responseFile = Path.Join(Path.GetTempPath(), $"repl-response-{Guid.NewGuid():N}.rsp");
 		File.WriteAllText(responseFile, "--text hello-from-rsp");
 
 		try

@@ -45,7 +45,7 @@ public interface IReplInteractionChannel
 
 	/// <summary>
 	/// Prompts the user for confirmation.
-	/// </summary>q
+	/// </summary>
 	///
 	/// <param name="name">Prompt name.</param>
 	/// <param name="prompt">Prompt text.</param>

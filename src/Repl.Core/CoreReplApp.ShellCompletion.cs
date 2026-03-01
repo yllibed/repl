@@ -102,12 +102,11 @@ public sealed partial class CoreReplApp
 			? StringComparison.OrdinalIgnoreCase
 			: StringComparison.Ordinal;
 		var beforeCount = candidates.Count;
-		foreach (var enumName in Enum.GetNames(enumType))
+		foreach (var enumName in Enum
+			         .GetNames(enumType)
+			         .Where(name => name.StartsWith(currentTokenPrefix, comparison)))
 		{
-			if (enumName.StartsWith(currentTokenPrefix, comparison))
-			{
-				TryAddShellCompletionCandidate(enumName, dedupe, candidates);
-			}
+			TryAddShellCompletionCandidate(enumName, dedupe, candidates);
 		}
 
 		return candidates.Count > beforeCount;

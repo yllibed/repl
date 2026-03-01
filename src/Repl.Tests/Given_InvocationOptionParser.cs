@@ -73,7 +73,7 @@ public sealed class Given_InvocationOptionParser
 			AllowUnknownOptions = false,
 			AllowResponseFiles = true,
 		};
-		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-{Guid.NewGuid():N}.rsp");
+		var responseFile = Path.Join(Path.GetTempPath(), $"repl-parser-{Guid.NewGuid():N}.rsp");
 		File.WriteAllText(
 			responseFile,
 			"""
@@ -109,7 +109,7 @@ public sealed class Given_InvocationOptionParser
 			AllowUnknownOptions = true,
 			AllowResponseFiles = true,
 		};
-		var missingFile = Path.Combine(Path.GetTempPath(), $"repl-parser-missing-{Guid.NewGuid():N}.rsp");
+		var missingFile = Path.Join(Path.GetTempPath(), $"repl-parser-missing-{Guid.NewGuid():N}.rsp");
 
 		var parsed = InvocationOptionParser.Parse(
 			[$"@{missingFile}"],
@@ -181,7 +181,7 @@ public sealed class Given_InvocationOptionParser
 			AllowUnknownOptions = true,
 			AllowResponseFiles = true,
 		};
-		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-empty-{Guid.NewGuid():N}.rsp");
+		var responseFile = Path.Join(Path.GetTempPath(), $"repl-parser-empty-{Guid.NewGuid():N}.rsp");
 		File.WriteAllText(responseFile, string.Empty);
 
 		try
@@ -210,7 +210,7 @@ public sealed class Given_InvocationOptionParser
 			AllowUnknownOptions = false,
 			AllowResponseFiles = true,
 		};
-		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-bom-{Guid.NewGuid():N}.rsp");
+		var responseFile = Path.Join(Path.GetTempPath(), $"repl-parser-bom-{Guid.NewGuid():N}.rsp");
 		var contentBytes = new byte[] { 0xEF, 0xBB, 0xBF }
 			.Concat(System.Text.Encoding.UTF8.GetBytes("--output json"))
 			.ToArray();
@@ -242,7 +242,7 @@ public sealed class Given_InvocationOptionParser
 			AllowUnknownOptions = true,
 			AllowResponseFiles = true,
 		};
-		var responseFile = Path.Combine(Path.GetTempPath(), $"repl-parser-escape-{Guid.NewGuid():N}.rsp");
+		var responseFile = Path.Join(Path.GetTempPath(), $"repl-parser-escape-{Guid.NewGuid():N}.rsp");
 		File.WriteAllText(responseFile, "value\\");
 
 		try

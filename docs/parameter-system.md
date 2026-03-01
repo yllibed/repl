@@ -49,6 +49,18 @@ Typical app code starts with:
 using Repl.Parameters;
 ```
 
+## Public namespace map
+
+The public API is grouped by concern:
+
+- `Repl.Parameters` for option/argument declaration attributes
+- `Repl.Documentation` for documentation export contracts
+- `Repl.ShellCompletion` for shell completion setup/runtime options
+- `Repl.Terminal` for terminal metadata/control contracts
+- `Repl.Interaction` for prompt/progress/status interaction contracts
+- `Repl.Autocomplete` for interactive autocomplete options
+- `Repl.Rendering` for ANSI rendering/palette contracts
+
 ## Internal architecture boundary
 
 The option engine internals are intentionally not public:

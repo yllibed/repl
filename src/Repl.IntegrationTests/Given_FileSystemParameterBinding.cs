@@ -10,7 +10,7 @@ public sealed class Given_FileSystemParameterBinding
 	{
 		var sut = ReplApp.Create();
 		sut.Map("inspect", (FileInfo path) => path.FullName);
-		var tempFile = Path.Combine(Path.GetTempPath(), $"repl-file-{Guid.NewGuid():N}.txt");
+		var tempFile = Path.Join(Path.GetTempPath(), $"repl-file-{Guid.NewGuid():N}.txt");
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["inspect", "--path", tempFile, "--no-logo"]));
 
@@ -24,7 +24,7 @@ public sealed class Given_FileSystemParameterBinding
 	{
 		var sut = ReplApp.Create();
 		sut.Map("inspect", (DirectoryInfo path) => path.FullName);
-		var tempDirectory = Path.Combine(Path.GetTempPath(), $"repl-dir-{Guid.NewGuid():N}");
+		var tempDirectory = Path.Join(Path.GetTempPath(), $"repl-dir-{Guid.NewGuid():N}");
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["inspect", "--path", tempDirectory, "--no-logo"]));
 
