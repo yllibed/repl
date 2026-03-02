@@ -1,153 +1,47 @@
 # Repl Toolkit
 
+[![NuGet](https://img.shields.io/nuget/v/Repl?logo=nuget&label=NuGet)](https://www.nuget.org/packages/Repl)
+[![Downloads](https://img.shields.io/nuget/dt/Repl?logo=nuget&label=Downloads)](https://www.nuget.org/packages/Repl)
+[![CI](https://github.com/yllibed/repl/actions/workflows/ci.yml/badge.svg)](https://github.com/yllibed/repl/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
 
-**Repl Toolkit** is a **foundational building block** for .NET applications that need a serious command surface.
+**A .NET framework for building composable command surfaces.**
+Define your commands once — run them as a CLI, explore them in an interactive REPL,
+host them in session-based terminals, or drive them from automation and AI agents.
 
-It is a **POSIX-like**, cross-platform command framework that works **everywhere .NET runs**: Windows, Linux, macOS, containers, CI, servers, including wasm, mobile, and embedded environments.
+> **New here?** The [DeepWiki](https://deepwiki.com/yllibed/repl) has full architecture docs, diagrams, and an AI assistant you can ask questions about the toolkit.
 
-Think of it as a **command-line parser** that naturally grows with your app:
+## Quick start
 
-- start as a **CLI**
-- upgrade to a **scoped REPL**
-- extend to **session-based terminal hosts** (local or remote)
-- expose a **machine-friendly surface** for automation and AI agents
+```bash
+dotnet add package Repl
+```
 
-Most libraries stop at “parse args and exit”.  
-Repl Toolkit is designed for the moment your tool becomes an **operational surface**: discoverable, stateful, testable, automatable — and portable.
+```csharp
+using Repl;
 
-- **One command graph** for CLI, REPL, and hosted sessions
-- **POSIX-like semantics** (commands, options, piping-friendly output modes, predictable behavior)
-- **Hierarchical scopes** for stateful workflows (no custom shell to reinvent)
-- **Deterministic outputs** for humans, scripts, and agents (`human/json/xml/yaml/markdown`)
-- **Typed interactions** (prompts, progress, status) instead of ad-hoc text
-- **Session-aware DI** and rich **session metadata**
-- **Multi-session testing** without brittle string assertions
-- **Cross-platform by design**: same behavior on Windows, Linux, macOS...
+var app = ReplApp.Create().UseDefaultInteractive();
+app.Map("hello", () => "world");
+return app.Run(args);
+```
 
----
+## Features
 
-## A core building block in your app architecture
+- **Unified command graph** — one route map shared by CLI, REPL, and hosted sessions
+- **POSIX-like semantics** — familiar flag syntax, `--` separator, predictable parsing
+- **Hierarchical scopes** — stateful navigation with `..`, contexts, route constraints (`{id:int}`, `{when:date}`)
+- **Multiple output formats** — `--json`, `--xml`, `--yaml`, `--markdown`, or `--human`
+- **AI/agent-friendly** — machine-readable contracts, deterministic outputs, pre-answered prompts (`--answer:*`)
+- **Typed results** — `Ok`, `Error`, `NotFound`, `Cancelled` with payloads — not raw strings
+- **Typed interactions** — prompts, progress, status, timeouts, cancellation
+- **Session-aware DI** — per-session services and metadata (transport, terminal, window size)
+- **Hosting primitives** — run sessions over WebSocket, Telnet, or custom carriers
+- **Shell completion** — Bash, PowerShell, Zsh, Fish, Nushell with auto-install
+- **Testing toolkit** — in-memory multi-session harness with typed assertions
+- **Cross-platform** — same behavior on Windows, Linux, macOS, containers, and CI
 
-Repl Toolkit is not a product. It is a **building block** you compose into your application.
-
-It provides:
-- a **routing model** for commands (shared by CLI, REPL, and sessions),
-- a **runtime** to execute them in different modes,
-- a **session model** with metadata and per-session services,
-- and **hosting primitives** to wire this to terminals, sockets, or other carriers.
-
-Your application:
-- decides **which commands exist**,
-- defines **what they do**,
-- chooses **how they are hosted**,
-- and shapes the **UX and policies** around them.
-
-Because it is just .NET, the same command surface can run:
-- as a local CLI tool,
-- inside a long-running service,
-- in a container,
-- in CI,
-- or behind a remote terminal — without changing your command model.
-
----
-
-## POSIX-like, but for modern .NET apps
-
-Repl Toolkit follows **POSIX-like command-line conventions** where it matters:
-
-- clear separation between **command paths**, **options**, and **arguments**
-- predictable **flag syntax** (`--name value`, `--name=value`, `--json`, `--output:<format>`)
-- explicit `--` to stop option parsing
-- stable, script-friendly output modes
-- consistent exit and result semantics
-
-At the same time, it goes beyond classic POSIX tools by adding:
-
-- **scoped navigation** (stateful REPL contexts),
-- **typed results** instead of raw strings,
-- **typed interactions** (prompts, progress, status),
-- and **session-aware execution** for hosted terminals.
-
-The result: tools that still *feel* like good CLI citizens, but scale to real operational workflows.
-
----
-
-## Designed as a first-class client for AI agents
-
-Repl Toolkit is explicitly designed to be a **great surface for automated clients and LLM agents**:
-
-- **Validated input data**  
-  Every command can receive its input as named parameters, which can be typed or inferred from the command signature.
-  Parameter format validation is done at runtime, and extensible with custom constraints.
-
-- **Deterministic output modes**  
-  Every command can be rendered as `json`, `xml`, `yaml`, `markdown`, or `human`, selected via flags like `--json` or `--output:<format>`.  
-  This avoids screen-scraping and fragile parsing. You can also create custom output formats.
-
-- **Machine-readable contracts**  
-  With `Repl.Protocol`, help, errors, and tool contracts can be exported as structured documents.
-
-- **Typed results, not strings**  
-  Commands return semantic results (`Ok`, `Error`, `Validation`, `NotFound`, `Cancelled`, …) with payloads, which can be asserted in tests or consumed by automation.
-
-- **Deterministic prompts for non-interactive runs**  
-  Interactive flows (questions, choices, confirmations) can be pre-answered with `--answer:<name>[=value]`, making the same command usable by humans and agents.
-
-- **Session metadata**  
-  Agents (and tools) can reason about terminal capabilities, window size, transport identity, and other context carried by the session.
-
-In short: Repl Toolkit is meant to be a **control-plane surface** for both humans and AI-driven automation.
-
----
-
-## What you can build with it
-
-Because it is a building block, not a product, typical uses include:
-
-- **In-app admin / ops consoles** embedded in services
-- **Power CLIs** that stay coherent when workflows become stateful
-- **Terminal sessions** (local, browser, sockets, etc.) hosted by your app
-- **Backends-first workflows**: build the command surface first, then layer a GUI on top
-- **A single command contract** shared by humans, scripts, and LLM agents
-
-> Repl Toolkit does **not** ship an opinionated “remote admin app”.  
-> It ships **command routing, sessions, metadata, and hosting primitives**.  
-> The samples demonstrate what *you* can build on top of those primitives.
-
----
-
-## See it for yourself
-
-A few short glimpses from the samples:
-
-Remote hosting sample (browser terminal, multiple transports, session visibility):  
-See `samples/05-hosting-remote/`.
-
-Scoped navigation and discovery:  
-See `samples/02-scoped-contacts/`.
-
-Multi-session tests (typed results + session metadata):  
-See `samples/06-testing/`.
-
----
-
-## One more thing
-
-You define routes and handlers **once**. Then you can:
-
-- run them as one-shot CLI commands,
-- explore them in a scoped REPL (with `..`, `help`, completion, history),
-- host them in **session-based terminals** with per-session DI and metadata,
-- use them directly from unit tests with typed results,
-- and drive them from **automation or AI agents** with deterministic outputs.
-
-Repl Toolkit gives you the **runtime and the rules**.  
-Your app defines the **product, policies, and UX**.
-
----
-
-## A small but expressive example (C#)
+## Example
 
 ```csharp
 using Repl;
@@ -168,30 +62,7 @@ app.Context("client", client =>
 return app.Run(args);
 ```
 
-For stdio protocol handlers (MCP/LSP/JSON-RPC, DAP, CGI-style gateways), mark the route as protocol passthrough:
-
-```csharp
-app.Context("mcp", mcp =>
-{
-    mcp.Map("start", async (IMcpServer server, CancellationToken ct) =>
-    {
-        var exitCode = await server.RunAsync(ct);
-        return Results.Exit(exitCode);
-    })
-    .AsProtocolPassthrough();
-});
-```
-
-In passthrough mode, repl keeps `stdout` available for protocol messages and sends framework diagnostics to `stderr`.
-If the handler requests `IReplIoContext`, write protocol payloads through `io.Output` (stdout in local CLI passthrough).
-Requesting `IReplIoContext` is optional for local CLI handlers that already use `Console.*` directly, but recommended for explicit stream control, better testability, and hosted-session support.
-Framework-rendered handler return payloads (if any) are also written to `stderr` in passthrough mode, so protocol handlers should usually return `Results.Exit(code)` after writing protocol output.
-This is a strong fit for MCP-style stdio servers where the protocol stream must stay pristine.
-Typical shape is `mytool mcp start` in passthrough mode, while `mytool start` stays a normal CLI command.
-It also maps well to DAP/CGI-style stdio flows; socket-first variants (for example FastCGI) usually do not require passthrough.
-Use this mode directly in local CLI/console runs. For hosted terminal sessions (`IReplHost` / remote transports), handlers should request `IReplIoContext`; console-bound toolings that use `Console.*` directly remain CLI-only.
-
-One-shot CLI:
+**CLI mode:**
 
 ```text
 $ myapp client list --json
@@ -200,7 +71,7 @@ $ myapp client list --json
 }
 ```
 
-Interactive REPL (same command model):
+**REPL mode** (same command graph):
 
 ```text
 $ myapp
@@ -211,139 +82,50 @@ $ myapp
 [client]> list
 ACME
 Globex
-
-> exit
 ```
-
-Hosted session (application-defined commands, from a sample):
-
-```text
-> sessions
-Session       Transport  Remote       Screen   Terminal        Connected  Idle
-ws-7c650a64   websocket  [::1]:60288  301x31   xterm-256color  1m 34s     1s
-```
-
-> Commands like `sessions` are **sample app commands**, not built-ins.
-
----
-
-## What you get out of the box
-
-- **Shared command graph** for CLI + REPL + hosted sessions
-- **Hierarchical contexts** (scopes) with validation and navigation results (`NavigateUp`, `NavigateTo`)
-- **Routing constraints** (`{id:int}`, `{when:date}`, `{x:guid}`…) plus custom constraints
-- **Parsing and binding** for named options, positional args, route values, and injected services
-- **Strict option validation by default** (unknown options fail fast; configurable)
-- **Response files** with `@file.rsp` expansion for complex invocations
-- **Output pipeline** with transformers and aliases  
-  (`--output:<format>`, `--json`, `--yaml`, `--markdown`, …)
-- **Extensible global options** via `options.Parsing.AddGlobalOption<T>(...)`
-- **Typed result model** (`Results.Ok/Error/Validation/NotFound/Cancelled`, etc.)
-- **Protocol passthrough mode** for stdio transports (`AsProtocolPassthrough()`), keeping `stdout` reserved for protocol payloads
-- **Typed interactions**: prompts, progress, status, timeouts, cancellation
-- **Session model + metadata** (transport, terminal identity, window size, ANSI capabilities, etc.)
-- **Hosting primitives** for running sessions over streams, sockets, or custom carriers
-- **Testing toolkit** (`Repl.Testing`) for multi-step + multi-session, typed-first assertions
-- **Cross-platform runtime**: same command surface on Windows, Linux, and macOS
-
-> This makes Repl Toolkit suitable as a control surface for automated development, ops bots, and LLM-driven workflows.
-
----
 
 ## Packages
 
-For most applications, you only need:
+| Package | Description |
+|---------|-------------|
+| **[`Repl`](https://www.nuget.org/packages/Repl)** | Meta-package — bundles Core + Defaults + Protocol (**start here**) |
+| [`Repl.Core`](https://www.nuget.org/packages/Repl.Core) | Runtime: routing, parsing, binding, results, help, middleware |
+| [`Repl.Defaults`](https://www.nuget.org/packages/Repl.Defaults) | DI, host composition, interactive mode, terminal UX |
+| [`Repl.Protocol`](https://www.nuget.org/packages/Repl.Protocol) | Machine-readable contracts (help, errors, tool schemas) |
+| [`Repl.WebSocket`](https://www.nuget.org/packages/Repl.WebSocket) | Session hosting over WebSocket |
+| [`Repl.Telnet`](https://www.nuget.org/packages/Repl.Telnet) | Telnet framing, negotiation, session adapters |
+| [`Repl.Testing`](https://www.nuget.org/packages/Repl.Testing) | In-memory multi-session test harness |
 
-- **`Repl`** — the meta package that brings the default stack.
-  > This is the package you should start with.
+## Samples
 
-Additional packages, when you need them:
+Progressive learning path — start with 01:
 
-- `Repl.Core` — core runtime: routing, parsing/binding, results, help, middleware
-- `Repl.Defaults` — DI + host composition: interactive mode, terminal UX, lifecycle helpers
-- `Repl.Protocol` — machine-readable contracts (help, errors, MCP types)
-- `Repl.WebSocket` — session hosting over raw WebSocket
-- `Repl.Telnet` — telnet framing/negotiation + session adapters
-- `Repl.Testing` — in-memory multi-session test harness
+1. **[Core Basics](samples/01-core-basics/)** — routing, constraints, help, output modes
+2. **[Scoped Contacts](samples/02-scoped-contacts/)** — dynamic scoping, `..` navigation
+3. **[Modular Ops](samples/03-modular-ops/)** — composable modules, generic CRUD
+4. **[Interactive Ops](samples/04-interactive-ops/)** — prompts, progress, timeouts, cancellation
+5. **[Hosting Remote](samples/05-hosting-remote/)** — WebSocket / Telnet session hosting
+6. **[Testing](samples/06-testing/)** — multi-session typed assertions
 
-Package details:
+## Documentation
 
-- [`src/Repl/README.md`](src/Repl/README.md)
-- [`src/Repl.Core/README.md`](src/Repl.Core/README.md)
-- [`src/Repl.Defaults/README.md`](src/Repl.Defaults/README.md)
-- [`src/Repl.Protocol/README.md`](src/Repl.Protocol/README.md)
-- [`src/Repl.WebSocket/README.md`](src/Repl.WebSocket/README.md)
-- [`src/Repl.Telnet/README.md`](src/Repl.Telnet/README.md)
-- [`src/Repl.Testing/README.md`](src/Repl.Testing/README.md)
-
----
-
-## Getting started
-
-- Architecture blueprint: [`docs/architecture.md`](docs/architecture.md)
-- Command reference: [`docs/commands.md`](docs/commands.md)
-- Parameter system notes: [`docs/parameter-system.md`](docs/parameter-system.md)
-- Terminal/session metadata: [`docs/terminal-metadata.md`](docs/terminal-metadata.md)
-- Testing toolkit: [`docs/testing-toolkit.md`](docs/testing-toolkit.md)
-- Conditional module presence: [`docs/module-presence.md`](docs/module-presence.md)
-- Shell completion bridge: [`docs/shell-completion.md`](docs/shell-completion.md)
-- Samples (recommended learning path): [`samples/README.md`](samples/README.md)
-- Community DeepWiki (unofficial): [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl)
-
-## Shell completion (configurable)
-
-Repl Toolkit includes a shell completion bridge for Bash, PowerShell, Zsh, Fish, and Nushell.
-
-Quick setup commands:
-- `completion install [--shell bash|powershell|zsh|fish|nu] [--force]`
-- `completion uninstall [--shell bash|powershell|zsh|fish|nu]`
-- `completion status`
-
-`completion ...` commands are CLI-only (not available in interactive or hosted session modes).
-Use the app executable command directly (the CLI head must match the app binary).
-Auto/prompt setup modes run only when entering interactive mode, never for one-shot terminal commands.
-
-Guide and full snippets: [`docs/shell-completion.md`](docs/shell-completion.md)
-
-## Conditional module presence
-
-Modules can be conditionally present at runtime using `MapModule(module, predicate)`.
-This enables dynamic surfaces like signed-out/signed-in experiences and channel-aware modules (`Cli`, `Interactive`, `Session`).
-When predicate-driving state changes, call `app.InvalidateRouting()` so the active graph is recomputed.
-
-Guide and examples: [`docs/module-presence.md`](docs/module-presence.md)
-
----
-
-## Demos (learning path)
-
-The fastest way to understand what the toolkit enables:
-
-1. [01 core basics](samples/01-core-basics/) — smallest command surface, help, constraints, output modes >>**START HERE**<<
-2. [02 scoped contacts](samples/02-scoped-contacts/) — dynamic scoping + `..` navigation
-3. [03 modular ops](samples/03-modular-ops/) — compose modules across contexts
-4. [04 interactive ops](samples/04-interactive-ops/) — prompts, progress, timeouts, cancellation
-5. [05 hosting remote](samples/05-hosting-remote/) — session hosting over WebSocket/Telnet (sample app)
-6. [06 testing](samples/06-testing/) — multi-session tests with typed assertions
-
----
-
-## Non-goals
-
-Repl Toolkit is not:
-
-- a shell scripting language
-- a TUI framework (Text-based User Interface)
-- a “parse args and stop there” library (but you can use it for only that)
-- an opinionated remote admin product (you have to build that yourself)
-
-It’s a **building block** for **operational command surfaces**: interactive, discoverable, hostable, testable, automation-friendly, AI-friendly, and cross-platform.
-
----
+| Topic | Link |
+|-------|------|
+| Architecture blueprint | [`docs/architecture.md`](docs/architecture.md) |
+| Command reference | [`docs/commands.md`](docs/commands.md) |
+| Parameter system | [`docs/parameter-system.md`](docs/parameter-system.md) |
+| Terminal & session metadata | [`docs/terminal-metadata.md`](docs/terminal-metadata.md) |
+| Testing toolkit | [`docs/testing-toolkit.md`](docs/testing-toolkit.md) |
+| Shell completion | [`docs/shell-completion.md`](docs/shell-completion.md) |
+| Conditional module presence | [`docs/module-presence.md`](docs/module-presence.md) |
+| Publishing & deployment | [`docs/publishing.md`](docs/publishing.md) |
+| Interactive docs & AI Q\&A | [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl) |
 
 ## Contributing
 
-Contributions are welcome — but please **discuss new features first** to keep the toolkit aligned with its goals.  
-Pick something from the backlog/issues, or propose an idea with a clear use case and expected UX.
+Contributions welcome — please discuss new features first to keep the toolkit aligned with its goals.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md), and [`SECURITY.md`](SECURITY.md).
 
-See: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+## License
+
+[MIT](LICENSE) — Copyright (c) 2026 Yllibed project / Carl de Billy
