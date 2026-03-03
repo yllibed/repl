@@ -117,6 +117,7 @@ Progressive learning path — start with 01:
 | Terminal & session metadata | [`docs/terminal-metadata.md`](docs/terminal-metadata.md) |
 | Testing toolkit | [`docs/testing-toolkit.md`](docs/testing-toolkit.md) |
 | Shell completion | [`docs/shell-completion.md`](docs/shell-completion.md) |
+| Comparison & migration | [`docs/comparison.md`](docs/comparison.md) |
 | Conditional module presence | [`docs/module-presence.md`](docs/module-presence.md) |
 | Publishing & deployment | [`docs/publishing.md`](docs/publishing.md) |
 | Interactive docs & AI Q\&A | [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl) |
