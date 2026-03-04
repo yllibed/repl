@@ -50,6 +50,11 @@ internal static class ParameterValueConverter
 			return true;
 		}
 
+		if (TryConvertTemporalRange(value, nonNullableType, out converted))
+		{
+			return true;
+		}
+
 		return false;
 	}
 
@@ -141,6 +146,36 @@ internal static class ParameterValueConverter
 			converted = TimeSpanLiteralParser.TryParse(value, out var parsed)
 				? parsed
 				: throw new FormatException($"'{value}' is not a valid time-span literal.");
+			return true;
+		}
+
+		return false;
+	}
+
+	private static bool TryConvertTemporalRange(string value, Type nonNullableType, out object? converted)
+	{
+		converted = null;
+		if (nonNullableType == typeof(ReplDateRange))
+		{
+			converted = TemporalRangeLiteralParser.TryParseDateRange(value, out var parsed)
+				? parsed
+				: throw new FormatException($"'{value}' is not a valid date range literal. Use start..end or start@duration.");
+			return true;
+		}
+
+		if (nonNullableType == typeof(ReplDateTimeRange))
+		{
+			converted = TemporalRangeLiteralParser.TryParseDateTimeRange(value, out var parsed)
+				? parsed
+				: throw new FormatException($"'{value}' is not a valid date-time range literal. Use start..end or start@duration.");
+			return true;
+		}
+
+		if (nonNullableType == typeof(ReplDateTimeOffsetRange))
+		{
+			converted = TemporalRangeLiteralParser.TryParseDateTimeOffsetRange(value, out var parsed)
+				? parsed
+				: throw new FormatException($"'{value}' is not a valid date-time-offset range literal. Use start..end or start@duration.");
 			return true;
 		}
 
