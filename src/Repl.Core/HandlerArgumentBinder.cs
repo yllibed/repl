@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using Repl.Internal.Options;
 
 namespace Repl;
@@ -51,6 +52,13 @@ internal static class HandlerArgumentBinder
 			throw new InvalidOperationException(
 				$"Unable to bind parameter '{parameter.Name}' ({parameter.ParameterType.Name}).");
 		}
+
+#pragma warning disable IL2072
+		if (IsOptionsGroupParameter(parameter))
+		{
+			return BindOptionsGroup(parameter.ParameterType, context, ref positionalIndex);
+		}
+#pragma warning restore IL2072
 
 		if (context.RouteValues.TryGetValue(parameterName, out var routeValue))
 		{
@@ -510,5 +518,143 @@ internal static class HandlerArgumentBinder
 		}
 
 		return list;
+	}
+
+	private static bool IsOptionsGroupParameter(System.Reflection.ParameterInfo parameter) =>
+		Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true);
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2067",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static object BindOptionsGroup(
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+		Type groupType,
+		InvocationBindingContext context,
+		ref int positionalIndex)
+	{
+		var instance = Activator.CreateInstance(groupType)!;
+
+		foreach (var property in groupType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+		{
+			if (!property.CanWrite)
+			{
+				continue;
+			}
+
+			var propertyName = property.Name;
+			var bindingMode = ResolvePropertyBindingMode(propertyName, property, context.OptionSchema);
+			var enumIgnoreCase = ResolveEnumIgnoreCase(propertyName, context);
+
+			if (bindingMode != ReplParameterMode.ArgumentOnly
+				&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
+			{
+				var converted = ConvertPropertyManyOrSingle(
+					property,
+					namedValues,
+					property.PropertyType,
+					context.NumericFormatProvider,
+					enumIgnoreCase);
+				property.SetValue(instance, converted);
+				continue;
+			}
+
+			if (bindingMode != ReplParameterMode.OptionOnly
+				&& TryConsumePositionalForProperty(
+					property,
+					context.PositionalArguments,
+					context.NumericFormatProvider,
+					enumIgnoreCase,
+					ref positionalIndex,
+					out var positionalValue))
+			{
+				property.SetValue(instance, positionalValue);
+			}
+		}
+
+		return instance;
+	}
+
+	private static ReplParameterMode ResolvePropertyBindingMode(
+		string propertyName,
+		PropertyInfo property,
+		OptionSchema optionSchema)
+	{
+		if (optionSchema.TryGetParameter(propertyName, out var schemaParameter))
+		{
+			return schemaParameter.Mode;
+		}
+
+		var optionAttribute = property.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
+		if (optionAttribute is not null)
+		{
+			return optionAttribute.Mode;
+		}
+
+		var argumentAttribute = property.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
+		return argumentAttribute?.Mode ?? ReplParameterMode.OptionAndPositional;
+	}
+
+	private static object? ConvertPropertyManyOrSingle(
+		PropertyInfo property,
+		IReadOnlyList<string> values,
+		Type targetType,
+		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase)
+	{
+		if (!TryGetCollectionElementType(targetType, out var elementType))
+		{
+			if (values.Count > 1)
+			{
+				throw new InvalidOperationException(
+					$"Property '{property.Name}' received multiple values but does not support repeated occurrences.");
+			}
+
+			return ParameterValueConverter.ConvertSingle(
+				values.Count == 0 ? null : values[0],
+				targetType,
+				numericFormatProvider,
+				enumIgnoreCase);
+		}
+
+		return ConvertMany(values, targetType, elementType, numericFormatProvider, enumIgnoreCase);
+	}
+
+	private static bool TryConsumePositionalForProperty(
+		PropertyInfo property,
+		IReadOnlyList<string> positionalArguments,
+		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase,
+		ref int positionalIndex,
+		out object? value)
+	{
+		var targetType = property.PropertyType;
+		if (TryGetCollectionElementType(targetType, out var elementType))
+		{
+			var remaining = positionalArguments.Skip(positionalIndex).ToArray();
+			if (remaining.Length == 0)
+			{
+				value = null;
+				return false;
+			}
+
+			positionalIndex = positionalArguments.Count;
+			value = ConvertMany(remaining, targetType, elementType, numericFormatProvider, enumIgnoreCase);
+			return true;
+		}
+
+		if (positionalIndex >= positionalArguments.Count)
+		{
+			value = null;
+			return false;
+		}
+
+		value = ParameterValueConverter.ConvertSingle(
+			positionalArguments[positionalIndex],
+			targetType,
+			numericFormatProvider,
+			enumIgnoreCase);
+		positionalIndex++;
+		return true;
 	}
 }

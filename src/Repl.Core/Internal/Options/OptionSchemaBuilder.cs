@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Repl;
 
@@ -27,7 +28,16 @@ internal static class OptionSchemaBuilder
 				continue;
 			}
 
-			AppendParameterSchemaEntries(parameter, entries, parameters);
+#pragma warning disable IL2072
+			if (IsOptionsGroupParameter(parameter))
+			{
+				AppendOptionsGroupSchemaEntries(parameter.ParameterType, entries, parameters);
+			}
+#pragma warning restore IL2072
+			else
+			{
+				AppendParameterSchemaEntries(parameter, entries, parameters);
+			}
 		}
 
 		ValidateTokenCollisions(entries, parsingOptions);
@@ -73,6 +83,12 @@ internal static class OptionSchemaBuilder
 		var mode = optionAttribute?.Mode
 			?? argumentAttribute?.Mode
 			?? ReplParameterMode.OptionAndPositional;
+		if (parameters.ContainsKey(parameter.Name!))
+		{
+			throw new InvalidOperationException(
+				$"Option token collision detected for parameter name '{parameter.Name}'.");
+		}
+
 		parameters[parameter.Name!] = new OptionSchemaParameter(
 			parameter.Name!,
 			parameter.ParameterType,
@@ -208,6 +224,15 @@ internal static class OptionSchemaBuilder
 	private static bool IsBoolParameter(Type type) =>
 		(Nullable.GetUnderlyingType(type) ?? type) == typeof(bool);
 
+	private static string ToCamelCase(string name) =>
+		name.Length == 0 || char.IsLower(name[0])
+			? name
+			: string.Create(name.Length, name, static (span, source) =>
+			{
+				source.AsSpan().CopyTo(span);
+				span[0] = char.ToLowerInvariant(span[0]);
+			});
+
 	private static string EnsureLongPrefix(string name) =>
 		name.StartsWith("--", StringComparison.Ordinal) ? name : $"--{name}";
 
@@ -249,6 +274,210 @@ internal static class OptionSchemaBuilder
 				entries.Add(new OptionSchemaEntry(
 					alias,
 					parameter.Name!,
+					OptionSchemaTokenKind.EnumAlias,
+					ReplArity.ZeroOrOne,
+					CaseSensitivity: enumFlag.CaseSensitivity ?? optionAttribute?.CaseSensitivity,
+					InjectedValue: field.Name));
+			}
+		}
+	}
+
+	private static bool IsOptionsGroupParameter(ParameterInfo parameter) =>
+		Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true);
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2070",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static void AppendOptionsGroupSchemaEntries(
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+		Type groupType,
+		List<OptionSchemaEntry> entries,
+		Dictionary<string, OptionSchemaParameter> parameters)
+	{
+		ValidateOptionsGroupType(groupType);
+
+		foreach (var property in groupType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+		{
+			if (!property.CanWrite)
+			{
+				continue;
+			}
+
+			if (Attribute.IsDefined(property.PropertyType, typeof(ReplOptionsGroupAttribute), inherit: true))
+			{
+				throw new InvalidOperationException(
+					$"Nested options groups are not supported. Property '{property.Name}' on '{groupType.Name}' is itself an options group.");
+			}
+
+			AppendPropertySchemaEntries(property, entries, parameters);
+		}
+	}
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2070",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static void ValidateOptionsGroupType(
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+		Type groupType)
+	{
+		if (groupType.IsAbstract || groupType.IsInterface)
+		{
+			throw new InvalidOperationException(
+				$"Options group type '{groupType.Name}' must be a concrete class.");
+		}
+
+		if (groupType.GetConstructor(BindingFlags.Public | BindingFlags.Instance, Type.EmptyTypes) is null)
+		{
+			throw new InvalidOperationException(
+				$"Options group type '{groupType.Name}' must have a public parameterless constructor.");
+		}
+	}
+
+	private static void AppendPropertySchemaEntries(
+		PropertyInfo property,
+		List<OptionSchemaEntry> entries,
+		Dictionary<string, OptionSchemaParameter> parameters)
+	{
+		var optionAttribute = property.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
+		var argumentAttribute = property.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
+		var mode = optionAttribute?.Mode
+			?? argumentAttribute?.Mode
+			?? ReplParameterMode.OptionAndPositional;
+		if (parameters.ContainsKey(property.Name))
+		{
+			throw new InvalidOperationException(
+				$"Option token collision detected for parameter name '{property.Name}'.");
+		}
+
+		parameters[property.Name] = new OptionSchemaParameter(
+			property.Name,
+			property.PropertyType,
+			mode,
+			CaseSensitivity: optionAttribute?.CaseSensitivity);
+		if (mode == ReplParameterMode.ArgumentOnly)
+		{
+			return;
+		}
+
+		var arity = ResolvePropertyArity(property.PropertyType, optionAttribute);
+		var tokenKind = ResolveTokenKind(property.PropertyType, arity);
+		var canonicalToken = ResolveCanonicalToken(ToCamelCase(property.Name), optionAttribute);
+		entries.Add(new OptionSchemaEntry(
+			canonicalToken,
+			property.Name,
+			tokenKind,
+			arity,
+			CaseSensitivity: optionAttribute?.CaseSensitivity));
+		AppendPropertyOptionAliases(property.Name, tokenKind, arity, optionAttribute, entries);
+		AppendPropertyReverseAliases(property.Name, optionAttribute, entries);
+		AppendPropertyValueAliases(property, optionAttribute, entries);
+		AppendPropertyEnumAliases(property, optionAttribute, entries);
+	}
+
+	private static ReplArity ResolvePropertyArity(Type propertyType, ReplOptionAttribute? optionAttribute)
+	{
+		if (optionAttribute?.Arity is { } explicitArity)
+		{
+			return explicitArity;
+		}
+
+		if (IsBoolParameter(propertyType))
+		{
+			return ReplArity.ZeroOrOne;
+		}
+
+		if (IsCollection(propertyType))
+		{
+			return ReplArity.ZeroOrMore;
+		}
+
+		return ReplArity.ZeroOrOne;
+	}
+
+	private static void AppendPropertyOptionAliases(
+		string propertyName,
+		OptionSchemaTokenKind tokenKind,
+		ReplArity arity,
+		ReplOptionAttribute? optionAttribute,
+		List<OptionSchemaEntry> entries)
+	{
+		foreach (var alias in optionAttribute?.Aliases ?? [])
+		{
+			ValidateOptionToken(alias, propertyName);
+			entries.Add(new OptionSchemaEntry(
+				alias,
+				propertyName,
+				tokenKind,
+				arity,
+				CaseSensitivity: optionAttribute?.CaseSensitivity));
+		}
+	}
+
+	private static void AppendPropertyReverseAliases(
+		string propertyName,
+		ReplOptionAttribute? optionAttribute,
+		List<OptionSchemaEntry> entries)
+	{
+		foreach (var reverseAlias in optionAttribute?.ReverseAliases ?? [])
+		{
+			ValidateOptionToken(reverseAlias, propertyName);
+			entries.Add(new OptionSchemaEntry(
+				reverseAlias,
+				propertyName,
+				OptionSchemaTokenKind.ReverseFlag,
+				ReplArity.ZeroOrOne,
+				CaseSensitivity: optionAttribute?.CaseSensitivity,
+				InjectedValue: "false"));
+		}
+	}
+
+	private static void AppendPropertyValueAliases(
+		PropertyInfo property,
+		ReplOptionAttribute? optionAttribute,
+		List<OptionSchemaEntry> entries)
+	{
+		foreach (var valueAlias in property.GetCustomAttributes<ReplValueAliasAttribute>(inherit: true))
+		{
+			ValidateOptionToken(valueAlias.Token, property.Name);
+			entries.Add(new OptionSchemaEntry(
+				valueAlias.Token,
+				property.Name,
+				OptionSchemaTokenKind.ValueAlias,
+				ReplArity.ZeroOrOne,
+				CaseSensitivity: valueAlias.CaseSensitivity ?? optionAttribute?.CaseSensitivity,
+				InjectedValue: valueAlias.Value));
+		}
+	}
+
+	private static void AppendPropertyEnumAliases(
+		PropertyInfo property,
+		ReplOptionAttribute? optionAttribute,
+		List<OptionSchemaEntry> entries)
+	{
+		var enumType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+		if (!enumType.IsEnum)
+		{
+			return;
+		}
+
+#pragma warning disable IL2075
+		foreach (var field in enumType.GetFields(BindingFlags.Public | BindingFlags.Static))
+#pragma warning restore IL2075
+		{
+			var enumFlag = field.GetCustomAttribute<ReplEnumFlagAttribute>(inherit: false);
+			if (enumFlag is null)
+			{
+				continue;
+			}
+
+			foreach (var alias in enumFlag.Aliases)
+			{
+				ValidateOptionToken(alias, property.Name);
+				entries.Add(new OptionSchemaEntry(
+					alias,
+					property.Name,
 					OptionSchemaTokenKind.EnumAlias,
 					ReplArity.ZeroOrOne,
 					CaseSensitivity: enumFlag.CaseSensitivity ?? optionAttribute?.CaseSensitivity,

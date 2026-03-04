@@ -3,7 +3,7 @@ namespace Repl.Parameters;
 /// <summary>
 /// Configures named option metadata for a handler parameter.
 /// </summary>
-[AttributeUsage(AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
+[AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
 public sealed class ReplOptionAttribute : Attribute
 {
 	/// <summary>

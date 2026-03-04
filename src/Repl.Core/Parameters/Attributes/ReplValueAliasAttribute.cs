@@ -3,7 +3,7 @@ namespace Repl.Parameters;
 /// <summary>
 /// Maps an alias token to an injected option value for a parameter.
 /// </summary>
-[AttributeUsage(AttributeTargets.Parameter, AllowMultiple = true, Inherited = true)]
+[AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property, AllowMultiple = true, Inherited = true)]
 public sealed class ReplValueAliasAttribute : Attribute
 {
 	/// <summary>

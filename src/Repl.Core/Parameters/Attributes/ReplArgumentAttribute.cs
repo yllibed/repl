@@ -3,7 +3,7 @@ namespace Repl.Parameters;
 /// <summary>
 /// Configures positional argument metadata for a handler parameter.
 /// </summary>
-[AttributeUsage(AttributeTargets.Parameter, AllowMultiple = false, Inherited = true)]
+[AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
 public sealed class ReplArgumentAttribute : Attribute
 {
 	/// <summary>
