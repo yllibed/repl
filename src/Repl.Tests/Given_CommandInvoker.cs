@@ -103,6 +103,54 @@ public sealed class Given_CommandInvoker
 		result.Should().Be(15);
 	}
 
+	[TestMethod]
+	[Description("Verifies synchronous tuple-returning handler produces a boxed ValueTuple that implements ITuple.")]
+	public async Task When_HandlerReturnsTuple_Then_ResultIsBoxedValueTuple()
+	{
+		var result = await CommandInvoker.InvokeAsync(
+			(Func<(string, int)>)(() => ("hello", 42)),
+			[]);
+
+		TupleDecomposer.IsTupleResult(result, out var tuple).Should().BeTrue();
+		tuple.Length.Should().Be(2);
+		tuple[0].Should().Be("hello");
+		tuple[1].Should().Be(42);
+	}
+
+	[TestMethod]
+	[Description("Verifies async Task<tuple>-returning handler unwraps to a boxed ValueTuple.")]
+	public async Task When_HandlerReturnsTaskOfTuple_Then_ResultIsBoxedValueTuple()
+	{
+		var result = await CommandInvoker.InvokeAsync(
+			(Func<Task<(string, int)>>)(async () =>
+			{
+				await Task.Yield();
+				return ("async", 7);
+			}),
+			[]);
+
+		TupleDecomposer.IsTupleResult(result, out var tuple).Should().BeTrue();
+		tuple[0].Should().Be("async");
+		tuple[1].Should().Be(7);
+	}
+
+	[TestMethod]
+	[Description("Verifies async ValueTask<tuple>-returning handler unwraps to a boxed ValueTuple.")]
+	public async Task When_HandlerReturnsValueTaskOfTuple_Then_ResultIsBoxedValueTuple()
+	{
+		var result = await CommandInvoker.InvokeAsync(
+			(Func<ValueTask<(string, int)>>)(async () =>
+			{
+				await Task.Yield();
+				return ("vtask", 9);
+			}),
+			[]);
+
+		TupleDecomposer.IsTupleResult(result, out var tuple).Should().BeTrue();
+		tuple[0].Should().Be("vtask");
+		tuple[1].Should().Be(9);
+	}
+
 	private sealed class InstanceHandler(int offset)
 	{
 		public int AddOffset(int value) => value + offset;

@@ -993,6 +993,13 @@ public sealed partial class CoreReplApp : ICoreReplApp
 						serviceProvider,
 						cancellationToken)
 					.ConfigureAwait(false);
+
+				if (TupleDecomposer.IsTupleResult(result, out var tuple))
+				{
+					return await RenderTupleResultAsync(tuple, scopeTokens, globalOptions, cancellationToken)
+						.ConfigureAwait(false);
+				}
+
 				var normalizedResult = ApplyNavigationResult(result, scopeTokens);
 				ExecutionObserver?.OnResult(normalizedResult);
 				var rendered = await RenderOutputAsync(normalizedResult, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
@@ -1021,6 +1028,52 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				.ConfigureAwait(false);
 			return 1;
 		}
+	}
+
+	private async ValueTask<int> RenderTupleResultAsync(
+		ITuple tuple,
+		List<string>? scopeTokens,
+		GlobalInvocationOptions globalOptions,
+		CancellationToken cancellationToken)
+	{
+		var isInteractive = scopeTokens is not null;
+		var exitCode = 0;
+
+		for (var i = 0; i < tuple.Length; i++)
+		{
+			var element = tuple[i];
+			var isLast = i == tuple.Length - 1;
+
+			// Navigation results: only apply navigation on the last element.
+			object? normalized;
+			if (element is ReplNavigationResult nav && !isLast)
+			{
+				normalized = nav.Payload;
+			}
+			else
+			{
+				normalized = isLast
+					? ApplyNavigationResult(element, scopeTokens)
+					: element;
+			}
+
+			ExecutionObserver?.OnResult(normalized);
+
+			var rendered = await RenderOutputAsync(normalized, globalOptions.OutputFormat, cancellationToken, isInteractive)
+				.ConfigureAwait(false);
+
+			if (!rendered)
+			{
+				return 1;
+			}
+
+			if (isLast)
+			{
+				exitCode = ComputeExitCode(normalized);
+			}
+		}
+
+		return exitCode;
 	}
 
 	private static int ComputeExitCode(object? result)
