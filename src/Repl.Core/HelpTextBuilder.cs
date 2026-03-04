@@ -719,6 +719,11 @@ internal static class HelpTextBuilder
 			rows.Add(CompleteRow);
 		}
 
+		foreach (var cmd in ambientOptions.CustomCommands.Values)
+		{
+			rows.Add([cmd.Name, cmd.Description ?? string.Empty]);
+		}
+
 		return [.. rows];
 	}
 

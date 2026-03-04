@@ -282,6 +282,13 @@ internal sealed class ConsoleInteractionChannel(
 		}
 	}
 
+	public async ValueTask ClearScreenAsync(CancellationToken cancellationToken)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		await _presenter.PresentAsync(new ReplClearScreenEvent(), cancellationToken)
+			.ConfigureAwait(false);
+	}
+
 	public async ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
 		string name,
 		string prompt,

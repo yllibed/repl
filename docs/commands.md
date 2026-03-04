@@ -241,6 +241,23 @@ Notes:
 - `history` and `autocomplete` return explicit errors outside interactive mode.
 - `complete` requires a terminal route and a registered `WithCompletion(...)` provider for the selected target.
 
+### Custom ambient commands
+
+You can register your own ambient commands that are available in every interactive scope.
+Custom ambient commands are dispatched after the built-in ones, appear in `help` output under Global Commands, and participate in interactive autocomplete.
+
+```csharp
+app.Options(o => o.AmbientCommands.MapAmbient(
+    "clear",
+    async (IReplInteractionChannel channel, CancellationToken ct) =>
+    {
+        await channel.ClearScreenAsync(ct);
+    },
+    "Clear the screen"));
+```
+
+Handler parameters are injected using the same binding rules as regular command handlers (DI services, `IReplInteractionChannel`, `CancellationToken`, etc.).
+
 ## Shell completion management commands
 
 When shell completion is enabled, the `completion` context is available in CLI mode:

@@ -99,4 +99,11 @@ public interface IReplInteractionChannel
 		IReadOnlyList<string> choices,
 		IReadOnlyList<int>? defaultIndices = null,
 		AskMultiChoiceOptions? options = null);
+
+	/// <summary>
+	/// Clears the terminal screen.
+	/// </summary>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>An asynchronous operation.</returns>
+	ValueTask ClearScreenAsync(CancellationToken cancellationToken);
 }

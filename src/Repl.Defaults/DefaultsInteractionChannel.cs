@@ -49,6 +49,9 @@ internal sealed class DefaultsInteractionChannel : IReplInteractionChannel, ICom
 		AskSecretOptions? options = null) =>
 		_inner.AskSecretAsync(name, prompt, options);
 
+	public ValueTask ClearScreenAsync(CancellationToken cancellationToken) =>
+		_inner.ClearScreenAsync(cancellationToken);
+
 	public ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
 		string name,
 		string prompt,

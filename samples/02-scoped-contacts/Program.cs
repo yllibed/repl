@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Repl;
+using Repl.Interaction;
 using Microsoft.Extensions.DependencyInjection;
 
 // Sample goal:
@@ -25,7 +26,14 @@ var app = ReplApp.Create(services =>
 		  Then: contact Alice (enters scope), show, remove
 		""")
 	.UseDefaultInteractive()
-	.UseCliProfile();
+	.UseCliProfile()
+	.Options(o => o.AmbientCommands.MapAmbient(
+		"clear",
+		[Description("Clear the screen")]
+		async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.ClearScreenAsync(ct);
+		}));
 
 app.Context(
 	"contact",
