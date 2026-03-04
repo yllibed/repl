@@ -172,6 +172,58 @@ Handler parameters support native conversion for:
 
 Path existence is not validated at parse time; handlers decide validation policy.
 
+## Handler return types
+
+Handlers can return any type. The framework renders the return value through the active output transformer (`--human`, `--json`, etc.).
+
+### Supported return patterns
+
+| Return type | Behavior |
+|---|---|
+| `string` | Rendered as plain text |
+| Object / anonymous type | Rendered as key-value pairs (human) or serialized (JSON/XML/YAML) |
+| `IEnumerable<T>` | Rendered as a table (human) or collection (structured formats) |
+| `IReplResult` | Structured result with kind prefix (`Results.Ok`, `Error`, `NotFound`...) |
+| `ReplNavigationResult` | Renders payload and navigates scope (`Results.NavigateUp`, `NavigateTo`) |
+| `IExitResult` | Renders optional payload and sets process exit code (`Results.Exit`) |
+| `void` / `null` | No output |
+
+### Result factory helpers
+
+```csharp
+Results.Ok("done")                          // plain text
+Results.Text("content")                     // plain text (alias)
+Results.Success("created", details)         // success with optional details object
+Results.Error("not_allowed", "message")     // error with code
+Results.Validation("invalid input")         // validation error
+Results.NotFound("no such item")            // not-found
+Results.Cancelled("user declined")          // cancellation
+Results.NavigateUp(payload)                 // navigate up one scope level
+Results.NavigateTo("client/42", payload)    // navigate to explicit scope
+Results.Exit(0, payload)                    // explicit exit code
+```
+
+### Multiple return values (tuples)
+
+Handlers can return C# tuples to produce multiple results rendered separately in sequence:
+
+```csharp
+app.Map("status", () => (
+    "Current user: alice",
+    Results.Success("All systems operational")
+));
+```
+
+Each tuple element goes through the full rendering pipeline independently. This works with all handler signatures — sync, `Task<(T1, T2)>`, and `ValueTask<(T1, T2)>` — and supports up to 8 elements.
+
+Tuple semantics:
+
+- each element is rendered as a separate output block
+- navigation results (`NavigateUp`, `NavigateTo`) are only applied on the **last** element
+- exit code is determined by the last element
+- null elements are silently skipped
+- nested tuples are not flattened — use a flat tuple instead
+
 ## Ambient commands
 
 These commands are handled by the runtime (not by your mapped routes):
