@@ -7,7 +7,7 @@ If you’re new, start with **01**, then follow the sequence.
 ## Index (recommended order)
 
 1. [01 — Core Basics](01-core-basics/)  
-   `Repl.Core` only: routing, parsing/binding, typed params + constraints, help/discovery, CLI + REPL from the same command graph.
+   `Repl.Core` only: routing, parsing/binding, typed params + constraints, reusable options groups, temporal ranges, help/discovery, CLI + REPL from the same command graph.
 2. [02 — Scoped Contacts](02-scoped-contacts/)  
    Dynamic scopes + REPL navigation (`..`) + DI-backed handlers.
 3. [03 — Modular Ops](03-modular-ops/)  

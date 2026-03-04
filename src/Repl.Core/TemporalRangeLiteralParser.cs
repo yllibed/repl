@@ -31,7 +31,8 @@ internal static class TemporalRangeLiteralParser
 		if (TrySplitDuration(span, out left, out var durationPart))
 		{
 			if (!TemporalLiteralParser.TryParseDateOnly(left.ToString(), out var from)
-				|| !TimeSpanLiteralParser.TryParse(durationPart.ToString(), out var duration))
+				|| !TimeSpanLiteralParser.TryParse(durationPart.ToString(), out var duration)
+				|| !IsWholeDays(duration))
 			{
 				return false;
 			}
@@ -176,4 +177,7 @@ internal static class TemporalRangeLiteralParser
 		durationPart = value[(index + 1)..];
 		return left.Length > 0 && durationPart.Length > 0;
 	}
+
+	private static bool IsWholeDays(TimeSpan duration) =>
+		duration.Ticks % TimeSpan.TicksPerDay == 0;
 }

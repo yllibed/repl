@@ -125,7 +125,10 @@ Options group behavior:
 - `[ReplOption]`, `[ReplArgument]`, `[ReplValueAlias]` attributes work on properties
 - the same group class can be reused across multiple commands
 - groups and regular parameters can be mixed in the same handler
+- group properties are `OptionOnly` by default; use explicit attributes to opt into positional binding
+- when a group property receives both named and positional values in one invocation, parsing fails with a validation error
 - parameter name collisions between group properties and regular parameters cause an `InvalidOperationException` at registration
+- positional group properties cannot be mixed with positional regular handler parameters in the same command
 - abstract, interface, or nested group types are rejected at registration
 
 ## Temporal range types
@@ -158,6 +161,7 @@ Available types:
 
 Duration syntax uses the same format as `TimeSpan` literals (`30d`, `8h`, `1h30m`, `PT1H`, etc.).
 Reversed ranges (`To < From`) produce a validation error.
+For `ReplDateRange` (`DateOnly`), duration syntax must resolve to whole days.
 
 ## Supported parameter conversions
 

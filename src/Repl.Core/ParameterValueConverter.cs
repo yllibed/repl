@@ -159,7 +159,7 @@ internal static class ParameterValueConverter
 		{
 			converted = TemporalRangeLiteralParser.TryParseDateRange(value, out var parsed)
 				? parsed
-				: throw new FormatException($"'{value}' is not a valid date range literal. Use start..end or start@duration.");
+				: throw new FormatException($"'{value}' is not a valid date range literal. Use start..end or start@duration with whole days.");
 			return true;
 		}
 

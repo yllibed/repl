@@ -72,6 +72,26 @@ public sealed class Given_TemporalRangeLiteralParser
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies DateOnly range rejects sub-day durations.")]
+	public void When_DateRangeHasSubDayDuration_Then_ReturnsFalse()
+	{
+		var result = TemporalRangeLiteralParser.TryParseDateRange("2024-01-15@8h", out _);
+
+		result.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies DateOnly range accepts whole-day durations expressed in hours.")]
+	public void When_DateRangeHasWholeDayDurationInHours_Then_ReturnsTrue()
+	{
+		var result = TemporalRangeLiteralParser.TryParseDateRange("2024-01-15@48h", out var range);
+
+		result.Should().BeTrue();
+		range.From.Should().Be(new DateOnly(2024, 1, 15));
+		range.To.Should().Be(new DateOnly(2024, 1, 17));
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies input without separator returns false.")]
 	public void When_DateRangeHasNoSeparator_Then_ReturnsFalse()
 	{

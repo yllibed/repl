@@ -21,6 +21,8 @@ internal static class OptionSchemaBuilder
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var entries = new List<OptionSchemaEntry>();
 		var parameters = new Dictionary<string, OptionSchemaParameter>(StringComparer.OrdinalIgnoreCase);
+		var regularPositionalParameterNames = new List<string>();
+		var groupPositionalPropertyNames = new List<string>();
 		foreach (var parameter in command.Handler.Method.GetParameters())
 		{
 			if (ShouldSkipSchemaParameter(parameter, routeParameterNames))
@@ -31,15 +33,24 @@ internal static class OptionSchemaBuilder
 #pragma warning disable IL2072
 			if (IsOptionsGroupParameter(parameter))
 			{
-				AppendOptionsGroupSchemaEntries(parameter.ParameterType, entries, parameters);
+				AppendOptionsGroupSchemaEntries(
+					parameter.ParameterType,
+					entries,
+					parameters,
+					groupPositionalPropertyNames);
 			}
 #pragma warning restore IL2072
 			else
 			{
 				AppendParameterSchemaEntries(parameter, entries, parameters);
+				if (IsExplicitPositionalParameter(parameter))
+				{
+					regularPositionalParameterNames.Add(parameter.Name!);
+				}
 			}
 		}
 
+		ValidatePositionalBindingCompatibility(regularPositionalParameterNames, groupPositionalPropertyNames);
 		ValidateTokenCollisions(entries, parsingOptions);
 		return new OptionSchema(entries, parameters);
 	}
@@ -79,10 +90,7 @@ internal static class OptionSchemaBuilder
 		Dictionary<string, OptionSchemaParameter> parameters)
 	{
 		var optionAttribute = parameter.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
-		var argumentAttribute = parameter.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
-		var mode = optionAttribute?.Mode
-			?? argumentAttribute?.Mode
-			?? ReplParameterMode.OptionAndPositional;
+		var mode = ResolveParameterMode(parameter);
 		if (parameters.ContainsKey(parameter.Name!))
 		{
 			throw new InvalidOperationException(
@@ -285,6 +293,44 @@ internal static class OptionSchemaBuilder
 	private static bool IsOptionsGroupParameter(ParameterInfo parameter) =>
 		Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true);
 
+	private static ReplParameterMode ResolveParameterMode(ParameterInfo parameter)
+	{
+		var optionAttribute = parameter.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
+		if (optionAttribute is not null)
+		{
+			return optionAttribute.Mode;
+		}
+
+		var argumentAttribute = parameter.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
+		return argumentAttribute?.Mode ?? ReplParameterMode.OptionAndPositional;
+	}
+
+	private static bool IsExplicitPositionalParameter(ParameterInfo parameter)
+	{
+		var optionAttribute = parameter.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
+		if (optionAttribute is not null)
+		{
+			return optionAttribute.Mode != ReplParameterMode.OptionOnly;
+		}
+
+		var argumentAttribute = parameter.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
+		return argumentAttribute is not null && argumentAttribute.Mode != ReplParameterMode.OptionOnly;
+	}
+
+	private static void ValidatePositionalBindingCompatibility(
+		List<string> regularPositionalParameterNames,
+		List<string> groupPositionalPropertyNames)
+	{
+		if (regularPositionalParameterNames.Count == 0 || groupPositionalPropertyNames.Count == 0)
+		{
+			return;
+		}
+
+		throw new InvalidOperationException(
+			$"Cannot mix positional options-group properties ({string.Join(", ", groupPositionalPropertyNames)}) "
+			+ $"with positional handler parameters ({string.Join(", ", regularPositionalParameterNames)}).");
+	}
+
 	[UnconditionalSuppressMessage(
 		"Trimming",
 		"IL2070",
@@ -293,7 +339,8 @@ internal static class OptionSchemaBuilder
 		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
 		Type groupType,
 		List<OptionSchemaEntry> entries,
-		Dictionary<string, OptionSchemaParameter> parameters)
+		Dictionary<string, OptionSchemaParameter> parameters,
+		List<string> positionalPropertyNames)
 	{
 		ValidateOptionsGroupType(groupType);
 
@@ -310,7 +357,7 @@ internal static class OptionSchemaBuilder
 					$"Nested options groups are not supported. Property '{property.Name}' on '{groupType.Name}' is itself an options group.");
 			}
 
-			AppendPropertySchemaEntries(property, entries, parameters);
+			AppendPropertySchemaEntries(property, entries, parameters, positionalPropertyNames);
 		}
 	}
 
@@ -338,13 +385,14 @@ internal static class OptionSchemaBuilder
 	private static void AppendPropertySchemaEntries(
 		PropertyInfo property,
 		List<OptionSchemaEntry> entries,
-		Dictionary<string, OptionSchemaParameter> parameters)
+		Dictionary<string, OptionSchemaParameter> parameters,
+		List<string> positionalPropertyNames)
 	{
 		var optionAttribute = property.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
 		var argumentAttribute = property.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
 		var mode = optionAttribute?.Mode
 			?? argumentAttribute?.Mode
-			?? ReplParameterMode.OptionAndPositional;
+			?? ReplParameterMode.OptionOnly;
 		if (parameters.ContainsKey(property.Name))
 		{
 			throw new InvalidOperationException(
@@ -356,6 +404,10 @@ internal static class OptionSchemaBuilder
 			property.PropertyType,
 			mode,
 			CaseSensitivity: optionAttribute?.CaseSensitivity);
+		if (mode != ReplParameterMode.OptionOnly)
+		{
+			positionalPropertyNames.Add(property.Name);
+		}
 		if (mode == ReplParameterMode.ArgumentOnly)
 		{
 			return;

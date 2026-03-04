@@ -107,4 +107,18 @@ public sealed class Given_TemporalRangeTypes
 		output.ExitCode.Should().Be(1);
 		output.Text.Should().Contain("not a valid date range literal");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies DateOnly range rejects sub-day durations.")]
+	public void When_DateRangeDurationIsSubDay_Then_InvocationFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("report", (ReplDateRange period) => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["report", "--period", "2024-01-15@8h", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("whole days");
+	}
 }

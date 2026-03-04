@@ -25,6 +25,13 @@ public sealed class Given_OptionsGroupBinding
 		public int Offset { get; set; }
 	}
 
+	[ReplOptionsGroup]
+	public class PositionalSearchOptions
+	{
+		[ReplArgument(Mode = ReplParameterMode.OptionAndPositional)]
+		public string Query { get; set; } = "";
+	}
+
 	[TestMethod]
 	[Description("Regression guard: verifies named options bind to options group properties.")]
 	public void When_UsingNamedOptionOnGroup_Then_PropertyBindsSuccessfully()
@@ -159,6 +166,47 @@ public sealed class Given_OptionsGroupBinding
 		listOutput.Text.Should().Contain("list:json");
 		showOutput.ExitCode.Should().Be(0);
 		showOutput.Text.Should().Contain("show:xml");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies positional binding on group properties is opt-in through ReplArgument.")]
+	public void When_GroupPropertyUsesReplArgument_Then_PositionalBindingWorks()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("search", (PositionalSearchOptions options) => options.Query);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["search", "needle", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("needle");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies group property cannot receive named and positional values in one invocation.")]
+	public void When_GroupPropertyGetsNamedAndPositional_Then_InvocationFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("search", (PositionalSearchOptions options) => options.Query);
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["search", "--query", "alpha", "beta", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("cannot receive both named and positional values");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies positional group properties cannot be mixed with positional regular parameters.")]
+	public void When_PositionalGroupPropertyMixedWithRegularPositional_Then_MapFails()
+	{
+		var sut = ReplApp.Create();
+
+		var act = () => sut.Map(
+			"search",
+			(PositionalSearchOptions options, [ReplArgument] string term) => $"{options.Query}:{term}");
+
+		act.Should().Throw<InvalidOperationException>()
+			.WithMessage("*Cannot mix positional options-group properties*");
 	}
 
 	[ReplOptionsGroup]

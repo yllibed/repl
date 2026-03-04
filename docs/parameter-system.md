@@ -48,9 +48,12 @@ Supporting enums:
 - the group's public writable properties become command options
 - standard `ReplOptionAttribute`, `ReplArgumentAttribute`, `ReplValueAliasAttribute` apply on properties
 - PascalCase property names are automatically lowered to camelCase for canonical tokens (`Format` → `--format`)
+- group properties are `OptionOnly` by default; positional binding is opt-in via explicit property attributes
 - properties with initializer values serve as defaults (no `HasDefaultValue` on `PropertyInfo`, so arity defaults to `ZeroOrOne`)
+- named + positional values for the same group property in one invocation are rejected as validation errors
 - abstract/interface group types and nested groups are rejected at registration time
 - parameter name collisions between group properties and regular handler parameters are detected at registration time
+- positional group properties cannot be mixed with positional non-group handler parameters in the same command
 
 ### Temporal range types
 
@@ -66,6 +69,7 @@ These types live under `Repl` namespace and support two parsing syntaxes:
 - duration: `start@duration` (at sign with `TimeSpanLiteralParser` duration)
 
 Reversed ranges (`To < From`) are validation errors.
+For `ReplDateRange` (`DateOnly`), `start@duration` accepts whole-day durations only.
 
 These public types live under `Repl.Parameters`.
 Typical app code starts with:
@@ -126,6 +130,7 @@ This same schema drives:
 - global options are consumed before command routing and can be app-extended
 - response-file expansion is disabled by default in interactive sessions
 - short-option bundling (`-abc` -> `-a -b -c`) is not enabled implicitly
+- reusable options groups and temporal range literals are first-class in Repl Toolkit, while System.CommandLine typically requires custom composition/parsing for equivalent behavior
 
 ## Notes
 

@@ -335,12 +335,10 @@ internal static class HelpTextBuilder
 			}
 
 			var defaultInstance = CreateOptionsGroupDefault(methodParam.ParameterType);
-			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType))
+			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType)
+				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
 			{
-				if (prop.CanWrite && !groupProperties.ContainsKey(prop.Name))
-				{
-					groupProperties[prop.Name] = (prop, defaultInstance);
-				}
+				groupProperties[prop.Name] = (prop, defaultInstance);
 			}
 		}
 

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Repl;
+using Repl.Parameters;
 
 // Sample goal:
 // - minimal CoreReplApp (no DI package)
@@ -18,6 +19,7 @@ app.Map("list", commands.List);
 app.Map("add {name} {email:email}", commands.Add);
 app.Map("show {id:int}", commands.Show);
 app.Map("count", commands.Count);
+app.Map("report period", commands.ReportPeriod);
 app.Map("error", ErrorCommand);
 app.Map("debug reset", commands.Reset);
 
@@ -29,7 +31,11 @@ static object ErrorCommand() =>
 file sealed class ContactCommands(ContactStore store)
 {
 	[Description("List all contacts.")]
-	public List<Contact> List() => [.. store.List()];
+	public List<Contact> List(SampleOutputOptions output)
+	{
+		_ = output;
+		return [.. store.List()];
+	}
 
 	[Description("Add a new contact.")]
 	public Contact Add(
@@ -38,13 +44,22 @@ file sealed class ContactCommands(ContactStore store)
 		=> store.Add(name, email);
 
 	[Description("Show one contact by id.")]
-	public object Show([Description("Contact numeric id")] int id)
-		=> store.Find(id) is { } contact
+	public object Show(
+		[Description("Contact numeric id")] int id,
+		SampleOutputOptions output)
+	{
+		_ = output;
+		return store.Find(id) is { } contact
 			? contact
 			: Results.NotFound($"Contact '{id}' was not found.");
+	}
 
 	[Description("Return the number of contacts.")]
 	public object Count() => Results.Success("Contact count.", store.Count());
+
+	[Description("Render a date-only reporting period from a temporal range literal.")]
+	public string ReportPeriod(ReplDateRange period) =>
+		$"Reporting from {period.From:yyyy-MM-dd} to {period.To:yyyy-MM-dd} ({store.Count()} contacts in memory).";
 
 	[Description("Reset in-memory sample data.")]
 	[Browsable(false)]
@@ -53,4 +68,16 @@ file sealed class ContactCommands(ContactStore store)
 		store.Reset();
 		return Results.Success("Data reset complete.");
 	}
+}
+
+[ReplOptionsGroup]
+file sealed class SampleOutputOptions
+{
+	[ReplOption(Aliases = ["-f"])]
+	[Description("Output format for this command.")]
+	public string Format { get; set; } = "text";
+
+	[ReplOption(ReverseAliases = ["--no-verbose"])]
+	[Description("Enable verbose output.")]
+	public bool Verbose { get; set; }
 }
