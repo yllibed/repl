@@ -47,6 +47,7 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 | XML / YAML / Markdown output | ❌ | ❌ | ✅ Built-in |
 | Custom output transformers | ❌ | ❌ | ✅ `AddTransformer` |
 | Typed result objects | ❌ | ❌ | ✅ Ok, Error, NotFound... |
+| Multiple return values (tuple) | ❌ | ❌ | ✅ `(T1, T2, ...)` rendered separately |
 | Rich terminal UI (charts, trees...) | ❌ Removed | ✅ Full Spectre.Console | ⚠️ Via add-on |
 | ANSI color auto-detection | ❌ | ✅ | ✅ |
 | `NO_COLOR` / `CLICOLOR_FORCE` | ❌ | ✅ | ✅ |
