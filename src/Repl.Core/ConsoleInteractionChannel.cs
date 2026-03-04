@@ -103,7 +103,14 @@ internal sealed class ConsoleInteractionChannel(
 		}
 	}
 
-	private static int MatchChoice(IReadOnlyList<string> choices, string input)
+	private static int MatchChoice(IReadOnlyList<string> choices, string input) =>
+		MatchChoiceByName(input, choices);
+
+	/// <summary>
+	/// Matches a text input against a choice list: exact match first, then unambiguous prefix.
+	/// Returns the zero-based index of the matched choice, or <c>-1</c> if no match found.
+	/// </summary>
+	private static int MatchChoiceByName(string input, IReadOnlyList<string> choices)
 	{
 		// Exact match first.
 		for (var i = 0; i < choices.Count; i++)
@@ -212,16 +219,421 @@ internal sealed class ConsoleInteractionChannel(
 		return line;
 	}
 
+	public async ValueTask<string> AskSecretAsync(
+		string name,
+		string prompt,
+		AskSecretOptions? options = null)
+	{
+		_ = ValidateName(name);
+		prompt = string.IsNullOrWhiteSpace(prompt)
+			? throw new ArgumentException("Prompt cannot be empty.", nameof(prompt))
+			: prompt;
+		var effectiveCt = ResolveToken(options?.CancellationToken);
+		effectiveCt.ThrowIfCancellationRequested();
+
+		if (_options.TryGetPrefilledAnswer(name, out var prefilledSecret))
+		{
+			return prefilledSecret ?? string.Empty;
+		}
+
+		var allowEmpty = options?.AllowEmpty ?? false;
+		while (true)
+		{
+			await _presenter.PresentAsync(
+					new ReplPromptEvent(name, prompt, "secret"),
+					effectiveCt)
+				.ConfigureAwait(false);
+
+			string? line;
+			if (options?.Timeout is not null && options.Timeout.Value > TimeSpan.Zero)
+			{
+				if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
+				{
+					line = await ReadWithTimeoutRedirectedAsync(effectiveCt, options.Timeout.Value)
+						.ConfigureAwait(false);
+				}
+				else
+				{
+					line = await ReadSecretWithCountdownAsync(
+							options.Timeout.Value, options?.Mask, effectiveCt)
+						.ConfigureAwait(false);
+				}
+			}
+			else
+			{
+				line = await ReadSecretLineAsync(options?.Mask, effectiveCt).ConfigureAwait(false);
+			}
+
+			if (string.IsNullOrEmpty(line))
+			{
+				if (allowEmpty)
+				{
+					return HandleMissingAnswer(string.Empty, "secret");
+				}
+
+				await _presenter.PresentAsync(
+						new ReplStatusEvent("A value is required."),
+						effectiveCt)
+					.ConfigureAwait(false);
+				continue;
+			}
+
+			return line;
+		}
+	}
+
+	public async ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
+		string name,
+		string prompt,
+		IReadOnlyList<string> choices,
+		IReadOnlyList<int>? defaultIndices = null,
+		AskMultiChoiceOptions? options = null)
+	{
+		ValidateMultiChoiceArgs(name, ref prompt, ref choices, defaultIndices);
+
+		var effectiveCt = ResolveToken(options?.CancellationToken);
+		effectiveCt.ThrowIfCancellationRequested();
+
+		var effectiveDefaults = defaultIndices ?? [];
+		var minSelections = options?.MinSelections ?? 0;
+		var maxSelections = options?.MaxSelections;
+
+		if (_options.TryGetPrefilledAnswer(name, out var prefilledMulti) && !string.IsNullOrWhiteSpace(prefilledMulti))
+		{
+			var parsed = ParseMultiChoiceInput(prefilledMulti, choices);
+			if (parsed is not null && IsValidSelection(parsed, minSelections, maxSelections))
+			{
+				return parsed;
+			}
+		}
+
+		var choiceDisplay = FormatMultiChoiceDisplay(choices, effectiveDefaults);
+		var defaultLabel = FormatMultiChoiceDefaultLabel(effectiveDefaults);
+
+		return await ReadMultiChoiceLoopAsync(
+			name, prompt, choices, effectiveDefaults, choiceDisplay, defaultLabel,
+			minSelections, maxSelections, effectiveCt, options?.Timeout).ConfigureAwait(false);
+	}
+
+	private static void ValidateMultiChoiceArgs(
+		string name, ref string prompt, ref IReadOnlyList<string> choices, IReadOnlyList<int>? defaultIndices)
+	{
+		_ = ValidateName(name);
+		prompt = string.IsNullOrWhiteSpace(prompt)
+			? throw new ArgumentException("Prompt cannot be empty.", nameof(prompt))
+			: prompt;
+		choices = choices is null || choices.Count == 0
+			? throw new ArgumentException("At least one choice is required.", nameof(choices))
+			: choices;
+		if (defaultIndices is null)
+		{
+			return;
+		}
+
+		foreach (var idx in defaultIndices)
+		{
+			if (idx < 0 || idx >= choices.Count)
+			{
+				throw new ArgumentOutOfRangeException(nameof(defaultIndices));
+			}
+		}
+	}
+
+	private static string FormatMultiChoiceDisplay(IReadOnlyList<string> choices, IReadOnlyList<int> defaults)
+	{
+		var defaultSet = new HashSet<int>(defaults);
+		return string.Join("  ", choices.Select((c, i) =>
+			defaultSet.Contains(i) ? $"[{i + 1}*] {c}" : $"[{i + 1}] {c}"));
+	}
+
+	private static string? FormatMultiChoiceDefaultLabel(IReadOnlyList<int> defaults) =>
+		defaults.Count > 0
+			? string.Join(',', defaults.Select(i => (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)))
+			: null;
+
+	private async ValueTask<IReadOnlyList<int>> ReadMultiChoiceLoopAsync(
+		string name, string prompt, IReadOnlyList<string> choices,
+		IReadOnlyList<int> effectiveDefaults, string choiceDisplay, string? defaultLabel,
+		int minSelections, int? maxSelections, CancellationToken ct, TimeSpan? timeout)
+	{
+		while (true)
+		{
+			var line = await ReadPromptLineAsync(
+					name, $"{prompt}\n  {choiceDisplay}\n  Enter numbers (comma-separated)",
+					kind: "multi-choice", ct, timeout, defaultLabel: defaultLabel)
+				.ConfigureAwait(false);
+
+			if (string.IsNullOrWhiteSpace(line))
+			{
+				return HandleMissingAnswer(effectiveDefaults, "multi-choice");
+			}
+
+			var selected = ParseMultiChoiceInput(line, choices);
+			if (selected is null)
+			{
+				await _presenter.PresentAsync(
+						new ReplStatusEvent($"Invalid input '{line}'. Enter numbers 1-{choices.Count} separated by commas."),
+						ct)
+					.ConfigureAwait(false);
+				continue;
+			}
+
+			if (!IsValidSelection(selected, minSelections, maxSelections))
+			{
+				var msg = maxSelections is not null
+					? $"Please select between {minSelections} and {maxSelections.Value} option(s)."
+					: $"Please select at least {minSelections} option(s).";
+				await _presenter.PresentAsync(new ReplStatusEvent(msg), ct).ConfigureAwait(false);
+				continue;
+			}
+
+			return selected;
+		}
+	}
+
+	private static int[]? ParseMultiChoiceInput(string input, IReadOnlyList<string> choices)
+	{
+		var parts = input.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		if (parts.Length == 0)
+		{
+			return null;
+		}
+
+		var result = new List<int>(parts.Length);
+		foreach (var part in parts)
+		{
+			// Try as 1-based number first.
+			if (int.TryParse(part, System.Globalization.CultureInfo.InvariantCulture, out var num) && num >= 1 && num <= choices.Count)
+			{
+				result.Add(num - 1);
+				continue;
+			}
+
+			// Try as choice name (exact or prefix match).
+			var matchIndex = MatchChoiceByName(part, choices);
+			if (matchIndex < 0)
+			{
+				return null;
+			}
+
+			result.Add(matchIndex);
+		}
+
+		return result.Distinct().Order().ToArray();
+	}
+
+	private static bool IsValidSelection(int[] selected, int min, int? max) =>
+		selected.Length >= min && (max is null || selected.Length <= max.Value);
+
+	private static async ValueTask<string?> ReadSecretLineAsync(char? mask, CancellationToken ct)
+	{
+		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
+		{
+			return await ReadLineWithEscAsync(ct).ConfigureAwait(false);
+		}
+
+		return await Task.Run(() => ReadSecretSync(mask, ct), ct).ConfigureAwait(false);
+	}
+
+	private static string? ReadSecretSync(char? mask, CancellationToken ct)
+	{
+		ConsoleInputGate.Gate.Wait(ct);
+		try
+		{
+			return ReadSecretCore(mask, ct);
+		}
+		finally
+		{
+			ConsoleInputGate.Gate.Release();
+		}
+	}
+
+	private static string? ReadSecretCore(char? mask, CancellationToken ct)
+	{
+		var buffer = new System.Text.StringBuilder();
+		while (!ct.IsCancellationRequested)
+		{
+			if (!Console.KeyAvailable)
+			{
+				Thread.Sleep(15);
+				continue;
+			}
+
+			var result = HandleSecretKey(buffer, mask, ct);
+			if (result is not null)
+			{
+				return result;
+			}
+		}
+
+		return null;
+	}
+
+	private async ValueTask<string?> ReadSecretWithCountdownAsync(
+		TimeSpan timeout,
+		char? mask,
+		CancellationToken cancellationToken)
+	{
+		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		using var timer = _timeProvider.CreateTimer(
+			callback: static state =>
+			{
+				try { ((CancellationTokenSource)state!).Cancel(); }
+				catch (ObjectDisposedException) { /* CTS disposed before timer fired. */ }
+			},
+			state: timeoutCts, dueTime: timeout, period: Timeout.InfiniteTimeSpan);
+
+		try
+		{
+			return await Task.Run(
+					function: () => ReadSecretWithCountdownSync(timeout, mask, timeoutCts.Token, cancellationToken),
+					cancellationToken: cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			return null;
+		}
+	}
+
+	private static string? ReadSecretWithCountdownSync(
+		TimeSpan timeout,
+		char? mask,
+		CancellationToken timeoutCt,
+		CancellationToken externalCt)
+	{
+		ConsoleInputGate.Gate.Wait(externalCt);
+		try
+		{
+			return ReadSecretWithCountdownCore(timeout, mask, timeoutCt, externalCt);
+		}
+		finally
+		{
+			ConsoleInputGate.Gate.Release();
+		}
+	}
+
+	private static string? ReadSecretWithCountdownCore(
+		TimeSpan timeout,
+		char? mask,
+		CancellationToken timeoutCt,
+		CancellationToken externalCt)
+	{
+		var remaining = (int)Math.Ceiling(timeout.TotalSeconds);
+		var buffer = new System.Text.StringBuilder();
+		var lastSuffix = FormatCountdownSuffix(remaining, defaultLabel: null);
+		var lastTickMs = Environment.TickCount64;
+		var userTyping = false;
+
+		Console.Write(lastSuffix);
+
+		while (!externalCt.IsCancellationRequested && (!timeoutCt.IsCancellationRequested || userTyping))
+		{
+			if (Console.KeyAvailable)
+			{
+				if (!userTyping)
+				{
+					userTyping = true;
+					if (lastSuffix.Length > 0)
+					{
+						EraseInline(lastSuffix.Length);
+						lastSuffix = string.Empty;
+					}
+				}
+
+				var result = HandleSecretKey(buffer, mask, externalCt);
+				if (result is not null)
+				{
+					return result;
+				}
+
+				continue;
+			}
+
+			Thread.Sleep(15);
+
+			if (!userTyping && remaining > 0)
+			{
+				(remaining, lastSuffix, lastTickMs) = TickCountdown(
+					remaining, defaultLabel: null, lastSuffix, lastTickMs);
+			}
+		}
+
+		if (lastSuffix.Length > 0)
+		{
+			EraseInline(lastSuffix.Length);
+		}
+
+		Console.WriteLine();
+		return null;
+	}
+
+	/// <summary>
+	/// Handles a single keypress during a secret prompt with countdown.
+	/// Returns the completed input string on Enter, or <c>null</c> if more input is needed.
+	/// </summary>
+	private static string? HandleSecretKey(
+		System.Text.StringBuilder buffer,
+		char? mask,
+		CancellationToken ct)
+	{
+		var key = Console.ReadKey(intercept: true);
+
+		if (key.Key == ConsoleKey.Escape)
+		{
+			if (buffer.Length > 0 && mask is not null)
+			{
+				EraseInline(buffer.Length);
+			}
+
+			throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+		}
+
+		if (key.Key == ConsoleKey.Enter)
+		{
+			Console.WriteLine();
+			return buffer.ToString();
+		}
+
+		if (key.Key == ConsoleKey.Backspace)
+		{
+			if (buffer.Length > 0)
+			{
+				buffer.Remove(buffer.Length - 1, 1);
+				if (mask is not null)
+				{
+					Console.Write("\b \b");
+				}
+			}
+
+			return null;
+		}
+
+		if (key.KeyChar != '\0')
+		{
+			buffer.Append(key.KeyChar);
+			if (mask is not null)
+			{
+				Console.Write(mask.Value);
+			}
+		}
+
+		return null;
+	}
+
+	private CancellationToken ResolveToken(CancellationToken? explicitToken)
+	{
+		var ct = explicitToken ?? default;
+		return ct != default ? ct : _commandToken;
+	}
+
 	private static string ValidateName(string name) =>
 		string.IsNullOrWhiteSpace(name)
 			? throw new ArgumentException("Prompt name cannot be empty.", nameof(name))
 			: name;
 
-	private CancellationToken ResolveToken(AskOptions? options)
-	{
-		var explicit_ = options?.CancellationToken ?? default;
-		return explicit_ != default ? explicit_ : _commandToken;
-	}
+	private CancellationToken ResolveToken(AskOptions? options) =>
+		ResolveToken(options?.CancellationToken);
 
 	private async ValueTask<string?> ReadPromptLineAsync(
 		string name,

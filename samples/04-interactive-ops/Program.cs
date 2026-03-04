@@ -6,6 +6,12 @@ using Microsoft.Extensions.DependencyInjection;
 // - AskTextAsync with retry-on-invalid (add)
 // - AskChoiceAsync with default + prefix matching (import)
 // - AskConfirmationAsync with safe default (clear)
+// - AskSecretAsync for masked input (login)
+// - AskMultiChoiceAsync for multi-selection (configure)
+// - AskEnumAsync for enum-based choice (theme)
+// - AskNumberAsync for typed numeric input (set-limit)
+// - AskValidatedTextAsync for validated text (set-email)
+// - PressAnyKeyAsync for interactive pause (demo)
 // - WriteStatusAsync for inline feedback (import, add)
 // - IProgress<ReplProgressEvent> structured progress (import)
 // - IProgress<double> simple progress (sync)
@@ -35,6 +41,12 @@ var app = ReplApp.Create(services =>
 		  Try: contact clear         (confirmation prompt)
 		  Try: contact sync          (simple progress)
 		  Try: contact watch         (Ctrl+C to stop)
+		  Try: contact login         (secret/password input)
+		  Try: contact configure     (multi-choice selection)
+		  Try: contact theme         (enum-based choice)
+		  Try: contact set-limit     (typed numeric input)
+		  Try: contact set-email     (validated text input)
+		  Try: contact demo          (press any key pause)
 		""")
 	.UseDefaultInteractive()
 	.UseCliProfile();
@@ -215,6 +227,84 @@ app.Context(
 				}
 
 				return Results.Cancelled("Watch stopped.");
+			});
+
+		// Secret input — password/token prompt with masked echo.
+		// Characters are shown as '*' by default, never echoed in clear.
+		// Prefillable via --answer:password=value for CI.
+		contact.Map(
+			"login",
+			[Description("Simulate login (secret input)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				var password = await channel.AskSecretAsync("password", "Password?");
+				return Results.Success($"Logged in (password length: {password.Length}).");
+			});
+
+		// Multi-choice — select one or more features from a list.
+		// Enter numbers separated by commas: 1,3
+		contact.Map(
+			"configure",
+			[Description("Configure features (multi-choice)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				var selected = await channel.AskMultiChoiceAsync(
+					"features",
+					"Enable features:",
+					["Authentication", "Logging", "Caching", "Metrics"],
+					defaultIndices: [0, 1]);
+				return Results.Success($"Enabled feature indices: {string.Join(", ", selected)}.");
+			});
+
+		// Enum choice — pick from enum values, humanized automatically.
+		contact.Map(
+			"theme",
+			[Description("Choose a theme (enum choice)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				var theme = await channel.AskEnumAsync<AppTheme>("theme", "Choose a theme:", AppTheme.System);
+				return Results.Success($"Theme set to {theme}.");
+			});
+
+		// Number input — typed numeric prompt with min/max bounds.
+		contact.Map(
+			"set-limit",
+			[Description("Set import limit (numeric input)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				var limit = await channel.AskNumberAsync<int>(
+					"limit",
+					"Max contacts to import?",
+					defaultValue: 100,
+					new AskNumberOptions<int>(Min: 1, Max: 10000));
+				return Results.Success($"Import limit set to {limit}.");
+			});
+
+		// Validated text input — re-prompts until validation passes.
+		contact.Map(
+			"set-email",
+			[Description("Set notification email (validated)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				var email = await channel.AskValidatedTextAsync(
+					"email",
+					"Notification email?",
+					input => System.Net.Mail.MailAddress.TryCreate(input, out _)
+						? null
+						: $"'{input}' is not a valid email address.");
+				return Results.Success($"Notification email set to {email}.");
+			});
+
+		// Press any key — simple interactive pause.
+		contact.Map(
+			"demo",
+			[Description("Interactive demo (press any key)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				await channel.WriteStatusAsync("Step 1: Preparing data...", cancellationToken);
+				await channel.PressAnyKeyAsync("Press any key to continue to step 2...", cancellationToken);
+				await channel.WriteStatusAsync("Step 2: Processing complete.", cancellationToken);
+				return Results.Success("Demo finished.");
 			});
 	});
 

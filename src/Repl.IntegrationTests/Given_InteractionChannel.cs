@@ -152,4 +152,165 @@ public sealed class Given_InteractionChannel
 		output.Text.Should().Contain("Alice");
 		output.Text.Should().NotContain("Name?");
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies prefilled secret answer bypasses interactive prompt.")]
+	public void When_SecretAnswerIsPrefilled_Then_PrefilledValueIsUsed()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("login", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var secret = await channel.AskSecretAsync("password", "Password?").ConfigureAwait(false);
+			return secret.Length > 0 ? "authenticated" : "empty";
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["login", "--answer:password=s3cret"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("authenticated");
+		output.Text.Should().NotContain("Password?");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies prefilled multi-choice answer with comma-separated indices.")]
+	public void When_MultiChoiceAnswerIsPrefilled_Then_PrefilledIndicesAreUsed()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("features", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var selected = await channel.AskMultiChoiceAsync(
+				"features",
+				"Select features:",
+				["Auth", "Logging", "Cache"],
+				defaultIndices: null).ConfigureAwait(false);
+			return string.Join(',', selected);
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["features", "--answer:features=1,3"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("0,2"); // 1-based "1,3" maps to 0-based [0,2]
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies prefilled multi-choice answer with choice names.")]
+	public void When_MultiChoiceAnswerIsPrefilledByName_Then_MatchingIndicesAreUsed()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("features", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var selected = await channel.AskMultiChoiceAsync(
+				"features",
+				"Select features:",
+				["Auth", "Logging", "Cache"]).ConfigureAwait(false);
+			return string.Join(',', selected);
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["features", "--answer:features=Auth,Cache"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("0,2");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies multi-choice fallback to default indices when no input provided.")]
+	public void When_MultiChoiceHasDefaultsAndNoInput_Then_DefaultIndicesAreReturned()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
+		sut.Map("features", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var selected = await channel.AskMultiChoiceAsync(
+				"features",
+				"Select features:",
+				["Auth", "Logging", "Cache"],
+				defaultIndices: [0, 2]).ConfigureAwait(false);
+			return string.Join(',', selected);
+		});
+
+		var output = ConsoleCaptureHelper.CaptureWithInput(string.Empty, () => sut.Run(["features"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("0,2");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies AskEnumAsync prefill by enum value name.")]
+	public void When_EnumAnswerIsPrefilledByName_Then_EnumValueIsReturned()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("choose-color", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var color = await channel.AskEnumAsync<SampleColor>("color", "Pick a color:").ConfigureAwait(false);
+			return color.ToString();
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["choose-color", "--answer:color=Green"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Green");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies AskNumberAsync prefill with numeric value.")]
+	public void When_NumberAnswerIsPrefilled_Then_ParsedValueIsReturned()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("set-count", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var count = await channel.AskNumberAsync<int>("count", "How many?").ConfigureAwait(false);
+			return count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["set-count", "--answer:count=42"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("42");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies AskValidatedTextAsync accepts valid input through prefill.")]
+	public void When_ValidatedTextAnswerIsPrefilled_Then_ValidValueIsAccepted()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("set-email", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var email = await channel.AskValidatedTextAsync(
+				"email",
+				"Email?",
+				input => input.Contains('@') ? null : "Must contain @").ConfigureAwait(false);
+			return email;
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["set-email", "--answer:email=a@b.com"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("a@b.com");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies secret prompt fallback uses empty string when AllowEmpty is true.")]
+	public void When_SecretAllowsEmptyAndNoInput_Then_EmptyStringIsReturned()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
+		sut.Map("token", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var token = await channel.AskSecretAsync(
+				"token", "API Token?",
+				new AskSecretOptions(AllowEmpty: true)).ConfigureAwait(false);
+			return token.Length == 0 ? "none" : token;
+		});
+
+		var output = ConsoleCaptureHelper.CaptureWithInput(string.Empty, () => sut.Run(["token"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("none");
+	}
 }

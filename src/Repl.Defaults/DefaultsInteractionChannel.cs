@@ -42,4 +42,18 @@ internal sealed class DefaultsInteractionChannel : IReplInteractionChannel, ICom
 		string? defaultValue = null,
 		AskOptions? options = null) =>
 		_inner.AskTextAsync(name, prompt, defaultValue, options);
+
+	public ValueTask<string> AskSecretAsync(
+		string name,
+		string prompt,
+		AskSecretOptions? options = null) =>
+		_inner.AskSecretAsync(name, prompt, options);
+
+	public ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
+		string name,
+		string prompt,
+		IReadOnlyList<string> choices,
+		IReadOnlyList<int>? defaultIndices = null,
+		AskMultiChoiceOptions? options = null) =>
+		_inner.AskMultiChoiceAsync(name, prompt, choices, defaultIndices, options);
 }

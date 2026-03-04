@@ -1,4 +1,17 @@
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+
+internal enum AppTheme
+{
+	[Description("Use system setting")]
+	System,
+	[Description("Light mode")]
+	Light,
+	[Description("Dark mode")]
+	Dark,
+	[Description("High contrast")]
+	HighContrast,
+}
 
 internal sealed record Contact(
 	[property: Display(Order = 0)] string Name,

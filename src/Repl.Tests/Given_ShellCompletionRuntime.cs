@@ -157,6 +157,48 @@ public sealed class Given_ShellCompletionRuntime
 		}
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies all status labels use the same ANSI style so no shell section appears in a different color.")]
+	public async Task When_StatusIsRenderedWithAnsi_Then_AllLabelsUseCommandStyle()
+	{
+		var root = Path.Combine(Path.GetTempPath(), "repl-shell-completion-ansi-label-tests", Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(root);
+		var profilePath = Path.Combine(root, ".bashrc");
+		File.WriteAllText(profilePath, string.Empty);
+		try
+		{
+			var options = new ReplOptions();
+			options.ShellCompletion.PreferredShell = ShellKind.Bash;
+			options.ShellCompletion.BashProfilePath = profilePath;
+			options.ShellCompletion.PowerShellProfilePath = Path.Combine(root, "ps.profile");
+			options.ShellCompletion.ZshProfilePath = Path.Combine(root, ".zshrc");
+			options.ShellCompletion.FishProfilePath = Path.Combine(root, "config.fish");
+			options.ShellCompletion.NuProfilePath = Path.Combine(root, "config.nu");
+			var runtime = CreateRuntime(options, tryReadProfileContent: _ => string.Empty);
+
+			var status = runtime.HandleStatusRoute();
+
+			var palette = new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark);
+			var settings = new HumanRenderSettings(Width: 200, UseAnsi: true, Palette: palette);
+			var transformer = new HumanOutputTransformer(() => settings);
+			var rendered = await transformer.TransformAsync(status, CancellationToken.None);
+
+			var lines = rendered.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+			var expectedPrefix = palette.CommandStyle;
+			var labelLines = lines.Where(line => line.Contains(':')).ToArray();
+			labelLines.Should().NotBeEmpty();
+			foreach (var line in labelLines)
+			{
+				line.Should().StartWith(expectedPrefix,
+					$"label line should begin with CommandStyle ANSI code: {line}");
+			}
+		}
+		finally
+		{
+			try { Directory.Delete(root, recursive: true); } catch { }
+		}
+	}
+
 	private static ShellCompletionRuntime CreateRuntime(
 		ReplOptions? options = null,
 		Func<string, int, string[]>? resolveCandidates = null,
