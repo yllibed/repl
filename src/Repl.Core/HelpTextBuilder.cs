@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 using Repl.Internal.Options;
@@ -325,9 +326,25 @@ internal static class HelpTextBuilder
 		var parameters = route.Command.Handler.Method.GetParameters()
 			.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name))
 			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
+		var groupProperties = new Dictionary<string, (PropertyInfo Property, object DefaultInstance)>(StringComparer.OrdinalIgnoreCase);
+		foreach (var methodParam in route.Command.Handler.Method.GetParameters())
+		{
+			if (!Attribute.IsDefined(methodParam.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
+			{
+				continue;
+			}
+
+			var defaultInstance = CreateOptionsGroupDefault(methodParam.ParameterType);
+			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType)
+				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
+			{
+				groupProperties[prop.Name] = (prop, defaultInstance);
+			}
+		}
+
 		var optionRows = route.OptionSchema.Parameters.Values
 			.Where(parameter => parameter.Mode != ReplParameterMode.ArgumentOnly)
-			.Select(parameter => BuildOptionRow(route.OptionSchema, parameter, parameters))
+			.Select(parameter => BuildOptionRow(route.OptionSchema, parameter, parameters, groupProperties))
 			.Where(row => row is not null)
 			.Select(row => row!)
 			.ToArray();
@@ -355,13 +372,9 @@ internal static class HelpTextBuilder
 	private static string[]? BuildOptionRow(
 		OptionSchema schema,
 		OptionSchemaParameter schemaParameter,
-		Dictionary<string, ParameterInfo> parameters)
+		Dictionary<string, ParameterInfo> parameters,
+		Dictionary<string, (PropertyInfo Property, object DefaultInstance)>? groupProperties = null)
 	{
-		if (!parameters.TryGetValue(schemaParameter.Name, out var parameter))
-		{
-			return null;
-		}
-
 		var entries = schema.Entries
 			.Where(entry =>
 				string.Equals(entry.ParameterName, schemaParameter.Name, StringComparison.OrdinalIgnoreCase)
@@ -381,16 +394,64 @@ internal static class HelpTextBuilder
 			.Distinct(StringComparer.OrdinalIgnoreCase)
 			.ToArray();
 		var tokenDisplay = string.Join(", ", visibleTokens);
-		var placeholder = ResolveOptionPlaceholder(parameter.ParameterType);
-		var description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
-		var defaultValue = parameter.HasDefaultValue && parameter.DefaultValue is not null
-			? $" [default: {parameter.DefaultValue}]"
-			: string.Empty;
+
+		Type parameterType;
+		string description;
+		string defaultValue;
+		if (parameters.TryGetValue(schemaParameter.Name, out var parameter))
+		{
+			parameterType = parameter.ParameterType;
+			description = parameter.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
+			defaultValue = parameter.HasDefaultValue && parameter.DefaultValue is not null
+				? $" [default: {parameter.DefaultValue}]"
+				: string.Empty;
+		}
+		else if (groupProperties is not null
+			&& groupProperties.TryGetValue(schemaParameter.Name, out var groupInfo))
+		{
+			parameterType = groupInfo.Property.PropertyType;
+			description = groupInfo.Property.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
+			var propDefault = groupInfo.Property.GetValue(groupInfo.DefaultInstance);
+			defaultValue = propDefault is not null && !IsDefaultForType(propDefault, parameterType)
+				? $" [default: {propDefault}]"
+				: string.Empty;
+		}
+		else
+		{
+			return null;
+		}
+
+		var placeholder = ResolveOptionPlaceholder(parameterType);
 		var left = string.IsNullOrWhiteSpace(placeholder)
 			? tokenDisplay
 			: $"{tokenDisplay} {placeholder}";
 		var right = $"{description}{defaultValue}".Trim();
 		return [left, right];
+	}
+
+	private static bool IsDefaultForType(object value, Type type)
+	{
+		if (type == typeof(bool))
+		{
+			return value is false;
+		}
+
+		if (type == typeof(int))
+		{
+			return value is 0;
+		}
+
+		if (type == typeof(long))
+		{
+			return value is 0L;
+		}
+
+		if (type == typeof(double))
+		{
+			return value is 0.0d;
+		}
+
+		return false;
 	}
 
 	private static string ResolveOptionPlaceholder(Type parameterType)
@@ -439,6 +500,21 @@ internal static class HelpTextBuilder
 		if (type == typeof(DirectoryInfo))
 		{
 			return "directory";
+		}
+
+		if (type == typeof(ReplDateRange))
+		{
+			return "date-range";
+		}
+
+		if (type == typeof(ReplDateTimeRange))
+		{
+			return "datetime-range";
+		}
+
+		if (type == typeof(ReplDateTimeOffsetRange))
+		{
+			return "datetimeoffset-range";
 		}
 
 		return type.Name.ToLowerInvariant();
@@ -738,6 +814,20 @@ internal static class HelpTextBuilder
 
 		return MatchesPrefix(template, tokens, parsingOptions);
 	}
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2067",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static object CreateOptionsGroupDefault(Type groupType) =>
+		Activator.CreateInstance(groupType)!;
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2070",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static PropertyInfo[] GetOptionsGroupProperties(Type groupType) =>
+		groupType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 
 	private static bool MatchesPrefix(
 		RouteTemplate template,

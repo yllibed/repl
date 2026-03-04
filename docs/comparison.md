@@ -16,8 +16,12 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 | Response files (`@file.rsp`) | ✅ | ❌ | ✅ |
 | POSIX `--` separator | ✅ | ✅ | ✅ |
 | Type conversion (FileInfo, enums...) | ✅ Widest built-in set | ✅ Via TypeConverter | ✅ |
+| Reusable options groups | ⚠️ Via custom composition | ⚠️ Via shared settings patterns | ✅ `[ReplOptionsGroup]` |
+| Temporal range literals (`start..end`, `start@duration`) | ⚠️ Via custom parser/binder | ⚠️ Via custom converter/binder | ✅ Built-in range types |
 | Global / recursive options | ✅ `Recursive = true` | ⚠️ Settings inheritance | ✅ `AddGlobalOption` |
 | Parse diagnostics with suggestions | ✅ | ✅ | ✅ |
+
+`⚠️` indicates the capability is achievable, but not as a first-class built-in abstraction.
 
 ## Interactive & Session
 

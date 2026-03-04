@@ -95,6 +95,74 @@ Notes:
 - in interactive sessions, response-file expansion is disabled by default
 - response-file paths are read from the local filesystem as provided; treat `@file` input as trusted CLI input
 
+## Options groups
+
+Handler parameters can use a class annotated with `[ReplOptionsGroup]` to declare reusable parameter groups:
+
+```csharp
+using Repl.Parameters;
+
+[ReplOptionsGroup]
+public class OutputOptions
+{
+    [ReplOption(Aliases = ["-f"])]
+    [Description("Output format.")]
+    public string Format { get; set; } = "text";
+
+    [ReplOption(ReverseAliases = ["--no-verbose"])]
+    public bool Verbose { get; set; }
+}
+
+app.Map("list", (OutputOptions output, int limit) => $"{output.Format}:{limit}");
+app.Map("show", (OutputOptions output, string id) => $"{output.Format}:{id}");
+```
+
+Options group behavior:
+
+- group properties become individual command options (the same as regular handler parameters)
+- PascalCase property names are automatically lowered to camelCase (`Format` → `--format`)
+- property initializer values serve as defaults when options are not provided
+- `[ReplOption]`, `[ReplArgument]`, `[ReplValueAlias]` attributes work on properties
+- the same group class can be reused across multiple commands
+- groups and regular parameters can be mixed in the same handler
+- group properties are `OptionOnly` by default; use explicit attributes to opt into positional binding
+- when a group property receives both named and positional values in one invocation, parsing fails with a validation error
+- parameter name collisions between group properties and regular parameters cause an `InvalidOperationException` at registration
+- positional group properties cannot be mixed with positional regular handler parameters in the same command
+- abstract, interface, or nested group types are rejected at registration
+
+## Temporal range types
+
+Handler parameters can use temporal range types for date/time intervals:
+
+```csharp
+app.Map("report", (ReplDateRange period) =>
+    $"{period.From:yyyy-MM-dd} to {period.To:yyyy-MM-dd}");
+
+app.Map("logs", (ReplDateTimeRange window) =>
+    $"{window.From:HH:mm} to {window.To:HH:mm}");
+
+app.Map("audit", (ReplDateTimeOffsetRange span) =>
+    $"{span.From} to {span.To}");
+```
+
+Two syntaxes are supported:
+
+- range: `--period 2024-01-15..2024-02-15`
+- duration: `--period 2024-01-15@30d`
+
+Available types:
+
+| Type | From/To type | Example |
+|------|-------------|---------|
+| `ReplDateRange` | `DateOnly` | `2024-01-15..2024-02-15` |
+| `ReplDateTimeRange` | `DateTime` | `2024-01-15T10:00..2024-01-15T18:00` |
+| `ReplDateTimeOffsetRange` | `DateTimeOffset` | `2024-01-15T10:00+02:00..2024-01-15T18:00+02:00` |
+
+Duration syntax uses the same format as `TimeSpan` literals (`30d`, `8h`, `1h30m`, `PT1H`, etc.).
+Reversed ranges (`To < From`) produce a validation error.
+For `ReplDateRange` (`DateOnly`), duration syntax must resolve to whole days.
+
 ## Supported parameter conversions
 
 Handler parameters support native conversion for:

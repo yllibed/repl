@@ -185,6 +185,37 @@ No screen scraping. No custom schema. No extra endpoints.
 
 ---
 
+## Options groups and temporal ranges
+
+This sample also demonstrates two advanced parameter features:
+
+- reusable options groups via `[ReplOptionsGroup]`
+- date-only temporal ranges via `ReplDateRange`
+
+Try these commands:
+
+```text
+$ myapp list --format json
+$ myapp show 1 --no-verbose
+$ myapp report period --period 2024-01-15..2024-02-15
+$ myapp report period --period 2024-01-15@30d
+```
+
+Expected behavior:
+
+- `--format` and `--no-verbose` are provided by a shared options-group object.
+- `report period` accepts `start..end` and `start@duration`.
+- `ReplDateRange` accepts whole-day durations only.
+
+Validation example:
+
+```text
+$ myapp report period --period 2024-01-15@8h
+Validation: '2024-01-15@8h' is not a valid date range literal. Use start..end or start@duration with whole days.
+```
+
+---
+
 ## Notes and limitations
 
 - This sample uses an **in-memory store**.  

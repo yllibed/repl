@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Repl.Internal.Options;
 
@@ -144,15 +145,25 @@ public sealed partial class CoreReplApp
 				Description: null))
 			.ToArray();
 
-		var options = route.Command.Handler.Method
-			.GetParameters()
+		var handlerParams = route.Command.Handler.Method.GetParameters();
+		var regularOptions = handlerParams
 			.Where(parameter =>
 				!string.IsNullOrWhiteSpace(parameter.Name)
 				&& parameter.ParameterType != typeof(CancellationToken)
 				&& !routeParameterNames.Contains(parameter.Name!)
-				&& !IsFrameworkInjectedParameter(parameter.ParameterType))
-			.Select(parameter => BuildDocumentationOption(route.OptionSchema, parameter))
-			.ToArray();
+				&& !IsFrameworkInjectedParameter(parameter.ParameterType)
+				&& !Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
+			.Select(parameter => BuildDocumentationOption(route.OptionSchema, parameter));
+		var groupOptions = handlerParams
+			.Where(parameter => Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
+			.SelectMany(parameter =>
+			{
+				var defaultInstance = CreateOptionsGroupDefault(parameter.ParameterType);
+				return GetOptionsGroupProperties(parameter.ParameterType)
+					.Where(prop => prop.CanWrite)
+					.Select(prop => BuildDocumentationOptionFromProperty(route.OptionSchema, prop, defaultInstance));
+			});
+		var options = regularOptions.Concat(groupOptions).ToArray();
 
 		return new ReplDocCommand(
 			Path: route.Template.Template,
@@ -250,6 +261,9 @@ public sealed partial class CoreReplApp
 				"timeonly" => "time",
 				"datetimeoffset" => "datetimeoffset",
 				"timespan" => "timespan",
+				"repldaterange" => "date-range",
+				"repldatetimerange" => "datetime-range",
+				"repldatetimeoffsetrange" => "datetimeoffset-range",
 				_ => type.Name,
 			};
 		}
@@ -257,6 +271,50 @@ public sealed partial class CoreReplApp
 		var genericName = type.Name[..type.Name.IndexOf('`')];
 		var genericArgs = string.Join(", ", type.GetGenericArguments().Select(GetFriendlyTypeName));
 		return $"{genericName}<{genericArgs}>";
+	}
+
+	private static ReplDocOption BuildDocumentationOptionFromProperty(
+		OptionSchema schema,
+		PropertyInfo property,
+		object defaultInstance)
+	{
+		var entries = schema.Entries
+			.Where(entry => string.Equals(entry.ParameterName, property.Name, StringComparison.OrdinalIgnoreCase))
+			.ToArray();
+		var aliases = entries
+			.Where(entry => entry.TokenKind is OptionSchemaTokenKind.NamedOption or OptionSchemaTokenKind.BoolFlag)
+			.Select(entry => entry.Token)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		var reverseAliases = entries
+			.Where(entry => entry.TokenKind == OptionSchemaTokenKind.ReverseFlag)
+			.Select(entry => entry.Token)
+			.Distinct(StringComparer.OrdinalIgnoreCase)
+			.ToArray();
+		var valueAliases = entries
+			.Where(entry => entry.TokenKind is OptionSchemaTokenKind.ValueAlias or OptionSchemaTokenKind.EnumAlias)
+			.Select(entry => new ReplDocValueAlias(entry.Token, entry.InjectedValue ?? string.Empty))
+			.GroupBy(alias => alias.Token, StringComparer.OrdinalIgnoreCase)
+			.Select(group => group.First())
+			.ToArray();
+		var effectiveType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+		var enumValues = effectiveType.IsEnum
+			? Enum.GetNames(effectiveType)
+			: [];
+		var propDefault = property.GetValue(defaultInstance);
+		var defaultValue = propDefault is not null
+			? propDefault.ToString()
+			: null;
+		return new ReplDocOption(
+			Name: property.Name,
+			Type: GetFriendlyTypeName(property.PropertyType),
+			Required: false,
+			Description: property.GetCustomAttribute<DescriptionAttribute>()?.Description,
+			Aliases: aliases,
+			ReverseAliases: reverseAliases,
+			ValueAliases: valueAliases,
+			EnumValues: enumValues,
+			DefaultValue: defaultValue);
 	}
 
 	private static ReplDocOption BuildDocumentationOption(OptionSchema schema, ParameterInfo parameter)
@@ -298,4 +356,18 @@ public sealed partial class CoreReplApp
 			EnumValues: enumValues,
 			DefaultValue: defaultValue);
 	}
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2067",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static object CreateOptionsGroupDefault(Type groupType) =>
+		Activator.CreateInstance(groupType)!;
+
+	[UnconditionalSuppressMessage(
+		"Trimming",
+		"IL2070",
+		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	private static PropertyInfo[] GetOptionsGroupProperties(Type groupType) =>
+		groupType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
 }
