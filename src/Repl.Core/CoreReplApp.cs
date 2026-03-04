@@ -1045,17 +1045,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			var isLast = i == tuple.Length - 1;
 
 			// Navigation results: only apply navigation on the last element.
-			object? normalized;
-			if (element is ReplNavigationResult nav && !isLast)
-			{
-				normalized = nav.Payload;
-			}
-			else
-			{
-				normalized = isLast
+			var normalized = element is ReplNavigationResult nav && !isLast
+				? nav.Payload
+				: isLast
 					? ApplyNavigationResult(element, scopeTokens)
 					: element;
-			}
 
 			ExecutionObserver?.OnResult(normalized);
 
