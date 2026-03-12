@@ -61,4 +61,9 @@ internal sealed class DefaultsInteractionChannel : IReplInteractionChannel, ICom
 		IReadOnlyList<int>? defaultIndices = null,
 		AskMultiChoiceOptions? options = null) =>
 		_inner.AskMultiChoiceAsync(name, prompt, choices, defaultIndices, options);
+
+	public ValueTask<TResult> DispatchAsync<TResult>(
+		InteractionRequest<TResult> request,
+		CancellationToken cancellationToken) =>
+		_inner.DispatchAsync(request, cancellationToken);
 }

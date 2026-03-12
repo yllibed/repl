@@ -33,6 +33,24 @@ internal sealed partial class ConsoleInteractionChannel(
 		return InteractionResult.Unhandled;
 	}
 
+	/// <inheritdoc />
+	public async ValueTask<TResult> DispatchAsync<TResult>(
+		InteractionRequest<TResult> request,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+		cancellationToken.ThrowIfCancellationRequested();
+
+		var dispatched = await TryDispatchAsync(request, cancellationToken).ConfigureAwait(false);
+		if (dispatched.Handled)
+		{
+			return (TResult)dispatched.Value!;
+		}
+
+		throw new NotSupportedException(
+			$"No handler registered for interaction request '{request.GetType().Name}'.");
+	}
+
 	/// <summary>
 	/// Sets the ambient per-command token. Called by the framework before each command dispatch.
 	/// </summary>

@@ -2,6 +2,8 @@ namespace Samples.Testing;
 
 internal static class SampleReplApp
 {
+	private static readonly string[] Regions = ["us-east", "eu-west", "ap-south"];
+
 	public static ReplApp Create() => Create(new SharedState());
 
 	public static ReplApp Create(SharedState sharedState)
@@ -42,6 +44,21 @@ internal static class SampleReplApp
 		{
 			await channel.WriteStatusAsync("Import started", ct).ConfigureAwait(false);
 			return "done";
+		});
+		app.Map("greet", async (IReplInteractionChannel channel) =>
+		{
+			var name = await channel.AskTextAsync("name", "Your name?").ConfigureAwait(false);
+			return $"Hello, {name}!";
+		});
+		app.Map("deploy", async (IReplInteractionChannel channel) =>
+		{
+			var confirmed = await channel.AskConfirmationAsync("proceed", "Deploy to production?").ConfigureAwait(false);
+			return confirmed;
+		});
+		app.Map("region", async (IReplInteractionChannel channel) =>
+		{
+			var index = await channel.AskChoiceAsync("region", "Target region:", Regions).ConfigureAwait(false);
+			return Regions[index];
 		});
 		return app;
 	}

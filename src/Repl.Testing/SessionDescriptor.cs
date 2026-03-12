@@ -36,6 +36,13 @@ public sealed record SessionDescriptor
 	public TerminalCapabilities? TerminalCapabilities { get; init; }
 
 	/// <summary>
+	/// Optional prefilled answers applied to every command in the session.
+	/// Per-command answers passed to <c>RunCommandAsync</c> override session-level values
+	/// for the same prompt name.
+	/// </summary>
+	public IReadOnlyDictionary<string, string>? Answers { get; init; }
+
+	/// <summary>
 	/// Optional session-specific run options customization.
 	/// </summary>
 	public Func<ReplRunOptions, ReplRunOptions>? ConfigureRunOptions { get; init; }

@@ -309,3 +309,22 @@ public class SpectreInteractionHandler : IReplInteractionHandler
 | **Use case**          | Custom progress bars, styled text   | Spectre prompts, GUI dialogs, TUI        |
 
 Use a **presenter** when you only want to change how things look. Use a **handler** when you want to replace the entire interaction for a given request type.
+
+### Custom request types
+
+Apps can define their own `InteractionRequest<TResult>` subtypes for app-specific controls:
+
+```csharp
+public sealed record AskColorPickerRequest(string Name, string Prompt)
+    : InteractionRequest<Color>(Name, Prompt);
+```
+
+Dispatch them through the pipeline via `DispatchAsync`:
+
+```csharp
+var color = await channel.DispatchAsync(
+    new AskColorPickerRequest("color", "Pick a color:"),
+    cancellationToken);
+```
+
+If no registered handler handles the request, a `NotSupportedException` is thrown with a clear message identifying the unhandled request type. This ensures app authors are immediately aware when a required handler is missing.

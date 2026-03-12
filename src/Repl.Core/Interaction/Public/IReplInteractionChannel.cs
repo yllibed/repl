@@ -106,4 +106,16 @@ public interface IReplInteractionChannel
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>An asynchronous operation.</returns>
 	ValueTask ClearScreenAsync(CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Dispatches a custom <see cref="InteractionRequest{TResult}"/> through the handler pipeline.
+	/// </summary>
+	/// <typeparam name="TResult">The expected result type.</typeparam>
+	/// <param name="request">The interaction request.</param>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>The result produced by the first handler that handles the request.</returns>
+	/// <exception cref="NotSupportedException">No registered handler handled the request.</exception>
+	ValueTask<TResult> DispatchAsync<TResult>(
+		InteractionRequest<TResult> request,
+		CancellationToken cancellationToken);
 }
