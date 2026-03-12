@@ -295,6 +295,86 @@ public sealed class Given_InteractionChannel
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies AskFlagsEnumAsync prefill by description names returns composite value.")]
+	public void When_FlagsEnumAnswerIsPrefilledByName_Then_CompositeValueIsReturned()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
+		sut.Map("set-perms", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var perms = await channel.AskFlagsEnumAsync<SamplePermissions>("perms", "Permissions:").ConfigureAwait(false);
+			return perms.ToString();
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["set-perms", "--answer:perms=View items,Remove items"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Read, Delete");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies AskNumberAsync re-prompts when value is out of bounds.")]
+	public void When_NumberAnswerIsOutOfBounds_Then_FallbackDefaultIsUsed()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
+		sut.Map("set-count", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var count = await channel.AskNumberAsync<int>(
+				"count", "How many?",
+				defaultValue: 10,
+				new AskNumberOptions<int>(Min: 1, Max: 100)).ConfigureAwait(false);
+			return count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+		});
+
+		// Input "999" is out of bounds; fallback re-prompts and gets empty → uses default 10.
+		var output = ConsoleCaptureHelper.CaptureWithInput("999\n\n", () => sut.Run(["set-count"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("at most 100");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies AskValidatedTextAsync re-prompts on invalid input.")]
+	public void When_ValidatedTextInputIsInvalid_Then_ErrorIsDisplayedAndReprompts()
+	{
+		var sut = ReplApp.Create()
+			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
+		sut.Map("set-email", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var email = await channel.AskValidatedTextAsync(
+				"email",
+				"Email?",
+				input => input.Contains('@') ? null : "Must contain @",
+				defaultValue: "fallback@test.com").ConfigureAwait(false);
+			return email;
+		});
+
+		// First input "bad" is invalid; second empty input falls back to default.
+		var output = ConsoleCaptureHelper.CaptureWithInput("bad\n\n", () => sut.Run(["set-email"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Must contain @");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies ClearScreenAsync emits clear screen event.")]
+	public void When_ClearScreenAsyncIsCalled_Then_ClearEventIsEmitted()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("cls", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.ClearScreenAsync(ct).ConfigureAwait(false);
+			return "cleared";
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["cls"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("cleared");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies secret prompt fallback uses empty string when AllowEmpty is true.")]
 	public void When_SecretAllowsEmptyAndNoInput_Then_EmptyStringIsReturned()
 	{

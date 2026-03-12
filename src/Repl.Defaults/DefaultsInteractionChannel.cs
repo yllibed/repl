@@ -7,9 +7,11 @@ internal sealed class DefaultsInteractionChannel : IReplInteractionChannel, ICom
 	public DefaultsInteractionChannel(
 		InteractionOptions options,
 		OutputOptions? outputOptions = null,
+		IReplInteractionPresenter? presenter = null,
+		IReadOnlyList<IReplInteractionHandler>? handlers = null,
 		TimeProvider? timeProvider = null)
 	{
-		_inner = new ConsoleInteractionChannel(options, outputOptions, timeProvider: timeProvider);
+		_inner = new ConsoleInteractionChannel(options, outputOptions, presenter: presenter, handlers: handlers, timeProvider: timeProvider);
 	}
 
 	void ICommandTokenReceiver.SetCommandToken(CancellationToken ct) =>

@@ -224,6 +224,12 @@ Tuple semantics:
 - null elements are silently skipped
 - nested tuples are not flattened — use a flat tuple instead
 
+## Interactive prompts
+
+Handlers can use `IReplInteractionChannel` for guided prompts (text, choice, confirmation, secret, multi-choice), progress reporting, and status messages. Extension methods add enum prompts, numeric input, validated text, and more.
+
+See the full guide: [interaction.md](interaction.md)
+
 ## Ambient commands
 
 These commands are handled by the runtime (not by your mapped routes):

@@ -11,7 +11,9 @@ using Microsoft.Extensions.DependencyInjection;
 // - AskEnumAsync for enum-based choice (theme)
 // - AskNumberAsync for typed numeric input (set-limit)
 // - AskValidatedTextAsync for validated text (set-email)
+// - AskFlagsEnumAsync for flags-enum multi-selection (permissions)
 // - PressAnyKeyAsync for interactive pause (demo)
+// - ClearScreenAsync via custom ambient command (clear)
 // - WriteStatusAsync for inline feedback (import, add)
 // - IProgress<ReplProgressEvent> structured progress (import)
 // - IProgress<double> simple progress (sync)
@@ -46,10 +48,19 @@ var app = ReplApp.Create(services =>
 		  Try: contact theme         (enum-based choice)
 		  Try: contact set-limit     (typed numeric input)
 		  Try: contact set-email     (validated text input)
+		  Try: contact permissions    (flags-enum multi-selection)
 		  Try: contact demo          (press any key pause)
+		  Try: clear                 (custom ambient command)
 		""")
 	.UseDefaultInteractive()
-	.UseCliProfile();
+	.UseCliProfile()
+	.Options(o => o.AmbientCommands.MapAmbient(
+		"clear",
+		async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.ClearScreenAsync(ct);
+		},
+		"Clear the screen"));
 
 app.Context(
 	"contact",
@@ -293,6 +304,21 @@ app.Context(
 						? null
 						: $"'{input}' is not a valid email address.");
 				return Results.Success($"Notification email set to {email}.");
+			});
+
+		// Flags enum — select one or more permissions from a [Flags] enum.
+		// Uses AskFlagsEnumAsync which maps to AskMultiChoiceAsync under the hood,
+		// combining selected values with bitwise OR.
+		contact.Map(
+			"permissions",
+			[Description("Set contact permissions (flags enum)")]
+			async (IReplInteractionChannel channel, CancellationToken cancellationToken) =>
+			{
+				var perms = await channel.AskFlagsEnumAsync<ContactPermissions>(
+					"permissions",
+					"Select permissions:",
+					ContactPermissions.Read | ContactPermissions.Write);
+				return Results.Success($"Permissions set to {perms}.");
 			});
 
 		// Press any key — simple interactive pause.

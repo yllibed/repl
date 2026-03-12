@@ -595,11 +595,19 @@ public sealed class ReplApp : IReplApp
 		var channel = new DefaultsInteractionChannel(
 			_core.OptionsSnapshot.Interaction,
 			_core.OptionsSnapshot.Output,
+			external.GetService(typeof(IReplInteractionPresenter)) as IReplInteractionPresenter,
+			ResolveHandlers(external),
 			external.GetService(typeof(TimeProvider)) as TimeProvider);
 		defaults[typeof(IReplInteractionChannel)] = channel;
 		defaults[typeof(IReplSessionInfo)] = new LiveSessionInfo();
 
 		return new SessionOverlayServiceProvider(external, defaults);
+	}
+
+	private static IReplInteractionHandler[] ResolveHandlers(IServiceProvider sp)
+	{
+		var handlers = sp.GetService(typeof(IEnumerable<IReplInteractionHandler>)) as IEnumerable<IReplInteractionHandler>;
+		return handlers?.ToArray() ?? [];
 	}
 
 	private sealed class SessionOverlayServiceProvider(
@@ -629,6 +637,8 @@ public sealed class ReplApp : IReplApp
 			new DefaultsInteractionChannel(
 				core.OptionsSnapshot.Interaction,
 				core.OptionsSnapshot.Output,
+				sp.GetService<IReplInteractionPresenter>(),
+				sp.GetServices<IReplInteractionHandler>().ToArray(),
 				sp.GetService<TimeProvider>())));
 		services.TryAddSingleton<IReplKeyReader, ConsoleKeyReader>();
 		services.TryAddSingleton<IReplSessionInfo, LiveSessionInfo>();
