@@ -47,12 +47,20 @@ webApp.Map("/ws/repl", async (HttpContext context, ReplApp repl, SessionTracker 
 	var remotePeer = FormatRemotePeer(context);
 	tracker.Add(sessionName, transport: "websocket", remotePeer);
 	ApplyInitialMetadata(tracker, sessionName, context.Request.Query);
+	var ansiOverride = ParseBoolean(context.Request.Query["ansi"].ToString());
+	var terminalParam = context.Request.Query["terminal"].ToString();
+	var initialCols = ParsePositiveInt(context.Request.Query["cols"].ToString());
+	var initialRows = ParsePositiveInt(context.Request.Query["rows"].ToString());
 	var options = new ReplRunOptions
 	{
 		TerminalOverrides = new TerminalSessionOverrides
 		{
 			TransportName = "websocket",
 			RemotePeer = remotePeer,
+			AnsiSupported = ansiOverride,
+			TerminalIdentity = string.IsNullOrWhiteSpace(terminalParam) ? null : terminalParam,
+			WindowSize = initialCols is > 0 && initialRows is > 0
+				? (initialCols.Value, initialRows.Value) : null,
 		},
 	};
 

@@ -11,6 +11,9 @@ internal sealed partial class ConsoleInteractionChannel(
 	private readonly IReplInteractionPresenter _presenter = presenter ?? new ConsoleReplInteractionPresenter(options, outputOptions);
 	private readonly IReadOnlyList<IReplInteractionHandler> _handlers = handlers ?? [];
 	private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+	private readonly bool _useRichPrompts = outputOptions?.IsAnsiEnabled() ?? false;
+	private readonly AnsiPalette? _palette = outputOptions is not null && outputOptions.IsAnsiEnabled()
+		? outputOptions.ResolvePalette() : null;
 	private CancellationToken _commandToken;
 
 	/// <summary>
@@ -144,8 +147,43 @@ internal sealed partial class ConsoleInteractionChannel(
 		string name, string prompt, IReadOnlyList<string> choices,
 		int effectiveDefaultIndex, CancellationToken ct, TimeSpan? timeout)
 	{
-		var choiceDisplay = string.Join('/', choices.Select((c, i) =>
-			i == effectiveDefaultIndex ? c.ToUpperInvariant() : c.ToLowerInvariant()));
+		if (CanUseRichPrompts())
+		{
+			return await ReadChoiceRichAsync(name, prompt, choices, effectiveDefaultIndex, ct)
+				.ConfigureAwait(false);
+		}
+
+		return await ReadChoiceTextFallbackAsync(
+			name, prompt, choices, effectiveDefaultIndex, ct, timeout).ConfigureAwait(false);
+	}
+
+	private async ValueTask<int> ReadChoiceRichAsync(
+		string name, string prompt, IReadOnlyList<string> choices,
+		int effectiveDefaultIndex, CancellationToken ct)
+	{
+		await _presenter.PresentAsync(new ReplPromptEvent(name, prompt, "choice"), ct)
+			.ConfigureAwait(false);
+		var richResult = await Task.Run(
+			() => ReadChoiceInteractiveSync(prompt, choices, effectiveDefaultIndex, ct), ct)
+			.ConfigureAwait(false);
+		return richResult >= 0
+			? richResult
+			: HandleMissingAnswer(fallbackValue: effectiveDefaultIndex, "choice");
+	}
+
+	private async ValueTask<int> ReadChoiceTextFallbackAsync(
+		string name, string prompt, IReadOnlyList<string> choices,
+		int effectiveDefaultIndex, CancellationToken ct, TimeSpan? timeout)
+	{
+		var shortcuts = MnemonicParser.AssignShortcuts(choices);
+		var parsedChoices = new (string Display, char? Shortcut)[choices.Count];
+		for (var i = 0; i < choices.Count; i++)
+		{
+			parsedChoices[i] = MnemonicParser.Parse(choices[i]);
+		}
+
+		var choiceDisplay = FormatChoiceDisplayText(parsedChoices, shortcuts, effectiveDefaultIndex);
+
 		while (true)
 		{
 			var line = await ReadPromptLineAsync(
@@ -154,24 +192,64 @@ internal sealed partial class ConsoleInteractionChannel(
 					kind: "choice",
 					ct,
 					timeout,
-					defaultLabel: choices[effectiveDefaultIndex])
+					defaultLabel: parsedChoices[effectiveDefaultIndex].Display)
 				.ConfigureAwait(false);
 			if (string.IsNullOrWhiteSpace(line))
 			{
 				return HandleMissingAnswer(fallbackValue: effectiveDefaultIndex, "choice");
 			}
 
-			var selectedIndex = MatchChoice(choices, line);
+			var selectedIndex = MatchChoiceWithMnemonics(line, choices, parsedChoices, shortcuts);
 			if (selectedIndex >= 0)
 			{
 				return selectedIndex;
 			}
 
+			var displayChoices = parsedChoices.Select(p => p.Display).ToArray();
 			await _presenter.PresentAsync(
-					new ReplStatusEvent($"Invalid choice '{line}'. Please enter one of: {string.Join(", ", choices)}."),
+					new ReplStatusEvent($"Invalid choice '{line}'. Please enter one of: {string.Join(", ", displayChoices)}."),
 					ct)
 				.ConfigureAwait(false);
 		}
+	}
+
+	private static string FormatChoiceDisplayText(
+		(string Display, char? Shortcut)[] parsedChoices, char?[] shortcuts, int defaultIndex)
+	{
+		return string.Join(" / ", parsedChoices.Select((p, i) =>
+		{
+			var text = MnemonicParser.FormatText(p.Display, shortcuts[i]);
+			return i == defaultIndex ? text.ToUpperInvariant() : text;
+		}));
+	}
+
+	private static int MatchChoiceWithMnemonics(
+		string line, IReadOnlyList<string> choices,
+		(string Display, char? Shortcut)[] parsedChoices, char?[] shortcuts)
+	{
+		// Try matching shortcut key
+		if (line.Length == 1)
+		{
+			for (var i = 0; i < shortcuts.Length; i++)
+			{
+				if (shortcuts[i] is { } sc
+					&& char.ToUpperInvariant(sc) == char.ToUpperInvariant(line[0]))
+				{
+					return i;
+				}
+			}
+		}
+
+		// Try original label match
+		var selectedIndex = MatchChoiceByName(line, choices);
+		if (selectedIndex >= 0)
+		{
+			return selectedIndex;
+		}
+
+		// Try display text match (without mnemonic markers)
+		var displayChoices = parsedChoices.Select(p => p.Display).ToArray();
+		return MatchChoiceByName(line, displayChoices);
 	}
 
 	private static int MatchChoice(IReadOnlyList<string> choices, string input) =>
@@ -476,10 +554,26 @@ internal sealed partial class ConsoleInteractionChannel(
 		IReadOnlyList<int> effectiveDefaults, string choiceDisplay, string? defaultLabel,
 		int minSelections, int? maxSelections, CancellationToken ct, TimeSpan? timeout)
 	{
+		if (CanUseRichPrompts())
+		{
+			await _presenter.PresentAsync(new ReplPromptEvent(name, prompt, "multi-choice"), ct)
+				.ConfigureAwait(false);
+			var richResult = await Task.Run(
+				() => ReadMultiChoiceInteractiveSync(prompt, choices, effectiveDefaults, minSelections, maxSelections, ct), ct)
+				.ConfigureAwait(false);
+			if (richResult is not null)
+			{
+				return richResult;
+			}
+
+			// Esc pressed → treat as empty input
+			return HandleMissingAnswer(effectiveDefaults, "multi-choice");
+		}
+
 		while (true)
 		{
 			var line = await ReadPromptLineAsync(
-					name, $"{prompt}\n  {choiceDisplay}\n  Enter numbers (comma-separated)",
+					name, $"{prompt}\r\n  {choiceDisplay}\r\n  Enter numbers (comma-separated)",
 					kind: "multi-choice", ct, timeout, defaultLabel: defaultLabel)
 				.ConfigureAwait(false);
 
@@ -567,6 +661,23 @@ internal sealed partial class ConsoleInteractionChannel(
 		}
 
 		return fallbackValue;
+	}
+
+	/// <summary>
+	/// Returns <c>true</c> when the terminal supports interactive arrow-key menus.
+	/// Works for local console (ANSI enabled + direct keyboard access) and for
+	/// hosted sessions that have ANSI support and an <see cref="IReplKeyReader"/>.
+	/// </summary>
+	private bool CanUseRichPrompts()
+	{
+		// Hosted session path: need ANSI + a key reader.
+		if (ReplSessionIO.IsSessionActive)
+		{
+			return ReplSessionIO.AnsiSupport == true && ReplSessionIO.KeyReader is not null;
+		}
+
+		// Local console path: need ANSI + non-redirected stdin.
+		return _useRichPrompts && !Console.IsInputRedirected;
 	}
 
 	private static bool TryParseBoolean(string? input, out bool value)

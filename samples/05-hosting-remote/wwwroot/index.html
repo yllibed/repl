@@ -276,6 +276,7 @@
         <label class="mode"><input type="radio" name="t" value="ws" checked /> WebSocket</label>
         <label class="mode"><input type="radio" name="t" value="telnet" /> Telnet</label>
         <label class="mode"><input type="radio" name="t" value="signalr" /> SignalR</label>
+        <label class="mode"><input type="radio" name="t" value="plain" /> Plain (no ANSI)</label>
       </div>
       <button id="go">Connect</button>
     </section>
@@ -284,12 +285,15 @@
       <h2>What You Can Do</h2>
       <p>
         Inspect the runtime with <code>status</code>, list active clients with <code>sessions</code>,
-        verify connected names with <code>who</code>, update shared settings, and broadcast messages across tabs.
+        try interactive menus with <code>configure</code> and <code>maintenance</code>,
+        update shared settings, and broadcast messages across tabs.
       </p>
       <div class="chips">
         <code>status</code>
         <code>sessions</code>
         <code>who</code>
+        <code>configure</code>
+        <code>maintenance</code>
         <code>settings show maintenance</code>
         <code>settings set maintenance on</code>
         <code>watch</code>
@@ -358,12 +362,13 @@
       if (token === 'ws' || token === 'websocket') return 'ws';
       if (token === 'telnet') return 'telnet';
       if (token === 'signalr' || token === 'sr') return 'signalr';
+      if (token === 'plain' || token === 'noansi') return 'plain';
       return null;
     }
 
     function connectSelectedMode() {
       const mode = document.querySelector('input[name="t"]:checked').value;
-      modeBadge.textContent = mode === 'ws' ? 'websocket' : mode;
+      modeBadge.textContent = mode === 'ws' ? 'websocket' : mode === 'plain' ? 'plain (no ANSI)' : mode;
       btn.disabled = true;
       setConnectionState('connecting');
       term.clear();
@@ -371,6 +376,7 @@
       if (inputHandler) { inputHandler.dispose(); inputHandler = null; }
       if (mode === 'ws') connectWS();
       else if (mode === 'telnet') connectTelnet();
+      else if (mode === 'plain') connectPlain();
       else connectSR();
     }
 
@@ -542,6 +548,28 @@
           IAC, SE
         ]);
       }
+    }
+
+    function connectPlain() {
+      // Plain text mode: no ANSI, no terminal capabilities, no hello message
+      const params = new URLSearchParams({
+        terminal: 'dumb',
+        cols: String(term.cols),
+        rows: String(term.rows),
+        ansi: 'false',
+        capabilities: ''
+      });
+      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl?${params.toString()}`);
+      ws.onmessage = e => term.write(e.data);
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+      send = d => { if (ws.readyState === 1) ws.send(d); };
+      inputHandler = term.onData(send);
+      // Send hello with ansi=false so server knows this is a dumb terminal
+      ws.onopen = () => {
+        setConnectionState('connected');
+        send(`@@repl:hello ${JSON.stringify({ terminal: 'dumb', cols: term.cols, rows: term.rows, ansi: false, capabilities: '' })}`);
+        term.focus();
+      };
     }
 
     function connectSR() {

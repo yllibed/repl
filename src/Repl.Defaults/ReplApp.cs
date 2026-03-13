@@ -592,6 +592,8 @@ public sealed class ReplApp : IReplApp
 			[typeof(IReplIoContext)] = new LiveReplIoContext(),
 		};
 
+		defaults[typeof(ITerminalInfo)] = new ConsoleTerminalInfo(_core.OptionsSnapshot.Output);
+
 		var channel = new DefaultsInteractionChannel(
 			_core.OptionsSnapshot.Interaction,
 			_core.OptionsSnapshot.Output,
@@ -643,6 +645,8 @@ public sealed class ReplApp : IReplApp
 		services.TryAddSingleton<IReplKeyReader, ConsoleKeyReader>();
 		services.TryAddSingleton<IReplSessionInfo, LiveSessionInfo>();
 		services.TryAddSingleton<IReplIoContext, LiveReplIoContext>();
+		services.TryAddSingleton<ITerminalInfo>(
+			_ => new ConsoleTerminalInfo(core.OptionsSnapshot.Output));
 	}
 
 	private sealed class ScopedReplApp(ICoreReplApp map, IServiceCollection services) : IReplApp

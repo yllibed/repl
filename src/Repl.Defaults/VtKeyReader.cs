@@ -39,6 +39,7 @@ public sealed class VtKeyReader : IReplKeyReader
 			'\x1b' => await ParseEscapeAsync(ct).ConfigureAwait(false),
 			'\r' or '\n' => MakeKey(ConsoleKey.Enter, '\r'),
 			'\t' => MakeKey(ConsoleKey.Tab, '\t'),
+			' ' => MakeKey(ConsoleKey.Spacebar, ' '),
 			'\x7f' => MakeKey(ConsoleKey.Backspace, '\b'),
 			'\b' => MakeKey(ConsoleKey.Backspace, '\b'),
 			_ => MakeCharKey(ch),

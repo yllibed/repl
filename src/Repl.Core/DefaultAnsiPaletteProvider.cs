@@ -21,7 +21,8 @@ internal sealed class DefaultAnsiPaletteProvider : IAnsiPaletteProvider
 		AutocompleteParameterStyle: "\u001b[38;5;186m",
 		AutocompleteAmbiguousStyle: "\u001b[38;5;222m",
 		AutocompleteErrorStyle: "\u001b[38;5;203m",
-		AutocompleteHintLabelStyle: "\u001b[38;5;244m");
+		AutocompleteHintLabelStyle: "\u001b[38;5;244m",
+		SelectionStyle: "\u001b[7m");
 
 	private static readonly AnsiPalette LightPalette = new(
 		SectionStyle: "\u001b[38;5;25m",
@@ -42,7 +43,8 @@ internal sealed class DefaultAnsiPaletteProvider : IAnsiPaletteProvider
 		AutocompleteParameterStyle: "\u001b[38;5;94m",
 		AutocompleteAmbiguousStyle: "\u001b[38;5;130m",
 		AutocompleteErrorStyle: "\u001b[38;5;160m",
-		AutocompleteHintLabelStyle: "\u001b[38;5;240m");
+		AutocompleteHintLabelStyle: "\u001b[38;5;240m",
+		SelectionStyle: "\u001b[7m");
 
 	public AnsiPalette Create(ThemeMode themeMode) =>
 		themeMode == ThemeMode.Light ? LightPalette : DarkPalette;
