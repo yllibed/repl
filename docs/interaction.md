@@ -328,3 +328,104 @@ var color = await channel.DispatchAsync(
 ```
 
 If no registered handler handles the request, a `NotSupportedException` is thrown with a clear message identifying the unhandled request type. This ensures app authors are immediately aware when a required handler is missing.
+
+---
+
+## Rich interactive prompts
+
+When the terminal supports ANSI escape sequences and individual key reads, `AskChoiceAsync` and `AskMultiChoiceAsync` automatically upgrade to rich interactive menus:
+
+- **Single-choice**: arrow-key menu (`Up`/`Down` to navigate, `Enter` to confirm, `Esc` to cancel). Mnemonic shortcut keys select items directly.
+- **Multi-choice**: checkbox-style menu (`Up`/`Down` to navigate, `Space` to toggle, `Enter` to confirm with min/max validation, `Esc` to cancel).
+
+The upgrade is transparent — command handlers call the same `AskChoiceAsync` / `AskMultiChoiceAsync` API; the framework selects the best rendering mode automatically.
+
+### Fallback chain
+
+The interaction pipeline evaluates handlers in this order:
+
+1. **Prefill** (`--answer:*`) — always checked first.
+2. **User handlers** — `IReplInteractionHandler` implementations registered via DI.
+3. **Built-in rich handler** (`RichPromptInteractionHandler`) — renders arrow-key menus when ANSI + key reader are available.
+4. **Text fallback** — numbered list with typed input; works in all environments (redirected stdin, hosted sessions, no ANSI).
+
+If the terminal cannot support rich prompts (e.g. ANSI disabled, stdin redirected, or hosted session), the framework falls back to the text-based prompt automatically.
+
+---
+
+## Mnemonic shortcuts
+
+Choice labels support an underscore convention to define keyboard shortcuts:
+
+| Label | Display | Shortcut |
+|---|---|---|
+| `"_Abort"` | `Abort` | `A` |
+| `"No_thing"` | `Nothing` | `t` |
+| `"__real"` | `_real` | (none — escaped underscore) |
+| `"Plain"` | `Plain` | (auto-assigned) |
+
+### Rendering
+
+- **ANSI mode**: the shortcut letter is rendered with an underline (`ESC[4m` / `ESC[24m`).
+- **Text mode**: the shortcut letter is wrapped in brackets: `[A]bort / [R]etry / [F]ail`.
+
+### Auto-assignment
+
+When a label has no explicit `_` marker, the framework auto-assigns a shortcut:
+
+1. First unique letter of the display text.
+2. If taken, scan remaining letters.
+3. If all letters are taken, assign digits `1`–`9`.
+
+### Example
+
+```csharp
+var index = await channel.AskChoiceAsync(
+    "action", "How to proceed?",
+    ["_Abort", "_Retry", "_Fail"],
+    defaultIndex: 0);
+```
+
+---
+
+## `ITerminalInfo`
+
+The `ITerminalInfo` service exposes terminal capabilities for custom `IReplInteractionHandler` implementations. It is registered automatically by the framework and available via DI.
+
+```csharp
+public interface ITerminalInfo
+{
+    bool IsAnsiSupported { get; }
+    bool CanReadKeys { get; }
+    (int Width, int Height)? WindowSize { get; }
+    AnsiPalette? Palette { get; }
+}
+```
+
+### Usage in a custom handler
+
+```csharp
+public class MyHandler(ITerminalInfo terminal) : IReplInteractionHandler
+{
+    public ValueTask<InteractionResult> TryHandleAsync(
+        InteractionRequest request, CancellationToken ct)
+    {
+        if (!terminal.IsAnsiSupported || !terminal.CanReadKeys)
+            return new(InteractionResult.Unhandled);
+
+        // Rich rendering using terminal.WindowSize, terminal.Palette, etc.
+        ...
+    }
+}
+```
+
+Register via DI as usual:
+
+```csharp
+var app = ReplApp.Create(services =>
+{
+    services.AddSingleton<IReplInteractionHandler, MyHandler>();
+});
+```
+
+The framework injects `ITerminalInfo` automatically — no manual registration required.
