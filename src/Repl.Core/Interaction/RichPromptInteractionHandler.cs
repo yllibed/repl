@@ -44,7 +44,12 @@ internal sealed partial class RichPromptInteractionHandler(
 		var richResult = await Task.Run(
 			() => ReadChoiceInteractiveSync(r.Prompt, r.Choices, defaultIndex, ct), ct)
 			.ConfigureAwait(false);
-		return InteractionResult.Success(richResult >= 0 ? richResult : defaultIndex);
+		if (richResult < 0)
+		{
+			throw new OperationCanceledException("Prompt cancelled via Esc.");
+		}
+
+		return InteractionResult.Success(richResult);
 	}
 
 	private async ValueTask<InteractionResult> HandleMultiChoiceRequestAsync(
@@ -62,8 +67,7 @@ internal sealed partial class RichPromptInteractionHandler(
 			return InteractionResult.Success((IReadOnlyList<int>)richResult);
 		}
 
-		// Esc pressed → return defaults
-		return InteractionResult.Success((IReadOnlyList<int>)defaults);
+		throw new OperationCanceledException("Prompt cancelled via Esc.");
 	}
 
 	private async ValueTask PresentPromptAsync(

@@ -101,7 +101,7 @@ internal sealed partial class RichPromptInteractionHandler
 		{
 			ClearMenuRegion(menuLines);
 			Out(AnsiCursorShow);
-			Flush(ct);
+			Flush(CancellationToken.None);
 			throw;
 		}
 	}
@@ -276,7 +276,7 @@ internal sealed partial class RichPromptInteractionHandler
 		{
 			ClearMenuRegion(menuLines, 1 + (hasError ? 1 : 0));
 			Out(AnsiCursorShow);
-			Flush(ct);
+			Flush(CancellationToken.None);
 			throw;
 		}
 	}

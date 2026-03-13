@@ -224,16 +224,21 @@ public static class ReplInteractionChannelExtensions
 		T? defaultValue,
 		AskNumberOptions<T>? options) where T : struct, INumber<T>
 	{
-		if (options?.Min is null && options?.Max is null)
+		if (options is null)
+		{
+			return prompt;
+		}
+
+		if (options.Min is null && options.Max is null)
 		{
 			return prompt;
 		}
 
 		var sb = new StringBuilder(prompt);
 		sb.Append(" (");
-		sb.Append(options?.Min?.ToString() ?? "..");
+		sb.Append(options.Min?.ToString() ?? "..");
 		sb.Append("..");
-		sb.Append(options?.Max?.ToString() ?? "");
+		sb.Append(options.Max?.ToString() ?? "");
 		sb.Append(')');
 		return sb.ToString();
 	}

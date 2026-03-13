@@ -400,13 +400,13 @@ internal sealed partial class ConsoleInteractionChannel(
 				else
 				{
 					line = await ReadSecretWithCountdownAsync(
-							options.Timeout.Value, options?.Mask, ct)
+							options.Timeout.Value, options.Mask, ct)
 						.ConfigureAwait(false);
 				}
 			}
 			else
 			{
-				line = await ReadSecretLineAsync(options?.Mask, ct).ConfigureAwait(false);
+				line = await ReadSecretLineAsync(options?.Mask ?? '*', ct).ConfigureAwait(false);
 			}
 
 			if (string.IsNullOrEmpty(line))

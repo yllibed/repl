@@ -113,7 +113,7 @@ public sealed class Given_ShellCompletionRuntime
 			{
 				File.Delete(profilePath);
 			}
-			catch
+			catch (IOException)
 			{
 				// Best-effort cleanup for temp test files.
 			}
@@ -195,7 +195,7 @@ public sealed class Given_ShellCompletionRuntime
 		}
 		finally
 		{
-			try { Directory.Delete(root, recursive: true); } catch { }
+			try { Directory.Delete(root, recursive: true); } catch (IOException) { }
 		}
 	}
 
