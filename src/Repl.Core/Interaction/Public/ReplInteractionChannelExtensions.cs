@@ -84,6 +84,7 @@ public static class ReplInteractionChannelExtensions
 			? new AskOptions(options.CancellationToken, options.Timeout)
 			: null;
 		var defaultText = defaultValue?.ToString();
+		string? previousLine = null;
 
 		while (true)
 		{
@@ -95,6 +96,8 @@ public static class ReplInteractionChannelExtensions
 			{
 				if (options?.Min is not null && value < options.Min.Value)
 				{
+					ThrowIfRepeatedInput(line, ref previousLine,
+						$"Value must be at least {options.Min.Value}.");
 					await channel.WriteStatusAsync(
 							$"Value must be at least {options.Min.Value}.",
 							options.CancellationToken)
@@ -104,6 +107,8 @@ public static class ReplInteractionChannelExtensions
 
 				if (options?.Max is not null && value > options.Max.Value)
 				{
+					ThrowIfRepeatedInput(line, ref previousLine,
+						$"Value must be at most {options.Max.Value}.");
 					await channel.WriteStatusAsync(
 							$"Value must be at most {options.Max.Value}.",
 							options.CancellationToken)
@@ -115,6 +120,8 @@ public static class ReplInteractionChannelExtensions
 			}
 
 			var ct = options?.CancellationToken ?? default;
+			ThrowIfRepeatedInput(line, ref previousLine,
+				$"'{line}' is not a valid {typeof(T).Name}.");
 			await channel.WriteStatusAsync($"'{line}' is not a valid {typeof(T).Name}.", ct)
 				.ConfigureAwait(false);
 		}
@@ -144,6 +151,7 @@ public static class ReplInteractionChannelExtensions
 	{
 		ArgumentNullException.ThrowIfNull(validate);
 		var ct = options?.CancellationToken ?? default;
+		string? previousInput = null;
 
 		while (true)
 		{
@@ -155,6 +163,7 @@ public static class ReplInteractionChannelExtensions
 				return input;
 			}
 
+			ThrowIfRepeatedInput(input, ref previousInput, error);
 			await channel.WriteStatusAsync(error, ct).ConfigureAwait(false);
 		}
 	}
@@ -241,5 +250,17 @@ public static class ReplInteractionChannelExtensions
 		sb.Append(options.Max?.ToString() ?? "");
 		sb.Append(')');
 		return sb.ToString();
+	}
+
+	private static void ThrowIfRepeatedInput(
+		string? current, ref string? previous, string validationMessage)
+	{
+		if (current is not null && string.Equals(current, previous, StringComparison.Ordinal))
+		{
+			throw new InvalidOperationException(
+				$"Prefilled answer failed validation: {validationMessage}");
+		}
+
+		previous = current;
 	}
 }
