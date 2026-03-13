@@ -11,9 +11,6 @@ internal sealed partial class ConsoleInteractionChannel(
 	private readonly IReplInteractionPresenter _presenter = presenter ?? new ConsoleReplInteractionPresenter(options, outputOptions);
 	private readonly IReadOnlyList<IReplInteractionHandler> _handlers = handlers ?? [];
 	private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-	private readonly bool _useRichPrompts = outputOptions?.IsAnsiEnabled() ?? false;
-	private readonly AnsiPalette? _palette = outputOptions is not null && outputOptions.IsAnsiEnabled()
-		? outputOptions.ResolvePalette() : null;
 	private CancellationToken _commandToken;
 
 	/// <summary>
@@ -139,36 +136,8 @@ internal sealed partial class ConsoleInteractionChannel(
 			return (int)dispatched.Value!;
 		}
 
-		return await ReadChoiceLoopAsync(name, prompt, choices, effectiveDefaultIndex, effectiveCt, options?.Timeout)
+		return await ReadChoiceTextFallbackAsync(name, prompt, choices, effectiveDefaultIndex, effectiveCt, options?.Timeout)
 			.ConfigureAwait(false);
-	}
-
-	private async ValueTask<int> ReadChoiceLoopAsync(
-		string name, string prompt, IReadOnlyList<string> choices,
-		int effectiveDefaultIndex, CancellationToken ct, TimeSpan? timeout)
-	{
-		if (CanUseRichPrompts())
-		{
-			return await ReadChoiceRichAsync(name, prompt, choices, effectiveDefaultIndex, ct)
-				.ConfigureAwait(false);
-		}
-
-		return await ReadChoiceTextFallbackAsync(
-			name, prompt, choices, effectiveDefaultIndex, ct, timeout).ConfigureAwait(false);
-	}
-
-	private async ValueTask<int> ReadChoiceRichAsync(
-		string name, string prompt, IReadOnlyList<string> choices,
-		int effectiveDefaultIndex, CancellationToken ct)
-	{
-		await _presenter.PresentAsync(new ReplPromptEvent(name, prompt, "choice"), ct)
-			.ConfigureAwait(false);
-		var richResult = await Task.Run(
-			() => ReadChoiceInteractiveSync(prompt, choices, effectiveDefaultIndex, ct), ct)
-			.ConfigureAwait(false);
-		return richResult >= 0
-			? richResult
-			: HandleMissingAnswer(fallbackValue: effectiveDefaultIndex, "choice");
 	}
 
 	private async ValueTask<int> ReadChoiceTextFallbackAsync(
@@ -508,7 +477,7 @@ internal sealed partial class ConsoleInteractionChannel(
 		var choiceDisplay = FormatMultiChoiceDisplay(choices, effectiveDefaults);
 		var defaultLabel = FormatMultiChoiceDefaultLabel(effectiveDefaults);
 
-		return await ReadMultiChoiceLoopAsync(
+		return await ReadMultiChoiceTextFallbackAsync(
 			name, prompt, choices, effectiveDefaults, choiceDisplay, defaultLabel,
 			minSelections, maxSelections, effectiveCt, options?.Timeout).ConfigureAwait(false);
 	}
@@ -549,27 +518,11 @@ internal sealed partial class ConsoleInteractionChannel(
 			? string.Join(',', defaults.Select(i => (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)))
 			: null;
 
-	private async ValueTask<IReadOnlyList<int>> ReadMultiChoiceLoopAsync(
+	private async ValueTask<IReadOnlyList<int>> ReadMultiChoiceTextFallbackAsync(
 		string name, string prompt, IReadOnlyList<string> choices,
 		IReadOnlyList<int> effectiveDefaults, string choiceDisplay, string? defaultLabel,
 		int minSelections, int? maxSelections, CancellationToken ct, TimeSpan? timeout)
 	{
-		if (CanUseRichPrompts())
-		{
-			await _presenter.PresentAsync(new ReplPromptEvent(name, prompt, "multi-choice"), ct)
-				.ConfigureAwait(false);
-			var richResult = await Task.Run(
-				() => ReadMultiChoiceInteractiveSync(prompt, choices, effectiveDefaults, minSelections, maxSelections, ct), ct)
-				.ConfigureAwait(false);
-			if (richResult is not null)
-			{
-				return richResult;
-			}
-
-			// Esc pressed → treat as empty input
-			return HandleMissingAnswer(effectiveDefaults, "multi-choice");
-		}
-
 		while (true)
 		{
 			var line = await ReadPromptLineAsync(
@@ -661,23 +614,6 @@ internal sealed partial class ConsoleInteractionChannel(
 		}
 
 		return fallbackValue;
-	}
-
-	/// <summary>
-	/// Returns <c>true</c> when the terminal supports interactive arrow-key menus.
-	/// Works for local console (ANSI enabled + direct keyboard access) and for
-	/// hosted sessions that have ANSI support and an <see cref="IReplKeyReader"/>.
-	/// </summary>
-	private bool CanUseRichPrompts()
-	{
-		// Hosted session path: need ANSI + a key reader.
-		if (ReplSessionIO.IsSessionActive)
-		{
-			return ReplSessionIO.AnsiSupport == true && ReplSessionIO.KeyReader is not null;
-		}
-
-		// Local console path: need ANSI + non-redirected stdin.
-		return _useRichPrompts && !Console.IsInputRedirected;
 	}
 
 	private static bool TryParseBoolean(string? input, out bool value)

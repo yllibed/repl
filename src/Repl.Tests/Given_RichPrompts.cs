@@ -14,7 +14,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadChoiceInteractiveSync(
+		var result = ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick one", ["Alpha", "Bravo", "Charlie"], defaultIndex: 0, CancellationToken.None);
 
 		result.Should().Be(0);
@@ -38,7 +38,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.DownArrow), Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadChoiceInteractiveSync(
+		var result = ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick one", ["Alpha", "Bravo", "Charlie"], defaultIndex: 0, CancellationToken.None);
 
 		result.Should().Be(1);
@@ -55,7 +55,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.UpArrow), Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadChoiceInteractiveSync(
+		var result = ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick one", ["Alpha", "Bravo", "Charlie"], defaultIndex: 0, CancellationToken.None);
 
 		result.Should().Be(2);
@@ -69,7 +69,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.B, 'b')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadChoiceInteractiveSync(
+		var result = ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick one", ["Alpha", "Bravo", "Charlie"], defaultIndex: 0, CancellationToken.None);
 
 		result.Should().Be(1);
@@ -83,7 +83,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Escape)]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadChoiceInteractiveSync(
+		var result = ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick one", ["Alpha", "Bravo"], defaultIndex: 0, CancellationToken.None);
 
 		result.Should().Be(-1);
@@ -97,7 +97,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.R, 'r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadChoiceInteractiveSync(
+		var result = ctx.Handler.ReadChoiceInteractiveSync(
 			"How to proceed?", ["_Abort", "_Retry", "_Fail"], defaultIndex: 0, CancellationToken.None);
 
 		result.Should().Be(1);
@@ -113,7 +113,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Spacebar, ' '), Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadMultiChoiceInteractiveSync(
+		var result = ctx.Handler.ReadMultiChoiceInteractiveSync(
 			"Select", ["Auth", "Logging", "Cache"], defaults: [],
 			minSelections: 0, maxSelections: null, CancellationToken.None);
 
@@ -133,7 +133,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadMultiChoiceInteractiveSync(
+		var result = ctx.Handler.ReadMultiChoiceInteractiveSync(
 			"Select", ["Auth", "Logging", "Cache"], defaults: [0, 2],
 			minSelections: 0, maxSelections: null, CancellationToken.None);
 
@@ -148,7 +148,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Escape)]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadMultiChoiceInteractiveSync(
+		var result = ctx.Handler.ReadMultiChoiceInteractiveSync(
 			"Select", ["Auth", "Logging"], defaults: [],
 			minSelections: 0, maxSelections: null, CancellationToken.None);
 
@@ -168,7 +168,7 @@ public sealed class Given_RichPrompts
 		]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadMultiChoiceInteractiveSync(
+		var result = ctx.Handler.ReadMultiChoiceInteractiveSync(
 			"Select", ["Auth", "Logging"], defaults: [],
 			minSelections: 1, maxSelections: null, CancellationToken.None);
 
@@ -188,7 +188,7 @@ public sealed class Given_RichPrompts
 		]);
 		using var ctx = CreateContext(harness, keys);
 
-		var result = ctx.Channel.ReadMultiChoiceInteractiveSync(
+		var result = ctx.Handler.ReadMultiChoiceInteractiveSync(
 			"Select", ["Auth", "Logging", "Cache"], defaults: [],
 			minSelections: 0, maxSelections: null, CancellationToken.None);
 
@@ -203,7 +203,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		ctx.Channel.ReadChoiceInteractiveSync(
+		ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick", ["Alpha", "Bravo", "Charlie"], defaultIndex: 0, CancellationToken.None);
 
 		// Find a frame that has all 3 items visible
@@ -225,7 +225,7 @@ public sealed class Given_RichPrompts
 		var keys = new FakeKeyReader([Key(ConsoleKey.Enter, '\r')]);
 		using var ctx = CreateContext(harness, keys);
 
-		ctx.Channel.ReadChoiceInteractiveSync(
+		ctx.Handler.ReadChoiceInteractiveSync(
 			"Pick", ["Alpha", "Bravo"], defaultIndex: 0, CancellationToken.None);
 
 		// Find a frame with both hint and menu items visible
@@ -255,14 +255,13 @@ public sealed class Given_RichPrompts
 		ReplSessionIO.AnsiSupport = true;
 
 		var outputOptions = new OutputOptions { AnsiMode = AnsiMode.Always };
-		var interactionOptions = new InteractionOptions();
-		var channel = new ConsoleInteractionChannel(interactionOptions, outputOptions);
-		return new TestContext(channel, scope);
+		var handler = new RichPromptInteractionHandler(outputOptions);
+		return new TestContext(handler, scope);
 	}
 
-	private sealed class TestContext(ConsoleInteractionChannel channel, IDisposable scope) : IDisposable
+	private sealed class TestContext(RichPromptInteractionHandler handler, IDisposable scope) : IDisposable
 	{
-		public ConsoleInteractionChannel Channel { get; } = channel;
+		public RichPromptInteractionHandler Handler { get; } = handler;
 
 		public void Dispose() => scope.Dispose();
 	}

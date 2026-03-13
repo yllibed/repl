@@ -1360,7 +1360,9 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			[typeof(CoreReplApp)] = this,
 			[typeof(ICoreReplApp)] = this,
 			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
-			[typeof(IReplInteractionChannel)] = new ConsoleInteractionChannel(_options.Interaction, _options.Output),
+			[typeof(IReplInteractionChannel)] = new ConsoleInteractionChannel(
+				_options.Interaction, _options.Output,
+				handlers: [new RichPromptInteractionHandler(_options.Output)]),
 			[typeof(IHistoryProvider)] = _options.Interactive.HistoryProvider ?? new InMemoryHistoryProvider(),
 			[typeof(IReplKeyReader)] = new ConsoleKeyReader(),
 			[typeof(IReplSessionInfo)] = new LiveSessionInfo(),

@@ -3,7 +3,7 @@ namespace Repl;
 /// <summary>
 /// Interactive arrow-key menu rendering for AskChoice and AskMultiChoice.
 /// </summary>
-internal sealed partial class ConsoleInteractionChannel
+internal sealed partial class RichPromptInteractionHandler
 {
 	private const string AnsiReset = "\u001b[0m";
 	private const string AnsiCursorHide = "\u001b[?25l";
@@ -587,12 +587,11 @@ internal sealed partial class ConsoleInteractionChannel
 		}
 	}
 
+	private static bool IsValidSelection(int[] selected, int min, int? max) =>
+		selected.Length >= min && (max is null || selected.Length <= max.Value);
+
 	// ---------- I/O routing ----------
 
-	/// <summary>
-	/// Writes text to the current output. Uses <see cref="ReplSessionIO.Output"/> which
-	/// routes to the hosted session writer when active, or to <see cref="Console.Out"/> locally.
-	/// </summary>
 	private static void Out(string text) => ReplSessionIO.Output.Write(text);
 
 	private static void OutLine(string text) => ReplSessionIO.Output.WriteLine(text);

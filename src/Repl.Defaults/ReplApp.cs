@@ -594,11 +594,15 @@ public sealed class ReplApp : IReplApp
 
 		defaults[typeof(ITerminalInfo)] = new ConsoleTerminalInfo(_core.OptionsSnapshot.Output);
 
+		var presenterInstance = external.GetService(typeof(IReplInteractionPresenter)) as IReplInteractionPresenter;
+		var userHandlers = ResolveHandlers(external);
+		var richHandler = new RichPromptInteractionHandler(_core.OptionsSnapshot.Output, presenterInstance);
+		IReplInteractionHandler[] allHandlers = [.. userHandlers, richHandler];
 		var channel = new DefaultsInteractionChannel(
 			_core.OptionsSnapshot.Interaction,
 			_core.OptionsSnapshot.Output,
-			external.GetService(typeof(IReplInteractionPresenter)) as IReplInteractionPresenter,
-			ResolveHandlers(external),
+			presenterInstance,
+			allHandlers,
 			external.GetService(typeof(TimeProvider)) as TimeProvider);
 		defaults[typeof(IReplInteractionChannel)] = channel;
 		defaults[typeof(IReplSessionInfo)] = new LiveSessionInfo();
@@ -636,12 +640,18 @@ public sealed class ReplApp : IReplApp
 		services.TryAddSingleton<IHistoryProvider, InMemoryHistoryProvider>();
 		services.TryAddSingleton(TimeProvider.System);
 		services.TryAdd(ServiceDescriptor.Singleton<IReplInteractionChannel>(sp =>
-			new DefaultsInteractionChannel(
+		{
+			var presenterSvc = sp.GetService<IReplInteractionPresenter>();
+			var userHandlers = sp.GetServices<IReplInteractionHandler>().ToArray();
+			var richHandler = new RichPromptInteractionHandler(core.OptionsSnapshot.Output, presenterSvc);
+			IReplInteractionHandler[] allHandlers = [.. userHandlers, richHandler];
+			return new DefaultsInteractionChannel(
 				core.OptionsSnapshot.Interaction,
 				core.OptionsSnapshot.Output,
-				sp.GetService<IReplInteractionPresenter>(),
-				sp.GetServices<IReplInteractionHandler>().ToArray(),
-				sp.GetService<TimeProvider>())));
+				presenterSvc,
+				allHandlers,
+				sp.GetService<TimeProvider>());
+		}));
 		services.TryAddSingleton<IReplKeyReader, ConsoleKeyReader>();
 		services.TryAddSingleton<IReplSessionInfo, LiveSessionInfo>();
 		services.TryAddSingleton<IReplIoContext, LiveReplIoContext>();
