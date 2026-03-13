@@ -406,7 +406,7 @@ internal sealed partial class ConsoleInteractionChannel(
 			}
 			else
 			{
-				line = await ReadSecretLineAsync(options?.Mask ?? '*', ct).ConfigureAwait(false);
+				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', ct).ConfigureAwait(false);
 			}
 
 			if (string.IsNullOrEmpty(line))
