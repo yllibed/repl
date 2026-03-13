@@ -4,3 +4,4 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Repl.IntegrationTests")]
 [assembly: InternalsVisibleTo("Repl.Defaults")]
 [assembly: InternalsVisibleTo("Repl.Testing")]
+[assembly: InternalsVisibleTo("Repl.Spectre")]
