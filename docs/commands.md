@@ -186,6 +186,7 @@ Handlers can return any type. The framework renders the return value through the
 | `IReplResult` | Structured result with kind prefix (`Results.Ok`, `Error`, `NotFound`...) |
 | `ReplNavigationResult` | Renders payload and navigates scope (`Results.NavigateUp`, `NavigateTo`) |
 | `IExitResult` | Renders optional payload and sets process exit code (`Results.Exit`) |
+| `EnterInteractiveResult` | Renders optional payload and enters interactive REPL mode (`Results.EnterInteractive`) |
 | `void` / `null` | No output |
 
 ### Result factory helpers
@@ -201,6 +202,8 @@ Results.Cancelled("user declined")          // cancellation
 Results.NavigateUp(payload)                 // navigate up one scope level
 Results.NavigateTo("client/42", payload)    // navigate to explicit scope
 Results.Exit(0, payload)                    // explicit exit code
+Results.EnterInteractive()                  // enter interactive REPL after command
+Results.EnterInteractive(payload)           // render payload then enter interactive REPL
 ```
 
 ### Multiple return values (tuples)
@@ -220,9 +223,18 @@ Tuple semantics:
 
 - each element is rendered as a separate output block
 - navigation results (`NavigateUp`, `NavigateTo`) are only applied on the **last** element
+- `EnterInteractive` as the last element enters interactive mode after rendering prior elements
 - exit code is determined by the last element
 - null elements are silently skipped
 - nested tuples are not flattened — use a flat tuple instead
+
+## Interactive prompts
+
+Handlers can use `IReplInteractionChannel` for guided prompts (text, choice, confirmation, secret, multi-choice), progress reporting, and status messages. Extension methods add enum prompts, numeric input, validated text, and more.
+
+When the terminal supports ANSI and key reads, choice and multi-choice prompts automatically upgrade to rich arrow-key menus with mnemonic shortcuts. Labels using the `_X` underscore convention get keyboard shortcuts (e.g. `"_Abort"` → press `A`).
+
+See the full guide: [interaction.md](interaction.md)
 
 ## Ambient commands
 
@@ -240,6 +252,23 @@ Notes:
 
 - `history` and `autocomplete` return explicit errors outside interactive mode.
 - `complete` requires a terminal route and a registered `WithCompletion(...)` provider for the selected target.
+
+### Custom ambient commands
+
+You can register your own ambient commands that are available in every interactive scope.
+Custom ambient commands are dispatched after the built-in ones, appear in `help` output under Global Commands, and participate in interactive autocomplete.
+
+```csharp
+app.Options(o => o.AmbientCommands.MapAmbient(
+    "clear",
+    async (IReplInteractionChannel channel, CancellationToken ct) =>
+    {
+        await channel.ClearScreenAsync(ct);
+    },
+    "Clear the screen"));
+```
+
+Handler parameters are injected using the same binding rules as regular command handlers (DI services, `IReplInteractionChannel`, `CancellationToken`, etc.).
 
 ## Shell completion management commands
 

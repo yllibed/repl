@@ -190,6 +190,11 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 			return Results.Exit(0);
 		}
 
+		if (!operation.Changed)
+		{
+			return Results.Text(operation.Message);
+		}
+
 		return new ShellCompletionUninstallModel
 		{
 			Success = operation.Success,

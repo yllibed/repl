@@ -36,6 +36,15 @@ internal sealed class ConsoleReplInteractionPresenter(
 			case ReplProgressEvent progress:
 				await WriteProgressAsync(progress).ConfigureAwait(false);
 				break;
+
+			case ReplClearScreenEvent:
+				await CloseProgressLineIfNeededAsync().ConfigureAwait(false);
+				if (_useAnsi)
+				{
+					await ReplSessionIO.Output.WriteAsync("\x1b[2J\x1b[H").ConfigureAwait(false);
+				}
+
+				break;
 		}
 	}
 

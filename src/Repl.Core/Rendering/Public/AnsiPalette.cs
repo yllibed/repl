@@ -22,4 +22,5 @@ public sealed record AnsiPalette(
 	string AutocompleteParameterStyle = "",
 	string AutocompleteAmbiguousStyle = "",
 	string AutocompleteErrorStyle = "",
-	string AutocompleteHintLabelStyle = "");
+	string AutocompleteHintLabelStyle = "",
+	string SelectionStyle = "");

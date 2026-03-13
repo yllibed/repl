@@ -92,6 +92,57 @@ internal sealed class RemoteModule(
 			});
 
 		map.Map(
+			"configure",
+			[Description("Configure server features (interactive multi-choice)")]
+			async (IReplInteractionChannel channel, CancellationToken ct) =>
+			{
+				string[] featureNames = ["Authentication", "Logging", "Caching", "Metrics"];
+				var selected = await channel.AskMultiChoiceAsync(
+					"features",
+					"Enable features:",
+					["_Authentication", "_Logging", "_Caching", "_Metrics"],
+					defaultIndices: [0, 1]);
+				var labels = selected.Select(i => featureNames[i]);
+				return Results.Ok($"Enabled: {string.Join(", ", labels)}.");
+			});
+
+		map.Map(
+			"maintenance",
+			[Description("Toggle maintenance mode (interactive choice with mnemonics)")]
+			async (IReplInteractionChannel channel, CancellationToken ct) =>
+			{
+				var current = settings.Get("maintenance") ?? "off";
+				await channel.WriteStatusAsync($"Maintenance is currently: {current}", ct);
+
+				var action = await channel.AskChoiceAsync(
+					"action",
+					"What would you like to do?",
+					["_Enable maintenance", "_Disable maintenance", "_Cancel"],
+					defaultIndex: 2);
+
+				if (action is 0 or 1)
+				{
+					var value = action == 0 ? "on" : "off";
+					settings.Set("maintenance", value);
+					return Results.Success($"Maintenance set to '{value}'.");
+				}
+
+				return Results.Ok("Cancelled.");
+			});
+
+		map.Map(
+			"debug",
+			[Description("Show terminal capabilities for this session")]
+			(IReplSessionInfo session) => new StatusRow[]
+			{
+				new("AnsiSupported", session.AnsiSupported.ToString(), session.AnsiSupported ? "ok" : "warning"),
+				new("Capabilities", session.TerminalCapabilities.ToString(), "ok"),
+				new("WindowSize", session.WindowSize is { } sz ? $"{sz.Width}x{sz.Height}" : "unknown", "ok"),
+				new("Terminal", session.TerminalIdentity ?? "unknown", "ok"),
+				new("Transport", session.TransportName ?? "local", "ok"),
+			});
+
+		map.Map(
 			"sessions",
 			[Description("List active sessions with transport and activity details")]
 			(IReplSessionInfo session) =>

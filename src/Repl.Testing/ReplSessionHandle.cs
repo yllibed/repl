@@ -13,6 +13,7 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 	private readonly ReplScenarioOptions _options;
 	private readonly IServiceProvider _services;
 	private readonly ReplRunOptions _runOptions;
+	private readonly IReadOnlyDictionary<string, string>? _sessionAnswers;
 	private readonly SemaphoreSlim _commandGate = new(initialCount: 1, maxCount: 1);
 	private readonly string _sessionId;
 	private bool _disposed;
@@ -23,6 +24,7 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		ReplScenarioOptions options,
 		IServiceProvider services,
 		ReplRunOptions runOptions,
+		IReadOnlyDictionary<string, string>? sessionAnswers,
 		string sessionId)
 	{
 		_owner = owner;
@@ -30,14 +32,40 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		_options = options;
 		_services = services;
 		_runOptions = runOptions;
+		_sessionAnswers = sessionAnswers;
 		_sessionId = sessionId;
 	}
 
 	public string SessionId => _sessionId;
 
-	public async ValueTask<CommandExecution> RunCommandAsync(
+	/// <summary>
+	/// Runs a command in this session.
+	/// </summary>
+	/// <param name="commandText">The command text to execute.</param>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>The execution result.</returns>
+	public ValueTask<CommandExecution> RunCommandAsync(
 		string commandText,
-		CancellationToken cancellationToken = default)
+		CancellationToken cancellationToken = default) =>
+		ExecuteCommandCoreAsync(commandText, answers: null, cancellationToken);
+
+	/// <summary>
+	/// Runs a command in this session with prefilled answers for interactive prompts.
+	/// </summary>
+	/// <param name="commandText">The command text to execute.</param>
+	/// <param name="answers">Prompt answers keyed by prompt name. Overrides session-level answers for the same name.</param>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>The execution result.</returns>
+	public ValueTask<CommandExecution> RunCommandAsync(
+		string commandText,
+		IReadOnlyDictionary<string, string> answers,
+		CancellationToken cancellationToken = default) =>
+		ExecuteCommandCoreAsync(commandText, answers, cancellationToken);
+
+	private async ValueTask<CommandExecution> ExecuteCommandCoreAsync(
+		string commandText,
+		IReadOnlyDictionary<string, string>? answers,
+		CancellationToken cancellationToken)
 	{
 		commandText = string.IsNullOrWhiteSpace(commandText)
 			? throw new ArgumentException("Command text cannot be empty.", nameof(commandText))
@@ -51,7 +79,7 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 			using var output = new StringWriter();
 			var host = new TestSessionHost(_sessionId, output);
 			var observer = new SessionExecutionObserver();
-			var args = Tokenize(commandText).ToArray();
+			var args = BuildArgsWithAnswers(Tokenize(commandText), _sessionAnswers, answers);
 			using var timeout = CreateTimeoutSource(cancellationToken);
 			var token = timeout?.Token ?? cancellationToken;
 
@@ -151,8 +179,45 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		var serviceCollection = new ServiceCollection();
 		serviceCollection.AddSingleton<IReplSessionState, InMemorySessionState>();
 		var services = serviceCollection.BuildServiceProvider();
-		var handle = new ReplSessionHandle(owner, app, options, services, runOptions, sessionId);
+		var handle = new ReplSessionHandle(owner, app, options, services, runOptions, descriptor.Answers, sessionId);
 		return ValueTask.FromResult(handle);
+	}
+
+	private static string[] BuildArgsWithAnswers(
+		List<string> baseTokens,
+		IReadOnlyDictionary<string, string>? sessionAnswers,
+		IReadOnlyDictionary<string, string>? commandAnswers)
+	{
+		if (sessionAnswers is null && commandAnswers is null)
+		{
+			return baseTokens.ToArray();
+		}
+
+		var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		if (sessionAnswers is not null)
+		{
+			foreach (var pair in sessionAnswers)
+			{
+				merged[pair.Key] = pair.Value;
+			}
+		}
+
+		if (commandAnswers is not null)
+		{
+			foreach (var pair in commandAnswers)
+			{
+				merged[pair.Key] = pair.Value;
+			}
+		}
+
+		var args = new List<string>(baseTokens.Count + merged.Count);
+		args.AddRange(baseTokens);
+		foreach (var pair in merged)
+		{
+			args.Add($"--answer:{pair.Key}={pair.Value}");
+		}
+
+		return args.ToArray();
 	}
 
 	private static List<CommandEvent> BuildTimeline(

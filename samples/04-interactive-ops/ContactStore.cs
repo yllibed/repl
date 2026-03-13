@@ -1,4 +1,30 @@
+using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+
+internal enum AppTheme
+{
+	[Description("Use system setting")]
+	System,
+	[Description("Light mode")]
+	Light,
+	[Description("Dark mode")]
+	Dark,
+	[Description("High contrast")]
+	HighContrast,
+}
+
+[Flags]
+internal enum ContactPermissions
+{
+	[Description("View contacts")]
+	Read = 1,
+	[Description("Create and edit contacts")]
+	Write = 2,
+	[Description("Remove contacts")]
+	Delete = 4,
+	[Description("Full administrative access")]
+	Admin = 8,
+}
 
 internal sealed record Contact(
 	[property: Display(Order = 0)] string Name,

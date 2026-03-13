@@ -314,6 +314,69 @@ public sealed class Given_ShellCompletionSetup
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies uninstall command shows plain message instead of misleading Success: True when nothing was installed.")]
+	public void When_CompletionUninstallHasNothingToRemove_Then_OutputDoesNotShowSuccessTrue()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			File.WriteAllText(paths.ProfilePath, "# empty profile\n");
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			var output = RunSetup(["completion", "uninstall", "--shell", "bash", "--no-logo"], environment);
+
+			output.ExitCode.Should().Be(0);
+			output.Text.Should().NotContainEquivalentOf("Success");
+			output.Text.Should().Contain("not found");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies uninstall command shows plain message when profile file does not exist.")]
+	public void When_CompletionUninstallProfileDoesNotExist_Then_OutputDoesNotShowSuccessTrue()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			var output = RunSetup(["completion", "uninstall", "--shell", "bash", "--no-logo"], environment);
+
+			output.ExitCode.Should().Be(0);
+			output.Text.Should().NotContainEquivalentOf("Success");
+			output.Text.Should().Contain("not installed");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies uninstall command shows structured result with Changed: True when a block was actually removed.")]
+	public void When_CompletionUninstallRemovesBlock_Then_OutputShowsChangedTrue()
+	{
+		var paths = CreateTempPaths();
+		try
+		{
+			var environment = CreateEnvironment(paths, preferredShell: ShellKind.Bash);
+			_ = RunSetup(["completion", "install", "--shell", "bash", "--no-logo"], environment);
+			var uninstall = RunSetup(["completion", "uninstall", "--shell", "bash", "--no-logo"], environment);
+
+			uninstall.ExitCode.Should().Be(0);
+			uninstall.Text.Should().Contain("Changed");
+			uninstall.Text.Should().Contain("True");
+			uninstall.Text.Should().Contain("Removed");
+		}
+		finally
+		{
+			TryDelete(paths.RootPath);
+		}
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies install/uninstall updates only the current app shell block and leaves foreign managed blocks intact.")]
 	public void When_ProfileContainsForeignManagedBlock_Then_InstallAndUninstallOnlyTouchCurrentAppBlock()
 	{

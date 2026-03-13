@@ -551,30 +551,29 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			return 1;
 		}
 
-		var exitCode = match.Route.Command.IsProtocolPassthrough
-			? await ExecuteProtocolPassthroughCommandAsync(match, globalOptions, serviceProvider, cancellationToken)
-				.ConfigureAwait(false)
-			: await ExecuteMatchedCommandAsync(
-					match,
-					globalOptions,
-					serviceProvider,
-					scopeTokens: null,
-					cancellationToken)
-				.ConfigureAwait(false);
 		if (match.Route.Command.IsProtocolPassthrough)
 		{
-			return exitCode;
+			return await ExecuteProtocolPassthroughCommandAsync(match, globalOptions, serviceProvider, cancellationToken)
+				.ConfigureAwait(false);
 		}
 
-		if (exitCode != 0 || !ShouldEnterInteractive(globalOptions, allowAuto: false))
+		var (exitCode, enterInteractive) = await ExecuteMatchedCommandAsync(
+				match,
+				globalOptions,
+				serviceProvider,
+				scopeTokens: null,
+				cancellationToken)
+			.ConfigureAwait(false);
+
+		if (enterInteractive || (exitCode == 0 && ShouldEnterInteractive(globalOptions, allowAuto: false)))
 		{
-			return exitCode;
+			var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
+			var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
+			var interactiveScope = GetDeepestContextScopePath(matchedPathTokens);
+			return await RunInteractiveSessionAsync(interactiveScope, serviceProvider, cancellationToken).ConfigureAwait(false);
 		}
 
-		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
-		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
-		var interactiveScope = GetDeepestContextScopePath(matchedPathTokens);
-		return await RunInteractiveSessionAsync(interactiveScope, serviceProvider, cancellationToken).ConfigureAwait(false);
+		return exitCode;
 	}
 
 	private async ValueTask<int> ExecuteProtocolPassthroughCommandAsync(
@@ -585,13 +584,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		if (ReplSessionIO.IsSessionActive)
 		{
-			return await ExecuteMatchedCommandAsync(
+			var (exitCode, _) = await ExecuteMatchedCommandAsync(
 					match,
 					globalOptions,
 					serviceProvider,
 					scopeTokens: null,
 					cancellationToken)
 				.ConfigureAwait(false);
+			return exitCode;
 		}
 
 		using var protocolScope = ReplSessionIO.SetSession(
@@ -601,13 +601,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			commandOutput: Console.Out,
 			error: Console.Error,
 			isHostedSession: false);
-		return await ExecuteMatchedCommandAsync(
+		var (code, _) = await ExecuteMatchedCommandAsync(
 				match,
 				globalOptions,
 				serviceProvider,
 				scopeTokens: null,
 				cancellationToken)
 			.ConfigureAwait(false);
+		return code;
 	}
 
 	private async ValueTask<int> HandleEmptyInvocationAsync(
@@ -918,7 +919,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		"Maintainability",
 		"MA0051:Method is too long",
 		Justification = "Execution path intentionally keeps validation, binding, middleware and rendering in one place.")]
-	private async ValueTask<int> ExecuteMatchedCommandAsync(
+	private async ValueTask<(int ExitCode, bool EnterInteractive)> ExecuteMatchedCommandAsync(
 		RouteMatch match,
 		GlobalInvocationOptions globalOptions,
 		IServiceProvider serviceProvider,
@@ -939,7 +940,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 					globalOptions.OutputFormat,
 					cancellationToken)
 				.ConfigureAwait(false);
-			return 1;
+			return (1, false);
 		}
 
 		var parsedOptions = InvocationOptionParser.Parse(
@@ -955,7 +956,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 					globalOptions.OutputFormat,
 					cancellationToken)
 				.ConfigureAwait(false);
-			return 1;
+			return (1, false);
 		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
@@ -982,7 +983,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			{
 				_ = await RenderOutputAsync(contextFailure, globalOptions.OutputFormat, cancellationToken)
 					.ConfigureAwait(false);
-				return 1;
+				return (1, false);
 			}
 
 			await TryRenderCommandBannerAsync(match.Route.Command, globalOptions.OutputFormat, serviceProvider, cancellationToken)
@@ -1000,11 +1001,22 @@ public sealed partial class CoreReplApp : ICoreReplApp
 						.ConfigureAwait(false);
 				}
 
+				if (result is EnterInteractiveResult enterInteractive)
+				{
+					if (enterInteractive.Payload is not null)
+					{
+						_ = await RenderOutputAsync(enterInteractive.Payload, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
+							.ConfigureAwait(false);
+					}
+
+					return (0, true);
+				}
+
 				var normalizedResult = ApplyNavigationResult(result, scopeTokens);
 				ExecutionObserver?.OnResult(normalizedResult);
 				var rendered = await RenderOutputAsync(normalizedResult, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
 					.ConfigureAwait(false);
-				return rendered ? ComputeExitCode(normalizedResult) : 1;
+				return (rendered ? ComputeExitCode(normalizedResult) : 1, false);
 		}
 		catch (OperationCanceledException)
 		{
@@ -1014,7 +1026,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		{
 			_ = await RenderOutputAsync(Results.Validation(ex.Message), globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
-			return 1;
+			return (1, false);
 		}
 		catch (Exception ex)
 		{
@@ -1026,11 +1038,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 					globalOptions.OutputFormat,
 					cancellationToken)
 				.ConfigureAwait(false);
-			return 1;
+			return (1, false);
 		}
 	}
 
-	private async ValueTask<int> RenderTupleResultAsync(
+	private async ValueTask<(int ExitCode, bool EnterInteractive)> RenderTupleResultAsync(
 		ITuple tuple,
 		List<string>? scopeTokens,
 		GlobalInvocationOptions globalOptions,
@@ -1038,10 +1050,23 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	{
 		var isInteractive = scopeTokens is not null;
 		var exitCode = 0;
+		var enterInteractive = false;
 
 		for (var i = 0; i < tuple.Length; i++)
 		{
 			var element = tuple[i];
+
+			// EnterInteractiveResult: extract payload (if any) and signal interactive entry.
+			if (element is EnterInteractiveResult eir)
+			{
+				enterInteractive = true;
+				element = eir.Payload;
+				if (element is null)
+				{
+					continue;
+				}
+			}
+
 			var isLast = i == tuple.Length - 1;
 
 			// Navigation results: only apply navigation on the last element.
@@ -1058,7 +1083,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 			if (!rendered)
 			{
-				return 1;
+				return (1, false);
 			}
 
 			if (isLast)
@@ -1067,7 +1092,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			}
 		}
 
-		return exitCode;
+		return (exitCode, enterInteractive);
 	}
 
 	private static int ComputeExitCode(object? result)
@@ -1360,7 +1385,9 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			[typeof(CoreReplApp)] = this,
 			[typeof(ICoreReplApp)] = this,
 			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
-			[typeof(IReplInteractionChannel)] = new ConsoleInteractionChannel(_options.Interaction, _options.Output),
+			[typeof(IReplInteractionChannel)] = new ConsoleInteractionChannel(
+				_options.Interaction, _options.Output,
+				handlers: [new RichPromptInteractionHandler(_options.Output)]),
 			[typeof(IHistoryProvider)] = _options.Interactive.HistoryProvider ?? new InMemoryHistoryProvider(),
 			[typeof(IReplKeyReader)] = new ConsoleKeyReader(),
 			[typeof(IReplSessionInfo)] = new LiveSessionInfo(),

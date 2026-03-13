@@ -71,4 +71,51 @@ public interface IReplInteractionChannel
 		string prompt,
 		string? defaultValue = null,
 		AskOptions? options = null);
+
+	/// <summary>
+	/// Prompts the user for a secret (masked input such as a password).
+	/// </summary>
+	/// <param name="name">Prompt name (used for prefill via <c>--answer:name=value</c>).</param>
+	/// <param name="prompt">Prompt text displayed to the user.</param>
+	/// <param name="options">Optional secret-specific options (mask character, allow empty, cancellation, timeout).</param>
+	/// <returns>The captured secret text.</returns>
+	ValueTask<string> AskSecretAsync(
+		string name,
+		string prompt,
+		AskSecretOptions? options = null);
+
+	/// <summary>
+	/// Prompts the user to select one or more options from a choice list.
+	/// </summary>
+	/// <param name="name">Prompt name (used for prefill via <c>--answer:name=1,3</c>).</param>
+	/// <param name="prompt">Prompt text displayed to the user.</param>
+	/// <param name="choices">Available choices.</param>
+	/// <param name="defaultIndices">Indices of pre-selected choices, or <c>null</c> for none.</param>
+	/// <param name="options">Optional multi-choice options (min/max selections, cancellation, timeout).</param>
+	/// <returns>The zero-based indices of the selected choices.</returns>
+	ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
+		string name,
+		string prompt,
+		IReadOnlyList<string> choices,
+		IReadOnlyList<int>? defaultIndices = null,
+		AskMultiChoiceOptions? options = null);
+
+	/// <summary>
+	/// Clears the terminal screen.
+	/// </summary>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>An asynchronous operation.</returns>
+	ValueTask ClearScreenAsync(CancellationToken cancellationToken);
+
+	/// <summary>
+	/// Dispatches a custom <see cref="InteractionRequest{TResult}"/> through the handler pipeline.
+	/// </summary>
+	/// <typeparam name="TResult">The expected result type.</typeparam>
+	/// <param name="request">The interaction request.</param>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>The result produced by the first handler that handles the request.</returns>
+	/// <exception cref="NotSupportedException">No registered handler handled the request.</exception>
+	ValueTask<TResult> DispatchAsync<TResult>(
+		InteractionRequest<TResult> request,
+		CancellationToken cancellationToken);
 }

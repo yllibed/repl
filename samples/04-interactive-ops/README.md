@@ -8,9 +8,15 @@ It exercises the full **`IReplInteractionChannel`** surface:
 - text prompts (with retry-on-invalid),
 - n-way choice prompts (default, prefix matching),
 - confirmations (safe defaults),
+- secret/password input (masked echo),
+- multi-choice selection,
+- enum and flags-enum prompts,
+- typed numeric input (with min/max bounds),
+- validated text (re-prompt on failure),
 - status messages,
 - two progress models (**`IProgress<double>`** and **`IProgress<ReplProgressEvent>`**),
 - prompt timeouts (with countdown → auto-default),
+- custom ambient commands (clear screen),
 - and cancellation patterns (**Esc during prompts**, **Ctrl+C during commands**).
 
 The goal: make interactive commands feel **production-ready**, while still remaining **scriptable** and **automation-friendly**.
@@ -68,14 +74,29 @@ Presentation stays configurable and host-specific.
 
 ## Channel coverage (at a glance)
 
-| Channel method                 | Example Command          | Pattern                                             |
+### Core primitives (`IReplInteractionChannel`)
+
+| Method                         | Example Command          | Pattern                                             |
 |--------------------------------|--------------------------|-----------------------------------------------------|
 | `AskTextAsync`                 | `add`                    | retry-on-invalid (loop)                             |
 | `AskChoiceAsync`               | `import`                 | n-way choice + default + prefix match + 10s timeout |
 | `AskConfirmationAsync`         | `clear`                  | safe default (`false`)                              |
+| `AskSecretAsync`               | `login`                  | masked input (`*` echo)                             |
+| `AskMultiChoiceAsync`          | `configure`              | multi-selection with defaults                       |
+| `ClearScreenAsync`             | `clear` (ambient)        | terminal clear via custom ambient command            |
 | `WriteStatusAsync`             | `add`, `import`, `watch` | inline feedback                                     |
 | `IProgress<ReplProgressEvent>` | `import`                 | structured progress (current/total)                 |
 | `IProgress<double>`            | `sync`                   | simple percentage                                   |
+
+### Extension methods (`ReplInteractionChannelExtensions`)
+
+| Method                  | Example Command | Pattern                                        |
+|-------------------------|-----------------|------------------------------------------------|
+| `AskEnumAsync<T>`       | `theme`         | single enum choice with humanized names        |
+| `AskFlagsEnumAsync<T>`  | `permissions`   | `[Flags]` enum multi-selection with bitwise OR |
+| `AskNumberAsync<T>`     | `set-limit`     | typed numeric input with min/max bounds        |
+| `AskValidatedTextAsync` | `set-email`     | text with validation predicate (re-prompts)    |
+| `PressAnyKeyAsync`      | `demo`          | simple interactive pause                       |
 
 Also demonstrated:
 

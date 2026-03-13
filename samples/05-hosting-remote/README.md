@@ -26,6 +26,9 @@ Browser terminal (xterm.js / VT-compatible, raw mode)
 | Session names | `who` | Quick list of connected session identifiers |
 | Session details | `sessions` | Transport, remote peer, terminal, screen, connected/idle durations |
 | Runtime diagnostics | `status` | Screen, terminal identity/capabilities, transport, runtime |
+| Terminal capabilities | `debug` | Structured status rows showing ANSI support, key reading, window size, palette |
+| Interactive configuration | `configure` | Multi-choice interactive menu (rich arrow-key menu or text fallback) |
+| Maintenance actions | `maintenance` | Single-choice interactive menu with mnemonic shortcuts (`_Abort`, `_Retry`, `_Fail`) |
 
 ## Run
 
@@ -78,4 +81,5 @@ send hello
 - `status` reflects metadata of the current REPL session.
 - Telnet mode performs NAWS/terminal-type negotiation automatically in the browser client script.
 - This sample intentionally mixes in-band and out-of-band metadata paths for demonstration.
+- Use `--ansi:never` to force Plain mode (no ANSI), which demonstrates the text fallback for interactive prompts.
 - Canonical support matrix and precedence order live in [`docs/terminal-metadata.md`](../../docs/terminal-metadata.md).

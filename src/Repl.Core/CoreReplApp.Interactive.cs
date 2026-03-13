@@ -326,6 +326,13 @@ public sealed partial class CoreReplApp
 				.ConfigureAwait(false);
 		}
 
+		if (_options.AmbientCommands.CustomCommands.TryGetValue(token, out var customAmbient))
+		{
+			await ExecuteCustomAmbientCommandAsync(customAmbient, serviceProvider, cancellationToken)
+				.ConfigureAwait(false);
+			return AmbientCommandOutcome.Handled;
+		}
+
 		return AmbientCommandOutcome.NotHandled;
 	}
 
@@ -516,6 +523,26 @@ public sealed partial class CoreReplApp
 		{
 			await ReplSessionIO.Output.WriteLineAsync(entry).ConfigureAwait(false);
 		}
+	}
+
+	private async ValueTask ExecuteCustomAmbientCommandAsync(
+		AmbientCommandDefinition command,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		var bindingContext = new InvocationBindingContext(
+			routeValues: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+			namedOptions: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
+			positionalArguments: [],
+			optionSchema: Internal.Options.OptionSchema.Empty,
+			optionCaseSensitivity: _options.Parsing.OptionCaseSensitivity,
+			contextValues: [],
+			numericFormatProvider: _options.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture,
+			serviceProvider: serviceProvider,
+			interactionOptions: _options.Interaction,
+			cancellationToken: cancellationToken);
+		var arguments = HandlerArgumentBinder.Bind(command.Handler, bindingContext);
+		await CommandInvoker.InvokeAsync(command.Handler, arguments).ConfigureAwait(false);
 	}
 
 	private string[] GetDeepestContextScopePath(IReadOnlyList<string> matchedPathTokens)
@@ -781,6 +808,10 @@ public sealed partial class CoreReplApp
 		];
 	}
 
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Ambient autocomplete candidates are kept together for discoverability.")]
 	private List<ConsoleLineReader.AutocompleteSuggestion> CollectAmbientAutocompleteCandidates(
 		string currentTokenPrefix,
 		StringComparison comparison)
@@ -830,6 +861,16 @@ public sealed partial class CoreReplApp
 				suggestions,
 				value: "complete",
 				description: "Query completion provider.",
+				currentTokenPrefix,
+				comparison);
+		}
+
+		foreach (var cmd in _options.AmbientCommands.CustomCommands.Values)
+		{
+			AddAmbientSuggestion(
+				suggestions,
+				value: cmd.Name,
+				description: cmd.Description ?? string.Empty,
 				currentTokenPrefix,
 				comparison);
 		}
@@ -1575,7 +1616,13 @@ public sealed partial class CoreReplApp
 			return true;
 		}
 
-		return _options.AmbientCommands.ShowCompleteInHelp && "complete".StartsWith(token, comparison);
+		if (_options.AmbientCommands.ShowCompleteInHelp && "complete".StartsWith(token, comparison))
+		{
+			return true;
+		}
+
+		return _options.AmbientCommands.CustomCommands.Keys
+			.Any(name => name.StartsWith(token, comparison));
 	}
 
 	private static bool TryClassifyTemplateSegment(

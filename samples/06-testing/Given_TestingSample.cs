@@ -102,6 +102,85 @@ public sealed class Given_TestingSample
 	}
 
 	[TestMethod]
+	[Description("Shows prefilled text prompt answers via the per-command answers API.")]
+	public async Task When_CommandPromptsForText_Then_PrefillAnswerIsUsed()
+	{
+		await using var host = ReplTestHost.Create(() => SampleReplApp.Create());
+		await using var session = await host.OpenSessionAsync();
+
+		var execution = await session.RunCommandAsync(
+			"greet --no-logo",
+			new Dictionary<string, string> { ["name"] = "Alice" });
+
+		execution.ExitCode.Should().Be(0);
+		execution.OutputText.Should().Contain("Hello, Alice!");
+	}
+
+	[TestMethod]
+	[Description("Shows prefilled confirmation prompt answers.")]
+	public async Task When_CommandPromptsForConfirmation_Then_PrefillAnswerIsUsed()
+	{
+		await using var host = ReplTestHost.Create(() => SampleReplApp.Create());
+		await using var session = await host.OpenSessionAsync();
+
+		var execution = await session.RunCommandAsync(
+			"deploy --no-logo",
+			new Dictionary<string, string> { ["proceed"] = "yes" });
+
+		execution.ExitCode.Should().Be(0);
+		execution.GetResult<bool>().Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Shows prefilled choice prompt answers.")]
+	public async Task When_CommandPromptsForChoice_Then_PrefillAnswerIsUsed()
+	{
+		await using var host = ReplTestHost.Create(() => SampleReplApp.Create());
+		await using var session = await host.OpenSessionAsync();
+
+		var execution = await session.RunCommandAsync(
+			"region --no-logo",
+			new Dictionary<string, string> { ["region"] = "eu-west" });
+
+		execution.ExitCode.Should().Be(0);
+		execution.GetResult<string>().Should().Be("eu-west");
+	}
+
+	[TestMethod]
+	[Description("Shows session-level default answers applied to all commands.")]
+	public async Task When_SessionHasDefaultAnswers_Then_AllCommandsUseThem()
+	{
+		await using var host = ReplTestHost.Create(() => SampleReplApp.Create());
+		await using var session = await host.OpenSessionAsync(new SessionDescriptor
+		{
+			Answers = new Dictionary<string, string> { ["name"] = "Bob" },
+		});
+
+		var execution = await session.RunCommandAsync("greet --no-logo");
+
+		execution.ExitCode.Should().Be(0);
+		execution.OutputText.Should().Contain("Hello, Bob!");
+	}
+
+	[TestMethod]
+	[Description("Shows per-command answers overriding session-level defaults.")]
+	public async Task When_PerCommandAnswerOverridesSession_Then_CommandWins()
+	{
+		await using var host = ReplTestHost.Create(() => SampleReplApp.Create());
+		await using var session = await host.OpenSessionAsync(new SessionDescriptor
+		{
+			Answers = new Dictionary<string, string> { ["name"] = "Bob" },
+		});
+
+		var execution = await session.RunCommandAsync(
+			"greet --no-logo",
+			new Dictionary<string, string> { ["name"] = "Alice" });
+
+		execution.ExitCode.Should().Be(0);
+		execution.OutputText.Should().Contain("Hello, Alice!");
+	}
+
+	[TestMethod]
 	[Description("Shows a realistic multi-step scenario with two sessions, shared state, typed assertions, and metadata checks.")]
 	public async Task When_RunningComplexScenario_Then_EndToEndBehaviorRemainsReadable()
 	{
