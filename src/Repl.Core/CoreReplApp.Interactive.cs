@@ -1621,15 +1621,8 @@ public sealed partial class CoreReplApp
 			return true;
 		}
 
-		foreach (var name in _options.AmbientCommands.CustomCommands.Keys)
-		{
-			if (name.StartsWith(token, comparison))
-			{
-				return true;
-			}
-		}
-
-		return false;
+		return _options.AmbientCommands.CustomCommands.Keys
+			.Any(name => name.StartsWith(token, comparison));
 	}
 
 	private static bool TryClassifyTemplateSegment(
