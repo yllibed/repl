@@ -93,4 +93,15 @@ public static class Results
 	/// <returns>An explicit exit result.</returns>
 	public static IExitResult Exit(int code, object? payload = null) =>
 		new ExitResult(code, payload);
+
+	/// <summary>
+	/// Signals that the process should enter interactive REPL mode after command completion.
+	/// When returned from a CLI one-shot command, the process renders the optional payload
+	/// and then enters the interactive REPL loop instead of exiting.
+	/// Also works as the last element of a tuple return.
+	/// </summary>
+	/// <param name="payload">Optional payload to render before entering interactive mode.</param>
+	/// <returns>An enter-interactive result.</returns>
+	public static EnterInteractiveResult EnterInteractive(object? payload = null) =>
+		new(payload);
 }
