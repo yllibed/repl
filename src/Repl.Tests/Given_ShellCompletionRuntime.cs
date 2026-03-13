@@ -195,7 +195,14 @@ public sealed class Given_ShellCompletionRuntime
 		}
 		finally
 		{
-			try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+			try
+			{
+				Directory.Delete(root, recursive: true);
+			}
+			catch (IOException)
+			{
+				// Best-effort cleanup for temp test directory.
+			}
 		}
 	}
 
