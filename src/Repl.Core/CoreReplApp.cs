@@ -853,7 +853,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var requestedFormat = string.IsNullOrWhiteSpace(globalOptions.OutputFormat)
 			? _options.Output.DefaultFormat
 			: globalOptions.OutputFormat;
-		if (!string.Equals(requestedFormat, "human", StringComparison.OrdinalIgnoreCase))
+		if (!_options.Output.BannerFormats.Contains(requestedFormat))
 		{
 			return;
 		}

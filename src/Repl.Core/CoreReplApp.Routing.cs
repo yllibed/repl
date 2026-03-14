@@ -318,7 +318,7 @@ public sealed partial class CoreReplApp
 		var format = string.IsNullOrWhiteSpace(requestedOutputFormat)
 			? _options.Output.DefaultFormat
 			: requestedOutputFormat;
-		return string.Equals(format, "human", StringComparison.OrdinalIgnoreCase);
+		return _options.Output.BannerFormats.Contains(format);
 	}
 
 	private async ValueTask InvokeBannerAsync(

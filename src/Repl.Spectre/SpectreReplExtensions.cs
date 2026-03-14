@@ -37,6 +37,7 @@ public static class SpectreReplExtensions
 		{
 			options.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer());
 			options.Output.DefaultFormat = "spectre";
+			options.Output.BannerFormats.Add("spectre");
 		});
 
 		return app;

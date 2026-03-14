@@ -18,5 +18,6 @@
 		<Project Path="../samples/04-interactive-ops/InteractiveOpsSample.csproj" />
 		<Project Path="../samples/05-hosting-remote/HostingRemoteSample.csproj" />
 		<Project Path="../samples/06-testing/TestingSample.csproj" />
+		<Project Path="../samples/07-spectre/SpectreOpsSample.csproj" />
 	</Folder>
 </Solution>
