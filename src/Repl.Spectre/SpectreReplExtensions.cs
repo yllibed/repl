@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -28,16 +29,26 @@ public static class SpectreReplExtensions
 	/// <see cref="SpectreInteractionHandler"/> and <see cref="IAnsiConsole"/> DI service.
 	/// </summary>
 	/// <param name="app">Target REPL application.</param>
+	/// <param name="configure">Optional callback to configure Spectre console options.</param>
 	/// <returns>The same app instance for chaining.</returns>
-	public static ReplApp UseSpectreConsole(this ReplApp app)
+	public static ReplApp UseSpectreConsole(this ReplApp app, Action<SpectreConsoleOptions>? configure = null)
 	{
 		ArgumentNullException.ThrowIfNull(app);
 
-		app.Options(options =>
+		var spectreOptions = new SpectreConsoleOptions();
+		configure?.Invoke(spectreOptions);
+		SessionAnsiConsole.Options = spectreOptions;
+
+		if (spectreOptions.Unicode && !Console.IsOutputRedirected)
 		{
-			options.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer());
-			options.Output.DefaultFormat = "spectre";
-			options.Output.BannerFormats.Add("spectre");
+			Console.OutputEncoding = Encoding.UTF8;
+		}
+
+		app.Options(o =>
+		{
+			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer());
+			o.Output.DefaultFormat = "spectre";
+			o.Output.BannerFormats.Add("spectre");
 		});
 
 		return app;

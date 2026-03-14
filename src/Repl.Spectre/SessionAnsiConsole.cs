@@ -9,6 +9,12 @@ namespace Repl.Spectre;
 internal static class SessionAnsiConsole
 {
 	/// <summary>
+	/// Gets or sets the console options shared by all factory methods.
+	/// Set by <see cref="SpectreReplExtensions.UseSpectreConsole"/> during app configuration.
+	/// </summary>
+	internal static SpectreConsoleOptions Options { get; set; } = new();
+
+	/// <summary>
 	/// Creates a new <see cref="IAnsiConsole"/> bound to the current session I/O.
 	/// </summary>
 	public static IAnsiConsole Create()
@@ -20,7 +26,7 @@ internal static class SessionAnsiConsole
 			Out = new SessionAnsiConsoleOutput(),
 		};
 
-		return AnsiConsole.Create(settings);
+		return ApplyOptions(AnsiConsole.Create(settings));
 	}
 
 	/// <summary>
@@ -36,7 +42,13 @@ internal static class SessionAnsiConsole
 			Out = new WriterAnsiConsoleOutput(writer, width),
 		};
 
-		return AnsiConsole.Create(settings);
+		return ApplyOptions(AnsiConsole.Create(settings));
+	}
+
+	private static IAnsiConsole ApplyOptions(IAnsiConsole console)
+	{
+		console.Profile.Capabilities.Unicode = Options.Unicode;
+		return console;
 	}
 
 	private sealed class SessionAnsiConsoleOutput : IAnsiConsoleOutput
