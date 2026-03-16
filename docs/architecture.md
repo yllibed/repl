@@ -17,6 +17,8 @@
 	- WebSocket session host integration (`ReplWebSocketSession`) over `StreamedReplHost`.
 - `Repl.Telnet`
 	- Telnet framing/session integration (`ReplTelnetSession`) with NAWS window-size negotiation.
+- `Repl.Spectre`
+	- Spectre.Console integration: `SpectreInteractionHandler` for rich prompts, `IAnsiConsole` DI injection, `"spectre"` output transformer for auto-rendered tables, `SpectreConsoleOptions` for capability configuration.
 - `Repl.Testing`
 	- In-memory multi-session testing toolkit (`ReplTestHost`, `ReplSessionHandle`, typed execution results/events).
 - `Repl.Tests`
