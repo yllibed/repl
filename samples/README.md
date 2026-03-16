@@ -20,6 +20,8 @@ If you’re new, start with **01**, then follow the sequence.
    `Repl.Testing` harness: multi-step + multi-session, typed results, interaction/timeline events, metadata snapshots.
 7. [07 — Spectre](07-spectre/)
    `Repl.Spectre` integration: FigletText, Table, Panel, Tree, BarChart, BreakdownChart, Calendar, JsonText, TextPath, Grid, Columns, Rule, Status, Progress, and all Spectre-powered prompts.
+8. [08 — Terminal.Gui](08-terminal-gui/)
+   `Repl.TerminalGui` TUI host: composable views (`ReplOutputView` + `ReplInputView`), ANSI terminal emulation via XTerm.NET, modal dialogs for prompts, Spectre-compatible rich output.
 
 ## Run
 
@@ -37,6 +39,7 @@ Replace the project path with the one you want:
 - `samples/05-hosting-remote/HostingRemoteSample.csproj`
 - `samples/06-testing/TestingSample.csproj`
 - `samples/07-spectre/SpectreOpsSample.csproj`
+- `samples/08-terminal-gui/TerminalGuiSample.csproj`
 
 ## Suggested reading (existing docs)
 

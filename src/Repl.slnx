@@ -7,6 +7,7 @@
 	<Project Path="Repl.Telnet/Repl.Telnet.csproj" />
 	<Project Path="Repl.Testing/Repl.Testing.csproj" />
 	<Project Path="Repl.Spectre/Repl.Spectre.csproj" />
+	<Project Path="Repl.TerminalGui/Repl.TerminalGui.csproj" />
 	<Project Path="Repl.ShellCompletionTestHost/Repl.ShellCompletionTestHost.csproj" />
 	<Project Path="Repl.Tests/Repl.Tests.csproj" />
 	<Project Path="Repl.IntegrationTests/Repl.IntegrationTests.csproj" />
@@ -20,5 +21,6 @@
 		<Project Path="../samples/05-hosting-remote/HostingRemoteSample.csproj" />
 		<Project Path="../samples/06-testing/TestingSample.csproj" />
 		<Project Path="../samples/07-spectre/SpectreOpsSample.csproj" />
+		<Project Path="../samples/08-terminal-gui/TerminalGuiSample.csproj" />
 	</Folder>
 </Solution>
