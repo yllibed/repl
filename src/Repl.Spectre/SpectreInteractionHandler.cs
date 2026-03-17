@@ -52,18 +52,20 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 	{
 		var console = SessionAnsiConsole.Create();
 		var choices = StripMnemonics(r.Choices);
+
+		// Reorder so the default item appears first (Spectre highlights first item).
+		if (r.DefaultIndex is { } idx && idx > 0 && idx < choices.Count)
+		{
+			(choices[0], choices[idx]) = (choices[idx], choices[0]);
+		}
+
 		var prompt = new SelectionPrompt<string>()
 			.Title(r.Prompt)
 			.AddChoices(choices);
 
-		if (r.DefaultIndex is { } idx && idx >= 0 && idx < choices.Count)
+		if (r.DefaultIndex is >= 0)
 		{
 			prompt.HighlightStyle(new Style(Color.Blue));
-			// Reorder so the default item appears first (Spectre highlights first item).
-			if (idx > 0)
-			{
-				(choices[0], choices[idx]) = (choices[idx], choices[0]);
-			}
 		}
 
 		var selected = await Task.Run(() => console.Prompt(prompt), ct).ConfigureAwait(false);
