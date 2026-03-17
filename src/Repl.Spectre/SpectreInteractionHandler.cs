@@ -84,12 +84,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 
 		if (r.DefaultIndices is { } defaults)
 		{
-			foreach (var defaultIdx in defaults)
+			foreach (var defaultIdx in defaults.Where(i => i >= 0 && i < choices.Count))
 			{
-				if (defaultIdx >= 0 && defaultIdx < choices.Count)
-				{
-					prompt.Select(choices[defaultIdx]);
-				}
+				prompt.Select(choices[defaultIdx]);
 			}
 		}
 
@@ -172,7 +169,7 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 	/// <summary>
 	/// Strips mnemonic markers from choice labels for Spectre display.
 	/// </summary>
-	private static List<string> StripMnemonics(IReadOnlyList<string> choices)
+	internal static List<string> StripMnemonics(IReadOnlyList<string> choices)
 	{
 		var result = new List<string>(choices.Count);
 		for (var i = 0; i < choices.Count; i++)
@@ -187,8 +184,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 	/// <summary>
 	/// Maps a selected display string back to the original choice index
 	/// by stripping mnemonics from original choices and matching.
+	/// Returns <c>-1</c> when the selected value does not match any choice.
 	/// </summary>
-	private static int MapBackToOriginalIndex(string selected, IReadOnlyList<string> originalChoices)
+	internal static int MapBackToOriginalIndex(string selected, IReadOnlyList<string> originalChoices)
 	{
 		for (var i = 0; i < originalChoices.Count; i++)
 		{
@@ -199,6 +197,6 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 			}
 		}
 
-		return 0;
+		return -1;
 	}
 }

@@ -228,7 +228,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 
 	private static string RenderToString(IRenderable renderable)
 	{
-		var writer = new StringWriter();
+		using var writer = new StringWriter();
 
 		var width = 120;
 		if (ReplSessionIO.WindowSize is { } size && size.Width > 0)
@@ -245,7 +245,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 					width = consoleWidth;
 				}
 			}
-			catch
+			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
 				// Width may be unavailable in redirected output.
 			}

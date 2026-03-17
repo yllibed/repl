@@ -11,6 +11,7 @@
 	<Project Path="Repl.Tests/Repl.Tests.csproj" />
 	<Project Path="Repl.IntegrationTests/Repl.IntegrationTests.csproj" />
 	<Project Path="Repl.ProtocolTests/Repl.ProtocolTests.csproj" />
+	<Project Path="Repl.SpectreTests/Repl.SpectreTests.csproj" />
 	<Folder Name="/Samples/">
 		<Project Path="../samples/01-core-basics/CoreBasicsSample.csproj" />
 		<Project Path="../samples/02-scoped-contacts/ScopedContactsSample.csproj" />

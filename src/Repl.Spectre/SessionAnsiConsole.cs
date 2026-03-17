@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text;
 
 namespace Repl.Spectre;
@@ -77,7 +78,7 @@ internal static class SessionAnsiConsole
 			{
 				return Console.WindowWidth;
 			}
-			catch
+			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
 				return 120;
 			}
@@ -94,7 +95,7 @@ internal static class SessionAnsiConsole
 			{
 				return Console.WindowHeight;
 			}
-			catch
+			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
 				return 24;
 			}
