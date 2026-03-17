@@ -13,6 +13,13 @@ internal static class SessionAnsiConsole
 	/// Gets or sets the console options shared by all factory methods.
 	/// Set by <see cref="SpectreReplExtensions.UseSpectreConsole"/> during app configuration.
 	/// </summary>
+	/// <remarks>
+	/// This is process-wide shared state. When multiple <see cref="ReplApp"/> instances
+	/// coexist in the same process with different Spectre configurations, the last
+	/// <see cref="SpectreReplExtensions.UseSpectreConsole"/> call wins. If per-app
+	/// isolation is needed, this should be refactored to flow through the service
+	/// container or <see cref="ReplSessionIO"/> instead.
+	/// </remarks>
 	internal static SpectreConsoleOptions Options { get; set; } = new();
 
 	/// <summary>
