@@ -143,7 +143,7 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		var console = SessionAnsiConsole.Create();
 		var prompt = new TextPrompt<string>(r.Prompt);
 
-		var effectiveMask = r.Options?.Mask ?? '*';
+		var effectiveMask = r.Options is { } options ? options.Mask : '*';
 		prompt.Secret(effectiveMask);
 
 		if (r.Options?.AllowEmpty == true)
