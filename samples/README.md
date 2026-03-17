@@ -16,8 +16,10 @@ If you’re new, start with **01**, then follow the sequence.
    Prompts, progress, timeouts, cancellation, and deterministic automation via `--answer:*`.
 5. [05 — Hosting Remote](05-hosting-remote/)  
    Session hosting over transports (raw WebSocket, Telnet-over-WebSocket, SignalR), shared state, session visibility, terminal metadata.
-6. [06 — Testing](06-testing/)  
+6. [06 — Testing](06-testing/)
    `Repl.Testing` harness: multi-step + multi-session, typed results, interaction/timeline events, metadata snapshots.
+7. [07 — Spectre](07-spectre/)
+   `Repl.Spectre` integration: FigletText, Table, Panel, Tree, BarChart, BreakdownChart, Calendar, JsonText, TextPath, Grid, Columns, Rule, Status, Progress, and all Spectre-powered prompts.
 
 ## Run
 
@@ -34,6 +36,7 @@ Replace the project path with the one you want:
 - `samples/04-interactive-ops/InteractiveOpsSample.csproj`
 - `samples/05-hosting-remote/HostingRemoteSample.csproj`
 - `samples/06-testing/TestingSample.csproj`
+- `samples/07-spectre/SpectreOpsSample.csproj`
 
 ## Suggested reading (existing docs)
 

@@ -429,3 +429,31 @@ var app = ReplApp.Create(services =>
 ```
 
 The framework injects `ITerminalInfo` automatically — no manual registration required.
+
+---
+
+## Spectre.Console integration
+
+The `Repl.Spectre` package provides a production-ready `IReplInteractionHandler` that renders
+all prompts as rich Spectre.Console widgets, plus injectable `IAnsiConsole` for custom renderables.
+
+```csharp
+var app = ReplApp.Create(services =>
+{
+    services.AddSpectreConsole();
+})
+.UseSpectreConsole();
+```
+
+With this setup:
+
+- `AskChoiceAsync` renders as a Spectre `SelectionPrompt` (arrow-key navigation)
+- `AskMultiChoiceAsync` renders as a `MultiSelectionPrompt` (checkbox-style)
+- `AskConfirmationAsync` renders as a `ConfirmationPrompt`
+- `AskTextAsync` renders as a `TextPrompt<string>`
+- `AskSecretAsync` renders as a `TextPrompt<string>.Secret()`
+- Collections returned from handlers render as bordered Spectre tables
+
+Command handlers remain unchanged — the upgrade from built-in prompts to Spectre prompts is transparent.
+
+See also: [`Repl.Spectre` README](../src/Repl.Spectre/README.md) | [sample 07-spectre](../samples/07-spectre/)

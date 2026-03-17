@@ -94,6 +94,7 @@ Globex
 | [`Repl.Protocol`](https://www.nuget.org/packages/Repl.Protocol) | Machine-readable contracts (help, errors, tool schemas) |
 | [`Repl.WebSocket`](https://www.nuget.org/packages/Repl.WebSocket) | Session hosting over WebSocket |
 | [`Repl.Telnet`](https://www.nuget.org/packages/Repl.Telnet) | Telnet framing, negotiation, session adapters |
+| [`Repl.Spectre`](https://www.nuget.org/packages/Repl.Spectre) | Spectre.Console integration: rich prompts, `IAnsiConsole`, table rendering |
 | [`Repl.Testing`](https://www.nuget.org/packages/Repl.Testing) | In-memory multi-session test harness |
 
 ## Samples
@@ -106,6 +107,7 @@ Progressive learning path — start with 01:
 4. **[Interactive Ops](samples/04-interactive-ops/)** — prompts, progress, timeouts, cancellation
 5. **[Hosting Remote](samples/05-hosting-remote/)** — WebSocket / Telnet session hosting
 6. **[Testing](samples/06-testing/)** — multi-session typed assertions
+7. **[Spectre](samples/07-spectre/)** — Spectre.Console renderables, visualizations, rich prompts
 
 ## Documentation
 
@@ -118,6 +120,7 @@ Progressive learning path — start with 01:
 | Testing toolkit | [`docs/testing-toolkit.md`](docs/testing-toolkit.md) |
 | Shell completion | [`docs/shell-completion.md`](docs/shell-completion.md) |
 | Comparison & migration | [`docs/comparison.md`](docs/comparison.md) |
+| Interaction channel | [`docs/interaction.md`](docs/interaction.md) |
 | Conditional module presence | [`docs/module-presence.md`](docs/module-presence.md) |
 | Publishing & deployment | [`docs/publishing.md`](docs/publishing.md) |
 | Interactive docs & AI Q\&A | [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl) |

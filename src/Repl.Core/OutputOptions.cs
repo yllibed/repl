@@ -62,6 +62,13 @@ public sealed class OutputOptions
 	public bool BannerEnabled { get; set; } = true;
 
 	/// <summary>
+	/// Gets the set of output format names eligible for banner rendering.
+	/// Only formats in this set will display banners in interactive mode.
+	/// Add custom format names (e.g. "spectre") to enable banners for those formats.
+	/// </summary>
+	public ISet<string> BannerFormats { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "human" };
+
+	/// <summary>
 	/// Gets or sets a value indicating whether structured output (for example JSON)
 	/// should be ANSI colorized during interactive sessions.
 	/// </summary>

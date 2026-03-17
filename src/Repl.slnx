@@ -6,10 +6,12 @@
 	<Project Path="Repl.WebSocket/Repl.WebSocket.csproj" />
 	<Project Path="Repl.Telnet/Repl.Telnet.csproj" />
 	<Project Path="Repl.Testing/Repl.Testing.csproj" />
+	<Project Path="Repl.Spectre/Repl.Spectre.csproj" />
 	<Project Path="Repl.ShellCompletionTestHost/Repl.ShellCompletionTestHost.csproj" />
 	<Project Path="Repl.Tests/Repl.Tests.csproj" />
 	<Project Path="Repl.IntegrationTests/Repl.IntegrationTests.csproj" />
 	<Project Path="Repl.ProtocolTests/Repl.ProtocolTests.csproj" />
+	<Project Path="Repl.SpectreTests/Repl.SpectreTests.csproj" />
 	<Folder Name="/Samples/">
 		<Project Path="../samples/01-core-basics/CoreBasicsSample.csproj" />
 		<Project Path="../samples/02-scoped-contacts/ScopedContactsSample.csproj" />
@@ -17,5 +19,6 @@
 		<Project Path="../samples/04-interactive-ops/InteractiveOpsSample.csproj" />
 		<Project Path="../samples/05-hosting-remote/HostingRemoteSample.csproj" />
 		<Project Path="../samples/06-testing/TestingSample.csproj" />
+		<Project Path="../samples/07-spectre/SpectreOpsSample.csproj" />
 	</Folder>
 </Solution>
