@@ -14,6 +14,11 @@ public sealed class ReplApp : IReplApp
 	private readonly CoreReplApp _core;
 	private readonly IServiceCollection _services;
 
+	// Lazily built provider shared between MapModule<T>() and Run().
+	// Ensures modules resolved via DI share the same service instances
+	// as handler parameters resolved at runtime.
+	private ServiceProvider? _sharedProvider;
+
 	private ReplApp(IServiceCollection services)
 	{
 		_services = services;
@@ -103,7 +108,7 @@ public sealed class ReplApp : IReplApp
 		ArgumentNullException.ThrowIfNull(configure);
 		return _core.Context(
 			segment,
-			scoped => configure(new ScopedReplApp(scoped, _services)),
+			scoped => configure(new ScopedReplApp(scoped, this)),
 			validation);
 	}
 
@@ -123,7 +128,7 @@ public sealed class ReplApp : IReplApp
 	public ReplApp MapModule<TModule>()
 		where TModule : class, IReplModule
 	{
-		var module = ResolveModuleFromServices<TModule>(_services);
+		var module = ResolveModuleFromServices<TModule>();
 		return MapModule(module);
 	}
 
@@ -162,7 +167,7 @@ public sealed class ReplApp : IReplApp
 	public int Run(string[] args, ReplRunOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(args);
-		using var provider = _services.BuildServiceProvider();
+		var provider = EnsureSharedProvider();
 #pragma warning disable VSTHRD002
 		return RunAsync(args, provider, options).AsTask().GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002
@@ -177,7 +182,7 @@ public sealed class ReplApp : IReplApp
 		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(args);
-		using var provider = _services.BuildServiceProvider();
+		var provider = EnsureSharedProvider();
 		return await RunAsync(args, provider, options, cancellationToken).ConfigureAwait(false);
 	}
 
@@ -433,10 +438,20 @@ public sealed class ReplApp : IReplApp
 
 	IReplMap IReplMap.WithBanner(string text) => WithBanner(text);
 
-	private static TModule ResolveModuleFromServices<TModule>(IServiceCollection services)
+	/// <summary>
+	/// Returns the shared provider, building it on first access.
+	/// This provider is reused for both module resolution and runtime execution,
+	/// ensuring DI-resolved modules share the same service instances as handlers.
+	/// </summary>
+	private ServiceProvider EnsureSharedProvider() =>
+		_sharedProvider ??= _services.BuildServiceProvider();
+
+	private TModule ResolveModuleFromServices<TModule>()
 		where TModule : class, IReplModule
 	{
-		using var provider = services.BuildServiceProvider();
+		// Resolve from the shared provider — its lifetime spans the entire app,
+		// so disposable dependencies captured by the module stay alive.
+		var provider = EnsureSharedProvider();
 		return provider.GetService<TModule>()
 			?? throw new InvalidOperationException(
 				$"Unable to resolve module '{typeof(TModule).FullName}'. Register it in services or call MapModule(IReplModule).");
@@ -659,10 +674,9 @@ public sealed class ReplApp : IReplApp
 			_ => new ConsoleTerminalInfo(core.OptionsSnapshot.Output));
 	}
 
-	private sealed class ScopedReplApp(ICoreReplApp map, IServiceCollection services) : IReplApp
+	private sealed class ScopedReplApp(ICoreReplApp map, ReplApp root) : IReplApp
 	{
 		private readonly ICoreReplApp _map = map;
-		private readonly IServiceCollection _services = services;
 
 		public CommandBuilder Map(string route, Delegate handler) => _map.Map(route, handler);
 
@@ -671,14 +685,14 @@ public sealed class ReplApp : IReplApp
 			ArgumentNullException.ThrowIfNull(configure);
 			return _map.Context(
 				segment,
-				scoped => configure(new ScopedReplApp(scoped, _services)),
+				scoped => configure(new ScopedReplApp(scoped, root)),
 				validation);
 		}
 
 		public IReplApp MapModule<TModule>()
 			where TModule : class, IReplModule
 		{
-			return MapModule(ResolveModuleFromServices<TModule>(_services));
+			return MapModule(root.ResolveModuleFromServices<TModule>());
 		}
 
 		public IReplApp MapModule(IReplModule module)

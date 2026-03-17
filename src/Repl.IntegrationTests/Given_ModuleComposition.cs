@@ -143,6 +143,53 @@ public sealed class Given_ModuleComposition
 		}
 	}
 
+	[TestMethod]
+	[Description("Regression guard: modules resolved via MapModule<T>() must keep their DI dependencies alive across interactive sessions — a disposed IServiceProvider must not orphan injected services.")]
+	public void When_ModuleDependsOnDisposableService_Then_ServiceSurvivesAcrossCommands()
+	{
+		var sut = ReplApp.Create(services =>
+		{
+			services.AddSingleton<DisposableCounter>();
+			services.AddSingleton<ModuleWithDisposableDependency>();
+		});
+		sut.MapModule<ModuleWithDisposableDependency>();
+
+		// Run the command twice — the second invocation would fail if the
+		// provider was disposed after module resolution (the original bug).
+		var first = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["counter", "increment", "--no-logo"]));
+		var second = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["counter", "increment", "--no-logo"]));
+
+		first.ExitCode.Should().Be(0);
+		second.ExitCode.Should().Be(0);
+
+		// Singleton counter should accumulate across runs (same provider)
+		first.Text.Should().Contain("1");
+		second.Text.Should().Contain("2");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: modules resolved via MapModule<T>() inside a nested context must also keep their DI dependencies alive.")]
+	public void When_ScopedModuleDependsOnDisposableService_Then_ServiceSurvives()
+	{
+		var sut = ReplApp.Create(services =>
+		{
+			services.AddSingleton<DisposableCounter>();
+			services.AddSingleton<ModuleWithDisposableDependency>();
+		});
+		sut.Context("scope {id}", scope =>
+		{
+			scope.MapModule<ModuleWithDisposableDependency>();
+		});
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["scope", "test", "counter", "increment", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("1");
+	}
+
 	private sealed class ScopedOpsModule : IReplModule
 	{
 		public void Map(IReplMap map)
@@ -150,6 +197,40 @@ public sealed class Given_ModuleComposition
 			map.Context("ops", ops =>
 			{
 				ops.Map("ping", () => "scoped-pong");
+			});
+		}
+	}
+
+	/// <summary>
+	/// A disposable service that tracks invocation count.
+	/// If the DI provider is prematurely disposed, accessing this throws ObjectDisposedException.
+	/// </summary>
+	private sealed class DisposableCounter : IDisposable
+	{
+		private int _count;
+		private bool _disposed;
+
+		public int Increment()
+		{
+			ObjectDisposedException.ThrowIf(_disposed, this);
+			return Interlocked.Increment(ref _count);
+		}
+
+		public void Dispose() => _disposed = true;
+	}
+
+	/// <summary>
+	/// A module that captures a disposable dependency via constructor injection.
+	/// This is the pattern that triggered the original bug: the module was resolved
+	/// from a temporary provider, and the dependency was disposed immediately after.
+	/// </summary>
+	private sealed class ModuleWithDisposableDependency(DisposableCounter counter) : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+			map.Context("counter", ctx =>
+			{
+				ctx.Map("increment", () => counter.Increment().ToString(System.Globalization.CultureInfo.InvariantCulture));
 			});
 		}
 	}
