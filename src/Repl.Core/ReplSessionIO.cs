@@ -226,6 +226,7 @@ internal static class ReplSessionIO
 		var previousInput = s_input.Value;
 		var previousKeyReader = s_keyReader.Value;
 		var previousIsHostedSession = s_isHostedSession.Value;
+		var previousIsProgrammatic = s_isProgrammatic.Value;
 		var previousSessionId = s_sessionId.Value;
 
 		var resolvedSessionId = string.IsNullOrWhiteSpace(sessionId)
@@ -269,6 +270,7 @@ internal static class ReplSessionIO
 			previousInput,
 			previousKeyReader,
 			previousIsHostedSession,
+			previousIsProgrammatic,
 			previousSessionId,
 			removeSessionOnDispose: string.IsNullOrWhiteSpace(sessionId),
 			sessionIdToRemove: resolvedSessionId);
@@ -343,6 +345,7 @@ internal static class ReplSessionIO
 		TextReader? previousInput,
 		IReplKeyReader? previousKeyReader,
 		bool previousIsHostedSession,
+		bool previousIsProgrammatic,
 		string? previousSessionId,
 		bool removeSessionOnDispose,
 		string sessionIdToRemove) : IDisposable
@@ -355,6 +358,7 @@ internal static class ReplSessionIO
 			s_input.Value = previousInput;
 			s_keyReader.Value = previousKeyReader;
 			s_isHostedSession.Value = previousIsHostedSession;
+			s_isProgrammatic.Value = previousIsProgrammatic;
 			s_sessionId.Value = previousSessionId;
 
 			if (removeSessionOnDispose)

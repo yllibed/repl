@@ -31,6 +31,9 @@ internal sealed class McpServerHandler
 		Justification = "MCP server handler runs in a context where all types are preserved.")]
 	public async Task RunAsync(IReplIoContext io, CancellationToken ct)
 	{
+		// Build the doc model with Programmatic channel so module presence
+		// predicates see the same channel as tool dispatch.
+		ReplSessionIO.IsProgrammatic = true;
 		var model = _app.CreateDocumentationModel();
 		var adapter = new McpToolAdapter(_app, _options, _services);
 		var separator = McpToolNameFlattener.ResolveSeparator(_options.ToolNamingSeparator);
@@ -372,10 +375,20 @@ internal sealed class McpServerHandler
 
 		_routingChangedHandler = (_, _) =>
 		{
-			var newModel = _app.CreateDocumentationModel();
-			RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator));
-			RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator));
-			RefreshCollection(promptCollection, CollectPrompts(newModel, adapter, separator));
+			// Resolve doc model with Programmatic channel to match tool dispatch context.
+			var previousProgrammatic = ReplSessionIO.IsProgrammatic;
+			ReplSessionIO.IsProgrammatic = true;
+			try
+			{
+				var newModel = _app.CreateDocumentationModel();
+				RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator));
+				RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator));
+				RefreshCollection(promptCollection, CollectPrompts(newModel, adapter, separator));
+			}
+			finally
+			{
+				ReplSessionIO.IsProgrammatic = previousProgrammatic;
+			}
 		};
 
 		coreApp.RoutingInvalidated += _routingChangedHandler;
