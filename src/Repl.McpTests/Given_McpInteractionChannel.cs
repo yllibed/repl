@@ -1,3 +1,4 @@
+using Repl.Interaction;
 using Repl.Mcp;
 
 namespace Repl.McpTests;
@@ -134,6 +135,104 @@ public sealed class Given_McpInteractionChannel
 		var result = await channel.AskMultiChoiceAsync("tags", "Select tags", ["red", "green", "blue"]);
 
 		result.Should().BeEquivalentTo([0, 2]);
+	}
+
+	// ── ParseBool error paths ─────────────────────────────────────────
+
+	[TestMethod]
+	[Description("Invalid boolean value throws McpInteractionException.")]
+	public async Task When_PrefillIsInvalidBool_Then_Throws()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["confirm"] = "maybe" });
+
+		var act = () => channel.AskConfirmationAsync("confirm", "Proceed?").AsTask();
+
+		await act.Should().ThrowAsync<McpInteractionException>();
+	}
+
+	[TestMethod]
+	[Description("'no' is parsed as false.")]
+	public async Task When_PrefillIsNo_Then_ReturnsFalse()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["confirm"] = "no" });
+
+		var result = await channel.AskConfirmationAsync("confirm", "Proceed?");
+
+		result.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("'n' is parsed as false.")]
+	public async Task When_PrefillIsN_Then_ReturnsFalse()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["confirm"] = "n" });
+
+		var result = await channel.AskConfirmationAsync("confirm", "Proceed?");
+
+		result.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("'0' is parsed as false.")]
+	public async Task When_PrefillIsZero_Then_ReturnsFalse()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["confirm"] = "0" });
+
+		var result = await channel.AskConfirmationAsync("confirm", "Proceed?");
+
+		result.Should().BeFalse();
+	}
+
+	// ── ResolveChoiceIndex prefix matching ────────────────────────────
+
+	[TestMethod]
+	[Description("Unambiguous prefix resolves to the matching choice.")]
+	public async Task When_PrefillIsUnambiguousPrefix_Then_ResolvesChoice()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["color"] = "gre" });
+
+		var result = await channel.AskChoiceAsync("color", "Pick a color", ["red", "green", "blue"]);
+
+		result.Should().Be(1);
+	}
+
+	[TestMethod]
+	[Description("Ambiguous prefix throws McpInteractionException.")]
+	public async Task When_PrefillIsAmbiguousPrefix_Then_Throws()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["color"] = "b" });
+
+		var act = () => channel.AskChoiceAsync("color", "Pick a color", ["blue", "black"]).AsTask();
+
+		await act.Should().ThrowAsync<McpInteractionException>();
+	}
+
+	// ── ParseMultiChoice min/max validation ───────────────────────────
+
+	[TestMethod]
+	[Description("Too few selections throws McpInteractionException.")]
+	public async Task When_MultiChoiceTooFewSelections_Then_Throws()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["tags"] = "red" });
+
+		var act = () => channel.AskMultiChoiceAsync(
+			"tags", "Select tags", ["red", "green", "blue"],
+			options: new AskMultiChoiceOptions(MinSelections: 2)).AsTask();
+
+		await act.Should().ThrowAsync<McpInteractionException>();
+	}
+
+	[TestMethod]
+	[Description("Too many selections throws McpInteractionException.")]
+	public async Task When_MultiChoiceTooManySelections_Then_Throws()
+	{
+		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["tags"] = "red,green" });
+
+		var act = () => channel.AskMultiChoiceAsync(
+			"tags", "Select tags", ["red", "green", "blue"],
+			options: new AskMultiChoiceOptions(MaxSelections: 1)).AsTask();
+
+		await act.Should().ThrowAsync<McpInteractionException>();
 	}
 
 	// ── ClearScreenAsync ───────────────────────────────────────────────

@@ -40,9 +40,10 @@ internal sealed class McpServerHandler
 		var separator = McpToolNameFlattener.ResolveSeparator(_options.ToolNamingSeparator);
 		var serverOptions = BuildServerOptions(model, adapter, separator);
 
-		_ = io; // AsProtocolPassthrough reserves stdin/stdout for the transport.
 		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
-		var transport = new StdioServerTransport(serverName);
+		var transport = _options.TransportFactory is { } factory
+			? factory(serverName, io)
+			: new StdioServerTransport(serverName);
 		try
 		{
 			var server = McpServer.Create(transport, serverOptions, serviceProvider: _services);

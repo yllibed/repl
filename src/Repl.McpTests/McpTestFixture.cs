@@ -60,10 +60,13 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var serverToClient = new Pipe();
 		var cts = new CancellationTokenSource();
 
-		var serverTransport = new StreamServerTransport(
-			clientToServer.Reader.AsStream(),
-			serverToClient.Writer.AsStream(),
-			"test-server");
+		var serverName = serverOptions.ServerInfo?.Name ?? "test-server";
+		var inputStream = clientToServer.Reader.AsStream();
+		var outputStream = serverToClient.Writer.AsStream();
+		var ioContext = new PipeIoContext(inputStream, outputStream);
+		ITransport serverTransport = options.TransportFactory is { } factory
+			? factory(serverName, ioContext)
+			: new StreamServerTransport(inputStream, outputStream, serverName);
 
 		var server = McpServer.Create(serverTransport, serverOptions);
 		var serverTask = server.RunAsync(cts.Token);
@@ -104,5 +107,16 @@ internal sealed class McpTestFixture : IAsyncDisposable
 	{
 		public static readonly EmptyServiceProvider Instance = new();
 		public object? GetService(Type serviceType) => null;
+	}
+
+	internal sealed class PipeIoContext(Stream inputStream, Stream outputStream) : IReplIoContext
+	{
+		public Stream InputStream => inputStream;
+		public Stream OutputStream => outputStream;
+		public TextReader Input => new StreamReader(inputStream);
+		public TextWriter Output => new StreamWriter(outputStream);
+		public TextWriter Error => TextWriter.Null;
+		public bool IsHostedSession => false;
+		public string? SessionId => null;
 	}
 }

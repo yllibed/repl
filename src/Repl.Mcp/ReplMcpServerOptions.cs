@@ -1,3 +1,4 @@
+using ModelContextProtocol.Protocol;
 using Repl.Documentation;
 
 namespace Repl;
@@ -57,6 +58,13 @@ public sealed class ReplMcpServerOptions
 	/// Default is <c>false</c> — opt in when your target agents lack resource support.
 	/// </summary>
 	public bool ResourceFallbackToTools { get; set; }
+
+	/// <summary>
+	/// Optional factory for creating custom MCP transports (e.g. WebSocket, SSE).
+	/// When <c>null</c> (default), the server uses <c>StdioServerTransport</c>.
+	/// The factory receives the server name and the I/O context for stream access.
+	/// </summary>
+	public Func<string, IReplIoContext, ITransport>? TransportFactory { get; set; }
 
 	/// <summary>
 	/// When <c>true</c>, prompts are also exposed as tools.
