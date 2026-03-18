@@ -477,7 +477,8 @@ jobs:
           }
 
           $nupkgCount = @(Get-ChildItem packages/*.nupkg).Count
-          $succeeded = $nupkgCount - $failed.Count
+          $failedNupkgCount = @($failed | Where-Object { $_ -like '*.nupkg' }).Count
+          $succeeded = $nupkgCount - $failedNupkgCount
           if ($failed.Count -gt 0) {
             Write-Warning "The following packages failed to publish: $($failed -join ', ')"
             Write-Warning "This may be expected for new packages awaiting NuGet validation."

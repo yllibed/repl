@@ -76,6 +76,7 @@ internal sealed partial class McpToolAdapter
 			sessionId: $"mcp-{Guid.NewGuid():N}",
 			isHostedSession: true))
 		{
+			ReplSessionIO.IsProgrammatic = true;
 			var exitCode = await coreApp.RunWithServicesAsync(
 				tokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
 

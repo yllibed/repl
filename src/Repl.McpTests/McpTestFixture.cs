@@ -12,15 +12,23 @@ namespace Repl.McpTests;
 /// </summary>
 internal sealed class McpTestFixture : IAsyncDisposable
 {
-	private readonly CancellationTokenSource _cts = new();
-	private readonly Pipe _clientToServer = new();
-	private readonly Pipe _serverToClient = new();
+	private readonly CancellationTokenSource _cts;
+	private readonly Pipe _clientToServer;
+	private readonly Pipe _serverToClient;
 	private readonly Task _serverTask;
 
-	private McpTestFixture(McpClient client, Task serverTask)
+	private McpTestFixture(
+		McpClient client,
+		Task serverTask,
+		CancellationTokenSource cts,
+		Pipe clientToServer,
+		Pipe serverToClient)
 	{
 		Client = client;
 		_serverTask = serverTask;
+		_cts = cts;
+		_clientToServer = clientToServer;
+		_serverToClient = serverToClient;
 	}
 
 	public McpClient Client { get; }
@@ -35,21 +43,24 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var adapter = CreateToolAdapter(app, model);
 		var serverOptions = BuildServerOptions(model, adapter);
 
-		var fixture = new McpTestFixture(null!, Task.CompletedTask);
+		var clientToServer = new Pipe();
+		var serverToClient = new Pipe();
+		var cts = new CancellationTokenSource();
+
 		var serverTransport = new StreamServerTransport(
-			fixture._clientToServer.Reader.AsStream(),
-			fixture._serverToClient.Writer.AsStream(),
+			clientToServer.Reader.AsStream(),
+			serverToClient.Writer.AsStream(),
 			"test-server");
 
 		var server = McpServer.Create(serverTransport, serverOptions);
-		var serverTask = server.RunAsync(fixture._cts.Token);
+		var serverTask = server.RunAsync(cts.Token);
 
 		var clientTransport = new StreamClientTransport(
-			fixture._clientToServer.Writer.AsStream(),
-			fixture._serverToClient.Reader.AsStream());
+			clientToServer.Writer.AsStream(),
+			serverToClient.Reader.AsStream());
 		var client = await McpClient.CreateAsync(clientTransport).ConfigureAwait(false);
 
-		return new McpTestFixture(client, serverTask);
+		return new McpTestFixture(client, serverTask, cts, clientToServer, serverToClient);
 	}
 
 	public async ValueTask DisposeAsync()
@@ -66,9 +77,11 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		}
 		catch (OperationCanceledException)
 		{
+			// Expected: server RunAsync cancelled during shutdown.
 		}
 		catch (TimeoutException)
 		{
+			// Server did not shut down within timeout — transport will be collected.
 		}
 
 		_cts.Dispose();
@@ -79,7 +92,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var adapter = new McpToolAdapter(app.Core, new ReplMcpServerOptions(), EmptyServiceProvider.Instance);
 		foreach (var command in model.Commands)
 		{
-			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
+			if (command.IsHidden || command.IsPrompt || command.Annotations?.AutomationHidden == true)
 			{
 				continue;
 			}
@@ -98,7 +111,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var tools = new McpServerPrimitiveCollection<McpServerTool>();
 		foreach (var command in model.Commands)
 		{
-			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
+			if (command.IsHidden || command.IsPrompt || command.Annotations?.AutomationHidden == true)
 			{
 				continue;
 			}

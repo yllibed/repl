@@ -666,6 +666,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	private ReplRuntimeChannel ResolveCurrentRuntimeChannel()
 	{
+		if (ReplSessionIO.IsProgrammatic)
+		{
+			return ReplRuntimeChannel.Programmatic;
+		}
+
 		if (ReplSessionIO.IsHostedSession)
 		{
 			return ReplRuntimeChannel.Session;

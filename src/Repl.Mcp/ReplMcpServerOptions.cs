@@ -48,6 +48,7 @@ public sealed class ReplMcpServerOptions
 	/// When <c>true</c> (default), resources are also exposed as read-only tools when the client
 	/// does not advertise resource support in its capabilities during the MCP <c>initialize</c> handshake.
 	/// </summary>
+	/// <remarks>Reserved for future implementation. The option is accepted but not yet wired.</remarks>
 	public bool ResourceFallbackToTools { get; set; } = true;
 
 	private readonly List<McpPromptRegistration> _prompts = [];

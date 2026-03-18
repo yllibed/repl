@@ -27,6 +27,7 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
 	private static readonly AsyncLocal<bool> s_isHostedSession = new();
+	private static readonly AsyncLocal<bool> s_isProgrammatic = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
 
@@ -63,6 +64,15 @@ internal static class ReplSessionIO
 	/// Gets a value indicating whether execution is currently running in a real hosted transport session.
 	/// </summary>
 	public static bool IsHostedSession => s_isHostedSession.Value;
+
+	/// <summary>
+	/// Gets a value indicating whether execution is driven by a programmatic agent or automation.
+	/// </summary>
+	internal static bool IsProgrammatic
+	{
+		get => s_isProgrammatic.Value;
+		set => s_isProgrammatic.Value = value;
+	}
 
 	/// <summary>
 	/// Gets the current hosted session identifier, when available.

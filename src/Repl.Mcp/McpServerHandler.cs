@@ -285,6 +285,7 @@ internal sealed class McpServerHandler
 
 	private bool IsToolCandidate(ReplDocCommand command) =>
 		!command.IsHidden
+		&& !command.IsPrompt
 		&& command.Annotations?.AutomationHidden != true
 		&& (_options.CommandFilter is not { } filter || filter(command));
 

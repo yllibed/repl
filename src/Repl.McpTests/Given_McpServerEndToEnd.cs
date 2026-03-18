@@ -67,8 +67,9 @@ public sealed class Given_McpServerEndToEnd
 			"greet",
 			new Dictionary<string, object?>(StringComparer.Ordinal) { ["name"] = "Alice" });
 
-		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
-		text.Should().Contain("Hello, Alice!");
+		var textBlock = result.Content.OfType<TextContentBlock>().FirstOrDefault();
+		textBlock.Should().NotBeNull("the tool call should produce text content");
+		textBlock!.Text.Should().Contain("Hello, Alice!");
 	}
 
 	[TestMethod]
@@ -106,8 +107,9 @@ public sealed class Given_McpServerEndToEnd
 			"math_add",
 			new Dictionary<string, object?>(StringComparer.Ordinal) { ["a"] = 3, ["b"] = 7 });
 
-		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
-		text.Should().Contain("10");
+		var textBlock = result.Content.OfType<TextContentBlock>().FirstOrDefault();
+		textBlock.Should().NotBeNull("the tool call should produce text content");
+		textBlock!.Text.Should().Contain("10");
 	}
 
 	[TestMethod]
@@ -151,5 +153,22 @@ public sealed class Given_McpServerEndToEnd
 				.ToList();
 			requiredNames.Should().NotContain("limit");
 		}
+	}
+
+	[TestMethod]
+	[Description("AsPrompt() commands are not exposed as tools.")]
+	public async Task When_CommandIsPrompt_Then_NotExposedAsTool()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("greet", () => "hello").ReadOnly();
+			app.Map("troubleshoot {symptom}", (string symptom) => $"Diagnose: {symptom}")
+				.AsPrompt();
+		});
+
+		var tools = await fixture.Client.ListToolsAsync();
+
+		tools.Should().ContainSingle(t => string.Equals(t.Name, "greet", StringComparison.Ordinal));
+		tools.Should().NotContain(t => string.Equals(t.Name, "troubleshoot", StringComparison.Ordinal));
 	}
 }

@@ -83,4 +83,37 @@ public sealed class Given_McpIntegration
 		cmd.Annotations!.LongRunning.Should().BeTrue();
 		cmd.Arguments.Should().ContainSingle(a => string.Equals(a.Name, "env", StringComparison.Ordinal));
 	}
+
+	[TestMethod]
+	[Description("Modules excluded from Programmatic channel are not visible as MCP tools.")]
+	public void When_ModuleExcludedFromProgrammatic_Then_NotInToolCandidates()
+	{
+		var app = ReplApp.Create();
+		app.Map("public-cmd", () => "ok").ReadOnly();
+		app.MapModule(
+			new AdminModule(),
+			ctx => ctx.Channel != ReplRuntimeChannel.Programmatic);
+		app.UseMcpServer();
+
+		// Simulate programmatic channel by setting the flag.
+		ReplSessionIO.IsProgrammatic = true;
+		try
+		{
+			var model = app.Core.CreateDocumentationModel();
+			model.Commands.Should().NotContain(c => string.Equals(c.Path, "admin reset", StringComparison.Ordinal));
+			model.Commands.Should().Contain(c => string.Equals(c.Path, "public-cmd", StringComparison.Ordinal));
+		}
+		finally
+		{
+			ReplSessionIO.IsProgrammatic = false;
+		}
+	}
+
+	private sealed class AdminModule : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+			map.Map("admin reset", () => "reset done");
+		}
+	}
 }
