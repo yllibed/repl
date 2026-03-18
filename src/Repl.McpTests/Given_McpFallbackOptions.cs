@@ -125,8 +125,86 @@ public sealed class Given_McpFallbackOptions
 			new ReplMcpServerOptions { ResourceFallbackToTools = true, PromptFallbackToTools = true });
 
 		tools.Should().BeEmpty();
-		// Resources are generated from the doc model, which includes AutomationHidden.
-		// But they won't be callable since the tool adapter won't route them.
+		// AutomationHidden commands are excluded from all MCP surfaces.
+		prompts.Should().BeEmpty();
+	}
+
+	// ── Hidden/AutomationHidden filtering on resources and prompts ──────
+
+	[TestMethod]
+	[Description("Hidden resource commands are excluded from resources/list.")]
+	public void When_HiddenResource_Then_ExcludedFromResources()
+	{
+		var (_, resources, _) = Generate(
+			app => app.Map("secret-config", () => "ok").AsResource().Hidden(),
+			new ReplMcpServerOptions());
+
+		resources.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	[Description("AutomationHidden resource commands are excluded from resources/list.")]
+	public void When_AutomationHiddenResource_Then_ExcludedFromResources()
+	{
+		var (_, resources, _) = Generate(
+			app => app.Map("debug-state", () => "ok").AsResource().AutomationHidden(),
+			new ReplMcpServerOptions());
+
+		resources.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	[Description("Hidden prompt commands are excluded from prompts/list.")]
+	public void When_HiddenPrompt_Then_ExcludedFromPrompts()
+	{
+		var (_, _, prompts) = Generate(
+			app => app.Map("internal-prompt {x}", (string x) => x).AsPrompt().Hidden(),
+			new ReplMcpServerOptions());
+
+		prompts.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	[Description("AutomationHidden prompt commands are excluded from prompts/list.")]
+	public void When_AutomationHiddenPrompt_Then_ExcludedFromPrompts()
+	{
+		var (_, _, prompts) = Generate(
+			app => app.Map("wizard-prompt {x}", (string x) => x).AsPrompt().AutomationHidden(),
+			new ReplMcpServerOptions());
+
+		prompts.Should().BeEmpty();
+	}
+
+	// ── Tool name collision detection ──────────────────────────────────
+
+	[TestMethod]
+	[Description("Different routes that flatten to the same tool name throw at startup.")]
+	public void When_DifferentRoutesCollide_Then_ThrowsAtStartup()
+	{
+		var act = () => Generate(
+			app =>
+			{
+				app.Map("contact add", () => "ok");
+				app.Map("contact_add", () => "ok");
+			},
+			new ReplMcpServerOptions());
+
+		act.Should().Throw<Exception>()
+			.WithInnerException<InvalidOperationException>()
+			.WithMessage("*collision*");
+	}
+
+	[TestMethod]
+	[Description("Same command in multiple phases (ReadOnly = core + resource fallback) does not throw.")]
+	public void When_SameCommandInMultiplePhases_Then_NoDuplicate()
+	{
+		var (tools, resources, _) = Generate(
+			app => app.Map("status", () => "ok").ReadOnly().AsResource(),
+			new ReplMcpServerOptions { ResourceFallbackToTools = true });
+
+		tools.Should().ContainSingle(t =>
+			string.Equals(t.ProtocolTool.Name, "status", StringComparison.Ordinal));
+		resources.Should().ContainSingle();
 	}
 
 	// ── Helpers ─────────────────────────────────────────────────────────

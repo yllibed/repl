@@ -299,6 +299,11 @@ app.UseMcpServer(o =>
 });
 ```
 
+## Known limitations
+
+- **Collection parameters** (`List<T>`, `int[]`): MCP passes JSON arrays as a single element. The CLI binding layer expects repeated values (`--tag vip --tag priority`), so collection parameters are not correctly bound from MCP tool calls yet. Use string parameters with custom parsing as a workaround.
+- **Parameterized resources**: Commands with route parameters (e.g. `contact {id}`) marked `.AsResource()` are listed as resources but cannot be invoked via `resources/read` since the URI has no mechanism to pass parameters. Use parameterless commands for resources, or rely on the tool fallback (`ResourceFallbackToTools = true`).
+
 ## Configuration options
 
 ```csharp

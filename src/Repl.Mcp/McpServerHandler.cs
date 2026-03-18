@@ -103,7 +103,7 @@ internal sealed class McpServerHandler
 		char separator)
 	{
 		var tools = new List<McpServerTool>();
-		var nameSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var nameSet = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 		// 1. Regular commands. Resource-only and prompt-only commands are handled
 		//    separately as fallback tools (opt-in). ReadOnly+AsResource commands
@@ -160,15 +160,27 @@ internal sealed class McpServerHandler
 	private static void AddTool(
 		ReplDocCommand command,
 		List<McpServerTool> tools,
-		HashSet<string> nameSet,
+		Dictionary<string, string> nameSet,
 		McpToolAdapter adapter,
 		char separator)
 	{
 		var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
-		if (!nameSet.Add(toolName))
+		if (nameSet.TryGetValue(toolName, out var existingPath))
 		{
-			return; // Already registered (e.g. ReadOnly command is both a tool and a resource).
+			// Same command registered from multiple phases (e.g. ReadOnly is both
+			// a core tool and a resource fallback) — skip silently.
+			if (string.Equals(command.Path, existingPath, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			// Different routes collapsed to the same name — surface at startup.
+			throw new InvalidOperationException(
+				$"MCP tool name collision: '{toolName}' from routes '{existingPath}' and '{command.Path}'. " +
+				"Consider a different ToolNamingSeparator or rename one of the commands.");
 		}
+
+		nameSet[toolName] = command.Path;
 
 		adapter.RegisterRoute(toolName, command);
 		tools.Add(new ReplMcpServerTool(command, toolName, adapter));
@@ -185,11 +197,16 @@ internal sealed class McpServerHandler
 
 		foreach (var resource in model.Resources)
 		{
-			// Skip auto-promoted ReadOnly resources when opt-out is active.
-			// Auto-promoted resources are those in the Resources list but not
-			// explicitly marked AsResource() — they got there via ReadOnly.
 			var docCommand = model.Commands.FirstOrDefault(c =>
 				string.Equals(c.Path, resource.Path, StringComparison.OrdinalIgnoreCase));
+
+			// Hidden and AutomationHidden commands are excluded from all MCP surfaces.
+			if (docCommand is not null && !IsToolCandidate(docCommand))
+			{
+				continue;
+			}
+
+			// Skip auto-promoted ReadOnly resources when opt-out is active.
 			if (!_options.AutoPromoteReadOnlyToResources
 				&& docCommand is not null
 				&& !docCommand.IsResource
@@ -238,7 +255,7 @@ internal sealed class McpServerHandler
 
 		foreach (var command in model.Commands)
 		{
-			if (!command.IsPrompt)
+			if (!command.IsPrompt || !IsToolCandidate(command))
 			{
 				continue;
 			}
