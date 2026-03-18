@@ -120,7 +120,7 @@ public sealed class Given_McpFallbackOptions
 	[Description("AutomationHidden commands are never tools, resources, or prompts.")]
 	public void When_AutomationHidden_Then_ExcludedFromEverything()
 	{
-		var (tools, resources, prompts) = Generate(
+		var (tools, _, prompts) = Generate(
 			app => app.Map("wizard", () => "ok").AutomationHidden().AsResource().AsPrompt(),
 			new ReplMcpServerOptions { ResourceFallbackToTools = true, PromptFallbackToTools = true });
 
