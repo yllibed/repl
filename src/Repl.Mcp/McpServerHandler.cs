@@ -215,7 +215,8 @@ internal sealed class McpServerHandler
 				continue;
 			}
 			var resourceName = McpToolNameFlattener.Flatten(resource.Path, separator);
-			var uriTemplate = $"repl://{resourceName}";
+			var resourceUri = McpToolNameFlattener.Flatten(resource.Path, '/');
+			var uriTemplate = $"repl://{resourceUri}";
 
 			var mcpResource = McpServerResource.Create(
 				async (CancellationToken ct) =>
