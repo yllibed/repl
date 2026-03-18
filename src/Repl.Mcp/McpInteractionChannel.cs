@@ -88,6 +88,13 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			return ParseBool(sampled);
 		}
 
+		if (_mode == InteractivityMode.PrefillThenFail && !defaultValue)
+		{
+			throw new McpInteractionException(
+				$"Interactive prompt '{name}' requires a value. " +
+				$"Provide it as a tool argument 'answer:{name}' (true/false).");
+		}
+
 		return defaultValue;
 	}
 

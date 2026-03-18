@@ -145,27 +145,15 @@ internal sealed partial class McpToolAdapter
 			}
 		}
 
+		// Remaining arguments become named options.
+		// Note: answer: prefixes are separated by PrepareExecution upstream
+		// and never reach this method.
 		foreach (var (key, value) in arguments)
 		{
-			if (consumedArgs.Contains(key))
+			if (!consumedArgs.Contains(key))
 			{
-				continue;
-			}
-
-			if (key.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			tokens.Add($"--{key}");
-			tokens.Add(value?.ToString() ?? "");
-		}
-
-		foreach (var (key, value) in arguments)
-		{
-			if (key.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
-			{
-				tokens.Add($"--{key}={value}");
+				tokens.Add($"--{key}");
+				tokens.Add(value?.ToString() ?? "");
 			}
 		}
 

@@ -59,32 +59,32 @@ public sealed class Given_McpToolAdapter
 	}
 
 	[TestMethod]
-	[Description("Interaction prefills become --answer:name=value tokens.")]
-	public void When_AnswerPrefixes_Then_BecomeAnswerTokens()
+	[Description("ReconstructTokens treats all non-route args as named options (answer: separation happens upstream in PrepareExecution).")]
+	public void When_RemainingArgs_Then_AllBecomeNamedOptions()
 	{
 		var args = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
 		{
-			["answer:confirm"] = "yes",
+			["format"] = "json",
+			["verbose"] = "true",
 		};
 
 		var tokens = McpToolAdapter.ReconstructTokens("deploy", args);
 
-		tokens.Should().BeEquivalentTo(["deploy", "--answer:confirm=yes"]);
+		tokens.Should().BeEquivalentTo(["deploy", "--format", "json", "--verbose", "true"]);
 	}
 
 	[TestMethod]
-	[Description("Mixed route args, options, and prefills reconstruct correctly.")]
+	[Description("Mixed route args and options reconstruct correctly.")]
 	public void When_MixedArguments_Then_ReconstructedCorrectly()
 	{
 		var args = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
 		{
 			["id"] = "42",
 			["verbose"] = "true",
-			["answer:confirm"] = "yes",
 		};
 
 		var tokens = McpToolAdapter.ReconstructTokens("contact {id:int} delete", args);
 
-		tokens.Should().BeEquivalentTo(["contact", "42", "delete", "--verbose", "true", "--answer:confirm=yes"]);
+		tokens.Should().BeEquivalentTo(["contact", "42", "delete", "--verbose", "true"]);
 	}
 }
