@@ -238,6 +238,40 @@ app.Map("import", async (IReplInteractionChannel interaction, CancellationToken 
 });
 ```
 
+## Writing output in MCP mode
+
+In MCP mode, each tool call runs in an isolated session with a captured output stream. Understanding where output goes is important for writing commands that work well with agents.
+
+| Output method | Where it goes | Recommendation |
+|---|---|---|
+| **Return value** | Serialized to JSON → `CallToolResult.Content` | **Preferred.** Clean, structured, always correct. |
+| **`IReplInteractionChannel`** | Intercepted by `McpInteractionChannel` | **Use for prompts and progress.** Maps to MCP primitives. |
+| **`ReplSessionIO.Output`** / `Console.WriteLine` | Captured in `StringWriter` → appended to tool result as text | Works, but produces raw text mixed with the serialized return value. Use intentionally. |
+| **`Console.OpenStandardOutput()`** | **Writes directly to the MCP stdio transport** | **Never use.** Corrupts the JSON-RPC protocol stream. |
+
+The key rule: **use return values and `IReplInteractionChannel`**. These are the designed integration points that produce clean, structured results for agents. Direct console writes are captured and won't crash anything, but they produce unstructured text that agents may struggle to parse.
+
+> **Token cost:** Everything returned in `CallToolResult.Content` is consumed by the LLM as input tokens. Verbose output (debug logs, large tables, raw dumps) translates directly into token cost and can degrade agent reasoning. Keep tool output concise and structured — return what the agent needs to act, not everything you'd show a human.
+
+```csharp
+// Good: structured return value
+app.Map("contacts", (IContactDb db) => db.GetAll()).ReadOnly();
+
+// Good: interaction channel for progress
+app.Map("import", async (IReplInteractionChannel ch, CancellationToken ct) =>
+{
+    await ch.WriteProgressAsync("Working...", 50, ct);
+    return Results.Success("Done.");
+});
+
+// Avoid: raw console output mixed with return value
+app.Map("status", () =>
+{
+    Console.WriteLine("Loading...");   // captured but messy
+    return new { Status = "ok" };      // agent sees "Loading...\n{...}"
+});
+```
+
 ## Dynamic tool discovery
 
 When `InvalidateRouting()` is called (module presence changes, session state changes), the MCP server automatically refreshes its tool list and emits `list_changed` notifications. Agents that support discovery refresh their available tools.
