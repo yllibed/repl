@@ -358,12 +358,6 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			}
 		}
 
-		if (int.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out var index)
-			&& index >= 0 && index < choices.Count)
-		{
-			return index;
-		}
-
 		throw new McpInteractionException(
 			$"Cannot resolve choice '{value}'. Available: {string.Join(", ", choices)}");
 	}

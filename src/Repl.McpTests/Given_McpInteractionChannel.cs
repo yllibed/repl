@@ -19,17 +19,6 @@ public sealed class Given_McpInteractionChannel
 	}
 
 	[TestMethod]
-	[Description("Prefilled numeric index resolves correctly.")]
-	public async Task When_PrefillIsNumericIndex_Then_ReturnsIndex()
-	{
-		var channel = CreateChannel(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) { ["color"] = "2" });
-
-		var result = await channel.AskChoiceAsync("color", "Pick a color", ["red", "green", "blue"]);
-
-		result.Should().Be(2);
-	}
-
-	[TestMethod]
 	[Description("Missing prefill with default returns default.")]
 	public async Task When_NoPrefillWithDefault_Then_ReturnsDefault()
 	{
