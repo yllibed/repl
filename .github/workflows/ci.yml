@@ -476,7 +476,12 @@ jobs:
             }
           }
 
+          $nupkgCount = @(Get-ChildItem packages/*.nupkg).Count
+          $succeeded = $nupkgCount - $failed.Count
           if ($failed.Count -gt 0) {
             Write-Warning "The following packages failed to publish: $($failed -join ', ')"
             Write-Warning "This may be expected for new packages awaiting NuGet validation."
+          }
+          if ($succeeded -eq 0 -and $nupkgCount -gt 0) {
+            throw "All $nupkgCount packages failed to publish. Check API key and NuGet source."
           }

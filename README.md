@@ -7,9 +7,9 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
 
 **A .NET framework for building composable command surfaces.**
-Define your commands once — run them as a CLI, explore them in an interactive REPL,
-host them in session-based terminals, expose them as MCP servers for AI agents,
-or drive them from automation scripts.
+- Define your commands once — run them as a CLI, explore them in an interactive REPL,
+- host them in session-based terminals, expose them as MCP servers for AI agents,
+- or drive them from automation scripts.
 
 > **New here?** The [DeepWiki](https://deepwiki.com/yllibed/repl) has full architecture docs, diagrams, and an AI assistant you can ask questions about the toolkit.
 
