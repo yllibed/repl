@@ -44,37 +44,74 @@ internal sealed partial class McpToolAdapter
 	{
 		if (!_toolRoutes.TryGetValue(toolName, out var command))
 		{
+			return ErrorResult($"Unknown tool: {toolName}");
+		}
+
+		var (tokens, prefills) = PrepareExecution(command.Path, arguments);
+		return await ExecuteThroughPipelineAsync(tokens, prefills, ct).ConfigureAwait(false);
+	}
+
+	private async Task<CallToolResult> ExecuteThroughPipelineAsync(
+		List<string> tokens,
+		Dictionary<string, string> prefills,
+		CancellationToken ct)
+	{
+		var coreApp = _app as CoreReplApp
+			?? throw new InvalidOperationException("MCP tool adapter requires CoreReplApp.");
+
+		var outputWriter = new StringWriter();
+		var inputReader = new StringReader(string.Empty);
+		var interactionChannel = new McpInteractionChannel(prefills, _options.InteractivityMode);
+		var mcpServices = new McpServiceProviderOverlay(_services, interactionChannel);
+
+		using (ReplSessionIO.SetSession(
+			output: outputWriter,
+			input: inputReader,
+			ansiMode: Rendering.AnsiMode.Never,
+			sessionId: $"mcp-{Guid.NewGuid():N}",
+			isHostedSession: true))
+		{
+			var exitCode = await coreApp.RunWithServicesAsync(
+				tokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
+
+			var output = outputWriter.ToString().Trim();
+			if (string.IsNullOrWhiteSpace(output))
+			{
+				output = exitCode == 0 ? "OK" : $"Command failed with exit code {exitCode}.";
+			}
+
 			return new CallToolResult
 			{
-				Content = [new TextContentBlock { Text = $"Unknown tool: {toolName}" }],
-				IsError = true,
+				Content = [new TextContentBlock { Text = output }],
+				IsError = exitCode != 0,
 			};
 		}
+	}
 
+	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
+		string routePath,
+		IDictionary<string, JsonElement> arguments)
+	{
 		var stringArgs = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+		var prefills = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
 		foreach (var (key, value) in arguments)
 		{
-			stringArgs[key] = value.ValueKind == JsonValueKind.String
-				? value.GetString()
+			var strValue = value.ValueKind == JsonValueKind.String
+				? value.GetString() ?? ""
 				: value.GetRawText();
+
+			if (key.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
+			{
+				prefills[key["answer:".Length..]] = strValue;
+			}
+			else
+			{
+				stringArgs[key] = strValue;
+			}
 		}
 
-		var tokens = ReconstructTokens(command.Path, stringArgs);
-
-		// Phase 2: Create a scoped execution context with:
-		// - New IServiceProvider scope (one per tool call for isolation)
-		// - In-memory IReplIoContext with StringWriter output capture
-		// - McpInteractionChannel (prefill → elicitation → sampling → fail)
-		// - ReplRuntimeChannel.Programmatic
-		// Then execute through the Repl pipeline and capture output.
-		_ = ct;
-
-		var output = $"Tool '{toolName}' dispatched with tokens: [{string.Join(", ", tokens)}]";
-		return await Task.FromResult(new CallToolResult
-		{
-			Content = [new TextContentBlock { Text = output }],
-			IsError = false,
-		}).ConfigureAwait(false);
+		return (ReconstructTokens(routePath, stringArgs), prefills);
 	}
 
 	/// <summary>
@@ -86,23 +123,14 @@ internal sealed partial class McpToolAdapter
 	{
 		var tokens = new List<string>();
 		var consumedArgs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		var parts = routePath.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-		foreach (var part in parts)
+		foreach (var part in routePath.Split(' ', StringSplitOptions.RemoveEmptyEntries))
 		{
 			var match = DynamicSegmentPattern().Match(part);
 			if (match.Success)
 			{
 				var argName = match.Groups["name"].Value;
-				if (arguments.TryGetValue(argName, out var value))
-				{
-					tokens.Add(value?.ToString() ?? "");
-				}
-				else
-				{
-					tokens.Add("");
-				}
-
+				tokens.Add(arguments.TryGetValue(argName, out var value) ? value?.ToString() ?? "" : "");
 				consumedArgs.Add(argName);
 			}
 			else
@@ -111,7 +139,6 @@ internal sealed partial class McpToolAdapter
 			}
 		}
 
-		// Remaining arguments → named options (--key value)
 		foreach (var (key, value) in arguments)
 		{
 			if (consumedArgs.Contains(key))
@@ -128,19 +155,22 @@ internal sealed partial class McpToolAdapter
 			tokens.Add(value?.ToString() ?? "");
 		}
 
-		// Interaction prefills → --answer:name=value tokens
 		foreach (var (key, value) in arguments)
 		{
-			if (!key.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
+			if (key.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
 			{
-				continue;
+				tokens.Add($"--{key}={value}");
 			}
-
-			tokens.Add($"--{key}={value}");
 		}
 
 		return tokens;
 	}
+
+	private static CallToolResult ErrorResult(string message) => new()
+	{
+		Content = [new TextContentBlock { Text = message }],
+		IsError = true,
+	};
 
 	[GeneratedRegex(@"^\{(?<name>\w+)(?::\w+)?\}$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
 	private static partial Regex DynamicSegmentPattern();
