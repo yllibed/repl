@@ -38,7 +38,8 @@ public sealed partial class CoreReplApp
 				Path: context.Template.Template,
 				Description: context.Description,
 				IsDynamic: context.Template.Segments.Any(segment => segment is DynamicRouteSegment),
-				IsHidden: context.IsHidden))
+				IsHidden: context.IsHidden,
+				Details: context.Details))
 			.ToArray();
 		var resourceDocs = commandDocs
 			.Where(cmd => cmd.IsResource || cmd.Annotations?.ReadOnly == true)
@@ -93,7 +94,8 @@ public sealed partial class CoreReplApp
 				Path: context.Template.Template,
 				Description: context.Description,
 				IsDynamic: context.Template.Segments.Any(segment => segment is DynamicRouteSegment),
-				IsHidden: context.IsHidden))
+				IsHidden: context.IsHidden,
+				Details: context.Details))
 			.ToArray();
 		var resourceDocs = commandDocs
 			.Where(cmd => cmd.IsResource || cmd.Annotations?.ReadOnly == true)

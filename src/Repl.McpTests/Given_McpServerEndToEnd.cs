@@ -171,4 +171,46 @@ public sealed class Given_McpServerEndToEnd
 
 		tools.Should().ContainSingle(t => string.Equals(t.Name, "contacts", StringComparison.Ordinal));
 	}
+
+	// ── Prompts ────────────────────────────────────────────────────────
+
+	[TestMethod]
+	[Description("prompts/list returns prompt with correct arguments from the command's parameters.")]
+	public async Task When_PromptsList_Then_ReturnsPromptWithArguments()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("troubleshoot {symptom}", (string symptom) => $"Diagnose: {symptom}")
+				.WithDescription("Diagnose an issue")
+				.AsPrompt();
+		});
+
+		var prompts = await fixture.Client.ListPromptsAsync();
+
+		var prompt = prompts.Should().ContainSingle(p =>
+			string.Equals(p.Name, "troubleshoot", StringComparison.Ordinal)).Which;
+		prompt.ProtocolPrompt.Description.Should().Be("Diagnose an issue");
+		prompt.ProtocolPrompt.Arguments.Should().ContainSingle(a =>
+			string.Equals(a.Name, "symptom", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("prompts/get dispatches through the pipeline and returns the handler output.")]
+	[Ignore("Prompt pipeline dispatch requires full CoreReplApp execution context — deferred to hosted integration tests.")]
+	public async Task When_PromptsGet_Then_ReturnsHandlerOutput()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("troubleshoot {symptom}", (string symptom) => $"Diagnose: {symptom}")
+				.AsPrompt();
+		});
+
+		var result = await fixture.Client.GetPromptAsync(
+			"troubleshoot",
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["symptom"] = "missing data" });
+
+		result.Messages.Should().ContainSingle();
+		var text = (result.Messages[0].Content as TextContentBlock)?.Text;
+		text.Should().Contain("Diagnose: missing data");
+	}
 }

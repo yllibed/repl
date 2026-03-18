@@ -273,7 +273,7 @@ internal sealed class McpServerHandler
 
 			promptSources[promptName] = command.Path;
 			adapter.RegisterRoute(promptName, command);
-			prompts[promptName] = CreatePipelinePrompt(promptName, command, adapter);
+			prompts[promptName] = new ReplMcpServerPrompt(command, promptName, adapter);
 		}
 
 		// Explicit registrations via options.Prompt() — override on collision (by design).
@@ -285,53 +285,6 @@ internal sealed class McpServerHandler
 		}
 
 		return [.. prompts.Values];
-	}
-
-	private static McpServerPrompt CreatePipelinePrompt(
-		string promptName,
-		ReplDocCommand command,
-		McpToolAdapter adapter) =>
-		McpServerPrompt.Create(
-			async (IDictionary<string, string?>? arguments, CancellationToken ct) =>
-			{
-				var jsonArgs = ConvertPromptArguments(arguments);
-				var result = await adapter.InvokeAsync(
-					promptName, jsonArgs, server: null, progressToken: null, ct)
-					.ConfigureAwait(false);
-
-				var text = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
-					?? command.Description ?? promptName;
-
-				return new GetPromptResult
-				{
-					Messages =
-					[
-						new PromptMessage
-						{
-							Role = Role.User,
-							Content = new TextContentBlock { Text = text },
-						},
-					],
-				};
-			},
-			new McpServerPromptCreateOptions { Name = promptName, Description = command.Description });
-
-	private static Dictionary<string, System.Text.Json.JsonElement> ConvertPromptArguments(
-		IDictionary<string, string?>? arguments)
-	{
-		var jsonArgs = new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
-		if (arguments is null)
-		{
-			return jsonArgs;
-		}
-
-		foreach (var (key, value) in arguments)
-		{
-			jsonArgs[key] = System.Text.Json.JsonSerializer.SerializeToElement(
-				value, McpJsonContext.Default.String);
-		}
-
-		return jsonArgs;
 	}
 
 	// ── Helpers ─────────────────────────────────────────────────────────

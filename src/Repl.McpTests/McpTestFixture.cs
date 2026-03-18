@@ -109,6 +109,8 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		McpToolAdapter adapter)
 	{
 		var tools = new McpServerPrimitiveCollection<McpServerTool>();
+		var prompts = new McpServerPrimitiveCollection<McpServerPrompt>();
+
 		foreach (var command in model.Commands)
 		{
 			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
@@ -116,8 +118,17 @@ internal sealed class McpTestFixture : IAsyncDisposable
 				continue;
 			}
 
-			var toolName = McpToolNameFlattener.Flatten(command.Path, '_');
-			tools.Add(new ReplMcpServerTool(command, toolName, adapter));
+			var name = McpToolNameFlattener.Flatten(command.Path, '_');
+
+			if (command.IsPrompt)
+			{
+				adapter.RegisterRoute(name, command);
+				prompts.Add(new ReplMcpServerPrompt(command, name, adapter));
+			}
+			else
+			{
+				tools.Add(new ReplMcpServerTool(command, name, adapter));
+			}
 		}
 
 		return new McpServerOptions
@@ -126,8 +137,10 @@ internal sealed class McpTestFixture : IAsyncDisposable
 			Capabilities = new ServerCapabilities
 			{
 				Tools = new ToolsCapability { ListChanged = true },
+				Prompts = prompts.Count > 0 ? new PromptsCapability { ListChanged = true } : null,
 			},
 			ToolCollection = tools,
+			PromptCollection = prompts,
 		};
 	}
 

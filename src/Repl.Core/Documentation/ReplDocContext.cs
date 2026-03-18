@@ -7,4 +7,5 @@ public sealed record ReplDocContext(
 	string Path,
 	string? Description,
 	bool IsDynamic,
-	bool IsHidden);
+	bool IsHidden,
+	string? Details = null);
