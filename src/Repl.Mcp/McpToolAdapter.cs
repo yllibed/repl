@@ -136,8 +136,17 @@ internal sealed partial class McpToolAdapter
 			if (match.Success)
 			{
 				var argName = match.Groups["name"].Value;
-				tokens.Add(arguments.TryGetValue(argName, out var value) ? value?.ToString() ?? "" : "");
 				consumedArgs.Add(argName);
+				if (arguments.TryGetValue(argName, out var value) && value is not null)
+				{
+					var strValue = value.ToString() ?? "";
+					if (strValue.Length > 0)
+					{
+						tokens.Add(strValue);
+					}
+
+					// Omit token entirely for missing optional segments.
+				}
 			}
 			else
 			{

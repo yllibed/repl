@@ -113,6 +113,20 @@ internal static class McpSchemaGenerator
 		var (jsonType, format) = MapType(replType);
 		var prop = new JsonObject { ["type"] = jsonType };
 
+		if (string.Equals(jsonType, "array", StringComparison.Ordinal))
+		{
+			// Extract inner type from List<T> or T[].
+			var innerType = ExtractCollectionItemType(replType);
+			var (itemType, itemFormat) = MapScalarType(innerType);
+			var itemSchema = new JsonObject { ["type"] = itemType };
+			if (itemFormat is not null)
+			{
+				itemSchema["format"] = itemFormat;
+			}
+
+			prop["items"] = itemSchema;
+		}
+
 		if (format is not null)
 		{
 			prop["format"] = format;
@@ -126,7 +140,40 @@ internal static class McpSchemaGenerator
 		return prop;
 	}
 
-	private static (string Type, string? Format) MapType(string replType) => replType.ToLowerInvariant() switch
+	private static (string Type, string? Format) MapType(string replType)
+	{
+		// Collection types: List<T>, IList<T>, T[], IReadOnlyList<T>, etc.
+		if (replType.EndsWith("[]", StringComparison.Ordinal)
+			|| replType.StartsWith("List<", StringComparison.OrdinalIgnoreCase)
+			|| replType.StartsWith("IList<", StringComparison.OrdinalIgnoreCase)
+			|| replType.StartsWith("IReadOnlyList<", StringComparison.OrdinalIgnoreCase))
+		{
+			return ("array", null);
+		}
+
+		return MapScalarType(replType);
+	}
+
+	private static string ExtractCollectionItemType(string replType)
+	{
+		// T[] → T
+		if (replType.EndsWith("[]", StringComparison.Ordinal))
+		{
+			return replType[..^2];
+		}
+
+		// List<T>, IList<T>, IReadOnlyList<T> → T
+		var openBracket = replType.IndexOf('<');
+		var closeBracket = replType.LastIndexOf('>');
+		if (openBracket >= 0 && closeBracket > openBracket)
+		{
+			return replType[(openBracket + 1)..closeBracket].Trim();
+		}
+
+		return "string";
+	}
+
+	private static (string Type, string? Format) MapScalarType(string replType) => replType.ToLowerInvariant() switch
 	{
 		"string" or "alpha" or "custom" => ("string", null),
 		"int" or "integer" => ("integer", null),

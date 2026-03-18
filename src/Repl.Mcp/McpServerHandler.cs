@@ -81,7 +81,7 @@ internal sealed class McpServerHandler
 		return new McpServerOptions
 		{
 			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
-			Capabilities = BuildCapabilities(resources, prompts),
+			Capabilities = BuildCapabilities(),
 			ToolCollection = ToCollection(tools),
 			ResourceCollection = ToResourceCollection(resources),
 			PromptCollection = ToCollection(prompts),
@@ -253,6 +253,7 @@ internal sealed class McpServerHandler
 		char separator)
 	{
 		var prompts = new Dictionary<string, McpServerPrompt>(StringComparer.OrdinalIgnoreCase);
+		var promptSources = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
 		foreach (var command in model.Commands)
 		{
@@ -262,10 +263,20 @@ internal sealed class McpServerHandler
 			}
 
 			var promptName = McpToolNameFlattener.Flatten(command.Path, separator);
+
+			if (promptSources.TryGetValue(promptName, out var existingPath)
+				&& !string.Equals(existingPath, command.Path, StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException(
+					$"MCP prompt name collision: '{promptName}' from routes '{existingPath}' and '{command.Path}'.");
+			}
+
+			promptSources[promptName] = command.Path;
 			adapter.RegisterRoute(promptName, command);
 			prompts[promptName] = CreatePipelinePrompt(promptName, command, adapter);
 		}
 
+		// Explicit registrations via options.Prompt() — override on collision (by design).
 		foreach (var registration in _options.Prompts)
 		{
 			prompts[registration.Name] = McpServerPrompt.Create(
@@ -330,27 +341,17 @@ internal sealed class McpServerHandler
 		&& command.Annotations?.AutomationHidden != true
 		&& (_options.CommandFilter is not { } filter || filter(command));
 
-	private static ServerCapabilities BuildCapabilities(
-		List<McpServerResource> resources,
-		List<McpServerPrompt> prompts)
+	/// <summary>
+	/// Always advertise all capabilities, even when initial collections are empty.
+	/// Routing invalidation may add resources/prompts later, and capabilities cannot
+	/// be retroactively added after the initialize handshake.
+	/// </summary>
+	private static ServerCapabilities BuildCapabilities() => new()
 	{
-		var capabilities = new ServerCapabilities
-		{
-			Tools = new ToolsCapability { ListChanged = true },
-		};
-
-		if (resources.Count > 0)
-		{
-			capabilities.Resources = new ResourcesCapability { ListChanged = true };
-		}
-
-		if (prompts.Count > 0)
-		{
-			capabilities.Prompts = new PromptsCapability { ListChanged = true };
-		}
-
-		return capabilities;
-	}
+		Tools = new ToolsCapability { ListChanged = true },
+		Resources = new ResourcesCapability { ListChanged = true },
+		Prompts = new PromptsCapability { ListChanged = true },
+	};
 
 	private static McpServerPrimitiveCollection<T> ToCollection<T>(IReadOnlyList<T> items)
 		where T : IMcpServerPrimitive
