@@ -15,6 +15,7 @@ internal sealed class McpServerHandler
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
+	private readonly TimeProvider _timeProvider;
 
 	public McpServerHandler(
 		ICoreReplApp app,
@@ -24,6 +25,7 @@ internal sealed class McpServerHandler
 		_app = app;
 		_options = options;
 		_services = services;
+		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 	}
 
 	[UnconditionalSuppressMessage(
@@ -353,7 +355,7 @@ internal sealed class McpServerHandler
 
 	private EventHandler? _routingChangedHandler;
 	private readonly Lock _refreshLock = new();
-	private Timer? _debounceTimer;
+	private ITimer? _debounceTimer;
 	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
 
 	private void SubscribeToRoutingChanges(
@@ -375,7 +377,7 @@ internal sealed class McpServerHandler
 			lock (_refreshLock)
 			{
 				_debounceTimer?.Dispose();
-				_debounceTimer = new Timer(
+				_debounceTimer = _timeProvider.CreateTimer(
 					_ => RebuildCollections(adapter, separator, toolCollection, resourceCollection, promptCollection),
 					state: null,
 					dueTime: DebounceDelay,
