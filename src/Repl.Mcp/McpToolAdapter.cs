@@ -16,7 +16,7 @@ internal sealed partial class McpToolAdapter
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
-	private readonly Dictionary<string, ReplDocCommand> _toolRoutes = new(StringComparer.OrdinalIgnoreCase);
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ReplDocCommand> _toolRoutes = new(StringComparer.OrdinalIgnoreCase);
 
 	public McpToolAdapter(ICoreReplApp app, ReplMcpServerOptions options, IServiceProvider services)
 	{

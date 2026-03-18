@@ -453,9 +453,11 @@ jobs:
       - name: Publish to NuGet
         if: success()
         shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: |
           $source = 'https://api.nuget.org/v3/index.json'
-          $apiKey = '${{ secrets.NUGET_API_KEY }}'
+          $apiKey = $env:NUGET_API_KEY
           $failed = @()
 
           foreach ($pkg in Get-ChildItem packages/*.nupkg) {
