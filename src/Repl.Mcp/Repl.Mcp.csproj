@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<Description>MCP server integration for Repl Toolkit: expose commands as AI agent tools, resources, and prompts.</Description>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Repl.McpTests" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\Repl.Defaults\Repl.Defaults.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="ModelContextProtocol" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="README.md" Pack="true" PackagePath="" Condition="Exists('README.md')" />
+	</ItemGroup>
+
+</Project>
