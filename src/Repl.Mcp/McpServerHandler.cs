@@ -45,10 +45,12 @@ internal sealed class McpServerHandler
 			var server = McpServer.Create(transport, serverOptions, serviceProvider: _services);
 			try
 			{
+				SubscribeToRoutingChanges(server, adapter, separator, serverOptions.ToolCollection!);
 				await server.RunAsync(ct).ConfigureAwait(false);
 			}
 			finally
 			{
+				UnsubscribeFromRoutingChanges();
 				await server.DisposeAsync().ConfigureAwait(false);
 			}
 		}
@@ -230,4 +232,45 @@ internal sealed class McpServerHandler
 		!command.IsHidden
 		&& command.Annotations?.AutomationHidden != true
 		&& (_options.CommandFilter is not { } filter || filter(command));
+
+	// ── list_changed on routing invalidation ───────────────────────────
+
+	private EventHandler? _routingChangedHandler;
+
+	private void SubscribeToRoutingChanges(
+		McpServer server,
+		McpToolAdapter adapter,
+		char separator,
+		McpServerPrimitiveCollection<McpServerTool> toolCollection)
+	{
+		if (_app is not CoreReplApp coreApp)
+		{
+			return;
+		}
+
+		_routingChangedHandler = (sender, args) =>
+		{
+			var newModel = _app.CreateDocumentationModel();
+			var newTools = GenerateTools(newModel, adapter, separator);
+
+			toolCollection.Clear();
+			foreach (var tool in newTools)
+			{
+				toolCollection.Add(tool);
+			}
+
+			// Collection mutations auto-emit list_changed via the SDK.
+		};
+
+		coreApp.RoutingInvalidated += _routingChangedHandler;
+	}
+
+	private void UnsubscribeFromRoutingChanges()
+	{
+		if (_routingChangedHandler is not null && _app is CoreReplApp coreApp)
+		{
+			coreApp.RoutingInvalidated -= _routingChangedHandler;
+			_routingChangedHandler = null;
+		}
+	}
 }

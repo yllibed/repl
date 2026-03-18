@@ -125,9 +125,19 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	}
 
 	/// <summary>
+	/// Occurs after routing has been invalidated.
+	/// Subscribers can use this to refresh derived state (e.g. MCP tool lists).
+	/// </summary>
+	internal event EventHandler? RoutingInvalidated;
+
+	/// <summary>
 	/// Invalidates active routing cache so module presence predicates are re-evaluated on next resolution.
 	/// </summary>
-	public void InvalidateRouting() => Interlocked.Increment(ref _routingCacheVersion);
+	public void InvalidateRouting()
+	{
+		Interlocked.Increment(ref _routingCacheVersion);
+		RoutingInvalidated?.Invoke(this, EventArgs.Empty);
+	}
 
 	/// <summary>
 	/// Maps a route and command handler.

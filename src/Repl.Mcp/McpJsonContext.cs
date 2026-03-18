@@ -7,4 +7,6 @@ namespace Repl.Mcp;
 /// Source-generated JSON serialization context for trim-safe serialization.
 /// </summary>
 [JsonSerializable(typeof(JsonObject))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(bool))]
 internal sealed partial class McpJsonContext : JsonSerializerContext;
