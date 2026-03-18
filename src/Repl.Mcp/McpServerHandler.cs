@@ -67,7 +67,7 @@ internal sealed class McpServerHandler
 	{
 		var tools = GenerateTools(model, adapter, separator);
 		var resources = GenerateResources(model, adapter, separator);
-		var prompts = CollectPrompts(model, separator);
+		var prompts = CollectPrompts(model, adapter, separator);
 
 		var serverName = _options.ServerName ?? model.App.Name ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
@@ -76,6 +76,18 @@ internal sealed class McpServerHandler
 		foreach (var tool in tools)
 		{
 			toolCollection.Add(tool);
+		}
+
+		var resourceCollection = new McpServerResourceCollection();
+		foreach (var resource in resources)
+		{
+			resourceCollection.Add(resource);
+		}
+
+		var promptCollection = new McpServerPrimitiveCollection<McpServerPrompt>();
+		foreach (var prompt in prompts)
+		{
+			promptCollection.Add(prompt);
 		}
 
 		var capabilities = new ServerCapabilities
@@ -98,6 +110,8 @@ internal sealed class McpServerHandler
 			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
 			Capabilities = capabilities,
 			ToolCollection = toolCollection,
+			ResourceCollection = resourceCollection,
+			PromptCollection = promptCollection,
 		};
 	}
 
@@ -184,11 +198,12 @@ internal sealed class McpServerHandler
 
 	private List<McpServerPrompt> CollectPrompts(
 		ReplDocumentationModel model,
+		McpToolAdapter adapter,
 		char separator)
 	{
 		var prompts = new Dictionary<string, McpServerPrompt>(StringComparer.OrdinalIgnoreCase);
 
-		// 1. Prompts from AsPrompt() commands.
+		// 1. Prompts from AsPrompt() commands — dispatch through the pipeline.
 		foreach (var command in model.Commands)
 		{
 			if (!command.IsPrompt)
@@ -197,35 +212,71 @@ internal sealed class McpServerHandler
 			}
 
 			var promptName = McpToolNameFlattener.Flatten(command.Path, separator);
-			var description = command.Description ?? promptName;
-			var prompt = McpServerPrompt.Create(
-				(string? args) => new GetPromptResult
+			adapter.RegisterRoute(promptName, command);
+			prompts[promptName] = CreatePipelinePrompt(promptName, command, adapter);
+		}
+
+		// 2. Explicit registrations via options.Prompt() — override on collision.
+		foreach (var registration in _options.Prompts)
+		{
+			prompts[registration.Name] = McpServerPrompt.Create(
+				registration.Handler,
+				new McpServerPromptCreateOptions { Name = registration.Name });
+		}
+
+		return [.. prompts.Values];
+	}
+
+	/// <summary>
+	/// Creates a prompt that dispatches through the Repl pipeline.
+	/// The handler executes with its arguments and the return value becomes the prompt message.
+	/// </summary>
+	private static McpServerPrompt CreatePipelinePrompt(
+		string promptName,
+		ReplDocCommand command,
+		McpToolAdapter adapter) =>
+		McpServerPrompt.Create(
+			async (IDictionary<string, string?>? arguments, CancellationToken ct) =>
+			{
+				var jsonArgs = ConvertPromptArguments(arguments);
+				var result = await adapter.InvokeAsync(
+					promptName, jsonArgs, server: null, progressToken: null, ct)
+					.ConfigureAwait(false);
+
+				var text = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
+					?? command.Description
+					?? promptName;
+
+				return new GetPromptResult
 				{
 					Messages =
 					[
 						new PromptMessage
 						{
 							Role = Role.User,
-							Content = new TextContentBlock { Text = description },
+							Content = new TextContentBlock { Text = text },
 						},
 					],
-				},
-				new McpServerPromptCreateOptions { Name = promptName, Description = command.Description });
+				};
+			},
+			new McpServerPromptCreateOptions { Name = promptName, Description = command.Description });
 
-			prompts[promptName] = prompt;
-		}
-
-		// 2. Explicit registrations via options.Prompt() — override on collision.
-		foreach (var registration in _options.Prompts)
+	private static Dictionary<string, System.Text.Json.JsonElement> ConvertPromptArguments(
+		IDictionary<string, string?>? arguments)
+	{
+		var jsonArgs = new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
+		if (arguments is null)
 		{
-			var prompt = McpServerPrompt.Create(
-				registration.Handler,
-				new McpServerPromptCreateOptions { Name = registration.Name });
-
-			prompts[registration.Name] = prompt;
+			return jsonArgs;
 		}
 
-		return [.. prompts.Values];
+		foreach (var (key, value) in arguments)
+		{
+			jsonArgs[key] = System.Text.Json.JsonSerializer.SerializeToElement(
+				value, McpJsonContext.Default.String);
+		}
+
+		return jsonArgs;
 	}
 
 	private bool IsToolCandidate(ReplDocCommand command) =>
