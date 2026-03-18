@@ -159,13 +159,13 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 	{
 		if (_prefillAnswers.TryGetValue(name, out var prefill))
 		{
-			return ParseMultiChoice(prefill, choices);
+			return ParseMultiChoice(prefill, choices, options);
 		}
 
 		if (await TrySampleAsync($"{prompt}\nSelect from: {string.Join(", ", choices)}")
 			.ConfigureAwait(false) is { } sampled)
 		{
-			return ParseMultiChoice(sampled, choices);
+			return ParseMultiChoice(sampled, choices, options);
 		}
 
 		if (defaultIndices is { Count: > 0 })
@@ -348,8 +348,13 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 	// ── Helpers ─────────────────────────────────────────────────────────
 
+	/// <summary>
+	/// Matches a choice value by exact name then unambiguous prefix — same logic as the
+	/// console interaction channel's MatchChoiceByName.
+	/// </summary>
 	private static int ResolveChoiceIndex(string value, IReadOnlyList<string> choices)
 	{
+		// Exact match.
 		for (var i = 0; i < choices.Count; i++)
 		{
 			if (string.Equals(choices[i], value, StringComparison.OrdinalIgnoreCase))
@@ -358,18 +363,74 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			}
 		}
 
+		// Unambiguous prefix match.
+		var prefixMatch = -1;
+		for (var i = 0; i < choices.Count; i++)
+		{
+			if (choices[i].StartsWith(value, StringComparison.OrdinalIgnoreCase))
+			{
+				if (prefixMatch >= 0)
+				{
+					prefixMatch = -1;
+					break; // Ambiguous — more than one match.
+				}
+
+				prefixMatch = i;
+			}
+		}
+
+		if (prefixMatch >= 0)
+		{
+			return prefixMatch;
+		}
+
 		throw new McpInteractionException(
 			$"Cannot resolve choice '{value}'. Available: {string.Join(", ", choices)}");
 	}
 
-	private static bool ParseBool(string value) =>
-		string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
-		|| string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
-		|| string.Equals(value, "y", StringComparison.OrdinalIgnoreCase)
-		|| string.Equals(value, "1", StringComparison.Ordinal);
+	private static bool ParseBool(string value)
+	{
+		if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(value, "y", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(value, "1", StringComparison.Ordinal))
+		{
+			return true;
+		}
 
-	private static int[] ParseMultiChoice(string value, IReadOnlyList<string> choices) =>
-		value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+		if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(value, "no", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(value, "n", StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(value, "0", StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		throw new McpInteractionException(
+			$"Cannot parse '{value}' as boolean. Use yes/no, true/false, y/n, or 1/0.");
+	}
+
+	private static int[] ParseMultiChoice(
+		string value,
+		IReadOnlyList<string> choices,
+		AskMultiChoiceOptions? options = null)
+	{
+		var indices = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.Select(token => ResolveChoiceIndex(token, choices))
 			.ToArray();
+
+		if (options?.MinSelections is { } min && indices.Length < min)
+		{
+			throw new McpInteractionException(
+				$"At least {min} selection(s) required, but got {indices.Length}.");
+		}
+
+		if (options?.MaxSelections is { } max && indices.Length > max)
+		{
+			throw new McpInteractionException(
+				$"At most {max} selection(s) allowed, but got {indices.Length}.");
+		}
+
+		return indices;
+	}
 }
