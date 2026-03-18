@@ -59,11 +59,39 @@ app.Map("wizard", handler).AutomationHidden();                    // excluded fr
 | `.ReadOnly()` | `readOnlyHint: true` | Call autonomously, no confirmation needed |
 | `.Destructive()` | `destructiveHint: true` | Ask user for confirmation before calling |
 | `.Idempotent()` | `idempotentHint: true` | Safe to retry on transient failure |
-| `.OpenWorld()` | `openWorldHint: true` | Expects latency, may fail (external systems) |
-| `.LongRunning()` | _(task support — future)_ | Use task-based execution |
+| `.OpenWorld()` | `openWorldHint: true` | Interacts with external systems (see below) |
+| `.LongRunning()` | `execution.taskSupport: optional` | Enables call-now/poll-later pattern |
 | `.AutomationHidden()` | _(excluded from list)_ | Not visible to agents at all |
 
-Without annotations, agents must assume worst-case (destructive, non-idempotent), leading to excessive confirmation prompts. **Annotate every command exposed to agents.**
+**`OpenWorld`** signals that the tool reaches beyond the MCP server boundary — network calls, third-party APIs, filesystem, cloud resources. Agents use this for:
+- **Latency expectations** — the call may be slow, plan accordingly
+- **Failure handling** — the call may fail for reasons outside the agent's control (network, rate limits)
+- **Security scope** — the action has effects beyond the local app. An agent with strict policies may treat `OpenWorld` + `Destructive` (e.g. deleting a cloud resource) differently from a purely local `Destructive` operation
+
+**`LongRunning`** advertises [MCP task support](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#tool-annotations) — the agent can submit the call, receive a task ID, and poll for results instead of blocking. `WriteProgressAsync` reports real-time progress to the agent during execution. Note: MCP Tasks are experimental in the SDK; not all clients support them yet.
+
+### Why annotations matter
+
+When a tool has **no annotations**, agents must assume the worst case: potentially destructive, non-idempotent, stateful. This means:
+- Every call requires user confirmation
+- No parallel execution
+- No automatic retries
+
+Annotations unlock agent optimizations. Agents use them to decide **confirmation**, **parallelization**, and **retry** behavior:
+
+| Scenario | Annotations | Agent behavior |
+|---|---|---|
+| List contacts | `.ReadOnly()` | No confirmation, can run in parallel with other reads |
+| Add contact | `.OpenWorld().Idempotent()` | May confirm, but safe to retry and parallelize |
+| Delete contact | `.Destructive()` | Always confirms, sequential execution |
+| Deploy | `.Destructive().OpenWorld()` | Confirms, sequential, expects latency |
+| No annotations | _(none)_ | Assumes destructive — confirms everything, no parallelism |
+
+The key combination for parallelization is **`ReadOnly`** or **`Idempotent`** — these tell the agent that concurrent calls won't interfere with each other. `Destructive` tools are always serialized.
+
+See the [MCP specification on tool annotations](https://modelcontextprotocol.io/specification/2025-03-26/server/tools#annotations) for the full semantics of each hint.
+
+**Annotate every command exposed to agents.** It's the difference between an agent that asks permission for everything and one that works efficiently.
 
 ## Rich descriptions
 
@@ -232,14 +260,14 @@ app.UseMcpServer(o =>
 
 Feature support varies across agent clients. The table below reflects the state as of **March 2025** — check [mcp-availability.com](https://mcp-availability.com/) for current data.
 
-| Feature | Claude Desktop | Claude Code | VS Code Copilot | Cursor | Continue |
-|---|---|---|---|---|---|
-| Tools | Yes | Yes | Yes | Yes | Yes |
-| Resources | Yes | — | Yes | Yes | — |
-| Prompts | Yes | — | Yes | — | Yes |
-| Discovery (`list_changed`) | — | Yes | — | — | — |
-| Sampling | — | — | Yes | — | — |
-| Elicitation | — | — | Yes | — | — |
+| Feature | Claude Desktop | Claude Code | Codex | VS Code Copilot | Cursor | Continue | Overall |
+|---|---|---|---|---|---|---|---|
+| Tools | Yes | Yes | Yes | Yes | Yes | Yes | ~100% |
+| Resources | Yes | — | — | Yes | Yes | — | ~39% |
+| Prompts | Yes | — | — | Yes | — | Yes | ~38% |
+| Discovery (`list_changed`) | — | Yes | — | — | — | — | ~19% |
+| Sampling | — | — | — | Yes | — | — | ~12% |
+| Elicitation | — | — | — | Yes | — | — | ~11% |
 
 **Implications:**
 - `PrefillThenFail` is the safest default (works with all clients)
@@ -257,10 +285,7 @@ Feature support varies across agent clients. The table below reflects the state 
   "mcpServers": {
     "myapp": {
       "command": "myapp",
-      "args": ["mcp", "serve"],
-      "env": {
-        "MYAPP_API_KEY": "..."
-      }
+      "args": ["mcp", "serve"]
     }
   }
 }
