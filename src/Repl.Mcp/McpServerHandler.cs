@@ -45,7 +45,11 @@ internal sealed class McpServerHandler
 			var server = McpServer.Create(transport, serverOptions, serviceProvider: _services);
 			try
 			{
-				SubscribeToRoutingChanges(server, adapter, separator, serverOptions.ToolCollection!);
+				SubscribeToRoutingChanges(
+					adapter, separator,
+					serverOptions.ToolCollection!,
+					serverOptions.ResourceCollection!,
+					serverOptions.PromptCollection!);
 				await server.RunAsync(ct).ConfigureAwait(false);
 			}
 			finally
@@ -289,28 +293,24 @@ internal sealed class McpServerHandler
 	private EventHandler? _routingChangedHandler;
 
 	private void SubscribeToRoutingChanges(
-		McpServer server,
 		McpToolAdapter adapter,
 		char separator,
-		McpServerPrimitiveCollection<McpServerTool> toolCollection)
+		McpServerPrimitiveCollection<McpServerTool> toolCollection,
+		McpServerResourceCollection resourceCollection,
+		McpServerPrimitiveCollection<McpServerPrompt> promptCollection)
 	{
 		if (_app is not CoreReplApp coreApp)
 		{
 			return;
 		}
 
-		_routingChangedHandler = (sender, args) =>
+		_routingChangedHandler = (_, _) =>
 		{
 			var newModel = _app.CreateDocumentationModel();
-			var newTools = GenerateTools(newModel, adapter, separator);
 
-			toolCollection.Clear();
-			foreach (var tool in newTools)
-			{
-				toolCollection.Add(tool);
-			}
-
-			// Collection mutations auto-emit list_changed via the SDK.
+			RefreshCollection(toolCollection, GenerateTools(newModel, adapter, separator));
+			RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator));
+			RefreshCollection(promptCollection, CollectPrompts(newModel, adapter, separator));
 		};
 
 		coreApp.RoutingInvalidated += _routingChangedHandler;
@@ -322,6 +322,25 @@ internal sealed class McpServerHandler
 		{
 			coreApp.RoutingInvalidated -= _routingChangedHandler;
 			_routingChangedHandler = null;
+		}
+	}
+
+	private static void RefreshCollection<T>(McpServerPrimitiveCollection<T> collection, IReadOnlyList<T> items)
+		where T : IMcpServerPrimitive
+	{
+		collection.Clear();
+		foreach (var item in items)
+		{
+			collection.Add(item);
+		}
+	}
+
+	private static void RefreshCollection(McpServerResourceCollection collection, IReadOnlyList<McpServerResource> items)
+	{
+		collection.Clear();
+		foreach (var item in items)
+		{
+			collection.Add(item);
 		}
 	}
 }
