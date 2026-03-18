@@ -189,8 +189,7 @@ public sealed class Given_McpFallbackOptions
 			},
 			new ReplMcpServerOptions());
 
-		act.Should().Throw<Exception>()
-			.WithInnerException<InvalidOperationException>()
+		act.Should().Throw<InvalidOperationException>()
 			.WithMessage("*collision*");
 	}
 
@@ -221,14 +220,9 @@ public sealed class Given_McpFallbackOptions
 
 		var model = app.Core.CreateDocumentationModel();
 		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
-
-		// Use reflection to call private BuildServerOptions.
-		var method = typeof(McpServerHandler).GetMethod(
-			"BuildServerOptions",
-			System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 		var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
 		var adapter = new McpToolAdapter(app.Core, options, EmptyServiceProvider.Instance);
-		var serverOptions = (McpServerOptions)method!.Invoke(handler, [model, adapter, separator])!;
+		var serverOptions = handler.BuildServerOptions(model, adapter, separator);
 
 		var tools = serverOptions.ToolCollection?.ToList() ?? [];
 		var resources = serverOptions.ResourceCollection?.ToList() ?? [];

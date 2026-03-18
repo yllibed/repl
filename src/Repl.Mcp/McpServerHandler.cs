@@ -66,7 +66,7 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	private McpServerOptions BuildServerOptions(
+	internal McpServerOptions BuildServerOptions(
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
 		char separator)

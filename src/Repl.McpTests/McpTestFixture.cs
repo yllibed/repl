@@ -8,7 +8,8 @@ namespace Repl.McpTests;
 
 /// <summary>
 /// Connects a Repl app's MCP server to an MCP client via in-process pipes.
-/// Disposes cleanly on teardown — no stdio involved.
+/// Uses the real <see cref="McpServerHandler"/> pipeline so fallback options,
+/// filtering, and collision detection are exercised end-to-end.
 /// </summary>
 internal sealed class McpTestFixture : IAsyncDisposable
 {
@@ -33,15 +34,27 @@ internal sealed class McpTestFixture : IAsyncDisposable
 
 	public McpClient Client { get; }
 
-	public static async Task<McpTestFixture> CreateAsync(Action<ReplApp> configure)
+	public static Task<McpTestFixture> CreateAsync(Action<ReplApp> configure) =>
+		CreateAsync(configure, configureOptions: null);
+
+	public static async Task<McpTestFixture> CreateAsync(
+		Action<ReplApp> configure,
+		Action<ReplMcpServerOptions>? configureOptions)
 	{
 		var app = ReplApp.Create();
-		app.UseMcpServer();
+		app.UseMcpServer(configureOptions);
 		configure(app);
 
+		var options = new ReplMcpServerOptions();
+		configureOptions?.Invoke(options);
+
+		// Use the real McpServerHandler to build server options — exercises
+		// the full tool/resource/prompt generation pipeline with fallbacks.
 		var model = app.Core.CreateDocumentationModel();
-		var adapter = CreateToolAdapter(app, model);
-		var serverOptions = BuildServerOptions(model, adapter);
+		var adapter = new McpToolAdapter(app.Core, options, EmptyServiceProvider.Instance);
+		var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
+		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
+		var serverOptions = handler.BuildServerOptions(model, adapter, separator);
 
 		var clientToServer = new Pipe();
 		var serverToClient = new Pipe();
@@ -85,63 +98,6 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		}
 
 		_cts.Dispose();
-	}
-
-	private static McpToolAdapter CreateToolAdapter(ReplApp app, Documentation.ReplDocumentationModel model)
-	{
-		var adapter = new McpToolAdapter(app.Core, new ReplMcpServerOptions(), EmptyServiceProvider.Instance);
-		foreach (var command in model.Commands)
-		{
-			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
-			{
-				continue;
-			}
-
-			var toolName = McpToolNameFlattener.Flatten(command.Path, '_');
-			adapter.RegisterRoute(toolName, command);
-		}
-
-		return adapter;
-	}
-
-	private static McpServerOptions BuildServerOptions(
-		Documentation.ReplDocumentationModel model,
-		McpToolAdapter adapter)
-	{
-		var tools = new McpServerPrimitiveCollection<McpServerTool>();
-		var prompts = new McpServerPrimitiveCollection<McpServerPrompt>();
-
-		foreach (var command in model.Commands)
-		{
-			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
-			{
-				continue;
-			}
-
-			var name = McpToolNameFlattener.Flatten(command.Path, '_');
-
-			if (command.IsPrompt)
-			{
-				adapter.RegisterRoute(name, command);
-				prompts.Add(new ReplMcpServerPrompt(command, name, adapter));
-			}
-			else
-			{
-				tools.Add(new ReplMcpServerTool(command, name, adapter));
-			}
-		}
-
-		return new McpServerOptions
-		{
-			ServerInfo = new Implementation { Name = "test-server", Version = "1.0.0" },
-			Capabilities = new ServerCapabilities
-			{
-				Tools = new ToolsCapability { ListChanged = true },
-				Prompts = prompts.Count > 0 ? new PromptsCapability { ListChanged = true } : null,
-			},
-			ToolCollection = tools,
-			PromptCollection = prompts,
-		};
 	}
 
 	private sealed class EmptyServiceProvider : IServiceProvider
