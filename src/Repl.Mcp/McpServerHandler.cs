@@ -150,7 +150,8 @@ internal sealed class McpServerHandler
 					var result = await adapter.InvokeAsync(
 						resourceName,
 						new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal),
-						server: null!,
+						server: null,
+						progressToken: null,
 						ct).ConfigureAwait(false);
 
 					var text = result.Content?.FirstOrDefault() is TextContentBlock block

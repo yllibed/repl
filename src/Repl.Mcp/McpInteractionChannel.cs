@@ -1,3 +1,6 @@
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using Repl.Interaction;
 
 namespace Repl.Mcp;
@@ -10,13 +13,19 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 {
 	private readonly IReadOnlyDictionary<string, string> _prefillAnswers;
 	private readonly InteractivityMode _mode;
+	private readonly McpServer? _server;
+	private readonly ProgressToken? _progressToken;
 
 	public McpInteractionChannel(
 		IReadOnlyDictionary<string, string> prefillAnswers,
-		InteractivityMode mode)
+		InteractivityMode mode,
+		McpServer? server = null,
+		ProgressToken? progressToken = null)
 	{
 		_prefillAnswers = prefillAnswers;
 		_mode = mode;
+		_server = server;
+		_progressToken = progressToken;
 	}
 
 	public ValueTask<int> AskChoiceAsync(
@@ -152,8 +161,21 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			$"Choices: {string.Join(", ", choices)}");
 	}
 
-	public ValueTask WriteProgressAsync(string label, double? percent, CancellationToken cancellationToken) =>
-		ValueTask.CompletedTask;
+	public async ValueTask WriteProgressAsync(string label, double? percent, CancellationToken cancellationToken)
+	{
+		if (_server is not null && _progressToken is { } token)
+		{
+			await _server.NotifyProgressAsync(
+				token,
+				new ProgressNotificationValue
+				{
+					Progress = (float)(percent ?? 0),
+					Total = 100f,
+					Message = label,
+				},
+				cancellationToken: cancellationToken).ConfigureAwait(false);
+		}
+	}
 
 	public ValueTask WriteStatusAsync(string text, CancellationToken cancellationToken) =>
 		ValueTask.CompletedTask;

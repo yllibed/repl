@@ -39,7 +39,8 @@ internal sealed partial class McpToolAdapter
 	public async Task<CallToolResult> InvokeAsync(
 		string toolName,
 		IDictionary<string, JsonElement> arguments,
-		McpServer server,
+		McpServer? server,
+		ProgressToken? progressToken,
 		CancellationToken ct)
 	{
 		if (!_toolRoutes.TryGetValue(toolName, out var command))
@@ -48,12 +49,15 @@ internal sealed partial class McpToolAdapter
 		}
 
 		var (tokens, prefills) = PrepareExecution(command.Path, arguments);
-		return await ExecuteThroughPipelineAsync(tokens, prefills, ct).ConfigureAwait(false);
+		return await ExecuteThroughPipelineAsync(tokens, prefills, server, progressToken, ct)
+			.ConfigureAwait(false);
 	}
 
 	private async Task<CallToolResult> ExecuteThroughPipelineAsync(
 		List<string> tokens,
 		Dictionary<string, string> prefills,
+		McpServer? server,
+		ProgressToken? progressToken,
 		CancellationToken ct)
 	{
 		var coreApp = _app as CoreReplApp
@@ -61,7 +65,8 @@ internal sealed partial class McpToolAdapter
 
 		var outputWriter = new StringWriter();
 		var inputReader = new StringReader(string.Empty);
-		var interactionChannel = new McpInteractionChannel(prefills, _options.InteractivityMode);
+		var interactionChannel = new McpInteractionChannel(
+			prefills, _options.InteractivityMode, server, progressToken);
 		var mcpServices = new McpServiceProviderOverlay(_services, interactionChannel);
 
 		using (ReplSessionIO.SetSession(
