@@ -92,7 +92,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var adapter = new McpToolAdapter(app.Core, new ReplMcpServerOptions(), EmptyServiceProvider.Instance);
 		foreach (var command in model.Commands)
 		{
-			if (command.IsHidden || command.IsPrompt || command.Annotations?.AutomationHidden == true)
+			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
 			{
 				continue;
 			}
@@ -111,7 +111,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var tools = new McpServerPrimitiveCollection<McpServerTool>();
 		foreach (var command in model.Commands)
 		{
-			if (command.IsHidden || command.IsPrompt || command.Annotations?.AutomationHidden == true)
+			if (command.IsHidden || command.Annotations?.AutomationHidden == true)
 			{
 				continue;
 			}

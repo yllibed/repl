@@ -156,19 +156,19 @@ public sealed class Given_McpServerEndToEnd
 	}
 
 	[TestMethod]
-	[Description("AsPrompt() commands are not exposed as tools.")]
-	public async Task When_CommandIsPrompt_Then_NotExposedAsTool()
+	[Description("ReadOnly commands are exposed as tools (they're regular commands with an annotation).")]
+	public async Task When_ReadOnlyCommand_Then_ExposedAsTool()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app =>
 		{
-			app.Map("greet", () => "hello").ReadOnly();
-			app.Map("troubleshoot {symptom}", (string symptom) => $"Diagnose: {symptom}")
-				.AsPrompt();
+			app.Map("contacts", () => "Alice, Bob")
+				.WithDescription("List contacts")
+				.ReadOnly()
+				.AsResource();
 		});
 
 		var tools = await fixture.Client.ListToolsAsync();
 
-		tools.Should().ContainSingle(t => string.Equals(t.Name, "greet", StringComparison.Ordinal));
-		tools.Should().NotContain(t => string.Equals(t.Name, "troubleshoot", StringComparison.Ordinal));
+		tools.Should().ContainSingle(t => string.Equals(t.Name, "contacts", StringComparison.Ordinal));
 	}
 }

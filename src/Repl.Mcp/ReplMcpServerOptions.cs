@@ -45,11 +45,25 @@ public sealed class ReplMcpServerOptions
 	public Func<ReplDocCommand, bool>? CommandFilter { get; set; }
 
 	/// <summary>
-	/// When <c>true</c> (default), resources are also exposed as read-only tools when the client
-	/// does not advertise resource support in its capabilities during the MCP <c>initialize</c> handshake.
+	/// When <c>true</c> (default), commands annotated <c>.ReadOnly()</c> are automatically
+	/// exposed as MCP resources in addition to being tools.
+	/// Set to <c>false</c> to require explicit <c>.AsResource()</c> marking.
 	/// </summary>
-	/// <remarks>Reserved for future implementation. The option is accepted but not yet wired.</remarks>
-	public bool ResourceFallbackToTools { get; set; } = true;
+	public bool AutoPromoteReadOnlyToResources { get; set; } = true;
+
+	/// <summary>
+	/// When <c>true</c>, resources are also exposed as read-only tools.
+	/// This is a compatibility fallback for clients that don't support MCP resources (~61% as of March 2025).
+	/// Default is <c>false</c> — opt in when your target agents lack resource support.
+	/// </summary>
+	public bool ResourceFallbackToTools { get; set; }
+
+	/// <summary>
+	/// When <c>true</c>, prompts are also exposed as tools.
+	/// This is a compatibility fallback for clients that don't support MCP prompts (~62% as of March 2025).
+	/// Default is <c>false</c> — opt in when your target agents lack prompt support.
+	/// </summary>
+	public bool PromptFallbackToTools { get; set; }
 
 	private readonly List<McpPromptRegistration> _prompts = [];
 

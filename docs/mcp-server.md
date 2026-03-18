@@ -132,6 +132,31 @@ app.Map("deploy {env}", handler)
 - **Resource**: data sources an agent should consult before acting (`contacts`, `config`, `status`)
 - **Prompt**: reusable instruction templates that shape agent behavior (`summarize-data`, `review-changes`, `troubleshoot`)
 
+### How commands map to MCP primitives
+
+| Command markers | Tool? | Resource? | Prompt? |
+|---|---|---|---|
+| _(none)_ | Yes | No | No |
+| `.ReadOnly()` | Yes | Yes (auto-promoted) | No |
+| `.ReadOnly()` + `AutoPromoteReadOnlyToResources = false` | Yes | No | No |
+| `.AsResource()` | No | Yes | No |
+| `.AsResource()` + `ResourceFallbackToTools = true` | Yes | Yes | No |
+| `.ReadOnly().AsResource()` | Yes | Yes | No |
+| `.AsPrompt()` | No | No | Yes |
+| `.AsPrompt()` + `PromptFallbackToTools = true` | Yes | No | Yes |
+| `.AutomationHidden()` | No | No | No |
+
+> **Compatibility fallback:** Since only ~39% of clients support resources and ~38% support prompts, you can opt in to expose them as tools too. Enable `ResourceFallbackToTools` and/or `PromptFallbackToTools` in `ReplMcpServerOptions`. `AutoPromoteReadOnlyToResources` (default: `true`) controls whether `.ReadOnly()` commands are automatically exposed as resources.
+>
+> ```csharp
+> app.UseMcpServer(o =>
+> {
+>     o.ResourceFallbackToTools = true;               // resources also appear as read-only tools
+>     o.PromptFallbackToTools = true;                  // prompts also appear as tools
+>     o.AutoPromoteReadOnlyToResources = false;        // opt out of ReadOnly → resource auto-promotion
+> });
+> ```
+
 ## JSON Schema generation
 
 Route constraints and handler parameter types produce typed JSON Schema:
@@ -250,7 +275,8 @@ app.UseMcpServer(o =>
     o.ContextName = "mcp";                                      // myapp {ContextName} serve
     o.ToolNamingSeparator = ToolNamingSeparator.Underscore;     // contact_add
     o.InteractivityMode = InteractivityMode.PrefillThenFail;    // interaction degradation
-    o.ResourceFallbackToTools = true;                           // expose resources as tools when client doesn't support resources
+    o.ResourceFallbackToTools = false;                          // opt-in: also expose resources as tools
+    o.PromptFallbackToTools = false;                             // opt-in: also expose prompts as tools
     o.CommandFilter = cmd => true;                              // filter which commands become tools
     o.Prompt("summarize", (string topic) => ...);               // explicit prompt registration
 });

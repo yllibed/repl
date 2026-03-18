@@ -36,8 +36,7 @@ internal sealed class McpServerHandler
 		var separator = McpToolNameFlattener.ResolveSeparator(_options.ToolNamingSeparator);
 		var serverOptions = BuildServerOptions(model, adapter, separator);
 
-		// AsProtocolPassthrough reserves stdin/stdout for the transport.
-		_ = io;
+		_ = io; // AsProtocolPassthrough reserves stdin/stdout for the transport.
 		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
 		var transport = new StdioServerTransport(serverName);
 		try
@@ -69,57 +68,33 @@ internal sealed class McpServerHandler
 		McpToolAdapter adapter,
 		char separator)
 	{
-		var tools = GenerateTools(model, adapter, separator);
+		var tools = GenerateAllTools(model, adapter, separator);
 		var resources = GenerateResources(model, adapter, separator);
 		var prompts = CollectPrompts(model, adapter, separator);
 
 		var serverName = _options.ServerName ?? model.App.Name ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
 
-		var toolCollection = new McpServerPrimitiveCollection<McpServerTool>();
-		foreach (var tool in tools)
-		{
-			toolCollection.Add(tool);
-		}
-
-		var resourceCollection = new McpServerResourceCollection();
-		foreach (var resource in resources)
-		{
-			resourceCollection.Add(resource);
-		}
-
-		var promptCollection = new McpServerPrimitiveCollection<McpServerPrompt>();
-		foreach (var prompt in prompts)
-		{
-			promptCollection.Add(prompt);
-		}
-
-		var capabilities = new ServerCapabilities
-		{
-			Tools = new ToolsCapability { ListChanged = true },
-		};
-
-		if (resources.Count > 0)
-		{
-			capabilities.Resources = new ResourcesCapability { ListChanged = true };
-		}
-
-		if (prompts.Count > 0)
-		{
-			capabilities.Prompts = new PromptsCapability { ListChanged = true };
-		}
-
 		return new McpServerOptions
 		{
 			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
-			Capabilities = capabilities,
-			ToolCollection = toolCollection,
-			ResourceCollection = resourceCollection,
-			PromptCollection = promptCollection,
+			Capabilities = BuildCapabilities(resources, prompts),
+			ToolCollection = ToCollection(tools),
+			ResourceCollection = ToResourceCollection(resources),
+			PromptCollection = ToCollection(prompts),
 		};
 	}
 
-	private List<McpServerTool> GenerateTools(
+	// ── Tool generation ────────────────────────────────────────────────
+
+	/// <summary>
+	/// Generates all tools: regular commands + resource fallback tools + prompt fallback tools.
+	/// Resources and prompts are always also exposed as tools so agents that don't support
+	/// the native primitives (~61% for resources, ~62% for prompts) can still access them.
+	/// Use <see cref="ReplMcpServerOptions.ResourceFallbackToTools"/> and
+	/// <see cref="ReplMcpServerOptions.PromptFallbackToTools"/> to disable.
+	/// </summary>
+	private List<McpServerTool> GenerateAllTools(
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
 		char separator)
@@ -127,6 +102,9 @@ internal sealed class McpServerHandler
 		var tools = new List<McpServerTool>();
 		var nameSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+		// 1. Regular commands. Resource-only and prompt-only commands are handled
+		//    separately as fallback tools (opt-in). ReadOnly+AsResource commands
+		//    are regular tools (they have a behavioral annotation, not just a marker).
 		foreach (var command in model.Commands)
 		{
 			if (!IsToolCandidate(command))
@@ -134,22 +112,68 @@ internal sealed class McpServerHandler
 				continue;
 			}
 
-			var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
-			if (!nameSet.Add(toolName))
+			if (command.IsPrompt)
 			{
-				throw new InvalidOperationException(
-					$"MCP tool name collision: '{toolName}' from route '{command.Path}'. " +
-					"Consider a different ToolNamingSeparator or rename one of the commands.");
+				continue; // Handled in phase 3 (prompt fallback).
 			}
 
-			adapter.RegisterRoute(toolName, command);
-			tools.Add(new ReplMcpServerTool(command, toolName, adapter));
+			if (command.IsResource && command.Annotations?.ReadOnly != true)
+			{
+				continue; // Resource-only (no ReadOnly annotation) — handled in phase 2.
+			}
+
+			AddTool(command, tools, nameSet, adapter, separator);
+		}
+
+		// 2. Resource fallback: resource-only commands as tools.
+		if (_options.ResourceFallbackToTools)
+		{
+			foreach (var resource in model.Resources)
+			{
+				var docCommand = model.Commands.FirstOrDefault(c =>
+					string.Equals(c.Path, resource.Path, StringComparison.OrdinalIgnoreCase));
+				if (docCommand is not null && IsToolCandidate(docCommand))
+				{
+					AddTool(docCommand, tools, nameSet, adapter, separator);
+				}
+			}
+		}
+
+		// 3. Prompt fallback: prompt commands as tools.
+		if (_options.PromptFallbackToTools)
+		{
+			foreach (var command in model.Commands)
+			{
+				if (command.IsPrompt && IsToolCandidate(command))
+				{
+					AddTool(command, tools, nameSet, adapter, separator);
+				}
+			}
 		}
 
 		return tools;
 	}
 
-	private static List<McpServerResource> GenerateResources(
+	private static void AddTool(
+		ReplDocCommand command,
+		List<McpServerTool> tools,
+		HashSet<string> nameSet,
+		McpToolAdapter adapter,
+		char separator)
+	{
+		var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
+		if (!nameSet.Add(toolName))
+		{
+			return; // Already registered (e.g. ReadOnly command is both a tool and a resource).
+		}
+
+		adapter.RegisterRoute(toolName, command);
+		tools.Add(new ReplMcpServerTool(command, toolName, adapter));
+	}
+
+	// ── Resource generation ────────────────────────────────────────────
+
+	private List<McpServerResource> GenerateResources(
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
 		char separator)
@@ -158,26 +182,30 @@ internal sealed class McpServerHandler
 
 		foreach (var resource in model.Resources)
 		{
+			// Skip auto-promoted ReadOnly resources when opt-out is active.
+			// Auto-promoted resources are those in the Resources list but not
+			// explicitly marked AsResource() — they got there via ReadOnly.
+			var docCommand = model.Commands.FirstOrDefault(c =>
+				string.Equals(c.Path, resource.Path, StringComparison.OrdinalIgnoreCase));
+			if (!_options.AutoPromoteReadOnlyToResources
+				&& docCommand is not null
+				&& !docCommand.IsResource
+				&& docCommand.Annotations?.ReadOnly == true)
+			{
+				continue;
+			}
 			var resourceName = McpToolNameFlattener.Flatten(resource.Path, separator);
 			var uriTemplate = $"repl://{resourceName}";
-
-			// Create a resource that dispatches through the tool adapter.
 			var capturedPath = resource.Path;
+
 			var mcpResource = McpServerResource.Create(
 				async (CancellationToken ct) =>
 				{
-					// Resources dispatch through the same pipeline as tools.
 					var result = await adapter.InvokeAsync(
 						resourceName,
 						new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal),
-						server: null,
-						progressToken: null,
-						ct).ConfigureAwait(false);
-
-					var text = result.Content?.FirstOrDefault() is TextContentBlock block
-						? block.Text ?? ""
-						: "";
-					return text;
+						server: null, progressToken: null, ct).ConfigureAwait(false);
+					return result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text ?? "";
 				},
 				new McpServerResourceCreateOptions
 				{
@@ -186,9 +214,6 @@ internal sealed class McpServerHandler
 					UriTemplate = uriTemplate,
 				});
 
-			// Ensure the resource route is registered.
-			var docCommand = model.Commands.FirstOrDefault(c =>
-				string.Equals(c.Path, capturedPath, StringComparison.OrdinalIgnoreCase));
 			if (docCommand is not null)
 			{
 				adapter.RegisterRoute(resourceName, docCommand);
@@ -200,6 +225,8 @@ internal sealed class McpServerHandler
 		return resources;
 	}
 
+	// ── Prompt generation ──────────────────────────────────────────────
+
 	private List<McpServerPrompt> CollectPrompts(
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
@@ -207,7 +234,6 @@ internal sealed class McpServerHandler
 	{
 		var prompts = new Dictionary<string, McpServerPrompt>(StringComparer.OrdinalIgnoreCase);
 
-		// 1. Prompts from AsPrompt() commands — dispatch through the pipeline.
 		foreach (var command in model.Commands)
 		{
 			if (!command.IsPrompt)
@@ -220,7 +246,6 @@ internal sealed class McpServerHandler
 			prompts[promptName] = CreatePipelinePrompt(promptName, command, adapter);
 		}
 
-		// 2. Explicit registrations via options.Prompt() — override on collision.
 		foreach (var registration in _options.Prompts)
 		{
 			prompts[registration.Name] = McpServerPrompt.Create(
@@ -231,10 +256,6 @@ internal sealed class McpServerHandler
 		return [.. prompts.Values];
 	}
 
-	/// <summary>
-	/// Creates a prompt that dispatches through the Repl pipeline.
-	/// The handler executes with its arguments and the return value becomes the prompt message.
-	/// </summary>
 	private static McpServerPrompt CreatePipelinePrompt(
 		string promptName,
 		ReplDocCommand command,
@@ -248,8 +269,7 @@ internal sealed class McpServerHandler
 					.ConfigureAwait(false);
 
 				var text = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
-					?? command.Description
-					?? promptName;
+					?? command.Description ?? promptName;
 
 				return new GetPromptResult
 				{
@@ -283,11 +303,57 @@ internal sealed class McpServerHandler
 		return jsonArgs;
 	}
 
+	// ── Helpers ─────────────────────────────────────────────────────────
+
 	private bool IsToolCandidate(ReplDocCommand command) =>
 		!command.IsHidden
-		&& !command.IsPrompt
 		&& command.Annotations?.AutomationHidden != true
 		&& (_options.CommandFilter is not { } filter || filter(command));
+
+	private static ServerCapabilities BuildCapabilities(
+		List<McpServerResource> resources,
+		List<McpServerPrompt> prompts)
+	{
+		var capabilities = new ServerCapabilities
+		{
+			Tools = new ToolsCapability { ListChanged = true },
+		};
+
+		if (resources.Count > 0)
+		{
+			capabilities.Resources = new ResourcesCapability { ListChanged = true };
+		}
+
+		if (prompts.Count > 0)
+		{
+			capabilities.Prompts = new PromptsCapability { ListChanged = true };
+		}
+
+		return capabilities;
+	}
+
+	private static McpServerPrimitiveCollection<T> ToCollection<T>(IReadOnlyList<T> items)
+		where T : IMcpServerPrimitive
+	{
+		var collection = new McpServerPrimitiveCollection<T>();
+		foreach (var item in items)
+		{
+			collection.Add(item);
+		}
+
+		return collection;
+	}
+
+	private static McpServerResourceCollection ToResourceCollection(IReadOnlyList<McpServerResource> items)
+	{
+		var collection = new McpServerResourceCollection();
+		foreach (var item in items)
+		{
+			collection.Add(item);
+		}
+
+		return collection;
+	}
 
 	// ── list_changed on routing invalidation ───────────────────────────
 
@@ -308,8 +374,7 @@ internal sealed class McpServerHandler
 		_routingChangedHandler = (_, _) =>
 		{
 			var newModel = _app.CreateDocumentationModel();
-
-			RefreshCollection(toolCollection, GenerateTools(newModel, adapter, separator));
+			RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator));
 			RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator));
 			RefreshCollection(promptCollection, CollectPrompts(newModel, adapter, separator));
 		};
