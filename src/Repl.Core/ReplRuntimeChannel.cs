@@ -19,5 +19,10 @@ public enum ReplRuntimeChannel
 	/// Hosted session (for example websocket/telnet/remote terminal).
 	/// </summary>
 	Session = 2,
+
+	/// <summary>
+	/// Programmatic execution driven by an external agent, script, or API.
+	/// </summary>
+	Programmatic = 3,
 }
 

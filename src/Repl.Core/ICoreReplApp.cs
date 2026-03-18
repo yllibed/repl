@@ -1,3 +1,5 @@
+using Repl.Documentation;
+
 namespace Repl;
 
 /// <summary>
@@ -47,4 +49,14 @@ public interface ICoreReplApp : IReplMap
 	/// Invalidates the active routing cache so module presence predicates are re-evaluated on next resolution.
 	/// </summary>
 	void InvalidateRouting();
+
+	/// <summary>
+	/// Builds a structured documentation model of the command graph.
+	/// </summary>
+	/// <param name="targetPath">
+	/// Optional target path to scope the model. When <c>null</c>, returns the full model.
+	/// When specified and not found, returns an empty model.
+	/// </param>
+	/// <returns>A structured documentation model.</returns>
+	ReplDocumentationModel CreateDocumentationModel(string? targetPath = null);
 }
