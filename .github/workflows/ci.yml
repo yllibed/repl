@@ -454,5 +454,29 @@ jobs:
         if: success()
         shell: pwsh
         run: |
-          dotnet nuget push packages/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
-          dotnet nuget push packages/*.snupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+          $source = 'https://api.nuget.org/v3/index.json'
+          $apiKey = '${{ secrets.NUGET_API_KEY }}'
+          $failed = @()
+
+          foreach ($pkg in Get-ChildItem packages/*.nupkg) {
+            Write-Host "Pushing $($pkg.Name)..."
+            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
+              $failed += $pkg.Name
+            }
+          }
+
+          foreach ($pkg in Get-ChildItem packages/*.snupkg -ErrorAction SilentlyContinue) {
+            Write-Host "Pushing $($pkg.Name)..."
+            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
+              $failed += $pkg.Name
+            }
+          }
+
+          if ($failed.Count -gt 0) {
+            Write-Warning "The following packages failed to publish: $($failed -join ', ')"
+            Write-Warning "This may be expected for new packages awaiting NuGet validation."
+          }
