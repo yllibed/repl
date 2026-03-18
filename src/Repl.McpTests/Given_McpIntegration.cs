@@ -20,11 +20,11 @@ public sealed class Given_McpIntegration
 
 	[TestMethod]
 	[Description("UseMcpServer with custom command name uses that name.")]
-	public void When_CustomCommandName_Then_RouteUsesCustomName()
+	public void When_CustomContextName_Then_RouteUsesCustomName()
 	{
 		var app = ReplApp.Create();
 		app.Map("hello", () => "world");
-		app.UseMcpServer(o => o.CommandName = "ai");
+		app.UseMcpServer(o => o.ContextName = "ai");
 
 		var match = app.Core.Resolve(["ai", "serve"]);
 

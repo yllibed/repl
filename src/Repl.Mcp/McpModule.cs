@@ -8,7 +8,7 @@ internal sealed class McpModule(ReplMcpServerOptions options) : IReplModule
 {
 	public void Map(IReplMap map)
 	{
-		map.Context(options.CommandName, mcp =>
+		map.Context(options.ContextName, mcp =>
 		{
 			mcp.Map("serve",
 				async (IReplIoContext io, IServiceProvider services, ICoreReplApp app, CancellationToken ct) =>

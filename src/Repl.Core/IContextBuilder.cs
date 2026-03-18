@@ -16,7 +16,7 @@ public interface IContextBuilder : IReplMap
 
 	/// <summary>
 	/// Sets a rich markdown description for the context.
-	/// Enriches human <c>--help --verbose</c> output and agent tool descriptions.
+	/// Used for agent tool descriptions and documentation export.
 	/// </summary>
 	/// <param name="markdown">Markdown content.</param>
 	/// <returns>The same context builder.</returns>

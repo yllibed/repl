@@ -11,6 +11,8 @@ using Repl;
 
 var app = ReplApp.Create().UseDefaultInteractive();
 
+app.UseMcpServer(o => o.ServerName = "ContactManager");
+
 // ── Resources (data to consult) ────────────────────────────────────
 
 app.Map("contacts", () => new[]
@@ -22,41 +24,48 @@ app.Map("contacts", () => new[]
 	.ReadOnly()
 	.AsResource();
 
-// ── Tools (operations to perform) ──────────────────────────────────
+// ── Contact operations (grouped context) ───────────────────────────
 
-app.Map("contact {id:int}", ([Description("Contact numeric id")] int id) =>
-		new { Id = id, Name = id == 1 ? "Alice" : "Bob", Email = $"user{id}@example.com" })
-	.WithDescription("Get contact by ID")
-	.ReadOnly();
+app.Context("contact", contact =>
+{
+	contact.Map("{id:int}", ([Description("Contact numeric id")] int id) =>
+			new { Id = id, Name = id == 1 ? "Alice" : "Bob", Email = $"user{id}@example.com" })
+		.WithDescription("Get contact by ID")
+		.ReadOnly();
 
-app.Map("contact add", (string name, string email) =>
-		new { Name = name, Email = email, Status = "created" })
-	.WithDescription("Add a new contact")
-	.WithDetails("""
-		Creates a new contact record.
-		The email must be unique across all contacts.
-		""")
-	.OpenWorld()
-	.Idempotent();
+	contact.Map("add", (string name, string email) =>
+			new { Name = name, Email = email, Status = "created" })
+		.WithDescription("Add a new contact")
+		.WithDetails("""
+			Creates a new contact record.
+			The email must be unique across all contacts.
+			""")
+		.OpenWorld()
+		.Idempotent();
 
-app.Map("contact delete {id:int}",
-	async ([Description("Contact numeric id")] int id, Repl.Interaction.IReplInteractionChannel interaction, CancellationToken ct) =>
-	{
-		if (!await interaction.AskConfirmationAsync("confirm", $"Delete contact {id}?", options: new(ct)))
+	contact.Map("delete {id:int}",
+		async ([Description("Contact numeric id")] int id, Repl.Interaction.IReplInteractionChannel interaction, CancellationToken ct) =>
 		{
-			return Results.Cancelled("Delete cancelled by user.");
-		}
+			if (!await interaction.AskConfirmationAsync("confirm", $"Delete contact {id}?", options: new(ct)))
+			{
+				return Results.Cancelled("Delete cancelled by user.");
+			}
 
-		return Results.Success($"Contact {id} deleted.");
-	})
-	.WithDescription("Delete a contact")
-	.Destructive();
+			return Results.Success($"Contact {id} deleted.");
+		})
+		.WithDescription("Delete a contact")
+		.Destructive();
+});
 
-// ── Prompts (conversation starters) ────────────────────────────────
+// ── Prompts (reusable agent instructions) ──────────────────────────
+// The handler returns text that becomes the agent's starting instructions.
 
-app.Map("explain-error {code}", (string code) =>
-		$"Explain error code '{code}' in the context of the ContactManager application.")
-	.WithDescription("Explain a ContactManager error code")
+app.Map("troubleshoot {symptom}", (string symptom) =>
+		$"The user reports: '{symptom}'. " +
+		"Investigate using the available contact tools. " +
+		"Check if any contacts are missing or malformed. " +
+		"Summarize your findings and suggest a fix.")
+	.WithDescription("Guide the agent through diagnosing a contact issue")
 	.AsPrompt();
 
 // ── Interactive-only commands ──────────────────────────────────────
@@ -68,12 +77,5 @@ app.Map("clear", async (Repl.Interaction.IReplInteractionChannel interaction, Ca
 	})
 	.WithDescription("Clear the screen")
 	.AutomationHidden();
-
-// ── MCP server integration ─────────────────────────────────────────
-
-app.UseMcpServer(o =>
-{
-	o.ServerName = "ContactManager";
-});
 
 return app.Run(args);

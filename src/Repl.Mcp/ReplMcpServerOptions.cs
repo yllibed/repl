@@ -23,10 +23,10 @@ public sealed class ReplMcpServerOptions
 	public string? ServerVersion { get; set; }
 
 	/// <summary>
-	/// Command name for the MCP context (default: <c>"mcp"</c>).
-	/// The serve subcommand becomes: <c>myapp {CommandName} serve</c>.
+	/// Context name for the MCP subcommands (default: <c>"mcp"</c>).
+	/// The serve subcommand becomes: <c>myapp {ContextName} serve</c>.
 	/// </summary>
-	public string CommandName { get; set; } = "mcp";
+	public string ContextName { get; set; } = "mcp";
 
 	/// <summary>
 	/// Separator used when flattening context paths into MCP tool names.

@@ -67,7 +67,7 @@ public sealed class CommandBuilder
 
 	/// <summary>
 	/// Gets the rich markdown description body.
-	/// Serves both human <c>--help --verbose</c> output and agent tool descriptions.
+	/// Used for agent tool descriptions and documentation export.
 	/// </summary>
 	public string? Details { get; private set; }
 
@@ -202,9 +202,8 @@ public sealed class CommandBuilder
 	// ── Rich metadata ──────────────────────────────────────────────────
 
 	/// <summary>
-	/// Sets a rich markdown description body.
-	/// Dual-purpose: enriches human <c>--help --verbose</c> output
-	/// and agent tool descriptions.
+	/// Sets a rich markdown description body for agent tool descriptions
+	/// and documentation export.
 	/// </summary>
 	/// <param name="markdown">Markdown content.</param>
 	/// <returns>The same builder instance.</returns>
