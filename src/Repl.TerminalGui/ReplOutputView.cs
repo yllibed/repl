@@ -127,11 +127,8 @@ public sealed class ReplOutputView : View
 					content = " ";
 				}
 
-				var attr = MapCellAttribute(cell);
-
-				Move(col, row);
-				App?.Driver?.SetAttribute(attr);
-				App?.Driver?.AddStr(content);
+				SetAttribute(MapCellAttribute(cell));
+				AddStr(col, row, content);
 			}
 		}
 

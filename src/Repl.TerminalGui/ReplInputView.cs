@@ -104,6 +104,11 @@ public sealed class ReplInputView : View
 			NavigateHistory(direction: 1);
 			e.Handled = true;
 		}
+		else if (e == Key.Tab || e == Key.Tab.WithShift)
+		{
+			// Prevent Tab from navigating focus away from the input field.
+			e.Handled = true;
+		}
 	}
 
 	private void NavigateHistory(int direction)
