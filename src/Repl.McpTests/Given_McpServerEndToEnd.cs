@@ -196,7 +196,6 @@ public sealed class Given_McpServerEndToEnd
 
 	[TestMethod]
 	[Description("prompts/get dispatches through the pipeline and returns the handler output.")]
-	[Ignore("Prompt pipeline dispatch requires full CoreReplApp execution context — deferred to hosted integration tests.")]
 	public async Task When_PromptsGet_Then_ReturnsHandlerOutput()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app =>

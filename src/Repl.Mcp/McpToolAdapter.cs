@@ -26,6 +26,11 @@ internal sealed partial class McpToolAdapter
 	}
 
 	/// <summary>
+	/// Clears all registered routes. Called before rebuilding on routing invalidation.
+	/// </summary>
+	public void ClearRoutes() => _toolRoutes.Clear();
+
+	/// <summary>
 	/// Registers a tool name → command mapping for dispatch.
 	/// </summary>
 	public void RegisterRoute(string toolName, ReplDocCommand command)

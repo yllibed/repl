@@ -64,15 +64,10 @@ internal sealed class ReplMcpServerPrompt : McpServerPrompt
 		RequestContext<GetPromptRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
-		var jsonArgs = new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
-		if (request.Params?.Arguments is { } args)
-		{
-			foreach (var (key, value) in args)
-			{
-				jsonArgs[key] = System.Text.Json.JsonSerializer.SerializeToElement(
-					value, McpJsonContext.Default.String);
-			}
-		}
+		// Prompt arguments are already JsonElement — pass through directly.
+		var jsonArgs = request.Params?.Arguments is { } args
+			? new Dictionary<string, System.Text.Json.JsonElement>(args, StringComparer.Ordinal)
+			: new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
 
 		var result = await _adapter.InvokeAsync(
 			_protocolPrompt.Name, jsonArgs, server: null, progressToken: null, cancellationToken)

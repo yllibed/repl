@@ -142,11 +142,12 @@ internal static class McpSchemaGenerator
 
 	private static (string Type, string? Format) MapType(string replType)
 	{
-		// Collection types: List<T>, IList<T>, T[], IReadOnlyList<T>, etc.
+		// Collection types: List<T>, IList<T>, T[], IReadOnlyList<T>, IEnumerable<T>, etc.
 		if (replType.EndsWith("[]", StringComparison.Ordinal)
 			|| replType.StartsWith("List<", StringComparison.OrdinalIgnoreCase)
 			|| replType.StartsWith("IList<", StringComparison.OrdinalIgnoreCase)
-			|| replType.StartsWith("IReadOnlyList<", StringComparison.OrdinalIgnoreCase))
+			|| replType.StartsWith("IReadOnlyList<", StringComparison.OrdinalIgnoreCase)
+			|| replType.StartsWith("IEnumerable<", StringComparison.OrdinalIgnoreCase))
 		{
 			return ("array", null);
 		}

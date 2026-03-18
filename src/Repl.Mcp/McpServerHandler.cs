@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Documentation;
@@ -225,6 +226,14 @@ internal sealed class McpServerHandler
 						resourceName,
 						new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal),
 						server: null, progressToken: null, ct).ConfigureAwait(false);
+
+					if (result.IsError == true)
+					{
+						var errorText = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
+							?? "Resource read failed.";
+						throw new McpException(errorText);
+					}
+
 					return result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text ?? "";
 				},
 				new McpServerResourceCreateOptions
@@ -352,6 +361,7 @@ internal sealed class McpServerHandler
 			ReplSessionIO.IsProgrammatic = true;
 			try
 			{
+				adapter.ClearRoutes();
 				var newModel = _app.CreateDocumentationModel();
 				RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator));
 				RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator));
