@@ -76,6 +76,17 @@ public sealed class Given_McpInteractionChannel
 		result.Should().BeFalse();
 	}
 
+	[TestMethod]
+	[Description("Missing prefill in PrefillThenFail mode throws even when defaultValue is true.")]
+	public async Task When_NoBoolPrefillInFailModeWithDefaultTrue_Then_Throws()
+	{
+		var channel = CreateChannel(mode: InteractivityMode.PrefillThenFail);
+
+		var act = () => channel.AskConfirmationAsync("confirm", "Proceed?", defaultValue: true).AsTask();
+
+		await act.Should().ThrowAsync<McpInteractionException>();
+	}
+
 	// ── AskTextAsync ───────────────────────────────────────────────────
 
 	[TestMethod]

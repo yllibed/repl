@@ -34,37 +34,45 @@ internal sealed class McpServerHandler
 	{
 		// Build the doc model with Programmatic channel so module presence
 		// predicates see the same channel as tool dispatch.
+		var previousProgrammatic = ReplSessionIO.IsProgrammatic;
 		ReplSessionIO.IsProgrammatic = true;
-		var model = _app.CreateDocumentationModel();
-		var adapter = new McpToolAdapter(_app, _options, _services);
-		var separator = McpToolNameFlattener.ResolveSeparator(_options.ToolNamingSeparator);
-		var serverOptions = BuildServerOptions(model, adapter, separator);
-
-		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
-		var transport = _options.TransportFactory is { } factory
-			? factory(serverName, io)
-			: new StdioServerTransport(serverName);
 		try
 		{
-			var server = McpServer.Create(transport, serverOptions, serviceProvider: _services);
+			var model = _app.CreateDocumentationModel();
+			var adapter = new McpToolAdapter(_app, _options, _services);
+			var separator = McpToolNameFlattener.ResolveSeparator(_options.ToolNamingSeparator);
+			var serverOptions = BuildServerOptions(model, adapter, separator);
+
+			var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
+			var transport = _options.TransportFactory is { } factory
+				? factory(serverName, io)
+				: new StdioServerTransport(serverName);
 			try
 			{
-				SubscribeToRoutingChanges(
-					adapter, separator,
-					serverOptions.ToolCollection!,
-					serverOptions.ResourceCollection!,
-					serverOptions.PromptCollection!);
-				await server.RunAsync(ct).ConfigureAwait(false);
+				var server = McpServer.Create(transport, serverOptions, serviceProvider: _services);
+				try
+				{
+					SubscribeToRoutingChanges(
+						adapter, separator,
+						serverOptions.ToolCollection!,
+						serverOptions.ResourceCollection!,
+						serverOptions.PromptCollection!);
+					await server.RunAsync(ct).ConfigureAwait(false);
+				}
+				finally
+				{
+					UnsubscribeFromRoutingChanges();
+					await server.DisposeAsync().ConfigureAwait(false);
+				}
 			}
 			finally
 			{
-				UnsubscribeFromRoutingChanges();
-				await server.DisposeAsync().ConfigureAwait(false);
+				await transport.DisposeAsync().ConfigureAwait(false);
 			}
 		}
 		finally
 		{
-			await transport.DisposeAsync().ConfigureAwait(false);
+			ReplSessionIO.IsProgrammatic = previousProgrammatic;
 		}
 	}
 
@@ -73,8 +81,10 @@ internal sealed class McpServerHandler
 		McpToolAdapter adapter,
 		char separator)
 	{
-		var tools = GenerateAllTools(model, adapter, separator);
-		var resources = GenerateResources(model, adapter, separator);
+		var commandsByPath = model.Commands.ToDictionary(
+			c => c.Path, c => c, StringComparer.OrdinalIgnoreCase);
+		var tools = GenerateAllTools(model, adapter, separator, commandsByPath);
+		var resources = GenerateResources(model, adapter, separator, commandsByPath);
 		var prompts = CollectPrompts(model, adapter, separator);
 
 		var serverName = _options.ServerName ?? model.App.Name ?? "repl-mcp-server";
@@ -102,7 +112,8 @@ internal sealed class McpServerHandler
 	private List<McpServerTool> GenerateAllTools(
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
-		char separator)
+		char separator,
+		Dictionary<string, ReplDocCommand> commandsByPath)
 	{
 		var tools = new List<McpServerTool>();
 		var nameSet = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -135,9 +146,8 @@ internal sealed class McpServerHandler
 		{
 			foreach (var resource in model.Resources)
 			{
-				var docCommand = model.Commands.FirstOrDefault(c =>
-					string.Equals(c.Path, resource.Path, StringComparison.OrdinalIgnoreCase));
-				if (docCommand is not null && IsToolCandidate(docCommand))
+				if (commandsByPath.TryGetValue(resource.Path, out var docCommand)
+					&& IsToolCandidate(docCommand))
 				{
 					AddTool(docCommand, tools, nameSet, adapter, separator);
 				}
@@ -193,14 +203,14 @@ internal sealed class McpServerHandler
 	private List<McpServerResource> GenerateResources(
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
-		char separator)
+		char separator,
+		Dictionary<string, ReplDocCommand> commandsByPath)
 	{
 		var resources = new List<McpServerResource>();
 
 		foreach (var resource in model.Resources)
 		{
-			var docCommand = model.Commands.FirstOrDefault(c =>
-				string.Equals(c.Path, resource.Path, StringComparison.OrdinalIgnoreCase));
+			commandsByPath.TryGetValue(resource.Path, out var docCommand);
 
 			// Hidden and AutomationHidden commands are excluded from all MCP surfaces.
 			if (docCommand is not null && !IsToolCandidate(docCommand))
@@ -342,6 +352,9 @@ internal sealed class McpServerHandler
 	// ── list_changed on routing invalidation ───────────────────────────
 
 	private EventHandler? _routingChangedHandler;
+	private readonly Lock _refreshLock = new();
+	private Timer? _debounceTimer;
+	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
 
 	private void SubscribeToRoutingChanges(
 		McpToolAdapter adapter,
@@ -357,24 +370,48 @@ internal sealed class McpServerHandler
 
 		_routingChangedHandler = (_, _) =>
 		{
-			// Resolve doc model with Programmatic channel to match tool dispatch context.
+			// Debounce: coalesce rapid-fire invalidations (e.g. multiple Map() calls)
+			// into a single rebuild after activity settles.
+			lock (_refreshLock)
+			{
+				_debounceTimer?.Dispose();
+				_debounceTimer = new Timer(
+					_ => RebuildCollections(adapter, separator, toolCollection, resourceCollection, promptCollection),
+					state: null,
+					dueTime: DebounceDelay,
+					period: Timeout.InfiniteTimeSpan);
+			}
+		};
+
+		coreApp.RoutingInvalidated += _routingChangedHandler;
+	}
+
+	private void RebuildCollections(
+		McpToolAdapter adapter,
+		char separator,
+		McpServerPrimitiveCollection<McpServerTool> toolCollection,
+		McpServerResourceCollection resourceCollection,
+		McpServerPrimitiveCollection<McpServerPrompt> promptCollection)
+	{
+		lock (_refreshLock)
+		{
 			var previousProgrammatic = ReplSessionIO.IsProgrammatic;
 			ReplSessionIO.IsProgrammatic = true;
 			try
 			{
 				adapter.ClearRoutes();
 				var newModel = _app.CreateDocumentationModel();
-				RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator));
-				RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator));
+				var newCommandsByPath = newModel.Commands.ToDictionary(
+					c => c.Path, c => c, StringComparer.OrdinalIgnoreCase);
+				RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator, newCommandsByPath));
+				RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator, newCommandsByPath));
 				RefreshCollection(promptCollection, CollectPrompts(newModel, adapter, separator));
 			}
 			finally
 			{
 				ReplSessionIO.IsProgrammatic = previousProgrammatic;
 			}
-		};
-
-		coreApp.RoutingInvalidated += _routingChangedHandler;
+		}
 	}
 
 	private void UnsubscribeFromRoutingChanges()
@@ -383,6 +420,12 @@ internal sealed class McpServerHandler
 		{
 			coreApp.RoutingInvalidated -= _routingChangedHandler;
 			_routingChangedHandler = null;
+		}
+
+		lock (_refreshLock)
+		{
+			_debounceTimer?.Dispose();
+			_debounceTimer = null;
 		}
 	}
 

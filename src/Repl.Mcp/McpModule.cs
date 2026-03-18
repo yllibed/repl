@@ -13,7 +13,11 @@ internal sealed class McpModule(ReplMcpServerOptions options) : IReplModule
 			mcp.Map("serve",
 				async (IReplIoContext io, IServiceProvider services, ICoreReplApp app, CancellationToken ct) =>
 				{
-					var handler = new McpServerHandler(app, options, services);
+					// Prefer DI-registered options (from AddReplMcpServer) over the
+					// instance captured at registration time, so both configuration
+					// paths converge on a single options instance.
+					var resolved = services.GetService(typeof(ReplMcpServerOptions)) as ReplMcpServerOptions ?? options;
+					var handler = new McpServerHandler(app, resolved, services);
 					await handler.RunAsync(io, ct).ConfigureAwait(false);
 					return Results.Exit(0);
 				})

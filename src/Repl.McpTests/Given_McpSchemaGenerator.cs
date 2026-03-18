@@ -156,7 +156,7 @@ public sealed class Given_McpSchemaGenerator
 	}
 
 	[TestMethod]
-	[Description("ReadOnly annotation maps to readOnlyHint: true.")]
+	[Description("ReadOnly annotation maps to readOnlyHint: true and destructiveHint: false.")]
 	public void When_ReadOnlyIsTrue_Then_ReadOnlyHintIsTrue()
 	{
 		var annotations = new CommandAnnotations { ReadOnly = true };
@@ -165,6 +165,7 @@ public sealed class Given_McpSchemaGenerator
 
 		result.Should().NotBeNull();
 		result!.ReadOnlyHint.Should().BeTrue();
+		result!.DestructiveHint.Should().BeFalse();
 	}
 
 	[TestMethod]

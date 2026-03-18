@@ -74,8 +74,9 @@ internal static class McpSchemaGenerator
 	/// Maps <see cref="CommandAnnotations"/> to MCP <see cref="ToolAnnotations"/>.
 	/// </summary>
 	/// <remarks>
-	/// Repl defaults <c>Destructive = false</c> (opt-in), unlike the SDK default of <c>true</c>.
-	/// Only flags explicitly set to <c>true</c> are emitted.
+	/// Repl defaults <c>Destructive = false</c> (opt-in), unlike the MCP spec default of <c>true</c>.
+	/// When <c>ReadOnly</c> is set, <c>DestructiveHint</c> is explicitly emitted as <c>false</c>
+	/// so agents don't require confirmation for read-only tools.
 	/// </remarks>
 	public static ToolAnnotations? MapAnnotations(CommandAnnotations? annotations)
 	{
@@ -86,7 +87,7 @@ internal static class McpSchemaGenerator
 
 		return new ToolAnnotations
 		{
-			DestructiveHint = annotations.Destructive ? true : null,
+			DestructiveHint = annotations.Destructive ? true : annotations.ReadOnly ? false : null,
 			ReadOnlyHint = annotations.ReadOnly ? true : null,
 			IdempotentHint = annotations.Idempotent ? true : null,
 			OpenWorldHint = annotations.OpenWorld ? true : null,
