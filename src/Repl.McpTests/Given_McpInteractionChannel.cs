@@ -77,12 +77,23 @@ public sealed class Given_McpInteractionChannel
 	}
 
 	[TestMethod]
-	[Description("Missing prefill in PrefillThenFail mode throws even when defaultValue is true.")]
-	public async Task When_NoBoolPrefillInFailModeWithDefaultTrue_Then_Throws()
+	[Description("Missing prefill with explicit default returns default even in PrefillThenFail mode.")]
+	public async Task When_NoBoolPrefillInFailModeWithDefaultTrue_Then_ReturnsDefault()
 	{
 		var channel = CreateChannel(mode: InteractivityMode.PrefillThenFail);
 
-		var act = () => channel.AskConfirmationAsync("confirm", "Proceed?", defaultValue: true).AsTask();
+		var result = await channel.AskConfirmationAsync("confirm", "Proceed?", defaultValue: true);
+
+		result.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Missing prefill without default in PrefillThenFail mode throws.")]
+	public async Task When_NoBoolPrefillInFailModeWithoutDefault_Then_Throws()
+	{
+		var channel = CreateChannel(mode: InteractivityMode.PrefillThenFail);
+
+		var act = () => channel.AskConfirmationAsync("confirm", "Proceed?").AsTask();
 
 		await act.Should().ThrowAsync<McpInteractionException>();
 	}

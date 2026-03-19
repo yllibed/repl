@@ -260,7 +260,7 @@ internal sealed partial class ConsoleInteractionChannel(
 	public async ValueTask<bool> AskConfirmationAsync(
 		string name,
 		string prompt,
-		bool defaultValue = false,
+		bool? defaultValue = null,
 		AskOptions? options = null)
 	{
 		_ = ValidateName(name);
@@ -276,8 +276,9 @@ internal sealed partial class ConsoleInteractionChannel(
 			return resolvedPrefilled;
 		}
 
+		var effectiveDefault = defaultValue ?? false;
 		var dispatched = await TryDispatchAsync(
-			new AskConfirmationRequest(name, prompt, defaultValue, options), effectiveCt).ConfigureAwait(false);
+			new AskConfirmationRequest(name, prompt, effectiveDefault, options), effectiveCt).ConfigureAwait(false);
 		if (dispatched.Handled)
 		{
 			return (bool)dispatched.Value!;
@@ -285,15 +286,15 @@ internal sealed partial class ConsoleInteractionChannel(
 
 		var line = await ReadPromptLineAsync(
 				name,
-				$"{prompt} [{(defaultValue ? "Y/n" : "y/N")}]",
+				$"{prompt} [{(effectiveDefault ? "Y/n" : "y/N")}]",
 				kind: "confirmation",
 				effectiveCt,
 				options?.Timeout,
-				defaultLabel: defaultValue ? "yes" : "no")
+				defaultLabel: effectiveDefault ? "yes" : "no")
 			.ConfigureAwait(false);
 		if (string.IsNullOrWhiteSpace(line))
 		{
-			return HandleMissingAnswer(defaultValue, "confirmation");
+			return HandleMissingAnswer(effectiveDefault, "confirmation");
 		}
 
 		if (string.Equals(line, "y", StringComparison.OrdinalIgnoreCase)
@@ -308,7 +309,7 @@ internal sealed partial class ConsoleInteractionChannel(
 			return false;
 		}
 
-		return HandleMissingAnswer(defaultValue, "confirmation");
+		return HandleMissingAnswer(effectiveDefault, "confirmation");
 	}
 
 	public async ValueTask<string> AskTextAsync(

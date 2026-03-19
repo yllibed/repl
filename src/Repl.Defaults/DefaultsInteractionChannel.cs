@@ -34,7 +34,7 @@ internal sealed class DefaultsInteractionChannel : IReplInteractionChannel, ICom
 	public ValueTask<bool> AskConfirmationAsync(
 		string name,
 		string prompt,
-		bool defaultValue = false,
+		bool? defaultValue = null,
 		AskOptions? options = null) =>
 		_inner.AskConfirmationAsync(name, prompt, defaultValue, options);
 

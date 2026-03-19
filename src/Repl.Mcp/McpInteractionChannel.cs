@@ -70,7 +70,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 	public async ValueTask<bool> AskConfirmationAsync(
 		string name,
 		string prompt,
-		bool defaultValue = false,
+		bool? defaultValue = null,
 		AskOptions? options = null)
 	{
 		if (_prefillAnswers.TryGetValue(name, out var prefill))
@@ -78,7 +78,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			return ParseBool(prefill);
 		}
 
-		if (await TryElicitBoolAsync(name, prompt, defaultValue).ConfigureAwait(false) is { } elicited)
+		if (await TryElicitBoolAsync(name, prompt, defaultValue ?? false).ConfigureAwait(false) is { } elicited)
 		{
 			return elicited;
 		}
@@ -88,14 +88,19 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			return ParseBool(sampled);
 		}
 
-		if (_mode == InteractivityMode.PrefillThenFail)
+		if (defaultValue.HasValue)
 		{
-			throw new McpInteractionException(
-				$"Interactive prompt '{name}' requires a value. " +
-				$"Provide it as a tool argument 'answer:{name}' (true/false).");
+			return defaultValue.Value;
 		}
 
-		return defaultValue;
+		if (_mode == InteractivityMode.PrefillThenDefaults)
+		{
+			return false;
+		}
+
+		throw new McpInteractionException(
+			$"Interactive prompt '{name}' requires a value. " +
+			$"Provide it as a tool argument 'answer:{name}' (true/false).");
 	}
 
 	public async ValueTask<string> AskTextAsync(
