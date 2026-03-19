@@ -229,32 +229,8 @@ internal sealed class McpServerHandler
 				continue;
 			}
 			var resourceName = McpToolNameFlattener.Flatten(resource.Path, separator);
-			var resourceUri = McpToolNameFlattener.Flatten(resource.Path, '/');
-			var uriTemplate = $"repl://{resourceUri}";
-
-			var mcpResource = McpServerResource.Create(
-				async (CancellationToken ct) =>
-				{
-					var result = await adapter.InvokeAsync(
-						resourceName,
-						new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal),
-						server: null, progressToken: null, ct).ConfigureAwait(false);
-
-					if (result.IsError == true)
-					{
-						var errorText = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
-							?? "Resource read failed.";
-						throw new McpException(errorText);
-					}
-
-					return result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text ?? "";
-				},
-				new McpServerResourceCreateOptions
-				{
-					Name = resourceName,
-					Description = resource.Description,
-					UriTemplate = uriTemplate,
-				});
+			var uriTemplate = McpToolNameFlattener.BuildResourceUri(resource.Path);
+			var mcpResource = new ReplMcpServerResource(resource, resourceName, uriTemplate, adapter);
 
 			if (docCommand is not null)
 			{

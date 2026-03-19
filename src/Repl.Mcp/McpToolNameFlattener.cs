@@ -34,6 +34,35 @@ internal static partial class McpToolNameFlattener
 	}
 
 	/// <summary>
+	/// Builds an MCP resource URI template from a route template,
+	/// preserving dynamic segments as RFC 6570 template variables.
+	/// </summary>
+	/// <param name="routePath">Route template (e.g. <c>contact {id:guid} show</c>).</param>
+	/// <returns>URI template (e.g. <c>repl://contact/{id}/show</c>).</returns>
+	public static string BuildResourceUri(string routePath)
+	{
+		var segments = routePath.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+		var parts = new List<string>(segments.Length);
+
+		foreach (var segment in segments)
+		{
+			var match = DynamicSegmentPattern().Match(segment);
+			if (match.Success)
+			{
+				// Strip the constraint: {name:constraint} → {name}
+				var name = segment.TrimStart('{').TrimEnd('}').Split(':')[0];
+				parts.Add($"{{{name}}}");
+			}
+			else
+			{
+				parts.Add(segment);
+			}
+		}
+
+		return $"repl://{string.Join('/', parts)}";
+	}
+
+	/// <summary>
 	/// Resolves the separator character from the <see cref="ToolNamingSeparator"/> enum.
 	/// </summary>
 	public static char ResolveSeparator(ToolNamingSeparator separator) => separator switch

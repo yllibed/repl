@@ -302,7 +302,7 @@ app.UseMcpServer(o =>
 ## Known limitations
 
 - **Collection parameters** (`List<T>`, `int[]`): MCP passes JSON arrays as a single element. The CLI binding layer expects repeated values (`--tag vip --tag priority`), so collection parameters are not correctly bound from MCP tool calls yet. Use string parameters with custom parsing as a workaround.
-- **Parameterized resources**: Commands with route parameters (e.g. `contact {id}`) marked `.AsResource()` are listed as resources but cannot be invoked via `resources/read` since the URI has no mechanism to pass parameters. Use parameterless commands for resources, or rely on the tool fallback (`ResourceFallbackToTools = true`).
+- **Parameterized resources**: Commands with route parameters (e.g. `config {env}`) marked `.AsResource()` are exposed as MCP resource templates with URI variables (e.g. `repl://config/{env}`). Agents read them via `resources/read` with the concrete URI (e.g. `repl://config/production`) and the parameters are passed to the command handler.
 
 ## Configuration options
 
@@ -548,7 +548,7 @@ await app.RunAsync(args);
 
 MCP exposure for this example:
 - **Tool** `contacts` + **Resource** `repl://contacts` (explicit `AsResource()`)
-- **Tool** `contact` + **Resource** `repl://contact` (auto-promoted via `ReadOnly`)
+- **Tool** `contact` + **Resource template** `repl://contact/{id}` (auto-promoted via `ReadOnly`)
 - **Tool** `contact_add` (open world)
 - **Tool** `contact_delete` (destructive, confirmation via elicitation/sampling)
 - **Tool** `import` (long-running, progress notifications)
