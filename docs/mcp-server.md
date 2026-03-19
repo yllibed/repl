@@ -304,6 +304,10 @@ app.UseMcpServer(o =>
 - **Collection parameters** (`List<T>`, `int[]`): MCP passes JSON arrays as a single element. The CLI binding layer expects repeated values (`--tag vip --tag priority`), so collection parameters are not correctly bound from MCP tool calls yet. Use string parameters with custom parsing as a workaround.
 - **Parameterized resources**: Commands with route parameters (e.g. `config {env}`) marked `.AsResource()` are exposed as MCP resource templates with URI variables (e.g. `repl://config/{env}`). Agents read them via `resources/read` with the concrete URI (e.g. `repl://config/production`) and the parameters are passed to the command handler.
 
+## Advanced: custom transports & HTTP
+
+For custom transports (WebSocket, named pipes, SSH) or HTTP integration (ASP.NET Core Streamable HTTP), see [mcp-advanced.md](mcp-advanced.md).
+
 ## Configuration options
 
 ```csharp

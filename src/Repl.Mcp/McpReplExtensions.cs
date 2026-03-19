@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Server;
 using Repl.Mcp;
 
 namespace Repl;
@@ -44,5 +45,46 @@ public static class McpReplExtensions
 			static context => context.Channel is ReplRuntimeChannel.Cli);
 
 		return app;
+	}
+
+	/// <summary>
+	/// Builds <see cref="McpServerOptions"/> from the Repl app's command graph.
+	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
+	/// without going through the <c>mcp serve</c> CLI command.
+	/// </summary>
+	/// <param name="app">The core Repl app.</param>
+	/// <param name="configure">Optional MCP configuration callback.</param>
+	/// <param name="services">Optional service provider for DI during tool dispatch.</param>
+	/// <returns>Ready-to-use <see cref="McpServerOptions"/> for <c>McpServer.Create</c> or ASP.NET integration.</returns>
+	public static McpServerOptions BuildMcpServerOptions(
+		this ICoreReplApp app,
+		Action<ReplMcpServerOptions>? configure = null,
+		IServiceProvider? services = null)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+
+		var options = new ReplMcpServerOptions();
+		configure?.Invoke(options);
+
+		var previousProgrammatic = ReplSessionIO.IsProgrammatic;
+		ReplSessionIO.IsProgrammatic = true;
+		try
+		{
+			var model = app.CreateDocumentationModel();
+			var adapter = new McpToolAdapter(app, options, services ?? EmptyServiceProvider.Instance);
+			var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
+			var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
+			return handler.BuildServerOptions(model, adapter, separator);
+		}
+		finally
+		{
+			ReplSessionIO.IsProgrammatic = previousProgrammatic;
+		}
+	}
+
+	private sealed class EmptyServiceProvider : IServiceProvider
+	{
+		public static readonly EmptyServiceProvider Instance = new();
+		public object? GetService(Type serviceType) => null;
 	}
 }
