@@ -33,7 +33,7 @@ public static class ReplDocumentationExtensions
 				var targetPath = targetPathTokens is null or { Length: 0 }
 					? null
 					: string.Join(' ', targetPathTokens);
-				return app.CreateDocumentationModel(targetPath);
+				return app.CreateDocumentationModelInternal(targetPath);
 			});
 		if (options.HiddenByDefault)
 		{

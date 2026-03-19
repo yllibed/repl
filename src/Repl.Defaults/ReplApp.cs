@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Repl.Documentation;
 using System.Linq.Expressions;
 using System.Reflection;
 
@@ -94,6 +95,10 @@ public sealed class ReplApp : IReplApp
 	/// Invalidates active routing cache so module presence predicates are re-evaluated on next resolution.
 	/// </summary>
 	public void InvalidateRouting() => _core.InvalidateRouting();
+
+	/// <inheritdoc />
+	public ReplDocumentationModel CreateDocumentationModel(string? targetPath = null) =>
+		_core.CreateDocumentationModel(targetPath);
 
 	/// <summary>
 	/// Maps a route and command handler.
@@ -716,6 +721,9 @@ public sealed class ReplApp : IReplApp
 		}
 
 		public void InvalidateRouting() => _map.InvalidateRouting();
+
+		public ReplDocumentationModel CreateDocumentationModel(string? targetPath = null) =>
+			_map.CreateDocumentationModel(targetPath);
 
 		IContextBuilder ICoreReplApp.Context(string segment, Action<ICoreReplApp> configure, Delegate? validation) =>
 			Context(segment, scoped => configure(scoped), validation);

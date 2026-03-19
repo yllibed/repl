@@ -6,4 +6,5 @@ namespace Repl.Documentation;
 public sealed record ReplDocumentationModel(
 	ReplDocApp App,
 	IReadOnlyList<ReplDocContext> Contexts,
-	IReadOnlyList<ReplDocCommand> Commands);
+	IReadOnlyList<ReplDocCommand> Commands,
+	IReadOnlyList<ReplDocResource> Resources);

@@ -27,6 +27,7 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
 	private static readonly AsyncLocal<bool> s_isHostedSession = new();
+	private static readonly AsyncLocal<bool> s_isProgrammatic = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
 
@@ -63,6 +64,15 @@ internal static class ReplSessionIO
 	/// Gets a value indicating whether execution is currently running in a real hosted transport session.
 	/// </summary>
 	public static bool IsHostedSession => s_isHostedSession.Value;
+
+	/// <summary>
+	/// Gets a value indicating whether execution is driven by a programmatic agent or automation.
+	/// </summary>
+	internal static bool IsProgrammatic
+	{
+		get => s_isProgrammatic.Value;
+		set => s_isProgrammatic.Value = value;
+	}
 
 	/// <summary>
 	/// Gets the current hosted session identifier, when available.
@@ -216,6 +226,7 @@ internal static class ReplSessionIO
 		var previousInput = s_input.Value;
 		var previousKeyReader = s_keyReader.Value;
 		var previousIsHostedSession = s_isHostedSession.Value;
+		var previousIsProgrammatic = s_isProgrammatic.Value;
 		var previousSessionId = s_sessionId.Value;
 
 		var resolvedSessionId = string.IsNullOrWhiteSpace(sessionId)
@@ -259,6 +270,7 @@ internal static class ReplSessionIO
 			previousInput,
 			previousKeyReader,
 			previousIsHostedSession,
+			previousIsProgrammatic,
 			previousSessionId,
 			removeSessionOnDispose: string.IsNullOrWhiteSpace(sessionId),
 			sessionIdToRemove: resolvedSessionId);
@@ -333,6 +345,7 @@ internal static class ReplSessionIO
 		TextReader? previousInput,
 		IReplKeyReader? previousKeyReader,
 		bool previousIsHostedSession,
+		bool previousIsProgrammatic,
 		string? previousSessionId,
 		bool removeSessionOnDispose,
 		string sessionIdToRemove) : IDisposable
@@ -345,6 +358,7 @@ internal static class ReplSessionIO
 			s_input.Value = previousInput;
 			s_keyReader.Value = previousKeyReader;
 			s_isHostedSession.Value = previousIsHostedSession;
+			s_isProgrammatic.Value = previousIsProgrammatic;
 			s_sessionId.Value = previousSessionId;
 
 			if (removeSessionOnDispose)

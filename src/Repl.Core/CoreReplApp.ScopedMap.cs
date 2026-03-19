@@ -99,6 +99,9 @@ public sealed partial class CoreReplApp
 
 		void ICoreReplApp.InvalidateRouting() => _app.InvalidateRouting();
 
+		public Documentation.ReplDocumentationModel CreateDocumentationModel(string? targetPath = null) =>
+			_app.CreateDocumentationModel(targetPath);
+
 		IReplMap IReplMap.WithBanner(string text)
 		{
 			ArgumentException.ThrowIfNullOrWhiteSpace(text);
@@ -135,6 +138,14 @@ public sealed partial class CoreReplApp
 		public IContextBuilder Hidden(bool isHidden = true)
 		{
 			_context.IsHidden = isHidden;
+			return this;
+		}
+
+		public IContextBuilder WithDetails(string markdown)
+		{
+			_context.Details = string.IsNullOrWhiteSpace(markdown)
+				? throw new ArgumentException("Details cannot be empty.", nameof(markdown))
+				: markdown;
 			return this;
 		}
 	}

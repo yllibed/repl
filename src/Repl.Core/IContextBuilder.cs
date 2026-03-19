@@ -13,4 +13,12 @@ public interface IContextBuilder : IReplMap
 	/// <param name="isHidden">True to hide the context from discovery output.</param>
 	/// <returns>The same context builder.</returns>
 	IContextBuilder Hidden(bool isHidden = true);
+
+	/// <summary>
+	/// Sets a rich markdown description for the context.
+	/// Used for agent tool descriptions and documentation export.
+	/// </summary>
+	/// <param name="markdown">Markdown content.</param>
+	/// <returns>The same context builder.</returns>
+	IContextBuilder WithDetails(string markdown);
 }

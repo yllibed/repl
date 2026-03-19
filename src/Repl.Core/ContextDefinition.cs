@@ -17,4 +17,6 @@ internal sealed class ContextDefinition(
 	public int ModuleId { get; } = moduleId;
 
 	public bool IsHidden { get; set; }
+
+	public string? Details { get; set; }
 }

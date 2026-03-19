@@ -9,4 +9,9 @@ public sealed record ReplDocCommand(
 	IReadOnlyList<string> Aliases,
 	bool IsHidden,
 	IReadOnlyList<ReplDocArgument> Arguments,
-	IReadOnlyList<ReplDocOption> Options);
+	IReadOnlyList<ReplDocOption> Options,
+	string? Details = null,
+	CommandAnnotations? Annotations = null,
+	IReadOnlyDictionary<string, object>? Metadata = null,
+	bool IsResource = false,
+	bool IsPrompt = false);

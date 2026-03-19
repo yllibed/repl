@@ -7,7 +7,60 @@ namespace Repl;
 
 public sealed partial class CoreReplApp
 {
-	internal object CreateDocumentationModel(string? targetPath)
+	/// <inheritdoc />
+	public ReplDocumentationModel CreateDocumentationModel(string? targetPath = null)
+	{
+		var activeGraph = ResolveActiveRoutingGraph();
+		var normalizedTargetPath = NormalizePath(targetPath);
+		var targetTokens = string.IsNullOrWhiteSpace(normalizedTargetPath)
+			? []
+			: normalizedTargetPath
+				.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		var discoverableRoutes = ResolveDiscoverableRoutes(
+			activeGraph.Routes,
+			activeGraph.Contexts,
+			targetTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var discoverableContexts = ResolveDiscoverableContexts(
+			activeGraph.Contexts,
+			targetTokens,
+			StringComparison.OrdinalIgnoreCase);
+		var commands = SelectDocumentationCommands(
+			normalizedTargetPath,
+			discoverableRoutes,
+			discoverableContexts,
+			out _);
+
+		var contexts = SelectDocumentationContexts(normalizedTargetPath, commands, discoverableContexts);
+		var commandDocs = commands.Select(BuildDocumentationCommand).ToArray();
+		var contextDocs = contexts
+			.Select(context => new ReplDocContext(
+				Path: context.Template.Template,
+				Description: context.Description,
+				IsDynamic: context.Template.Segments.Any(segment => segment is DynamicRouteSegment),
+				IsHidden: context.IsHidden,
+				Details: context.Details))
+			.ToArray();
+		var resourceDocs = commandDocs
+			.Where(cmd => cmd.IsResource || cmd.Annotations?.ReadOnly == true)
+			.Select(cmd => new ReplDocResource(
+				Path: cmd.Path,
+				Description: cmd.Description,
+				Details: cmd.Details,
+				Arguments: cmd.Arguments,
+				Options: cmd.Options))
+			.ToArray();
+		return new ReplDocumentationModel(
+			App: BuildDocumentationApp(),
+			Contexts: contextDocs,
+			Commands: commandDocs,
+			Resources: resourceDocs);
+	}
+
+	/// <summary>
+	/// Internal documentation model creation that supports not-found result for help rendering.
+	/// </summary>
+	internal object CreateDocumentationModelInternal(string? targetPath)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		var normalizedTargetPath = NormalizePath(targetPath);
@@ -41,12 +94,23 @@ public sealed partial class CoreReplApp
 				Path: context.Template.Template,
 				Description: context.Description,
 				IsDynamic: context.Template.Segments.Any(segment => segment is DynamicRouteSegment),
-				IsHidden: context.IsHidden))
+				IsHidden: context.IsHidden,
+				Details: context.Details))
+			.ToArray();
+		var resourceDocs = commandDocs
+			.Where(cmd => cmd.IsResource || cmd.Annotations?.ReadOnly == true)
+			.Select(cmd => new ReplDocResource(
+				Path: cmd.Path,
+				Description: cmd.Description,
+				Details: cmd.Details,
+				Arguments: cmd.Arguments,
+				Options: cmd.Options))
 			.ToArray();
 		return new ReplDocumentationModel(
 			App: BuildDocumentationApp(),
 			Contexts: contextDocs,
-			Commands: commandDocs);
+			Commands: commandDocs,
+			Resources: resourceDocs);
 	}
 
 	private static RouteDefinition[] SelectDocumentationCommands(
@@ -137,15 +201,20 @@ public sealed partial class CoreReplApp
 		var routeParameterNames = dynamicSegments
 			.Select(segment => segment.Name)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var arguments = dynamicSegments
-			.Select(segment => new ReplDocArgument(
-				Name: segment.Name,
-				Type: GetConstraintTypeName(segment.ConstraintKind),
-				Required: !segment.IsOptional,
-				Description: null))
-			.ToArray();
-
 		var handlerParams = route.Command.Handler.Method.GetParameters();
+		var arguments = dynamicSegments
+			.Select(segment =>
+			{
+				var paramInfo = handlerParams.FirstOrDefault(p =>
+					string.Equals(p.Name, segment.Name, StringComparison.OrdinalIgnoreCase));
+				var description = paramInfo?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+				return new ReplDocArgument(
+					Name: segment.Name,
+					Type: GetConstraintTypeName(segment.ConstraintKind),
+					Required: !segment.IsOptional,
+					Description: description);
+			})
+			.ToArray();
 		var regularOptions = handlerParams
 			.Where(parameter =>
 				!string.IsNullOrWhiteSpace(parameter.Name)
@@ -171,7 +240,12 @@ public sealed partial class CoreReplApp
 			Aliases: route.Command.Aliases,
 			IsHidden: route.Command.IsHidden,
 			Arguments: arguments,
-			Options: options);
+			Options: options,
+			Details: route.Command.Details,
+			Annotations: route.Command.Annotations,
+			Metadata: route.Command.Metadata.Count > 0 ? route.Command.Metadata : null,
+			IsResource: route.Command.IsResource,
+			IsPrompt: route.Command.IsPrompt);
 	}
 
 	private ReplDocApp BuildDocumentationApp()

@@ -7,8 +7,9 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
 
 **A .NET framework for building composable command surfaces.**
-Define your commands once — run them as a CLI, explore them in an interactive REPL,
-host them in session-based terminals, or drive them from automation and AI agents.
+- Define your commands once — run them as a CLI, explore them in an interactive REPL,
+- host them in session-based terminals, expose them as MCP servers for AI agents,
+- or drive them from automation scripts.
 
 > **New here?** The [DeepWiki](https://deepwiki.com/yllibed/repl) has full architecture docs, diagrams, and an AI assistant you can ask questions about the toolkit.
 
@@ -32,6 +33,7 @@ return app.Run(args);
 - **POSIX-like semantics** — familiar flag syntax, `--` separator, predictable parsing
 - **Hierarchical scopes** — stateful navigation with `..`, contexts, route constraints (`{id:int}`, `{when:date}`)
 - **Multiple output formats** — `--json`, `--xml`, `--yaml`, `--markdown`, or `--human`
+- **MCP server** — expose your commands as tools for AI agents with `app.UseMcpServer()` — zero boilerplate
 - **AI/agent-friendly** — machine-readable contracts, deterministic outputs, pre-answered prompts (`--answer:*`)
 - **Typed results** — `Ok`, `Error`, `NotFound`, `Cancelled` with payloads — not raw strings
 - **Typed interactions** — prompts, progress, status, timeouts, cancellation
@@ -84,6 +86,18 @@ ACME
 Globex
 ```
 
+**MCP mode** (same command graph, exposed to AI agents):
+
+```csharp
+app.UseMcpServer();  // add one line
+```
+
+```json
+{ "command": "myapp", "args": ["mcp", "serve"] }
+```
+
+One command graph. CLI, REPL, remote sessions, and AI agents — all from the same code.
+
 ## Packages
 
 | Package | Description |
@@ -94,6 +108,7 @@ Globex
 | [`Repl.Protocol`](https://www.nuget.org/packages/Repl.Protocol) | Machine-readable contracts (help, errors, tool schemas) |
 | [`Repl.WebSocket`](https://www.nuget.org/packages/Repl.WebSocket) | Session hosting over WebSocket |
 | [`Repl.Telnet`](https://www.nuget.org/packages/Repl.Telnet) | Telnet framing, negotiation, session adapters |
+| [`Repl.Mcp`](https://www.nuget.org/packages/Repl.Mcp) | MCP server: expose commands as AI agent tools, resources, and prompts |
 | [`Repl.Spectre`](https://www.nuget.org/packages/Repl.Spectre) | Spectre.Console integration: rich prompts, `IAnsiConsole`, table rendering |
 | [`Repl.Testing`](https://www.nuget.org/packages/Repl.Testing) | In-memory multi-session test harness |
 
@@ -108,6 +123,7 @@ Progressive learning path — start with 01:
 5. **[Hosting Remote](samples/05-hosting-remote/)** — WebSocket / Telnet session hosting
 6. **[Testing](samples/06-testing/)** — multi-session typed assertions
 7. **[Spectre](samples/07-spectre/)** — Spectre.Console renderables, visualizations, rich prompts
+8. **[MCP Server](samples/08-mcp-server/)** — expose commands as MCP tools for AI agents
 
 ## Documentation
 
@@ -121,6 +137,7 @@ Progressive learning path — start with 01:
 | Shell completion | [`docs/shell-completion.md`](docs/shell-completion.md) |
 | Comparison & migration | [`docs/comparison.md`](docs/comparison.md) |
 | Interaction channel | [`docs/interaction.md`](docs/interaction.md) |
+| MCP server (AI agents) | [`docs/mcp-server.md`](docs/mcp-server.md) |
 | Conditional module presence | [`docs/module-presence.md`](docs/module-presence.md) |
 | Publishing & deployment | [`docs/publishing.md`](docs/publishing.md) |
 | Interactive docs & AI Q\&A | [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl) |

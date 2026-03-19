@@ -55,7 +55,7 @@ public interface IReplInteractionChannel
 	ValueTask<bool> AskConfirmationAsync(
 		string name,
 		string prompt,
-		bool defaultValue = false,
+		bool? defaultValue = null,
 		AskOptions? options = null);
 
 	/// <summary>
