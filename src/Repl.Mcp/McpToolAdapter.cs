@@ -31,6 +31,19 @@ internal sealed partial class McpToolAdapter
 	public void ClearRoutes() => _toolRoutes.Clear();
 
 	/// <summary>
+	/// Atomically replaces all routes from another adapter instance.
+	/// Used for optimistic concurrency during routing invalidation.
+	/// </summary>
+	public void ReplaceRoutes(McpToolAdapter source)
+	{
+		_toolRoutes.Clear();
+		foreach (var (key, value) in source._toolRoutes)
+		{
+			_toolRoutes[key] = value;
+		}
+	}
+
+	/// <summary>
 	/// Registers a tool name → command mapping for dispatch.
 	/// </summary>
 	public void RegisterRoute(string toolName, ReplDocCommand command)

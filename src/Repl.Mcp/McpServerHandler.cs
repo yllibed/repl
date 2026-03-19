@@ -371,24 +371,43 @@ internal sealed class McpServerHandler
 		McpServerResourceCollection resourceCollection,
 		McpServerPrimitiveCollection<McpServerPrompt> promptCollection)
 	{
-		lock (_refreshLock)
+		try
 		{
+			// Optimistic concurrency: build new collections with a temporary adapter
+			// so existing routes remain live during rebuild. Only swap at the end.
+			var tempAdapter = new McpToolAdapter(_app, _options, _services);
 			var previousProgrammatic = ReplSessionIO.IsProgrammatic;
 			ReplSessionIO.IsProgrammatic = true;
+			List<McpServerTool> newTools;
+			List<McpServerResource> newResources;
+			List<McpServerPrompt> newPrompts;
 			try
 			{
-				adapter.ClearRoutes();
 				var newModel = _app.CreateDocumentationModel();
 				var newCommandsByPath = newModel.Commands.ToDictionary(
 					c => c.Path, c => c, StringComparer.OrdinalIgnoreCase);
-				RefreshCollection(toolCollection, GenerateAllTools(newModel, adapter, separator, newCommandsByPath));
-				RefreshCollection(resourceCollection, GenerateResources(newModel, adapter, separator, newCommandsByPath));
-				RefreshCollection(promptCollection, CollectPrompts(newModel, adapter, separator));
+				newTools = GenerateAllTools(newModel, tempAdapter, separator, newCommandsByPath);
+				newResources = GenerateResources(newModel, tempAdapter, separator, newCommandsByPath);
+				newPrompts = CollectPrompts(newModel, tempAdapter, separator);
 			}
 			finally
 			{
 				ReplSessionIO.IsProgrammatic = previousProgrammatic;
 			}
+
+			// Atomic swap: replace the adapter routes and collections in one lock.
+			lock (_refreshLock)
+			{
+				adapter.ReplaceRoutes(tempAdapter);
+				RefreshCollection(toolCollection, newTools);
+				RefreshCollection(resourceCollection, newResources);
+				RefreshCollection(promptCollection, newPrompts);
+			}
+		}
+		catch (Exception)
+		{
+			// Timer callbacks must not throw — an unhandled exception here would
+			// crash the process. The server continues with stale routes.
 		}
 	}
 

@@ -70,7 +70,7 @@ internal sealed class ReplMcpServerPrompt : McpServerPrompt
 			: new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
 
 		var result = await _adapter.InvokeAsync(
-			_protocolPrompt.Name, jsonArgs, server: null, progressToken: null, cancellationToken)
+			_protocolPrompt.Name, jsonArgs, request.Server, progressToken: null, cancellationToken)
 			.ConfigureAwait(false);
 
 		// Surface errors as MCP exceptions so clients can distinguish failures.

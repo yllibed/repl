@@ -210,6 +210,7 @@ public sealed class Given_McpServerEndToEnd
 
 		result.Messages.Should().ContainSingle();
 		var text = (result.Messages[0].Content as TextContentBlock)?.Text;
+		text.Should().NotBeNull();
 		text.Should().Contain("Diagnose: missing data");
 	}
 }
