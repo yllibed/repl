@@ -24,13 +24,32 @@ app.UseMcpServer(o =>
 });
 ```
 
-The app still launches via `myapp mcp serve` — the framework handles the full MCP lifecycle (tool registration, routing invalidation, shutdown).
+The app still launches via `myapp mcp serve` — the framework handles the full MCP lifecycle (tool registration, routing invalidation, shutdown). This approach gives you **one session per process**.
+
+### Multi-session (accept N connections)
+
+For multiple concurrent sessions over a custom transport (e.g. a WebSocket listener accepting many clients), use `BuildMcpServerOptions` to build the options once, then create a server per connection:
+
+```csharp
+var mcpOptions = app.Core.BuildMcpServerOptions();
+
+// For each incoming WebSocket connection:
+async Task HandleConnectionAsync(Stream input, Stream output, CancellationToken ct)
+{
+    var transport = new StreamServerTransport(input, output, "my-server");
+    var server = McpServer.Create(transport, mcpOptions);
+    await server.RunAsync(ct);
+    await server.DisposeAsync();
+}
+```
+
+Each session is fully isolated — tool invocations run in separate `AsyncLocal` scopes with their own I/O streams, just like hosted sessions.
 
 ### When to use
 
 - You have a non-stdio transport (WebSocket, named pipe, TCP) that carries the standard MCP JSON-RPC protocol
-- You want the framework to manage the server lifecycle
-- Single-session per process is acceptable
+- Single-session: use `TransportFactory` via `mcp serve` (simplest)
+- Multi-session: use `BuildMcpServerOptions` + one `McpServer.Create` per connection
 
 ## Scenario B: MCP-over-HTTP (Streamable HTTP)
 
