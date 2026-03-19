@@ -35,6 +35,12 @@ public sealed class ReplMcpServerOptions
 	public ToolNamingSeparator ToolNamingSeparator { get; set; } = ToolNamingSeparator.Underscore;
 
 	/// <summary>
+	/// URI scheme used for MCP resource URIs (default: <c>"repl"</c>).
+	/// Resources are exposed as <c>{scheme}://{path}</c>.
+	/// </summary>
+	public string ResourceUriScheme { get; set; } = "repl";
+
+	/// <summary>
 	/// Controls how runtime interaction prompts are handled in MCP mode.
 	/// </summary>
 	public InteractivityMode InteractivityMode { get; set; } = InteractivityMode.PrefillThenFail;

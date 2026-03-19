@@ -74,4 +74,21 @@ public sealed class Given_McpResourceParameters
 			text.Should().Contain("all-ok");
 		}
 	}
+
+	[TestMethod]
+	[Description("Custom ResourceUriScheme is used in resource URIs.")]
+	public async Task When_CustomScheme_Then_ResourceUriUsesScheme()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("status", () => "ok").ReadOnly().AsResource(),
+			options => options.ResourceUriScheme = "myapp").ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			var result = await session.Client.ReadResourceAsync("myapp://status").ConfigureAwait(false);
+
+			var text = result.Contents.OfType<TextResourceContents>().First().Text;
+			text.Should().Contain("ok");
+		}
+	}
 }

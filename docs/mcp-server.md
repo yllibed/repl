@@ -313,6 +313,7 @@ app.UseMcpServer(o =>
     o.ServerVersion = "1.0.0";                                  // MCP initialize response
     o.ContextName = "mcp";                                      // myapp {ContextName} serve
     o.ToolNamingSeparator = ToolNamingSeparator.Underscore;     // contact_add
+    o.ResourceUriScheme = "repl";                               // resource URIs: repl://path
     o.InteractivityMode = InteractivityMode.PrefillThenFail;    // interaction degradation
     o.ResourceFallbackToTools = false;                          // opt-in: also expose resources as tools
     o.PromptFallbackToTools = false;                             // opt-in: also expose prompts as tools

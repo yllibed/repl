@@ -229,7 +229,7 @@ internal sealed class McpServerHandler
 				continue;
 			}
 			var resourceName = McpToolNameFlattener.Flatten(resource.Path, separator);
-			var uriTemplate = McpToolNameFlattener.BuildResourceUri(resource.Path);
+			var uriTemplate = McpToolNameFlattener.BuildResourceUri(resource.Path, _options.ResourceUriScheme);
 			var mcpResource = new ReplMcpServerResource(resource, resourceName, uriTemplate, adapter);
 
 			if (docCommand is not null)

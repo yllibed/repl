@@ -38,8 +38,9 @@ internal static partial class McpToolNameFlattener
 	/// preserving dynamic segments as RFC 6570 template variables.
 	/// </summary>
 	/// <param name="routePath">Route template (e.g. <c>contact {id:guid} show</c>).</param>
+	/// <param name="scheme">URI scheme (default: <c>repl</c>).</param>
 	/// <returns>URI template (e.g. <c>repl://contact/{id}/show</c>).</returns>
-	public static string BuildResourceUri(string routePath)
+	public static string BuildResourceUri(string routePath, string scheme = "repl")
 	{
 		var segments = routePath.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 		var parts = new List<string>(segments.Length);
@@ -59,7 +60,7 @@ internal static partial class McpToolNameFlattener
 			}
 		}
 
-		return $"repl://{string.Join('/', parts)}";
+		return $"{scheme}://{string.Join('/', parts)}";
 	}
 
 	/// <summary>
