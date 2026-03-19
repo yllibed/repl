@@ -265,9 +265,10 @@ internal static class HelpTextBuilder
 			: $"{Environment.NewLine}Aliases: {string.Join(", ", route.Command.Aliases)}";
 		var argumentSection = BuildArgumentSection(route, useAnsi, palette);
 		var optionSection = BuildOptionSection(route, useAnsi, palette);
+		var answerSection = BuildAnswerSection(route, useAnsi, palette);
 		if (!useAnsi)
 		{
-			return $"Usage: {displayTemplate}{Environment.NewLine}Description: {description}{aliases}{argumentSection}{optionSection}";
+			return $"Usage: {displayTemplate}{Environment.NewLine}Description: {description}{aliases}{argumentSection}{optionSection}{answerSection}";
 		}
 
 		var usage = $"{AnsiText.Apply("Usage:", palette.SectionStyle)} {AnsiText.Apply(displayTemplate, palette.CommandStyle)}";
@@ -275,7 +276,7 @@ internal static class HelpTextBuilder
 		var aliasText = route.Command.Aliases.Count == 0
 			? string.Empty
 			: $"{Environment.NewLine}{AnsiText.Apply("Aliases:", palette.SectionStyle)} {AnsiText.Apply(string.Join(", ", route.Command.Aliases), palette.CommandStyle)}";
-		return $"{usage}{Environment.NewLine}{desc}{aliasText}{argumentSection}{optionSection}";
+		return $"{usage}{Environment.NewLine}{desc}{aliasText}{argumentSection}{optionSection}{answerSection}";
 	}
 
 	private static string BuildArgumentSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
@@ -316,6 +317,31 @@ internal static class HelpTextBuilder
 			builder.Append(useAnsi
 				? $"  {AnsiText.Apply(row[0], palette.CommandStyle)}  {AnsiText.Apply(row[1], palette.DescriptionStyle)}"
 				: $"  {row[0]}  {row[1]}");
+		}
+
+		return builder.ToString();
+	}
+
+	private static string BuildAnswerSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
+	{
+		if (route.Command.Answers.Count == 0)
+		{
+			return string.Empty;
+		}
+
+		var builder = new StringBuilder();
+		builder.AppendLine();
+		builder.Append(useAnsi
+			? AnsiText.Apply("Answers:", palette.SectionStyle)
+			: "Answers:");
+		foreach (var answer in route.Command.Answers)
+		{
+			var token = $"--answer:{answer.Name}";
+			var desc = answer.Description ?? $"({answer.Type})";
+			builder.AppendLine();
+			builder.Append(useAnsi
+				? $"  {AnsiText.Apply(token, palette.CommandStyle)}  {AnsiText.Apply(desc, palette.DescriptionStyle)}"
+				: $"  {token}  {desc}");
 		}
 
 		return builder.ToString();

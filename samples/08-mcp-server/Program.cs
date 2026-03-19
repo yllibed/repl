@@ -54,7 +54,8 @@ app.Context("contact", contact =>
 			return Results.Success($"Contact {id} deleted.");
 		})
 		.WithDescription("Delete a contact")
-		.Destructive();
+		.Destructive()
+		.WithAnswer("confirm", "bool", "Confirm deletion");
 });
 
 // ── Prompts (reusable agent instructions) ──────────────────────────

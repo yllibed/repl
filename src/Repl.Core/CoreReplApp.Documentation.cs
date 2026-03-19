@@ -234,6 +234,8 @@ public sealed partial class CoreReplApp
 			});
 		var options = regularOptions.Concat(groupOptions).ToArray();
 
+		var answers = BuildDocumentationAnswers(route.Command);
+
 		return new ReplDocCommand(
 			Path: route.Template.Template,
 			Description: route.Command.Description,
@@ -244,8 +246,23 @@ public sealed partial class CoreReplApp
 			Details: route.Command.Details,
 			Annotations: route.Command.Annotations,
 			Metadata: route.Command.Metadata.Count > 0 ? route.Command.Metadata : null,
+			Answers: answers.Length > 0 ? answers : null,
 			IsResource: route.Command.IsResource,
 			IsPrompt: route.Command.IsPrompt);
+	}
+
+	private static ReplDocAnswer[] BuildDocumentationAnswers(CommandBuilder command)
+	{
+		var fluentAnswers = command.Answers
+			.Select(a => new ReplDocAnswer(a.Name, a.Type, a.Description));
+		var attributeAnswers = command.Handler.Method
+			.GetCustomAttributes<AnswerAttribute>()
+			.Select(a => new ReplDocAnswer(a.Name, a.Type, a.Description));
+		return fluentAnswers
+			.Concat(attributeAnswers)
+			.GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
+			.Select(g => g.First())
+			.ToArray();
 	}
 
 	private ReplDocApp BuildDocumentationApp()

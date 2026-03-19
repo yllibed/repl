@@ -64,7 +64,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		throw new McpInteractionException(
 			$"Interactive prompt '{name}' requires a value. " +
-			$"Provide it as a tool argument 'answer:{name}'. Choices: {string.Join(", ", choices)}");
+			$"Provide it as a tool argument 'answer.{name}'. Choices: {string.Join(", ", choices)}");
 	}
 
 	public async ValueTask<bool> AskConfirmationAsync(
@@ -100,7 +100,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		throw new McpInteractionException(
 			$"Interactive prompt '{name}' requires a value. " +
-			$"Provide it as a tool argument 'answer:{name}' (true/false).");
+			$"Provide it as a tool argument 'answer.{name}' (true/false).");
 	}
 
 	public async ValueTask<string> AskTextAsync(
@@ -136,7 +136,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		throw new McpInteractionException(
 			$"Interactive prompt '{name}' requires a value. " +
-			$"Provide it as a tool argument 'answer:{name}'.");
+			$"Provide it as a tool argument 'answer.{name}'.");
 	}
 
 	public ValueTask<string> AskSecretAsync(
@@ -152,7 +152,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		throw new McpInteractionException(
 			$"Secret prompt '{name}' requires a prefilled value. " +
-			$"Provide it as a tool argument 'answer:{name}'.");
+			$"Provide it as a tool argument 'answer.{name}'.");
 	}
 
 	public async ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
@@ -185,7 +185,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		throw new McpInteractionException(
 			$"Interactive prompt '{name}' requires a value. " +
-			$"Provide it as a tool argument 'answer:{name}' (comma-separated). " +
+			$"Provide it as a tool argument 'answer.{name}' (comma-separated). " +
 			$"Choices: {string.Join(", ", choices)}");
 	}
 

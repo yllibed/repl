@@ -87,6 +87,13 @@ public sealed class CommandBuilder
 	public bool IsPrompt { get; private set; }
 
 	/// <summary>
+	/// Gets declared answer slots for interactive prompts.
+	/// </summary>
+	public IReadOnlyList<AnswerDeclaration> Answers => _answers;
+
+	private readonly List<AnswerDeclaration> _answers = [];
+
+	/// <summary>
 	/// Gets generic metadata entries for extensibility.
 	/// </summary>
 	public IReadOnlyDictionary<string, object> Metadata => _metadata;
@@ -228,6 +235,21 @@ public sealed class CommandBuilder
 			: key;
 		ArgumentNullException.ThrowIfNull(value);
 		_metadata[key] = value;
+		return this;
+	}
+
+	/// <summary>
+	/// Declares an interactive answer slot that can be pre-filled via <c>--answer:{name}=value</c>
+	/// on the CLI or <c>answer:{name}</c> in MCP tool calls.
+	/// </summary>
+	/// <param name="name">Answer name (matches the <c>name</c> parameter in <c>AskConfirmationAsync</c>, <c>AskChoiceAsync</c>, etc.).</param>
+	/// <param name="type">Value type using route constraint names: <c>string</c>, <c>bool</c>, <c>int</c>, <c>guid</c>, <c>email</c>, etc.</param>
+	/// <param name="description">Optional description for help text and agent tool schemas.</param>
+	/// <returns>The same builder instance.</returns>
+	public CommandBuilder WithAnswer(string name, string type = "string", string? description = null)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(name);
+		_answers.Add(new AnswerDeclaration(name, type, description));
 		return this;
 	}
 

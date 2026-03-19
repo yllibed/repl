@@ -56,6 +56,8 @@ internal static class McpSchemaGenerator
 			}
 		}
 
+		AddAnswerProperties(command, properties);
+
 		var schema = new JsonObject
 		{
 			["type"] = "object",
@@ -68,6 +70,20 @@ internal static class McpSchemaGenerator
 		}
 
 		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
+	}
+
+	private static void AddAnswerProperties(ReplDocCommand command, JsonObject properties)
+	{
+		if (command.Answers is not { Count: > 0 })
+		{
+			return;
+		}
+
+		foreach (var answer in command.Answers)
+		{
+			var prop = CreatePropertySchema(answer.Type, answer.Description);
+			properties[$"answer.{answer.Name}"] = prop;
+		}
 	}
 
 	/// <summary>

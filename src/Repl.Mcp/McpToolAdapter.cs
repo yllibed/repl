@@ -87,6 +87,10 @@ internal sealed partial class McpToolAdapter
 			prefills, _options.InteractivityMode, server, progressToken);
 		var mcpServices = new McpServiceProviderOverlay(_services, interactionChannel);
 
+		// Force JSON output — agents consume structured data, not human tables/banners.
+		var effectiveTokens = new List<string>(tokens.Count + 1) { "--output:json" };
+		effectiveTokens.AddRange(tokens);
+
 		using (ReplSessionIO.SetSession(
 			output: outputWriter,
 			input: inputReader,
@@ -96,7 +100,7 @@ internal sealed partial class McpToolAdapter
 		{
 			ReplSessionIO.IsProgrammatic = true;
 			var exitCode = await coreApp.RunWithServicesAsync(
-				tokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
+				effectiveTokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
 
 			var output = outputWriter.ToString().Trim();
 			if (string.IsNullOrWhiteSpace(output))
@@ -125,9 +129,9 @@ internal sealed partial class McpToolAdapter
 				? value.GetString() ?? ""
 				: value.GetRawText();
 
-			if (key.StartsWith("answer:", StringComparison.OrdinalIgnoreCase))
+			if (key.StartsWith("answer.", StringComparison.OrdinalIgnoreCase))
 			{
-				prefills[key["answer:".Length..]] = strValue;
+				prefills[key["answer.".Length..]] = strValue;
 			}
 			else
 			{

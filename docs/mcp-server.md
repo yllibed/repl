@@ -206,7 +206,7 @@ Commands that use runtime prompts (`AskChoiceAsync`, `AskConfirmationAsync`, etc
 
 | Tier | Mechanism | When |
 |---|---|---|
-| 1. Prefill | Values from tool arguments (`answer:confirm=yes`) | Always tried first |
+| 1. Prefill | Values from tool arguments (`answer.confirm=yes`) | Always tried first |
 | 2. Elicitation | Structured form request to user through agent client | `PrefillThenElicitation` mode + client supports it |
 | 3. Sampling | LLM answers on behalf of user | `PrefillThenElicitation` or `PrefillThenSampling` + client supports it |
 | 4. Default/Fail | Use default value or fail with descriptive error | Fallback |

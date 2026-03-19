@@ -13,5 +13,6 @@ public sealed record ReplDocCommand(
 	string? Details = null,
 	CommandAnnotations? Annotations = null,
 	IReadOnlyDictionary<string, object>? Metadata = null,
+	IReadOnlyList<ReplDocAnswer>? Answers = null,
 	bool IsResource = false,
 	bool IsPrompt = false);
