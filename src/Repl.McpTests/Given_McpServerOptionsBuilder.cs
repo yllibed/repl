@@ -10,8 +10,8 @@ namespace Repl.McpTests;
 public sealed class Given_McpServerOptionsBuilder
 {
 	[TestMethod]
-	[Description("BuildMcpServerOptions wires the dynamic tools handler from the app's command graph.")]
-	public void When_AppHasCommands_Then_OptionsContainListToolsHandler()
+	[Description("BuildMcpServerOptions captures the current tools as a pre-populated collection.")]
+	public void When_AppHasCommands_Then_OptionsContainToolCollection()
 	{
 		var app = ReplApp.Create();
 		app.Map("greet {name}", (string name) => $"Hello, {name}!").ReadOnly();
@@ -19,21 +19,24 @@ public sealed class Given_McpServerOptionsBuilder
 
 		var options = app.Core.BuildMcpServerOptions();
 
-		options.Handlers.ListToolsHandler.Should().NotBeNull();
-		options.Handlers.CallToolHandler.Should().NotBeNull();
+		options.ToolCollection.Should().NotBeNull();
+		options.ToolCollection.Should().Contain(tool => string.Equals(tool.ProtocolTool.Name, "greet", StringComparison.Ordinal));
+		options.ToolCollection.Should().Contain(tool => string.Equals(tool.ProtocolTool.Name, "ping", StringComparison.Ordinal));
 	}
 
 	[TestMethod]
-	[Description("BuildMcpServerOptions wires the dynamic resources handler from ReadOnly commands.")]
-	public void When_AppHasReadOnlyCommands_Then_OptionsContainResourcesHandler()
+	[Description("BuildMcpServerOptions captures the current resources as a pre-populated collection.")]
+	public void When_AppHasReadOnlyCommands_Then_OptionsContainResourceCollection()
 	{
 		var app = ReplApp.Create();
 		app.Map("status", () => "ok").ReadOnly();
 
 		var options = app.Core.BuildMcpServerOptions();
 
-		options.Handlers.ListResourcesHandler.Should().NotBeNull();
-		options.Handlers.ReadResourceHandler.Should().NotBeNull();
+		options.ResourceCollection.Should().NotBeNull();
+		options.ResourceCollection.Should().ContainSingle(resource =>
+			resource.ProtocolResource != null
+			&& string.Equals(resource.ProtocolResource.Name, "status", StringComparison.Ordinal));
 	}
 
 	[TestMethod]

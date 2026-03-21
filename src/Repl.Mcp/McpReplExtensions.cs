@@ -50,6 +50,8 @@ public static class McpReplExtensions
 	/// Builds <see cref="McpServerOptions"/> from the Repl app's command graph.
 	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
 	/// without going through the <c>mcp serve</c> CLI command.
+	/// The returned options capture the current command graph as pre-populated
+	/// collections.
 	/// </summary>
 	/// <param name="app">The core Repl app.</param>
 	/// <param name="configure">Optional MCP configuration callback.</param>
@@ -66,7 +68,7 @@ public static class McpReplExtensions
 		configure?.Invoke(options);
 
 		var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
-		return handler.BuildServerOptions();
+		return handler.BuildStaticServerOptions();
 	}
 
 	private sealed class EmptyServiceProvider : IServiceProvider

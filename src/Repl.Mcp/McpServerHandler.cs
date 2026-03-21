@@ -66,7 +66,7 @@ internal sealed class McpServerHandler
 		Justification = "MCP server handler runs in a context where all types are preserved.")]
 	public async Task RunAsync(IReplIoContext io, CancellationToken ct)
 	{
-		var serverOptions = BuildServerOptions();
+		var serverOptions = BuildDynamicServerOptions();
 		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
 		var transport = _options.TransportFactory is { } factory
 			? factory(serverName, io)
@@ -92,7 +92,7 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	internal McpServerOptions BuildServerOptions()
+	internal McpServerOptions BuildDynamicServerOptions()
 	{
 		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
@@ -111,6 +111,22 @@ internal sealed class McpServerHandler
 				ListPromptsHandler = ListPromptsAsync,
 				GetPromptHandler = GetPromptAsync,
 			},
+		};
+	}
+
+	internal McpServerOptions BuildStaticServerOptions()
+	{
+		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
+		var serverVersion = _options.ServerVersion ?? "1.0.0";
+		var snapshot = BuildSnapshotCore();
+
+		return new McpServerOptions
+		{
+			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
+			Capabilities = BuildCapabilities(),
+			ToolCollection = ToCollection(snapshot.Tools),
+			ResourceCollection = ToResourceCollection(snapshot.Resources),
+			PromptCollection = ToCollection(snapshot.Prompts),
 		};
 	}
 
@@ -798,6 +814,29 @@ internal sealed class McpServerHandler
 		!command.IsHidden
 		&& command.Annotations?.AutomationHidden != true
 		&& (_options.CommandFilter is not { } filter || filter(command));
+
+	private static McpServerPrimitiveCollection<T> ToCollection<T>(IReadOnlyList<T> items)
+		where T : IMcpServerPrimitive
+	{
+		var collection = new McpServerPrimitiveCollection<T>();
+		foreach (var item in items)
+		{
+			collection.Add(item);
+		}
+
+		return collection;
+	}
+
+	private static McpServerResourceCollection ToResourceCollection(IReadOnlyList<McpServerResource> items)
+	{
+		var collection = new McpServerResourceCollection();
+		foreach (var item in items)
+		{
+			collection.Add(item);
+		}
+
+		return collection;
+	}
 
 	internal sealed record McpGeneratedSnapshot(
 		McpToolAdapter Adapter,

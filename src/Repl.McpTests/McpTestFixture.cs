@@ -54,22 +54,22 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		configureOptions?.Invoke(options);
 
 		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
-		var serverOptions = handler.BuildServerOptions();
 
 		var clientToServer = new Pipe();
 		var serverToClient = new Pipe();
 		var cts = new CancellationTokenSource();
 
-		var serverName = serverOptions.ServerInfo?.Name ?? "test-server";
 		var inputStream = clientToServer.Reader.AsStream();
 		var outputStream = serverToClient.Writer.AsStream();
 		var ioContext = new PipeIoContext(inputStream, outputStream);
-		ITransport serverTransport = options.TransportFactory is { } factory
-			? factory(serverName, ioContext)
-			: new StreamServerTransport(inputStream, outputStream, serverName);
-
-		var server = McpServer.Create(serverTransport, serverOptions);
-		var serverTask = server.RunAsync(cts.Token);
+		if (options.TransportFactory is null)
+		{
+			options.TransportFactory = static (serverName, io) => new StreamServerTransport(
+				((PipeIoContext)io).InputStream,
+				((PipeIoContext)io).OutputStream,
+				serverName);
+		}
+		var serverTask = handler.RunAsync(ioContext, cts.Token);
 
 		var clientTransport = new StreamClientTransport(
 			clientToServer.Writer.AsStream(),
