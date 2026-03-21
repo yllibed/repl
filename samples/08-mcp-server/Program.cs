@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Repl;
+using Repl.Mcp;
 
 // ── A Repl app exposed as an MCP server for AI agents ──────────────
 //

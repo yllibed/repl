@@ -17,14 +17,17 @@ internal sealed class McpTestFixture : IAsyncDisposable
 	private readonly Pipe _clientToServer;
 	private readonly Pipe _serverToClient;
 	private readonly Task _serverTask;
+	private readonly ReplApp _app;
 
 	private McpTestFixture(
+		ReplApp app,
 		McpClient client,
 		Task serverTask,
 		CancellationTokenSource cts,
 		Pipe clientToServer,
 		Pipe serverToClient)
 	{
+		_app = app;
 		Client = client;
 		_serverTask = serverTask;
 		_cts = cts;
@@ -32,14 +35,16 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		_serverToClient = serverToClient;
 	}
 
+	public ReplApp App => _app;
 	public McpClient Client { get; }
 
 	public static Task<McpTestFixture> CreateAsync(Action<ReplApp> configure) =>
-		CreateAsync(configure, configureOptions: null);
+		CreateAsync(configure, configureOptions: null, clientOptions: null);
 
 	public static async Task<McpTestFixture> CreateAsync(
 		Action<ReplApp> configure,
-		Action<ReplMcpServerOptions>? configureOptions)
+		Action<ReplMcpServerOptions>? configureOptions,
+		McpClientOptions? clientOptions = null)
 	{
 		var app = ReplApp.Create();
 		app.UseMcpServer(configureOptions);
@@ -48,35 +53,30 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var options = new ReplMcpServerOptions();
 		configureOptions?.Invoke(options);
 
-		// Use the real McpServerHandler to build server options — exercises
-		// the full tool/resource/prompt generation pipeline with fallbacks.
-		var model = app.Core.CreateDocumentationModel();
-		var adapter = new McpToolAdapter(app.Core, options, EmptyServiceProvider.Instance);
-		var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
 		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
-		var serverOptions = handler.BuildServerOptions(model, adapter, separator);
 
 		var clientToServer = new Pipe();
 		var serverToClient = new Pipe();
 		var cts = new CancellationTokenSource();
 
-		var serverName = serverOptions.ServerInfo?.Name ?? "test-server";
 		var inputStream = clientToServer.Reader.AsStream();
 		var outputStream = serverToClient.Writer.AsStream();
 		var ioContext = new PipeIoContext(inputStream, outputStream);
-		ITransport serverTransport = options.TransportFactory is { } factory
-			? factory(serverName, ioContext)
-			: new StreamServerTransport(inputStream, outputStream, serverName);
-
-		var server = McpServer.Create(serverTransport, serverOptions);
-		var serverTask = server.RunAsync(cts.Token);
+		if (options.TransportFactory is null)
+		{
+			options.TransportFactory = static (serverName, io) => new StreamServerTransport(
+				((PipeIoContext)io).InputStream,
+				((PipeIoContext)io).OutputStream,
+				serverName);
+		}
+		var serverTask = handler.RunAsync(ioContext, cts.Token);
 
 		var clientTransport = new StreamClientTransport(
 			clientToServer.Writer.AsStream(),
 			serverToClient.Reader.AsStream());
-		var client = await McpClient.CreateAsync(clientTransport).ConfigureAwait(false);
+		var client = await McpClient.CreateAsync(clientTransport, clientOptions).ConfigureAwait(false);
 
-		return new McpTestFixture(client, serverTask, cts, clientToServer, serverToClient);
+		return new McpTestFixture(app, client, serverTask, cts, clientToServer, serverToClient);
 	}
 
 	public async ValueTask DisposeAsync()

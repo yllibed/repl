@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Controls how runtime interaction prompts are handled in MCP mode.

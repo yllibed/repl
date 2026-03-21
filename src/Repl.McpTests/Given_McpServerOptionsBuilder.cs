@@ -2,6 +2,7 @@ using System.IO.Pipelines;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Repl.Mcp;
 
 namespace Repl.McpTests;
 
@@ -9,8 +10,8 @@ namespace Repl.McpTests;
 public sealed class Given_McpServerOptionsBuilder
 {
 	[TestMethod]
-	[Description("BuildMcpServerOptions returns options with tools from the app's command graph.")]
-	public void When_AppHasCommands_Then_OptionsContainTools()
+	[Description("BuildMcpServerOptions captures the current tools as a pre-populated collection.")]
+	public void When_AppHasCommands_Then_OptionsContainToolCollection()
 	{
 		var app = ReplApp.Create();
 		app.Map("greet {name}", (string name) => $"Hello, {name}!").ReadOnly();
@@ -19,13 +20,13 @@ public sealed class Given_McpServerOptionsBuilder
 		var options = app.Core.BuildMcpServerOptions();
 
 		options.ToolCollection.Should().NotBeNull();
-		options.ToolCollection!.Should().Contain(t => string.Equals(t.ProtocolTool.Name, "greet", StringComparison.Ordinal));
-		options.ToolCollection!.Should().Contain(t => string.Equals(t.ProtocolTool.Name, "ping", StringComparison.Ordinal));
+		options.ToolCollection.Should().Contain(tool => string.Equals(tool.ProtocolTool.Name, "greet", StringComparison.Ordinal));
+		options.ToolCollection.Should().Contain(tool => string.Equals(tool.ProtocolTool.Name, "ping", StringComparison.Ordinal));
 	}
 
 	[TestMethod]
-	[Description("BuildMcpServerOptions returns options with resources from ReadOnly commands.")]
-	public void When_AppHasReadOnlyCommands_Then_OptionsContainResources()
+	[Description("BuildMcpServerOptions captures the current resources as a pre-populated collection.")]
+	public void When_AppHasReadOnlyCommands_Then_OptionsContainResourceCollection()
 	{
 		var app = ReplApp.Create();
 		app.Map("status", () => "ok").ReadOnly();
@@ -33,7 +34,9 @@ public sealed class Given_McpServerOptionsBuilder
 		var options = app.Core.BuildMcpServerOptions();
 
 		options.ResourceCollection.Should().NotBeNull();
-		options.ResourceCollection!.Should().NotBeEmpty();
+		options.ResourceCollection.Should().ContainSingle(resource =>
+			resource.ProtocolResource != null
+			&& string.Equals(resource.ProtocolResource.Name, "status", StringComparison.Ordinal));
 	}
 
 	[TestMethod]

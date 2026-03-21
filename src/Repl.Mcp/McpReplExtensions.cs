@@ -1,8 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Server;
-using Repl.Mcp;
 
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Extension methods for integrating MCP server support into a Repl app.
@@ -51,6 +50,8 @@ public static class McpReplExtensions
 	/// Builds <see cref="McpServerOptions"/> from the Repl app's command graph.
 	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
 	/// without going through the <c>mcp serve</c> CLI command.
+	/// The returned options capture the current command graph as pre-populated
+	/// collections.
 	/// </summary>
 	/// <param name="app">The core Repl app.</param>
 	/// <param name="configure">Optional MCP configuration callback.</param>
@@ -66,20 +67,8 @@ public static class McpReplExtensions
 		var options = new ReplMcpServerOptions();
 		configure?.Invoke(options);
 
-		var previousProgrammatic = ReplSessionIO.IsProgrammatic;
-		ReplSessionIO.IsProgrammatic = true;
-		try
-		{
-			var model = app.CreateDocumentationModel();
-			var adapter = new McpToolAdapter(app, options, services ?? EmptyServiceProvider.Instance);
-			var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
-			var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
-			return handler.BuildServerOptions(model, adapter, separator);
-		}
-		finally
-		{
-			ReplSessionIO.IsProgrammatic = previousProgrammatic;
-		}
+		var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
+		return handler.BuildStaticServerOptions();
 	}
 
 	private sealed class EmptyServiceProvider : IServiceProvider

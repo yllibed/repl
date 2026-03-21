@@ -1,7 +1,7 @@
 using ModelContextProtocol.Protocol;
 using Repl.Documentation;
 
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Configuration for the Repl MCP server integration.
@@ -78,6 +78,12 @@ public sealed class ReplMcpServerOptions
 	/// Default is <c>false</c> — opt in when your target agents lack prompt support.
 	/// </summary>
 	public bool PromptFallbackToTools { get; set; }
+
+	/// <summary>
+	/// Controls the opt-in compatibility layer for clients that don't handle dynamic MCP tool lists well.
+	/// Leave this disabled for applications whose tool list is static.
+	/// </summary>
+	public DynamicToolCompatibilityMode DynamicToolCompatibility { get; set; } = DynamicToolCompatibilityMode.Disabled;
 
 	private readonly List<McpPromptRegistration> _prompts = [];
 

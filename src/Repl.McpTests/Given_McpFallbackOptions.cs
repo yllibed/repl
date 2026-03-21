@@ -218,15 +218,11 @@ public sealed class Given_McpFallbackOptions
 		var app = ReplApp.Create();
 		configure(app);
 
-		var model = app.Core.CreateDocumentationModel();
 		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
-		var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
-		var adapter = new McpToolAdapter(app.Core, options, EmptyServiceProvider.Instance);
-		var serverOptions = handler.BuildServerOptions(model, adapter, separator);
-
-		var tools = serverOptions.ToolCollection?.ToList() ?? [];
-		var resources = serverOptions.ResourceCollection?.ToList() ?? [];
-		var prompts = serverOptions.PromptCollection?.ToList() ?? [];
+		var snapshot = handler.BuildSnapshotForTests();
+		var tools = snapshot.Tools;
+		var resources = snapshot.Resources;
+		var prompts = snapshot.Prompts;
 
 		return (tools, resources, prompts);
 	}

@@ -1,19 +1,17 @@
-using Repl.Interaction;
-
 namespace Repl.Mcp;
 
 /// <summary>
-/// Service provider overlay that injects MCP-specific services (interaction channel).
+/// Service provider overlay that injects MCP-specific services.
 /// </summary>
 internal sealed class McpServiceProviderOverlay(
 	IServiceProvider inner,
-	IReplInteractionChannel interactionChannel) : IServiceProvider
+	IReadOnlyDictionary<Type, object> overrides) : IServiceProvider
 {
 	public object? GetService(Type serviceType)
 	{
-		if (serviceType == typeof(IReplInteractionChannel))
+		if (overrides.TryGetValue(serviceType, out var service))
 		{
-			return interactionChannel;
+			return service;
 		}
 
 		return inner.GetService(serviceType);

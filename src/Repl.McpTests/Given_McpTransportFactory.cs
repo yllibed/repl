@@ -1,4 +1,5 @@
 using ModelContextProtocol.Server;
+using Repl.Mcp;
 using static Repl.McpTests.McpTestFixture;
 
 namespace Repl.McpTests;
