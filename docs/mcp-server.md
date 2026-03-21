@@ -4,6 +4,11 @@ Expose your Repl command graph as an [MCP](https://modelcontextprotocol.io) (Mod
 
 See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working demo.
 
+Related guides:
+- [mcp-advanced.md](mcp-advanced.md) for roots, soft roots, and dynamic tool patterns
+- [mcp-transports.md](mcp-transports.md) for custom transports and HTTP hosting
+- [mcp-internals.md](mcp-internals.md) for concepts and under-the-hood behavior
+
 ## Quick start
 
 ```bash
@@ -28,9 +33,11 @@ One command graph. CLI, REPL, remote sessions, and AI agents — all from the sa
 
 > **Note:** `UseMcpServer()` registers a hidden `mcp serve` context. The tool list is built lazily when an agent connects, so it sees all commands regardless of registration order.
 
-## How it works
+## What it does
 
-`UseMcpServer()` registers a hidden `mcp serve` command that starts an MCP stdio server. When an agent connects, the server reads the command graph via `CreateDocumentationModel()`, generates typed JSON Schema for each command, and dispatches tool calls through the standard Repl pipeline (routing, binding, middleware, rendering).
+`UseMcpServer()` registers a hidden `mcp serve` command that starts an MCP stdio server. The connected agent then sees your Repl command graph as MCP tools, resources, and prompts.
+
+If you want the internal mechanics, see [mcp-internals.md](mcp-internals.md).
 
 Commands map to MCP primitives:
 
@@ -240,18 +247,24 @@ app.Map("import", async (IReplInteractionChannel interaction, CancellationToken 
 
 ## Writing output in MCP mode
 
-In MCP mode, each tool call runs in an isolated session with a captured output stream. Understanding where output goes is important for writing commands that work well with agents.
+In MCP mode, each tool call runs in an isolated session. Repl commands should communicate through return values and `IReplInteractionChannel`, not through `Console.*`.
+
+This is not just a style preference:
+- In normal Repl code, `Console.*` bypasses the framework's output model
+- In MCP mode, some console writes can corrupt the protocol stream
+- Even when captured, ad-hoc console output makes tool results ambiguous and harder to consume correctly
 
 | Output method | Where it goes | Recommendation |
 |---|---|---|
 | **Return value** | Serialized to JSON → `CallToolResult.Content` | **Preferred.** Clean, structured, always correct. |
 | **`IReplInteractionChannel`** | Intercepted by `McpInteractionChannel` | **Use for prompts and progress.** Maps to MCP primitives. |
-| **`ReplSessionIO.Output`** / `Console.WriteLine` | Captured in `StringWriter` → appended to tool result as text | Works, but produces raw text mixed with the serialized return value. Use intentionally. |
+| **`ReplSessionIO.Output`** | Writes to the session output | Reserve for advanced cases. Prefer return values for data and `IReplInteractionChannel` for runtime interaction. |
+| **`Console.WriteLine`** | Bypasses the Repl abstraction; may be captured indirectly in some cases | **Avoid.** This is an anti-pattern in Repl code, and especially wrong in MCP handlers. |
 | **`Console.OpenStandardOutput()`** | **Writes directly to the MCP stdio transport** | **Never use.** Corrupts the JSON-RPC protocol stream. |
 
-The key rule: **use return values and `IReplInteractionChannel`**. These are the designed integration points that produce clean, structured results for agents. Direct console writes are captured and won't crash anything, but they produce unstructured text that agents may struggle to parse.
+The key rule: **use return values and `IReplInteractionChannel`**. These are the designed integration points in Repl and the only ones you should rely on for MCP-facing commands.
 
-> **Token cost:** Everything returned in `CallToolResult.Content` is consumed by the LLM as input tokens. Verbose output (debug logs, large tables, raw dumps) translates directly into token cost and can degrade agent reasoning. Keep tool output concise and structured — return what the agent needs to act, not everything you'd show a human.
+> **Why this matters:** extra text in tool output increases token usage, but the more serious issue is correctness. Console-style writes blur the boundary between structured result data, progress, logs, and protocol traffic. In MCP code, that can range from confusing agent behavior to outright protocol corruption.
 
 ```csharp
 // Good: structured return value
@@ -264,11 +277,18 @@ app.Map("import", async (IReplInteractionChannel ch, CancellationToken ct) =>
     return Results.Success("Done.");
 });
 
-// Avoid: raw console output mixed with return value
+// If you really need textual session output, use Repl's IO abstraction
+app.Map("status", async () =>
+{
+    await ReplSessionIO.Output.WriteLineAsync("Loading...");
+    return new { Status = "ok" };
+});
+
+// Don't: bypass Repl's IO model with Console.*
 app.Map("status", () =>
 {
-    Console.WriteLine("Loading...");   // captured but messy
-    return new { Status = "ok" };      // agent sees "Loading...\n{...}"
+    Console.WriteLine("Loading...");
+    return new { Status = "ok" };
 });
 ```
 
@@ -299,14 +319,39 @@ app.UseMcpServer(o =>
 });
 ```
 
+## Troubleshooting
+
+### New tools are not visible to the agent
+
+Check:
+- Whether your app calls `InvalidateRouting()` when the effective command graph changes
+- Whether the MCP client actually refreshes after `notifications/tools/list_changed`
+- Whether your tool list is truly dynamic per session
+
+If your client seems to ignore dynamic tool refreshes, see [mcp-advanced.md](mcp-advanced.md) and enable the opt-in compatibility shim.
+
+### The agent does not see workspace roots
+
+Some MCP clients do not support native roots.
+
+If you need workspace-aware behavior:
+- Use `IMcpClientRoots` when native roots are supported
+- Add a soft-roots initialization tool when they are not
+
+See [mcp-advanced.md](mcp-advanced.md) for the full pattern.
+
+### I need to understand why this behaves that way
+
+See [mcp-internals.md](mcp-internals.md) for:
+- what roots are
+- how session-aware routing works
+- why `list_changed` is not always enough
+- how the compatibility shim works
+
 ## Known limitations
 
 - **Collection parameters** (`List<T>`, `int[]`): MCP passes JSON arrays as a single element. The CLI binding layer expects repeated values (`--tag vip --tag priority`), so collection parameters are not correctly bound from MCP tool calls yet. Use string parameters with custom parsing as a workaround.
 - **Parameterized resources**: Commands with route parameters (e.g. `config {env}`) marked `.AsResource()` are exposed as MCP resource templates with URI variables (e.g. `repl://config/{env}`). Agents read them via `resources/read` with the concrete URI (e.g. `repl://config/production`) and the parameters are passed to the command handler.
-
-## Advanced: custom transports & HTTP
-
-For custom transports (WebSocket, named pipes, SSH) or HTTP integration (ASP.NET Core Streamable HTTP), see [mcp-advanced.md](mcp-advanced.md).
 
 ## Configuration options
 
@@ -321,6 +366,7 @@ app.UseMcpServer(o =>
     o.InteractivityMode = InteractivityMode.PrefillThenFail;    // interaction degradation
     o.ResourceFallbackToTools = false;                          // opt-in: also expose resources as tools
     o.PromptFallbackToTools = false;                             // opt-in: also expose prompts as tools
+    o.DynamicToolCompatibility = DynamicToolCompatibilityMode.Disabled; // opt-in shim for clients that miss dynamic tool refresh
     o.CommandFilter = cmd => true;                              // filter which commands become tools
     o.Prompt("summarize", (string topic) => ...);               // explicit prompt registration
 });
@@ -444,7 +490,16 @@ Include this file in the package to enable registry-based discovery:
       "identifier": "MyApp",
       "version": "1.0.0",
       "transport": { "type": "stdio" },
-      "packageArguments": ["mcp", "serve"],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ],
       "environmentVariables": []
     }
   ]
@@ -461,6 +516,9 @@ dotnet nuget push bin/Release/MyApp.1.0.0.nupkg --source https://api.nuget.org/v
 # Install and run
 dotnet tool install -g MyApp
 myapp mcp serve
+
+# Run without install
+dnx -y MyApp -- mcp serve
 ```
 
 NuGet.org discovery: `nuget.org/packages?packagetype=mcpserver`

@@ -1,105 +1,180 @@
-# MCP Advanced: Custom Transports & HTTP Integration
+# MCP Advanced: Dynamic Tools, Roots, and Session-Aware Patterns
 
-This guide covers two advanced integration scenarios beyond the default stdio transport.
+This guide covers advanced MCP usage patterns for Repl apps:
 
-> **Prerequisite**: read [mcp-server.md](mcp-server.md) first for the basics of exposing a Repl app as an MCP server.
+- Tool visibility that changes per session
+- Native MCP client roots
+- Soft roots for clients that don't support roots
+- Compatibility shims for clients that don't refresh dynamic tool lists well
 
-## Scenario A: Stdio-over-anything
+> **Prerequisite**: read [mcp-server.md](mcp-server.md) first for the basic setup.
+>
+> **Need the plumbing details?** See [mcp-internals.md](mcp-internals.md).
+>
+> **Need custom transports or HTTP hosting?** See [mcp-transports.md](mcp-transports.md).
 
-The MCP protocol is JSON-RPC over stdin/stdout. The `TransportFactory` option lets you replace the physical transport while keeping the same protocol — useful for WebSocket bridges, named pipes, SSH tunnels, etc.
+## When this page matters
 
-### How it works
+Most Repl MCP servers don't need any of this.
 
-`TransportFactory` receives the server name and an I/O context, and returns an `ITransport`. The MCP server uses this transport instead of `StdioServerTransport`.
+Use the techniques in this page when:
+- Available tools depend on login state, tenant, feature flags, or workspace
+- The agent needs to know which directories it is allowed to work in
+- Your MCP client does not support native roots
+- Your MCP client does not seem to refresh its tool list after `list_changed`
+
+If your tool list is static, stay with the default setup from [mcp-server.md](mcp-server.md).
+
+## Client roots
+
+A **root** is a workspace or directory that the MCP client declares as being in scope for the session.
+
+Examples:
+- The folder the user opened in the editor
+- The project workspace attached to the agent
+- A set of directories the agent is allowed to inspect
+
+When the client supports native MCP roots, `Repl.Mcp` exposes them through `IMcpClientRoots`.
+
+```csharp
+app.Map("workspace roots", async (IMcpClientRoots roots, CancellationToken ct) =>
+    {
+        var current = await roots.GetAsync(ct);
+        return current.Select(r => new { r.Name, Uri = r.Uri.ToString() });
+    })
+    .WithDescription("List the current MCP workspace roots")
+    .ReadOnly();
+```
+
+Useful members:
+
+| Member | Meaning |
+|---|---|
+| `IsSupported` | The connected client supports native MCP roots |
+| `Current` | Current effective roots for the session |
+| `GetAsync()` | Refreshes native roots if supported |
+| `HasSoftRoots` | Fallback roots were initialized manually |
+| `SetSoftRoots()` / `ClearSoftRoots()` | Manage fallback roots for the current session |
+
+## Session-aware routing
+
+Because `IMcpClientRoots` is injectable, you can use it in command handlers and in module presence predicates.
+
+That lets you expose tools only when a certain MCP capability or session state is available.
+
+```csharp
+app.MapModule(
+    new WorkspaceModule(),
+    (IMcpClientRoots roots) => roots.IsSupported);
+```
+
+Typical session-aware conditions:
+- Roots are available
+- Soft roots were initialized
+- The current tenant or login is known
+- A module should appear only for one agent session
+
+## Soft roots fallback
+
+Some clients do not support MCP roots at all. In that case, a practical workaround is to expose an initialization tool only when roots are unavailable.
+
+The agent can call that tool first to establish one or more **soft roots** for the session.
+
+```csharp
+app.MapModule(
+    new SoftRootsInitModule(),
+    (IMcpClientRoots roots) => !roots.IsSupported);
+
+app.MapModule(
+    new WorkspaceModule(),
+    (IMcpClientRoots roots) => roots.IsSupported || roots.HasSoftRoots);
+
+sealed class SoftRootsInitModule : IReplModule
+{
+    public void Map(IReplMap app)
+    {
+        app.Map("workspace init {path}", (IMcpClientRoots roots, string path) =>
+            {
+                // SetSoftRoots invalidates routing for the current MCP session.
+                roots.SetSoftRoots([new McpClientRoot(new Uri(path, UriKind.Absolute), "workspace")]);
+                return "Workspace initialized.";
+            })
+            // Message to agent asking it to set soft routes
+            .WithDescription("Before using other workspace tools, call this to set the working directory.");
+    }
+}
+```
+
+Recommended instruction to give the agent:
+
+> If `workspace_init` is available, call it first with the working directory you should operate in.
+
+This is often the simplest fallback for editor integrations or agent hosts that don't implement native roots.
+
+## Dynamic tool compatibility shim
+
+Some MCP clients receive `notifications/tools/list_changed` but do not refresh their tool list correctly.
+
+If your app has a dynamic tool list, you can opt in to a compatibility shim:
 
 ```csharp
 app.UseMcpServer(o =>
 {
-    o.TransportFactory = (serverName, io) =>
-    {
-        // Bridge a WebSocket connection to MCP via streams.
-        var (inputStream, outputStream) = CreateWebSocketBridge();
-        return new StreamServerTransport(inputStream, outputStream, serverName);
-    };
+    o.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim;
 });
 ```
 
-The app still launches via `myapp mcp serve` — the framework handles the full MCP lifecycle (tool registration, routing invalidation, shutdown). This approach gives you **one session per process**.
+When enabled:
 
-### Multi-session (accept N connections)
+1. The first `tools/list` returns only `discover_tools` and `call_tool`
+2. The server emits `notifications/tools/list_changed`
+3. Later `tools/list` calls return the real tool set
 
-For multiple concurrent sessions over a custom transport (e.g. a WebSocket listener accepting many clients), use `BuildMcpServerOptions` to build the options once, then create a server per connection:
+This lets limited clients continue operating:
+- `discover_tools` returns the current real tools and schemas
+- `call_tool` invokes a real tool by name and arguments
 
-```csharp
-var mcpOptions = app.Core.BuildMcpServerOptions();
+Use this only when you need it.
 
-// For each incoming WebSocket connection:
-async Task HandleConnectionAsync(Stream input, Stream output, CancellationToken ct)
-{
-    var transport = new StreamServerTransport(input, output, "my-server");
-    var server = McpServer.Create(transport, mcpOptions);
-    await server.RunAsync(ct);
-    await server.DisposeAsync();
-}
-```
+Good candidates:
+- Tools appear after authentication
+- Tools depend on roots or soft roots
+- Tools vary by session or runtime context
 
-Each session is fully isolated — tool invocations run in separate `AsyncLocal` scopes with their own I/O streams, just like hosted sessions.
+Avoid it when:
+- Your tool list is static
+- Your client already handles `list_changed` correctly
 
-### When to use
+## Choosing the right fallback
 
-- You have a non-stdio transport (WebSocket, named pipe, TCP) that carries the standard MCP JSON-RPC protocol
-- Single-session: use `TransportFactory` via `mcp serve` (simplest)
-- Multi-session: use `BuildMcpServerOptions` + one `McpServer.Create` per connection
+| Problem | Recommended approach |
+|---|---|
+| Client supports roots and refreshes tools correctly | Use the default MCP setup |
+| Client does not support roots | Add a soft-roots initialization tool |
+| Client supports tools but misses dynamic refreshes | Enable `DiscoverAndCallShim` |
+| Client has both issues | Use soft roots and, if needed, the dynamic tool shim |
 
-## Scenario B: MCP-over-HTTP (Streamable HTTP)
+## Troubleshooting patterns
 
-The MCP spec defines a native HTTP transport: POST for client→server messages, GET/SSE for server→client streaming, with session management. This requires an HTTP host (typically ASP.NET Core) rather than a CLI command.
+### The agent doesn't see tools that should appear later
 
-### How it works
+Check:
+- Your app calls `InvalidateRouting()` when session-driven state changes
+- The client actually refreshes after `list_changed`
+- `DynamicToolCompatibility` is enabled if the client is weak on dynamic discovery
 
-`BuildMcpServerOptions()` constructs the full `McpServerOptions` (tools, resources, prompts, capabilities) from your Repl app's command graph — without starting a server. You pass these options to the MCP C# SDK's HTTP integration.
+If needed, see [mcp-server.md](mcp-server.md#troubleshooting) for the quick checklist and [mcp-internals.md](mcp-internals.md) for the behavior details.
 
-```csharp
-var app = ReplApp.Create();
-app.Map("greet {name}", (string name) => $"Hello, {name}!");
-app.Map("status", () => "all systems go").ReadOnly();
+### The agent doesn't know which workspace to use
 
-// Build MCP options from the command graph.
-var mcpOptions = app.Core.BuildMcpServerOptions(configure: o =>
-{
-    o.ServerName = "MyApi";
-    o.ResourceUriScheme = "myapi";
-});
+Check:
+- Whether the client supports native roots
+- Whether a roots-aware tool can inspect `IMcpClientRoots`
+- Whether you need a soft-roots init tool
 
-// Use with McpServer.Create for a custom HTTP handler...
-var server = McpServer.Create(httpTransport, mcpOptions);
+### My module predicate depends on roots but never activates
 
-// ...or pass the collections to ASP.NET Core's MapMcp.
-```
-
-### Multi-session
-
-Each HTTP request creates an isolated MCP session. This uses the same mechanism as Repl's hosted sessions:
-
-- `ReplSessionIO.SetSession()` creates an `AsyncLocal` scope per request
-- Each session has its own output writer, input reader, and session ID
-- Tool invocations are fully isolated — concurrent requests don't interfere
-
-This is identical to how the framework handles concurrent tool calls in stdio mode (via `McpToolAdapter.ExecuteThroughPipelineAsync`).
-
-### When to use
-
-- You're building a web API that also exposes MCP endpoints
-- You need multiple concurrent MCP sessions (agents connecting via HTTP)
-- You want to integrate with the ASP.NET Core pipeline (auth, middleware, etc.)
-
-## Configuration reference
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `TransportFactory` | `null` (stdio) | Custom transport factory for Scenario A |
-| `ResourceUriScheme` | `"repl"` | URI scheme for MCP resources (`{scheme}://path`) |
-| `ServerName` | Assembly product name | Server name in MCP `initialize` response |
-| `ServerVersion` | `"1.0.0"` | Server version in MCP `initialize` response |
-
-See [mcp-server.md](mcp-server.md) for the full configuration reference.
+Check:
+- Whether the client actually advertises roots support
+- Whether you need `await roots.GetAsync(...)` in a handler rather than only a predicate
+- Whether soft roots are a better fit for that client
