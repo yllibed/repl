@@ -299,7 +299,11 @@ internal sealed class McpServerHandler
 				_snapshotDirty = false;
 				return built;
 			}
-			catch when (previousSnapshot is not null)
+			catch (OperationCanceledException)
+			{
+				throw;
+			}
+			catch (Exception) when (previousSnapshot is not null)
 			{
 				_snapshot = previousSnapshot;
 				_snapshotDirty = false;
@@ -463,7 +467,11 @@ internal sealed class McpServerHandler
 
 			await server.SendNotificationAsync(method, CancellationToken.None).ConfigureAwait(false);
 		}
-		catch
+		catch (OperationCanceledException)
+		{
+			// Notifications are best-effort. Cancellation is not actionable here.
+		}
+		catch (Exception)
 		{
 			// Notifications are best-effort. The next list/read request will rebuild on demand.
 		}
