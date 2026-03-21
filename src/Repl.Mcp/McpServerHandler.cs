@@ -32,7 +32,8 @@ internal sealed class McpServerHandler
 	private readonly Lock _attachLock = new();
 
 	private McpGeneratedSnapshot? _snapshot;
-	private bool _snapshotDirty = true;
+	private long _snapshotVersion = 1;
+	private long _builtSnapshotVersion;
 	private McpServer? _server;
 	private EventHandler? _routingChangedHandler;
 	private ITimer? _debounceTimer;
@@ -277,7 +278,9 @@ internal sealed class McpServerHandler
 	{
 		AttachServer(server);
 
-		if (!_snapshotDirty && _snapshot is { } cached)
+		var snapshotVersion = Volatile.Read(ref _snapshotVersion);
+		if (Volatile.Read(ref _builtSnapshotVersion) == snapshotVersion
+			&& _snapshot is { } cached)
 		{
 			return cached;
 		}
@@ -285,7 +288,9 @@ internal sealed class McpServerHandler
 		await _snapshotGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			if (!_snapshotDirty && _snapshot is { } refreshed)
+			snapshotVersion = Volatile.Read(ref _snapshotVersion);
+			if (Volatile.Read(ref _builtSnapshotVersion) == snapshotVersion
+				&& _snapshot is { } refreshed)
 			{
 				return refreshed;
 			}
@@ -296,7 +301,10 @@ internal sealed class McpServerHandler
 				await _roots.GetAsync(cancellationToken).ConfigureAwait(false);
 				var built = BuildSnapshotCore();
 				_snapshot = built;
-				_snapshotDirty = false;
+				if (Volatile.Read(ref _snapshotVersion) == snapshotVersion)
+				{
+					Volatile.Write(ref _builtSnapshotVersion, snapshotVersion);
+				}
 				return built;
 			}
 			catch (OperationCanceledException)
@@ -306,7 +314,10 @@ internal sealed class McpServerHandler
 			catch (Exception) when (previousSnapshot is not null)
 			{
 				_snapshot = previousSnapshot;
-				_snapshotDirty = false;
+				if (Volatile.Read(ref _snapshotVersion) == snapshotVersion)
+				{
+					Volatile.Write(ref _builtSnapshotVersion, snapshotVersion);
+				}
 				return previousSnapshot;
 			}
 		}
@@ -355,15 +366,15 @@ internal sealed class McpServerHandler
 			return;
 		}
 
-		foreach (var tool in tools)
+		var collision = tools
+			.Select(static tool => tool.ProtocolTool.Name)
+			.FirstOrDefault(name =>
+				string.Equals(name, DiscoverToolsName, StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(name, CallToolName, StringComparison.OrdinalIgnoreCase));
+		if (collision is not null)
 		{
-			var name = tool.ProtocolTool.Name;
-			if (string.Equals(name, DiscoverToolsName, StringComparison.OrdinalIgnoreCase)
-				|| string.Equals(name, CallToolName, StringComparison.OrdinalIgnoreCase))
-			{
-				throw new InvalidOperationException(
-					$"MCP tool name collision: '{name}' is reserved by DynamicToolCompatibility mode.");
-			}
+			throw new InvalidOperationException(
+				$"MCP tool name collision: '{collision}' is reserved by DynamicToolCompatibility mode.");
 		}
 	}
 
@@ -435,7 +446,7 @@ internal sealed class McpServerHandler
 
 	private void OnRoutingInvalidated()
 	{
-		_snapshotDirty = true;
+		Interlocked.Increment(ref _snapshotVersion);
 
 		lock (_refreshLock)
 		{

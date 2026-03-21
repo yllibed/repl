@@ -11,6 +11,7 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	private McpClientRoot[] _hardRoots = [];
 	private McpClientRoot[] _softRoots = [];
 	private bool _hardRootsLoaded;
+	private long _hardRootsVersion;
 
 	public McpClientRootsService(ICoreReplApp app)
 	{
@@ -55,24 +56,18 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 			return Current;
 		}
 
+		long versionAtStart;
 		lock (_syncRoot)
 		{
 			if (_hardRootsLoaded)
 			{
 				return _hardRoots;
 			}
+
+			versionAtStart = _hardRootsVersion;
 		}
 
-		var result = await server.RequestRootsAsync(new ListRootsRequestParams(), cancellationToken)
-			.ConfigureAwait(false);
-		var mappedRoots = result.Roots?.Select(MapRoot).ToArray() ?? [];
-
-		lock (_syncRoot)
-		{
-			_hardRoots = mappedRoots;
-			_hardRootsLoaded = true;
-			return _hardRoots;
-		}
+		return await GetAndMaybeCacheRootsAsync(server, versionAtStart, cancellationToken).ConfigureAwait(false);
 	}
 
 	public void SetSoftRoots(IEnumerable<McpClientRoot> roots)
@@ -120,9 +115,32 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 		{
 			_hardRoots = [];
 			_hardRootsLoaded = false;
+			_hardRootsVersion++;
 		}
 
 		_app.InvalidateRouting();
+	}
+
+	private async ValueTask<IReadOnlyList<McpClientRoot>> GetAndMaybeCacheRootsAsync(
+		McpServer server,
+		long versionAtStart,
+		CancellationToken cancellationToken)
+	{
+		var result = await server.RequestRootsAsync(new ListRootsRequestParams(), cancellationToken)
+			.ConfigureAwait(false);
+		var mappedRoots = result.Roots?.Select(MapRoot).ToArray() ?? [];
+
+		lock (_syncRoot)
+		{
+			if (_hardRootsVersion == versionAtStart)
+			{
+				_hardRoots = mappedRoots;
+				_hardRootsLoaded = true;
+				return _hardRoots;
+			}
+
+			return mappedRoots;
+		}
 	}
 
 	private static McpClientRoot MapRoot(Root root)
