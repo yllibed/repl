@@ -74,6 +74,80 @@ Typical session-aware conditions:
 - The current tenant or login is known
 - A module should appear only for one agent session
 
+## Guidance: MCP-only vs workspace-aware commands
+
+`IMcpClientRoots` is MCP-scoped, but that does not automatically mean every command using it must be MCP-only.
+
+There are two useful patterns:
+
+### Pattern 1: MCP-only commands
+
+Use this when the command only makes sense inside an MCP session.
+
+```csharp
+app.MapModule(
+    new WorkspaceBootstrapModule(),
+    (IMcpClientRoots? roots) => roots is not null);
+```
+
+This is the simplest option when:
+- the command exists only to help an agent initialize MCP session state
+- the command depends directly on MCP capabilities
+- showing it in CLI or interactive Repl would be confusing
+
+### Pattern 2: Workspace-aware commands
+
+Use this when the command should work both inside and outside MCP.
+
+In that case, treat MCP roots as just one possible source of workspace context, not the only source.
+
+Typical workspace sources:
+
+1. native MCP roots
+2. MCP soft roots
+3. session state in Repl
+4. a command-line argument or explicit option
+5. the process current directory
+
+For example:
+
+```csharp
+app.Map("workspace status", async (IMcpClientRoots? roots, IReplSessionState state, CancellationToken ct) =>
+    {
+        var workspace =
+            roots is not null
+                ? (await roots.GetAsync(ct)).FirstOrDefault()?.Uri?.ToString()
+                : state.Get<string>("workspace.path");
+
+        return workspace is null
+            ? "No workspace selected."
+            : $"Workspace: {workspace}";
+    })
+    .ReadOnly();
+```
+
+And you can pair that with a general-purpose Repl command:
+
+```csharp
+app.Map("workspace set {path}", (IReplSessionState state, string path) =>
+    {
+        state.Set("workspace.path", path);
+        return "Workspace updated.";
+    });
+```
+
+This pattern is often better than making everything MCP-only.
+
+### Recommendation
+
+When a command needs a working directory or workspace, design it around a **workspace resolution strategy** instead of assuming one single source.
+
+That usually makes the command:
+- more reusable
+- easier to test
+- usable from CLI, hosted sessions, and MCP
+- easier to adapt when some clients support roots and others do not
+
 ## Soft roots fallback
 
 Some clients do not support MCP roots at all. In that case, a practical workaround is to expose an initialization tool only when roots are unavailable.
