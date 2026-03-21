@@ -17,14 +17,17 @@ internal sealed class McpTestFixture : IAsyncDisposable
 	private readonly Pipe _clientToServer;
 	private readonly Pipe _serverToClient;
 	private readonly Task _serverTask;
+	private readonly ReplApp _app;
 
 	private McpTestFixture(
+		ReplApp app,
 		McpClient client,
 		Task serverTask,
 		CancellationTokenSource cts,
 		Pipe clientToServer,
 		Pipe serverToClient)
 	{
+		_app = app;
 		Client = client;
 		_serverTask = serverTask;
 		_cts = cts;
@@ -32,6 +35,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		_serverToClient = serverToClient;
 	}
 
+	public ReplApp App => _app;
 	public McpClient Client { get; }
 
 	public static Task<McpTestFixture> CreateAsync(Action<ReplApp> configure) =>
@@ -72,7 +76,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 			serverToClient.Reader.AsStream());
 		var client = await McpClient.CreateAsync(clientTransport, clientOptions).ConfigureAwait(false);
 
-		return new McpTestFixture(client, serverTask, cts, clientToServer, serverToClient);
+		return new McpTestFixture(app, client, serverTask, cts, clientToServer, serverToClient);
 	}
 
 	public async ValueTask DisposeAsync()

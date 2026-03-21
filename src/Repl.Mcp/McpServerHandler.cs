@@ -447,6 +447,10 @@ internal sealed class McpServerHandler
 	private void OnRoutingInvalidated()
 	{
 		Interlocked.Increment(ref _snapshotVersion);
+		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim)
+		{
+			Interlocked.Exchange(ref _compatibilityIntroServed, 0);
+		}
 
 		lock (_refreshLock)
 		{

@@ -145,6 +145,55 @@ public sealed class Given_McpRootsAndDynamicTools
 		secondTools.Should().NotContain(t => string.Equals(t.Name, "discover_tools", StringComparison.Ordinal));
 	}
 
+	[TestMethod]
+	[Description("The compatibility shim is re-armed after routing invalidation so dynamic clients can bootstrap again.")]
+	public async Task When_RoutingChanges_AfterCompatibilityIntro_Then_ShimIsServedAgain()
+	{
+		var listChangedCount = 0;
+		var listChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app =>
+			{
+				app.Map("echo {msg}", (string msg) => $"echo:{msg}");
+			},
+			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
+
+		await using var registration = fixture.Client.RegisterNotificationHandler(
+			NotificationMethods.ToolListChangedNotification,
+			(_, _) =>
+			{
+				var count = Interlocked.Increment(ref listChangedCount);
+				listChanged.TrySetResult();
+				if (count >= 2)
+				{
+					return ValueTask.CompletedTask;
+				}
+
+				return ValueTask.CompletedTask;
+			});
+
+		var initialTools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		initialTools.Select(static tool => tool.Name).Should().BeEquivalentTo(
+			["discover_tools", "call_tool"]);
+
+		await listChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+		var steadyStateTools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		steadyStateTools.Should().Contain(t => string.Equals(t.Name, "echo", StringComparison.Ordinal));
+		steadyStateTools.Should().NotContain(t => string.Equals(t.Name, "discover_tools", StringComparison.Ordinal));
+
+		listChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		fixture.App.Map("added later", () => "added");
+		fixture.App.Core.InvalidateRouting();
+
+		await listChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+		var toolsAfterInvalidation = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		toolsAfterInvalidation.Select(static tool => tool.Name).Should().BeEquivalentTo(
+			["discover_tools", "call_tool"]);
+	}
+
 	private sealed class RootAwareModule : IReplModule
 	{
 		public void Map(IReplMap app)
