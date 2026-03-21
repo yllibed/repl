@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Separator style for flattening context paths into MCP tool names.

@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Describes an MCP client root.

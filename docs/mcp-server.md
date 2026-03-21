@@ -16,6 +16,8 @@ dotnet add package Repl.Mcp
 ```
 
 ```csharp
+using Repl.Mcp;
+
 var app = ReplApp.Create().UseDefaultInteractive();
 app.UseMcpServer();
 

@@ -89,6 +89,8 @@ Globex
 **MCP mode** (same command graph, exposed to AI agents):
 
 ```csharp
+using Repl.Mcp;
+
 app.UseMcpServer();  // add one line
 ```
 

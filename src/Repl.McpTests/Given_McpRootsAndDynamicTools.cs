@@ -2,6 +2,7 @@ using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Repl.Mcp;
 
 namespace Repl.McpTests;
 
@@ -40,14 +41,14 @@ public sealed class Given_McpRootsAndDynamicTools
 				app.MapModule(new RootAwareModule());
 			},
 			configureOptions: null,
-			clientOptions);
+			clientOptions: clientOptions);
 
 		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
 		tools.Should().ContainSingle(t => string.Equals(t.Name, "roots_info", StringComparison.Ordinal));
 
 		var result = await fixture.Client.CallToolAsync(
-			"roots_info",
-			new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+			toolName: "roots_info",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
 		var text = result.Content.OfType<TextContentBlock>().First().Text;
 		text.Should().Contain("workspace");
 		text.Should().Contain("file:///C:/workspace");
@@ -57,7 +58,7 @@ public sealed class Given_McpRootsAndDynamicTools
 	[Description("Soft roots can initialize MCP-only commands when native roots are unavailable.")]
 	public async Task When_ClientDoesNotSupportRoots_Then_SoftRootsCanInitializeWorkspace()
 	{
-		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		await using var fixture = await McpTestFixture.CreateAsync(configure: app =>
 		{
 			app.MapModule(
 				new SoftRootsInitModule(),
@@ -73,7 +74,7 @@ public sealed class Given_McpRootsAndDynamicTools
 
 		await fixture.Client.CallToolAsync(
 			"softroots_init",
-			new Dictionary<string, object?>(StringComparer.Ordinal)
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)
 			{
 				["path"] = "file:///C:/soft-workspace",
 			}).ConfigureAwait(false);
@@ -82,8 +83,8 @@ public sealed class Given_McpRootsAndDynamicTools
 		after.Should().Contain(t => string.Equals(t.Name, "softroots_show", StringComparison.Ordinal));
 
 		var show = await fixture.Client.CallToolAsync(
-			"softroots_show",
-			new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+			toolName: "softroots_show",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
 		var text = show.Content.OfType<TextContentBlock>().First().Text;
 		text.Should().Contain("file:///C:/soft-workspace");
 	}
@@ -99,7 +100,7 @@ public sealed class Given_McpRootsAndDynamicTools
 			{
 				app.Map("echo {msg}", (string msg) => $"echo:{msg}");
 			},
-			options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
+			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
 
 		await using var registration = fixture.Client.RegisterNotificationHandler(
 			NotificationMethods.ToolListChangedNotification,
@@ -116,8 +117,8 @@ public sealed class Given_McpRootsAndDynamicTools
 		await listChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
 
 		var discover = await fixture.Client.CallToolAsync(
-			"discover_tools",
-			new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+			toolName: "discover_tools",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
 		discover.IsError.Should().NotBeTrue();
 		discover.StructuredContent.Should().NotBeNull();
 		var discoveredTools = JsonSerializer.Deserialize<Tool[]>(
@@ -127,8 +128,8 @@ public sealed class Given_McpRootsAndDynamicTools
 		discoveredTools!.Should().Contain(t => string.Equals(t.Name, "echo", StringComparison.Ordinal));
 
 		var compatibilityCall = await fixture.Client.CallToolAsync(
-			"call_tool",
-			new Dictionary<string, object?>(StringComparer.Ordinal)
+			toolName: "call_tool",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)
 			{
 				["name"] = "echo",
 				["arguments"] = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -168,7 +169,7 @@ public sealed class Given_McpRootsAndDynamicTools
 				"softroots init {path}",
 				(IMcpClientRoots roots, string path) =>
 				{
-					roots.SetSoftRoots([new McpClientRoot(new Uri(path, UriKind.Absolute), "soft-root")]);
+					roots.SetSoftRoots([new McpClientRoot(Uri: new Uri(path, UriKind.Absolute), Name: "soft-root")]);
 					return "initialized";
 				});
 		}

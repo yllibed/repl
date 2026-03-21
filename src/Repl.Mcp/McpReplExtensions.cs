@@ -1,8 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Server;
-using Repl.Mcp;
 
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Extension methods for integrating MCP server support into a Repl app.

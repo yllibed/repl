@@ -1,3 +1,5 @@
+using Repl.Mcp;
+
 namespace Repl.McpTests;
 
 [TestClass]

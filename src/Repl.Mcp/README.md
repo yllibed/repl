@@ -5,6 +5,8 @@ MCP server integration for [Repl Toolkit](https://github.com/yllibed/repl) — e
 ## One line to add
 
 ```csharp
+using Repl.Mcp;
+
 app.UseMcpServer();
 ```
 

@@ -2,6 +2,7 @@ using System.IO.Pipelines;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Repl.Mcp;
 
 namespace Repl.McpTests;
 

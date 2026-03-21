@@ -37,6 +37,8 @@ Examples:
 When the client supports native MCP roots, `Repl.Mcp` exposes them through `IMcpClientRoots`.
 
 ```csharp
+using Repl.Mcp;
+
 app.Map("workspace roots", async (IMcpClientRoots roots, CancellationToken ct) =>
     {
         var current = await roots.GetAsync(ct);
@@ -63,6 +65,8 @@ Because `IMcpClientRoots` is injectable, you can use it in command handlers and 
 That lets you expose tools only when a certain MCP capability or session state is available.
 
 ```csharp
+using Repl.Mcp;
+
 app.MapModule(
     new WorkspaceModule(),
     (IMcpClientRoots roots) => roots.IsSupported);
@@ -85,6 +89,8 @@ There are two useful patterns:
 Use this when the command only makes sense inside an MCP session.
 
 ```csharp
+using Repl.Mcp;
+
 app.MapModule(
     new WorkspaceBootstrapModule(),
     (IMcpClientRoots? roots) => roots is not null);
@@ -112,6 +118,8 @@ Typical workspace sources:
 For example:
 
 ```csharp
+using Repl.Mcp;
+
 app.Map("workspace status", async (IMcpClientRoots? roots, IReplSessionState state, CancellationToken ct) =>
     {
         var workspace =
@@ -155,6 +163,8 @@ Some clients do not support MCP roots at all. In that case, a practical workarou
 The agent can call that tool first to establish one or more **soft roots** for the session.
 
 ```csharp
+using Repl.Mcp;
+
 app.MapModule(
     new SoftRootsInitModule(),
     (IMcpClientRoots roots) => !roots.IsSupported);
@@ -192,6 +202,8 @@ Some MCP clients receive `notifications/tools/list_changed` but do not refresh t
 If your app has a dynamic tool list, you can opt in to a compatibility shim:
 
 ```csharp
+using Repl.Mcp;
+
 app.UseMcpServer(o =>
 {
     o.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim;

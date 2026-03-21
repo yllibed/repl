@@ -296,7 +296,7 @@ public sealed partial class CoreReplApp
 		|| parameterType == typeof(IReplInteractionChannel)
 		|| parameterType == typeof(IReplIoContext)
 		|| parameterType == typeof(IReplKeyReader)
-		|| string.Equals(parameterType.FullName, "Repl.IMcpClientRoots", StringComparison.Ordinal);
+		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpClientRoots", StringComparison.Ordinal);
 
 	private static bool IsRequiredParameter(ParameterInfo parameter)
 	{

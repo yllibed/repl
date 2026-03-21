@@ -1,7 +1,7 @@
 using ModelContextProtocol.Protocol;
 using Repl.Documentation;
 
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Configuration for the Repl MCP server integration.

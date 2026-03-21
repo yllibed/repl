@@ -1,4 +1,4 @@
-namespace Repl;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Controls the compatibility strategy used for dynamic MCP tool lists.
