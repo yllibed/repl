@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Documentation;
+using Repl.Interaction;
 
 namespace Repl.Mcp;
 
@@ -85,7 +86,12 @@ internal sealed partial class McpToolAdapter
 		var inputReader = new StringReader(string.Empty);
 		var interactionChannel = new McpInteractionChannel(
 			prefills, _options.InteractivityMode, server, progressToken);
-		var mcpServices = new McpServiceProviderOverlay(_services, interactionChannel);
+		var mcpServices = new McpServiceProviderOverlay(
+			_services,
+			new Dictionary<Type, object>
+			{
+				[typeof(IReplInteractionChannel)] = interactionChannel,
+			});
 
 		// Force JSON output — agents consume structured data, not human tables/banners.
 		var effectiveTokens = new List<string>(tokens.Count + 1) { "--output:json" };

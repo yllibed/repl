@@ -57,6 +57,16 @@ public sealed partial class CoreReplApp
 			Resources: resourceDocs);
 	}
 
+	internal ReplDocumentationModel CreateDocumentationModel(
+		IServiceProvider serviceProvider,
+		string? targetPath = null)
+	{
+		ArgumentNullException.ThrowIfNull(serviceProvider);
+
+		using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
+		return CreateDocumentationModel(targetPath);
+	}
+
 	/// <summary>
 	/// Internal documentation model creation that supports not-found result for help rendering.
 	/// </summary>
@@ -285,7 +295,8 @@ public sealed partial class CoreReplApp
 		|| parameterType == typeof(IReplSessionState)
 		|| parameterType == typeof(IReplInteractionChannel)
 		|| parameterType == typeof(IReplIoContext)
-		|| parameterType == typeof(IReplKeyReader);
+		|| parameterType == typeof(IReplKeyReader)
+		|| string.Equals(parameterType.FullName, "Repl.IMcpClientRoots", StringComparison.Ordinal);
 
 	private static bool IsRequiredParameter(ParameterInfo parameter)
 	{

@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -12,10 +14,31 @@ namespace Repl.Mcp;
 /// </summary>
 internal sealed class McpServerHandler
 {
+	private const string DiscoverToolsName = "discover_tools";
+	private const string CallToolName = "call_tool";
+	private static readonly IDictionary<string, JsonElement> EmptyArguments =
+		new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+	private static readonly string[] CompatibilityCallRequiredProperties = ["name"];
+
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
 	private readonly TimeProvider _timeProvider;
+	private readonly char _separator;
+	private readonly McpClientRootsService _roots;
+	private readonly IServiceProvider _sessionServices;
+	private readonly SemaphoreSlim _snapshotGate = new(initialCount: 1, maxCount: 1);
+	private readonly Lock _refreshLock = new();
+	private readonly Lock _attachLock = new();
+
+	private McpGeneratedSnapshot? _snapshot;
+	private bool _snapshotDirty = true;
+	private McpServer? _server;
+	private EventHandler? _routingChangedHandler;
+	private ITimer? _debounceTimer;
+	private int _rootsNotificationRegistered;
+	private int _compatibilityIntroServed;
+	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
 
 	public McpServerHandler(
 		ICoreReplApp app,
@@ -26,6 +49,14 @@ internal sealed class McpServerHandler
 		_options = options;
 		_services = services;
 		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
+		_separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
+		_roots = new McpClientRootsService(app);
+		_sessionServices = new McpServiceProviderOverlay(
+			services,
+			new Dictionary<Type, object>
+			{
+				[typeof(IMcpClientRoots)] = _roots,
+			});
 	}
 
 	[UnconditionalSuppressMessage(
@@ -34,43 +65,67 @@ internal sealed class McpServerHandler
 		Justification = "MCP server handler runs in a context where all types are preserved.")]
 	public async Task RunAsync(IReplIoContext io, CancellationToken ct)
 	{
-		// Build the doc model with Programmatic channel so module presence
-		// predicates see the same channel as tool dispatch.
+		var serverOptions = BuildServerOptions();
+		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
+		var transport = _options.TransportFactory is { } factory
+			? factory(serverName, io)
+			: new StdioServerTransport(serverName);
+		try
+		{
+			var server = McpServer.Create(transport, serverOptions, serviceProvider: _sessionServices);
+			AttachServer(server);
+
+			try
+			{
+				await server.RunAsync(ct).ConfigureAwait(false);
+			}
+			finally
+			{
+				UnsubscribeFromRoutingChanges();
+				await server.DisposeAsync().ConfigureAwait(false);
+			}
+		}
+		finally
+		{
+			await transport.DisposeAsync().ConfigureAwait(false);
+		}
+	}
+
+	internal McpServerOptions BuildServerOptions()
+	{
+		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
+		var serverVersion = _options.ServerVersion ?? "1.0.0";
+
+		return new McpServerOptions
+		{
+			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
+			Capabilities = BuildCapabilities(),
+			Handlers = new McpServerHandlers
+			{
+				ListToolsHandler = ListToolsAsync,
+				CallToolHandler = CallToolAsync,
+				ListResourcesHandler = ListResourcesAsync,
+				ListResourceTemplatesHandler = ListResourceTemplatesAsync,
+				ReadResourceHandler = ReadResourceAsync,
+				ListPromptsHandler = ListPromptsAsync,
+				GetPromptHandler = GetPromptAsync,
+			},
+		};
+	}
+
+	internal McpGeneratedSnapshot BuildSnapshotForTests() => BuildSnapshotCore();
+
+	internal async Task<McpGeneratedSnapshot> BuildSnapshotForTestsAsync(CancellationToken cancellationToken = default) =>
+		await GetSnapshotAsync(server: null, cancellationToken).ConfigureAwait(false);
+
+	private string? ResolveAppName()
+	{
 		var previousProgrammatic = ReplSessionIO.IsProgrammatic;
 		ReplSessionIO.IsProgrammatic = true;
 		try
 		{
-			var model = _app.CreateDocumentationModel();
-			var adapter = new McpToolAdapter(_app, _options, _services);
-			var separator = McpToolNameFlattener.ResolveSeparator(_options.ToolNamingSeparator);
-			var serverOptions = BuildServerOptions(model, adapter, separator);
-
-			var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
-			var transport = _options.TransportFactory is { } factory
-				? factory(serverName, io)
-				: new StdioServerTransport(serverName);
-			try
-			{
-				var server = McpServer.Create(transport, serverOptions, serviceProvider: _services);
-				try
-				{
-					SubscribeToRoutingChanges(
-						adapter, separator,
-						serverOptions.ToolCollection!,
-						serverOptions.ResourceCollection!,
-						serverOptions.PromptCollection!);
-					await server.RunAsync(ct).ConfigureAwait(false);
-				}
-				finally
-				{
-					UnsubscribeFromRoutingChanges();
-					await server.DisposeAsync().ConfigureAwait(false);
-				}
-			}
-			finally
-			{
-				await transport.DisposeAsync().ConfigureAwait(false);
-			}
+			var model = CreateDocumentationModel();
+			return model.App.Name;
 		}
 		finally
 		{
@@ -78,28 +133,470 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	internal McpServerOptions BuildServerOptions(
-		ReplDocumentationModel model,
-		McpToolAdapter adapter,
-		char separator)
+	private async ValueTask<ListToolsResult> ListToolsAsync(
+		RequestContext<ListToolsRequestParams> request,
+		CancellationToken cancellationToken)
 	{
-		var commandsByPath = model.Commands.ToDictionary(
-			c => c.Path, c => c, StringComparer.OrdinalIgnoreCase);
-		var tools = GenerateAllTools(model, adapter, separator, commandsByPath);
-		var resources = GenerateResources(model, adapter, separator, commandsByPath);
-		var prompts = CollectPrompts(model, adapter, separator);
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 
-		var serverName = _options.ServerName ?? model.App.Name ?? "repl-mcp-server";
-		var serverVersion = _options.ServerVersion ?? "1.0.0";
-
-		return new McpServerOptions
+		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim
+			&& Interlocked.CompareExchange(ref _compatibilityIntroServed, 1, 0) == 0)
 		{
-			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
-			Capabilities = BuildCapabilities(),
-			ToolCollection = ToCollection(tools),
-			ResourceCollection = ToResourceCollection(resources),
-			PromptCollection = ToCollection(prompts),
+			_ = SendNotificationSafeAsync(NotificationMethods.ToolListChangedNotification);
+			return new ListToolsResult
+			{
+				Tools =
+				[
+					CreateCompatibilityDiscoverTool(),
+					CreateCompatibilityCallTool(),
+				],
+			};
+		}
+
+		return new ListToolsResult
+		{
+			Tools = [.. snapshot.Tools.Select(static tool => tool.ProtocolTool)],
 		};
+	}
+
+	private async ValueTask<CallToolResult> CallToolAsync(
+		RequestContext<CallToolRequestParams> request,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		IDictionary<string, JsonElement> arguments = request.Params?.Arguments ?? EmptyArguments;
+		var toolName = request.Params?.Name ?? string.Empty;
+		var progressToken = request.Params?.ProgressToken;
+
+		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim)
+		{
+			if (string.Equals(toolName, DiscoverToolsName, StringComparison.Ordinal))
+			{
+				return BuildDiscoverToolsResult(snapshot);
+			}
+
+			if (string.Equals(toolName, CallToolName, StringComparison.Ordinal))
+			{
+				return await InvokeCompatibilityToolAsync(snapshot, arguments, request.Server, progressToken, cancellationToken)
+					.ConfigureAwait(false);
+			}
+		}
+
+		return await snapshot.Adapter.InvokeAsync(
+			toolName,
+			arguments,
+			request.Server,
+			progressToken,
+			cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<ListResourcesResult> ListResourcesAsync(
+		RequestContext<ListResourcesRequestParams> request,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		return new ListResourcesResult
+		{
+			Resources =
+			[
+				.. snapshot.Resources
+					.Where(static resource => !resource.IsTemplated && resource.ProtocolResource is not null)
+					.Select(static resource => resource.ProtocolResource!),
+			],
+		};
+	}
+
+	private async ValueTask<ListResourceTemplatesResult> ListResourceTemplatesAsync(
+		RequestContext<ListResourceTemplatesRequestParams> request,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		return new ListResourceTemplatesResult
+		{
+			ResourceTemplates =
+			[
+				.. snapshot.Resources
+					.Where(static resource => resource.IsTemplated)
+					.Select(static resource => resource.ProtocolResourceTemplate),
+			],
+		};
+	}
+
+	private async ValueTask<ReadResourceResult> ReadResourceAsync(
+		RequestContext<ReadResourceRequestParams> request,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var uri = request.Params?.Uri ?? string.Empty;
+		var resource = snapshot.Resources.FirstOrDefault(candidate => candidate.IsMatch(uri));
+		if (resource is null)
+		{
+			throw new McpException($"Unknown resource: {uri}");
+		}
+
+		return await resource.ReadAsync(request, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<ListPromptsResult> ListPromptsAsync(
+		RequestContext<ListPromptsRequestParams> request,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		return new ListPromptsResult
+		{
+			Prompts = [.. snapshot.Prompts.Select(static prompt => prompt.ProtocolPrompt)],
+		};
+	}
+
+	private async ValueTask<GetPromptResult> GetPromptAsync(
+		RequestContext<GetPromptRequestParams> request,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(request.Server);
+		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var promptName = request.Params?.Name ?? string.Empty;
+		var prompt = snapshot.Prompts.FirstOrDefault(candidate =>
+			string.Equals(candidate.ProtocolPrompt.Name, promptName, StringComparison.OrdinalIgnoreCase));
+		if (prompt is null)
+		{
+			throw new McpException($"Unknown prompt: {promptName}");
+		}
+
+		return await prompt.GetAsync(request, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<McpGeneratedSnapshot> GetSnapshotAsync(
+		McpServer? server,
+		CancellationToken cancellationToken)
+	{
+		AttachServer(server);
+
+		if (!_snapshotDirty && _snapshot is { } cached)
+		{
+			return cached;
+		}
+
+		await _snapshotGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			if (!_snapshotDirty && _snapshot is { } refreshed)
+			{
+				return refreshed;
+			}
+
+			var previousSnapshot = _snapshot;
+			try
+			{
+				await _roots.GetAsync(cancellationToken).ConfigureAwait(false);
+				var built = BuildSnapshotCore();
+				_snapshot = built;
+				_snapshotDirty = false;
+				return built;
+			}
+			catch when (previousSnapshot is not null)
+			{
+				_snapshot = previousSnapshot;
+				_snapshotDirty = false;
+				return previousSnapshot;
+			}
+		}
+		finally
+		{
+			_snapshotGate.Release();
+		}
+	}
+
+	private McpGeneratedSnapshot BuildSnapshotCore()
+	{
+		var model = CreateDocumentationModel();
+		var adapter = new McpToolAdapter(_app, _options, _sessionServices);
+		var commandsByPath = model.Commands.ToDictionary(
+			command => command.Path,
+			command => command,
+			StringComparer.OrdinalIgnoreCase);
+		var tools = GenerateAllTools(model, adapter, _separator, commandsByPath);
+		ValidateCompatibilityToolNames(tools);
+		var resources = GenerateResources(model, adapter, _separator, commandsByPath);
+		var prompts = CollectPrompts(model, adapter, _separator);
+		return new McpGeneratedSnapshot(adapter, tools, resources, prompts);
+	}
+
+	private ReplDocumentationModel CreateDocumentationModel()
+	{
+		var coreApp = _app as CoreReplApp
+			?? throw new InvalidOperationException("MCP server handler requires CoreReplApp.");
+
+		var previousProgrammatic = ReplSessionIO.IsProgrammatic;
+		ReplSessionIO.IsProgrammatic = true;
+		try
+		{
+			return coreApp.CreateDocumentationModel(_sessionServices);
+		}
+		finally
+		{
+			ReplSessionIO.IsProgrammatic = previousProgrammatic;
+		}
+	}
+
+	private void ValidateCompatibilityToolNames(IReadOnlyList<McpServerTool> tools)
+	{
+		if (_options.DynamicToolCompatibility != DynamicToolCompatibilityMode.DiscoverAndCallShim)
+		{
+			return;
+		}
+
+		foreach (var tool in tools)
+		{
+			var name = tool.ProtocolTool.Name;
+			if (string.Equals(name, DiscoverToolsName, StringComparison.OrdinalIgnoreCase)
+				|| string.Equals(name, CallToolName, StringComparison.OrdinalIgnoreCase))
+			{
+				throw new InvalidOperationException(
+					$"MCP tool name collision: '{name}' is reserved by DynamicToolCompatibility mode.");
+			}
+		}
+	}
+
+	private void AttachServer(McpServer? server)
+	{
+		if (server is null)
+		{
+			return;
+		}
+
+		lock (_attachLock)
+		{
+			if (ReferenceEquals(_server, server))
+			{
+				return;
+			}
+
+			_server = server;
+			_roots.AttachServer(server);
+			EnsureRoutingSubscription();
+			EnsureRootsNotificationHandler(server);
+		}
+	}
+
+	private void EnsureRoutingSubscription()
+	{
+		if (_routingChangedHandler is not null || _app is not CoreReplApp coreApp)
+		{
+			return;
+		}
+
+		var weakSelf = new WeakReference<McpServerHandler>(this);
+		EventHandler? handler = null;
+		handler = (_, _) =>
+		{
+			if (!weakSelf.TryGetTarget(out var target))
+			{
+				coreApp.RoutingInvalidated -= handler;
+				return;
+			}
+
+			target.OnRoutingInvalidated();
+		};
+
+		_routingChangedHandler = handler;
+		coreApp.RoutingInvalidated += handler;
+	}
+
+	private void EnsureRootsNotificationHandler(McpServer server)
+	{
+		if (Interlocked.Exchange(ref _rootsNotificationRegistered, 1) != 0)
+		{
+			return;
+		}
+
+		var weakSelf = new WeakReference<McpServerHandler>(this);
+		_ = server.RegisterNotificationHandler(
+			NotificationMethods.RootsListChangedNotification,
+			(_, _) =>
+			{
+				if (weakSelf.TryGetTarget(out var target))
+				{
+					target._roots.HandleRootsListChanged();
+				}
+
+				return ValueTask.CompletedTask;
+			});
+	}
+
+	private void OnRoutingInvalidated()
+	{
+		_snapshotDirty = true;
+
+		lock (_refreshLock)
+		{
+			_debounceTimer?.Dispose();
+			_debounceTimer = _timeProvider.CreateTimer(
+				_ => _ = SendDiscoveryNotificationsSafeAsync(),
+				state: null,
+				dueTime: DebounceDelay,
+				period: Timeout.InfiniteTimeSpan);
+		}
+	}
+
+	private async Task SendDiscoveryNotificationsSafeAsync()
+	{
+		await SendNotificationSafeAsync(NotificationMethods.ToolListChangedNotification).ConfigureAwait(false);
+		await SendNotificationSafeAsync(NotificationMethods.ResourceListChangedNotification).ConfigureAwait(false);
+		await SendNotificationSafeAsync(NotificationMethods.PromptListChangedNotification).ConfigureAwait(false);
+	}
+
+	private async Task SendNotificationSafeAsync(string method)
+	{
+		try
+		{
+			var server = _server;
+			if (server is null)
+			{
+				return;
+			}
+
+			await server.SendNotificationAsync(method, CancellationToken.None).ConfigureAwait(false);
+		}
+		catch
+		{
+			// Notifications are best-effort. The next list/read request will rebuild on demand.
+		}
+	}
+
+	private void UnsubscribeFromRoutingChanges()
+	{
+		if (_routingChangedHandler is not null && _app is CoreReplApp coreApp)
+		{
+			coreApp.RoutingInvalidated -= _routingChangedHandler;
+			_routingChangedHandler = null;
+		}
+
+		lock (_refreshLock)
+		{
+			_debounceTimer?.Dispose();
+			_debounceTimer = null;
+		}
+	}
+
+	private static ServerCapabilities BuildCapabilities() => new()
+	{
+		Tools = new ToolsCapability { ListChanged = true },
+		Resources = new ResourcesCapability { ListChanged = true },
+		Prompts = new PromptsCapability { ListChanged = true },
+	};
+
+	private static Tool CreateCompatibilityDiscoverTool() => new()
+	{
+		Name = DiscoverToolsName,
+		Description = "Discover the current dynamic MCP tool list.",
+		InputSchema = JsonSerializer.SerializeToElement(
+			new JsonObject
+			{
+				["type"] = "object",
+				["properties"] = new JsonObject(),
+				["additionalProperties"] = false,
+			},
+			McpJsonContext.Default.JsonObject),
+		Annotations = new ToolAnnotations { ReadOnlyHint = true },
+	};
+
+	private static Tool CreateCompatibilityCallTool() => new()
+	{
+		Name = CallToolName,
+		Description = "Call a dynamic MCP tool by name when the client cannot refresh the tool list.",
+		InputSchema = JsonSerializer.SerializeToElement(
+			new JsonObject
+			{
+				["type"] = "object",
+				["properties"] = new JsonObject
+				{
+					["name"] = new JsonObject
+					{
+						["type"] = "string",
+						["description"] = "The real dynamic tool name to invoke.",
+					},
+					["arguments"] = new JsonObject
+					{
+						["type"] = "object",
+						["description"] = "The arguments to pass to the real dynamic tool.",
+						["additionalProperties"] = true,
+					},
+				},
+				["required"] = new JsonArray(CompatibilityCallRequiredProperties.Select(static property => JsonValue.Create(property)).ToArray()),
+				["additionalProperties"] = false,
+			},
+			McpJsonContext.Default.JsonObject),
+	};
+
+	private static CallToolResult BuildDiscoverToolsResult(McpGeneratedSnapshot snapshot)
+	{
+		var tools = snapshot.Tools.Select(static tool => tool.ProtocolTool).ToArray();
+		var structuredContent = JsonSerializer.SerializeToElement(tools, McpJsonContext.Default.ToolArray);
+
+		return new CallToolResult
+		{
+			Content = [new TextContentBlock { Text = $"Discovered {tools.Length} dynamic tool(s)." }],
+			StructuredContent = structuredContent,
+			IsError = false,
+		};
+	}
+
+	private static async ValueTask<CallToolResult> InvokeCompatibilityToolAsync(
+		McpGeneratedSnapshot snapshot,
+		IDictionary<string, JsonElement> arguments,
+		McpServer? server,
+		ProgressToken? progressToken,
+		CancellationToken cancellationToken)
+	{
+		if (!arguments.TryGetValue("name", out var nameElement) || nameElement.ValueKind != JsonValueKind.String)
+		{
+			return new CallToolResult
+			{
+				Content = [new TextContentBlock { Text = "Compatibility call_tool requires a string 'name' argument." }],
+				IsError = true,
+			};
+		}
+
+		var toolName = nameElement.GetString() ?? string.Empty;
+		var toolArguments = ExtractCompatibilityArguments(arguments);
+		return await snapshot.Adapter.InvokeAsync(
+			toolName,
+			toolArguments,
+			server,
+			progressToken,
+			cancellationToken).ConfigureAwait(false);
+	}
+
+	private static IDictionary<string, JsonElement> ExtractCompatibilityArguments(
+		IDictionary<string, JsonElement> arguments)
+	{
+		if (!arguments.TryGetValue("arguments", out var nestedArguments)
+			|| nestedArguments.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+		{
+			return EmptyArguments;
+		}
+
+		if (nestedArguments.ValueKind != JsonValueKind.Object)
+		{
+			return new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["arguments"] = nestedArguments.Clone(),
+			};
+		}
+
+		var result = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+		foreach (var property in nestedArguments.EnumerateObject())
+		{
+			result[property.Name] = property.Value.Clone();
+		}
+
+		return result;
 	}
 
 	// ── Tool generation ────────────────────────────────────────────────
@@ -120,9 +617,6 @@ internal sealed class McpServerHandler
 		var tools = new List<McpServerTool>();
 		var nameSet = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-		// 1. Regular commands. Resource-only and prompt-only commands are handled
-		//    separately as fallback tools (opt-in). ReadOnly+AsResource commands
-		//    are regular tools (they have a behavioral annotation, not just a marker).
 		foreach (var command in model.Commands)
 		{
 			if (!IsToolCandidate(command))
@@ -132,18 +626,17 @@ internal sealed class McpServerHandler
 
 			if (command.IsPrompt)
 			{
-				continue; // Handled in phase 3 (prompt fallback).
+				continue;
 			}
 
 			if (command.IsResource && command.Annotations?.ReadOnly != true)
 			{
-				continue; // Resource-only (no ReadOnly annotation) — handled in phase 2.
+				continue;
 			}
 
 			AddTool(command, tools, nameSet, adapter, separator);
 		}
 
-		// 2. Resource fallback: resource-only commands as tools.
 		if (_options.ResourceFallbackToTools)
 		{
 			foreach (var resource in model.Resources)
@@ -156,7 +649,6 @@ internal sealed class McpServerHandler
 			}
 		}
 
-		// 3. Prompt fallback: prompt commands as tools.
 		if (_options.PromptFallbackToTools)
 		{
 			foreach (var command in model.Commands)
@@ -181,21 +673,17 @@ internal sealed class McpServerHandler
 		var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
 		if (nameSet.TryGetValue(toolName, out var existingPath))
 		{
-			// Same command registered from multiple phases (e.g. ReadOnly is both
-			// a core tool and a resource fallback) — skip silently.
 			if (string.Equals(command.Path, existingPath, StringComparison.OrdinalIgnoreCase))
 			{
 				return;
 			}
 
-			// Different routes collapsed to the same name — surface at startup.
 			throw new InvalidOperationException(
 				$"MCP tool name collision: '{toolName}' from routes '{existingPath}' and '{command.Path}'. " +
 				"Consider a different ToolNamingSeparator or rename one of the commands.");
 		}
 
 		nameSet[toolName] = command.Path;
-
 		adapter.RegisterRoute(toolName, command);
 		tools.Add(new ReplMcpServerTool(command, toolName, adapter));
 	}
@@ -214,13 +702,11 @@ internal sealed class McpServerHandler
 		{
 			commandsByPath.TryGetValue(resource.Path, out var docCommand);
 
-			// Hidden and AutomationHidden commands are excluded from all MCP surfaces.
 			if (docCommand is not null && !IsToolCandidate(docCommand))
 			{
 				continue;
 			}
 
-			// Skip auto-promoted ReadOnly resources when opt-out is active.
 			if (!_options.AutoPromoteReadOnlyToResources
 				&& docCommand is not null
 				&& !docCommand.IsResource
@@ -228,6 +714,7 @@ internal sealed class McpServerHandler
 			{
 				continue;
 			}
+
 			var resourceName = McpToolNameFlattener.Flatten(resource.Path, separator);
 			var uriTemplate = McpToolNameFlattener.BuildResourceUri(resource.Path, _options.ResourceUriScheme);
 			var mcpResource = new ReplMcpServerResource(resource, resourceName, uriTemplate, adapter);
@@ -274,7 +761,6 @@ internal sealed class McpServerHandler
 			prompts[promptName] = new ReplMcpServerPrompt(command, promptName, adapter);
 		}
 
-		// Explicit registrations via options.Prompt() — override on collision (by design).
 		foreach (var registration in _options.Prompts)
 		{
 			prompts[registration.Name] = McpServerPrompt.Create(
@@ -285,163 +771,14 @@ internal sealed class McpServerHandler
 		return [.. prompts.Values];
 	}
 
-	// ── Helpers ─────────────────────────────────────────────────────────
-
 	private bool IsToolCandidate(ReplDocCommand command) =>
 		!command.IsHidden
 		&& command.Annotations?.AutomationHidden != true
 		&& (_options.CommandFilter is not { } filter || filter(command));
 
-	/// <summary>
-	/// Always advertise all capabilities, even when initial collections are empty.
-	/// Routing invalidation may add resources/prompts later, and capabilities cannot
-	/// be retroactively added after the initialize handshake.
-	/// </summary>
-	private static ServerCapabilities BuildCapabilities() => new()
-	{
-		Tools = new ToolsCapability { ListChanged = true },
-		Resources = new ResourcesCapability { ListChanged = true },
-		Prompts = new PromptsCapability { ListChanged = true },
-	};
-
-	private static McpServerPrimitiveCollection<T> ToCollection<T>(IReadOnlyList<T> items)
-		where T : IMcpServerPrimitive
-	{
-		var collection = new McpServerPrimitiveCollection<T>();
-		foreach (var item in items)
-		{
-			collection.Add(item);
-		}
-
-		return collection;
-	}
-
-	private static McpServerResourceCollection ToResourceCollection(IReadOnlyList<McpServerResource> items)
-	{
-		var collection = new McpServerResourceCollection();
-		foreach (var item in items)
-		{
-			collection.Add(item);
-		}
-
-		return collection;
-	}
-
-	// ── list_changed on routing invalidation ───────────────────────────
-
-	private EventHandler? _routingChangedHandler;
-	private readonly Lock _refreshLock = new();
-	private ITimer? _debounceTimer;
-	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
-
-	private void SubscribeToRoutingChanges(
-		McpToolAdapter adapter,
-		char separator,
-		McpServerPrimitiveCollection<McpServerTool> toolCollection,
-		McpServerResourceCollection resourceCollection,
-		McpServerPrimitiveCollection<McpServerPrompt> promptCollection)
-	{
-		if (_app is not CoreReplApp coreApp)
-		{
-			return;
-		}
-
-		_routingChangedHandler = (_, _) =>
-		{
-			// Debounce: coalesce rapid-fire invalidations (e.g. multiple Map() calls)
-			// into a single rebuild after activity settles.
-			lock (_refreshLock)
-			{
-				_debounceTimer?.Dispose();
-				_debounceTimer = _timeProvider.CreateTimer(
-					_ => RebuildCollections(adapter, separator, toolCollection, resourceCollection, promptCollection),
-					state: null,
-					dueTime: DebounceDelay,
-					period: Timeout.InfiniteTimeSpan);
-			}
-		};
-
-		coreApp.RoutingInvalidated += _routingChangedHandler;
-	}
-
-	private void RebuildCollections(
-		McpToolAdapter adapter,
-		char separator,
-		McpServerPrimitiveCollection<McpServerTool> toolCollection,
-		McpServerResourceCollection resourceCollection,
-		McpServerPrimitiveCollection<McpServerPrompt> promptCollection)
-	{
-		try
-		{
-			// Optimistic concurrency: build new collections with a temporary adapter
-			// so existing routes remain live during rebuild. Only swap at the end.
-			var tempAdapter = new McpToolAdapter(_app, _options, _services);
-			var previousProgrammatic = ReplSessionIO.IsProgrammatic;
-			ReplSessionIO.IsProgrammatic = true;
-			List<McpServerTool> newTools;
-			List<McpServerResource> newResources;
-			List<McpServerPrompt> newPrompts;
-			try
-			{
-				var newModel = _app.CreateDocumentationModel();
-				var newCommandsByPath = newModel.Commands.ToDictionary(
-					c => c.Path, c => c, StringComparer.OrdinalIgnoreCase);
-				newTools = GenerateAllTools(newModel, tempAdapter, separator, newCommandsByPath);
-				newResources = GenerateResources(newModel, tempAdapter, separator, newCommandsByPath);
-				newPrompts = CollectPrompts(newModel, tempAdapter, separator);
-			}
-			finally
-			{
-				ReplSessionIO.IsProgrammatic = previousProgrammatic;
-			}
-
-			// Atomic swap: replace the adapter routes and collections in one lock.
-			lock (_refreshLock)
-			{
-				adapter.ReplaceRoutes(tempAdapter);
-				RefreshCollection(toolCollection, newTools);
-				RefreshCollection(resourceCollection, newResources);
-				RefreshCollection(promptCollection, newPrompts);
-			}
-		}
-		catch (Exception)
-		{
-			// Timer callbacks must not throw — an unhandled exception here would
-			// crash the process. The server continues with stale routes.
-		}
-	}
-
-	private void UnsubscribeFromRoutingChanges()
-	{
-		if (_routingChangedHandler is not null && _app is CoreReplApp coreApp)
-		{
-			coreApp.RoutingInvalidated -= _routingChangedHandler;
-			_routingChangedHandler = null;
-		}
-
-		lock (_refreshLock)
-		{
-			_debounceTimer?.Dispose();
-			_debounceTimer = null;
-		}
-	}
-
-	private static void RefreshCollection<T>(McpServerPrimitiveCollection<T> collection, IReadOnlyList<T> items)
-		where T : IMcpServerPrimitive
-	{
-		collection.Clear();
-		foreach (var item in items)
-		{
-			collection.Add(item);
-		}
-	}
-
-	private static void RefreshCollection(McpServerResourceCollection collection, IReadOnlyList<McpServerResource> items)
-	{
-		collection.Clear();
-		foreach (var item in items)
-		{
-			collection.Add(item);
-		}
-	}
+	internal sealed record McpGeneratedSnapshot(
+		McpToolAdapter Adapter,
+		List<McpServerTool> Tools,
+		List<McpServerResource> Resources,
+		List<McpServerPrompt> Prompts);
 }

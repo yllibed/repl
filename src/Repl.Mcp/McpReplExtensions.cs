@@ -66,20 +66,8 @@ public static class McpReplExtensions
 		var options = new ReplMcpServerOptions();
 		configure?.Invoke(options);
 
-		var previousProgrammatic = ReplSessionIO.IsProgrammatic;
-		ReplSessionIO.IsProgrammatic = true;
-		try
-		{
-			var model = app.CreateDocumentationModel();
-			var adapter = new McpToolAdapter(app, options, services ?? EmptyServiceProvider.Instance);
-			var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
-			var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
-			return handler.BuildServerOptions(model, adapter, separator);
-		}
-		finally
-		{
-			ReplSessionIO.IsProgrammatic = previousProgrammatic;
-		}
+		var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
+		return handler.BuildServerOptions();
 	}
 
 	private sealed class EmptyServiceProvider : IServiceProvider

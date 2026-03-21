@@ -35,11 +35,12 @@ internal sealed class McpTestFixture : IAsyncDisposable
 	public McpClient Client { get; }
 
 	public static Task<McpTestFixture> CreateAsync(Action<ReplApp> configure) =>
-		CreateAsync(configure, configureOptions: null);
+		CreateAsync(configure, configureOptions: null, clientOptions: null);
 
 	public static async Task<McpTestFixture> CreateAsync(
 		Action<ReplApp> configure,
-		Action<ReplMcpServerOptions>? configureOptions)
+		Action<ReplMcpServerOptions>? configureOptions,
+		McpClientOptions? clientOptions = null)
 	{
 		var app = ReplApp.Create();
 		app.UseMcpServer(configureOptions);
@@ -48,13 +49,8 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var options = new ReplMcpServerOptions();
 		configureOptions?.Invoke(options);
 
-		// Use the real McpServerHandler to build server options — exercises
-		// the full tool/resource/prompt generation pipeline with fallbacks.
-		var model = app.Core.CreateDocumentationModel();
-		var adapter = new McpToolAdapter(app.Core, options, EmptyServiceProvider.Instance);
-		var separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
 		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
-		var serverOptions = handler.BuildServerOptions(model, adapter, separator);
+		var serverOptions = handler.BuildServerOptions();
 
 		var clientToServer = new Pipe();
 		var serverToClient = new Pipe();
@@ -74,7 +70,7 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		var clientTransport = new StreamClientTransport(
 			clientToServer.Writer.AsStream(),
 			serverToClient.Reader.AsStream());
-		var client = await McpClient.CreateAsync(clientTransport).ConfigureAwait(false);
+		var client = await McpClient.CreateAsync(clientTransport, clientOptions).ConfigureAwait(false);
 
 		return new McpTestFixture(client, serverTask, cts, clientToServer, serverToClient);
 	}

@@ -197,7 +197,8 @@ internal static class OptionSchemaBuilder
 		|| parameter.ParameterType == typeof(IReplSessionState)
 		|| parameter.ParameterType == typeof(IReplInteractionChannel)
 		|| parameter.ParameterType == typeof(IReplIoContext)
-		|| parameter.ParameterType == typeof(IReplKeyReader);
+		|| parameter.ParameterType == typeof(IReplKeyReader)
+		|| string.Equals(parameter.ParameterType.FullName, "Repl.IMcpClientRoots", StringComparison.Ordinal);
 
 	private static ReplArity ResolveArity(ParameterInfo parameter, ReplOptionAttribute? optionAttribute)
 	{
