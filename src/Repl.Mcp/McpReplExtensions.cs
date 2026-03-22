@@ -47,6 +47,24 @@ public static class McpReplExtensions
 	}
 
 	/// <summary>
+	/// Builds <see cref="McpServerOptions"/> from a <see cref="ReplApp"/>'s command graph,
+	/// automatically using the app's shared service provider for DI during tool dispatch.
+	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
+	/// without going through the <c>mcp serve</c> CLI command.
+	/// </summary>
+	/// <param name="app">The Repl app.</param>
+	/// <param name="configure">Optional MCP configuration callback.</param>
+	/// <returns>Ready-to-use <see cref="McpServerOptions"/> for <c>McpServer.Create</c> or ASP.NET integration.</returns>
+	public static McpServerOptions BuildMcpServerOptions(
+		this ReplApp app,
+		Action<ReplMcpServerOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+
+		return app.Core.BuildMcpServerOptions(configure, app.Services);
+	}
+
+	/// <summary>
 	/// Builds <see cref="McpServerOptions"/> from the Repl app's command graph.
 	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
 	/// without going through the <c>mcp serve</c> CLI command.

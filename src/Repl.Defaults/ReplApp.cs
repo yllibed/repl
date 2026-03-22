@@ -394,6 +394,13 @@ public sealed class ReplApp : IReplApp
 		}
 	}
 
+	/// <summary>
+	/// Returns the shared service provider, building it on first access.
+	/// This provider is reused for both module resolution and runtime execution,
+	/// ensuring DI-resolved modules share the same service instances as handlers.
+	/// </summary>
+	public IServiceProvider Services => EnsureSharedProvider();
+
 	internal CoreReplApp Core => _core;
 
 	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens) => _core.Resolve(inputTokens);

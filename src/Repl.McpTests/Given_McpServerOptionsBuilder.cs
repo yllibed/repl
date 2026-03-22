@@ -17,7 +17,7 @@ public sealed class Given_McpServerOptionsBuilder
 		app.Map("greet {name}", (string name) => $"Hello, {name}!").ReadOnly();
 		app.Map("ping", () => "pong");
 
-		var options = app.Core.BuildMcpServerOptions();
+		var options = app.BuildMcpServerOptions();
 
 		options.ToolCollection.Should().NotBeNull();
 		options.ToolCollection.Should().Contain(tool => string.Equals(tool.ProtocolTool.Name, "greet", StringComparison.Ordinal));
@@ -31,7 +31,7 @@ public sealed class Given_McpServerOptionsBuilder
 		var app = ReplApp.Create();
 		app.Map("status", () => "ok").ReadOnly();
 
-		var options = app.Core.BuildMcpServerOptions();
+		var options = app.BuildMcpServerOptions();
 
 		options.ResourceCollection.Should().NotBeNull();
 		options.ResourceCollection.Should().ContainSingle(resource =>
@@ -46,7 +46,7 @@ public sealed class Given_McpServerOptionsBuilder
 		var app = ReplApp.Create();
 		app.Map("echo {msg}", (string msg) => $"echo:{msg}");
 
-		var mcpOptions = app.Core.BuildMcpServerOptions();
+		var mcpOptions = app.BuildMcpServerOptions();
 
 		var clientToServer = new Pipe();
 		var serverToClient = new Pipe();
