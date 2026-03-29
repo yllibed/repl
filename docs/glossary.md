@@ -4,7 +4,7 @@
 
 ### Ambient command
 
-Built-in command available in interactive mode (e.g., `exit`, `cd`, `history`, `clear`). Can be extended via `AmbientCommandOptions.MapAmbient()`.
+Built-in command available in interactive mode (e.g., `exit`, `history`, `help`, `complete`). Can be extended via `AmbientCommandOptions.MapAmbient()`.
 
 ### Argument binding
 
@@ -12,7 +12,7 @@ Process of resolving handler parameter values from route values, options, DI ser
 
 ### Channel
 
-Runtime execution mode: CLI, Interactive, Hosted, or MCP.
+Runtime execution mode: `Cli`, `Interactive`, `Session`, or `Programmatic`.
 
 ### Command graph
 

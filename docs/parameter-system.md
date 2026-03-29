@@ -63,20 +63,13 @@ Three public record types represent temporal intervals:
 - `ReplDateTimeRange(DateTime From, DateTime To)`
 - `ReplDateTimeOffsetRange(DateTimeOffset From, DateTimeOffset To)`
 
-These types live under `Repl` namespace and support two parsing syntaxes:
+These types live under the `Repl` namespace and support two parsing syntaxes:
 
 - range: `start..end` (double-dot separator)
 - duration: `start@duration` (at sign with `TimeSpanLiteralParser` duration)
 
 Reversed ranges (`To < From`) are validation errors.
 For `ReplDateRange` (`DateOnly`), `start@duration` accepts whole-day durations only.
-
-These public types live under `Repl.Parameters`.
-Typical app code starts with:
-
-```csharp
-using Repl.Parameters;
-```
 
 ## Public namespace map
 

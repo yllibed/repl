@@ -68,7 +68,6 @@ Ambient commands are built-in commands available in every scope during interacti
 |------------|------------------------------------|
 | `exit`     | End the interactive session.       |
 | `history`  | Show command history.              |
-| `clear`    | Clear the terminal screen.         |
 | `help`     | Display help for the current scope.|
 | `complete` | List completions for input.        |
 

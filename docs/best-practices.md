@@ -233,9 +233,9 @@ Register ambient commands for common actions:
 ```csharp
 app.Options(o => o.AmbientCommands.MapAmbient(
     "clear",
-    [Description("Clear the screen")]
     static async (IReplInteractionChannel ch, CancellationToken ct) =>
-        await ch.ClearScreenAsync(ct)));
+        await ch.ClearScreenAsync(ct),
+    "Clear the screen"));
 ```
 
 Seed history for discoverability:

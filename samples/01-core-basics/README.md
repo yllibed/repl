@@ -102,40 +102,29 @@ myapp
 ## The code (single file, no DI)
 
 ```csharp
-using Repl;
 using System.ComponentModel;
+using Repl;
+using Repl.Parameters;
 
-var store = new ContactStore(); // simple in-memory store
+var store = new ContactStore();
+var commands = new ContactCommands(store);
 
-CoreReplApp.Create()
-    .UseDefaultInteractive()
-    .Map("list",
-        [Description("List all contacts")]
-        () => store.List())
+var app = CoreReplApp.Create()
+    .WithDescription("Core basics sample: minimal contacts REPL without DI dependencies.")
+    .WithBanner("""
+          Try: list, add Alice alice@test.com, show 1, count
+          Also: error (exception handling), debug reset
+        """);
 
-    .Map("add {name} {email}",
-        [Description("Add a contact")]
-        ([Description("Full name")] string name,
-         [Description("Email address")] string email) =>
-        {
-            var contact = store.Add(name, email);
-            return contact;
-        })
+app.Map("list", commands.List);
+app.Map("add {name} {email:email}", commands.Add);
+app.Map("show {id:int}", commands.Show);
+app.Map("count", commands.Count);
+app.Map("report period", commands.ReportPeriod);
+app.Map("error", ErrorCommand);
+app.Map("debug reset", commands.Reset);
 
-    .Map("show {id:int}",
-        [Description("Show a contact by id")]
-        (int id) => store.Show(id))
-
-    .Map("count",
-        [Description("Count contacts")]
-        () => store.Count())
-
-    // Hidden utility for demos/tests
-    .Map("debug reset",
-        [Browsable(false)]
-        () => store.Reset())
-
-    .Run(args);
+return app.Run(args);
 ```
 
 ### Key things to notice
