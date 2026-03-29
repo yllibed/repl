@@ -1,4 +1,5 @@
 # 04 — Interactive Ops
+
 **Guided operations with prompts, progress, timeouts, and cancellation**
 
 This demo is where a REPL stops feeling like “a command loop” and starts feeling like a **guided operator console**.
@@ -266,6 +267,7 @@ This demo shows multiple cancellation paths:
 - **Prompt timeout**: auto-selects default after countdown
 
 Long-running commands (like `watch`) follow the cooperative pattern:
+
 - inject `CancellationToken`
 - stop when cancelled
 - return `Results.Cancelled()` or equivalent

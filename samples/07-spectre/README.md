@@ -1,4 +1,5 @@
 # 07 — Spectre
+
 **Rich Spectre.Console integration: renderables, visualizations, and interactive prompts**
 
 This sample showcases the `Repl.Spectre` package with **21 Spectre.Console features**

@@ -39,7 +39,7 @@
  	- analyzers enabled
 - Central package versions in `src/Directory.Packages.props`.
 - CI restore/build/test/coverage/pack pipeline in `.github/workflows/ci.yml`.
- 	- Build/test validation runs on Windows, Linux, and macOS.
+ 	- Build/test validation runs on Linux and macOS.
 - CI restore audit guard in `src/Directory.Solution.targets`.
 
 ## Test conventions

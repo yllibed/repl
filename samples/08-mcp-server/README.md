@@ -14,16 +14,19 @@ Expose a Repl command graph as an MCP server for AI agents.
 ## Running
 
 **Interactive REPL:**
+
 ```bash
 dotnet run
 ```
 
 **MCP server mode:**
+
 ```bash
 dotnet run -- mcp serve
 ```
 
 **Test with MCP Inspector:**
+
 ```bash
 npx @modelcontextprotocol/inspector dotnet run --project . -- mcp serve
 ```
@@ -31,6 +34,7 @@ npx @modelcontextprotocol/inspector dotnet run --project . -- mcp serve
 ## Agent configuration
 
 ### Claude Desktop
+
 ```json
 {
   "mcpServers": {
@@ -43,6 +47,7 @@ npx @modelcontextprotocol/inspector dotnet run --project . -- mcp serve
 ```
 
 ### VS Code (GitHub Copilot)
+
 ```json
 {
   "servers": {

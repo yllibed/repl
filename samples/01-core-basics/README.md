@@ -1,4 +1,5 @@
 # 01 — Core Basics
+
 **From “parse args” to a real command surface (Repl.Core only)**
 
 This first demo is intentionally small and dependency-light. It uses **Repl.Core only** (no DI, no hosting extras) to show the **essentials**:
@@ -177,6 +178,7 @@ Arguments:
 ```
 
 From this alone, an agent can:
+
 - discover the available commands,
 - understand required arguments,
 - and call them with `--json` to get structured results.
@@ -195,10 +197,10 @@ This sample also demonstrates two advanced parameter features:
 Try these commands:
 
 ```text
-$ myapp list --format json
-$ myapp show 1 --no-verbose
-$ myapp report period --period 2024-01-15..2024-02-15
-$ myapp report period --period 2024-01-15@30d
+myapp list --format json
+myapp show 1 --no-verbose
+myapp report period --period 2024-01-15..2024-02-15
+myapp report period --period 2024-01-15@30d
 ```
 
 Expected behavior:
@@ -235,6 +237,7 @@ Those come next.
 ## What’s next?
 
 Now that you’ve seen:
+
 - routes,
 - constraints,
 - help/discovery,
@@ -243,4 +246,5 @@ Now that you’ve seen:
 the next demo introduces **scopes and navigation**:
 
 👉 [**02 — Scoped Contacts**](../02-scoped-contacts/): enter contexts, navigate with `..`, and see how the command graph becomes *stateful* without turning into a shell you have to invent yourself.
+
 ```

@@ -25,9 +25,7 @@ jobs:
       - name: Run markdownlint
         uses: DavidAnson/markdownlint-cli2-action@05f32210e84442804257b2a6f20b273450ec8265 # v19.1.0
         with:
-          globs: |
-            docs/*.md
-            README.md
+          globs: '**/*.md'
 
   build-test-cross-platform:
     name: Build and Test (${{ matrix.os }})
@@ -439,7 +437,7 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: build-test-pack
+    needs: [build-test-pack, lint-docs]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-latest
     steps:

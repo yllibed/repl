@@ -57,18 +57,9 @@ user(42)> ..
 >
 ```
 
-### Going to root
-
-Type `.` to return to the root scope regardless of depth:
-
-```text
-user(42)/settings> .
->
-```
-
 ### Scope state management
 
-The `scopeTokens` list is prepended to every command entered while in a scope. When the user types `show` inside scope `user 42`, the resolved tokens become `["user", "42", "show"]`. Navigation commands (`..`, `.`) mutate `scopeTokens` directly without executing a handler.
+The `scopeTokens` list is prepended to every command entered while in a scope. When the user types `show` inside scope `user 42`, the resolved tokens become `["user", "42", "show"]`. The `..` navigation command mutates `scopeTokens` directly without executing a handler.
 
 ## Ambient Commands
 
@@ -77,7 +68,6 @@ Ambient commands are built-in commands available in every scope during interacti
 | Command    | Description                        |
 |------------|------------------------------------|
 | `exit`     | End the interactive session.       |
-| `cd`       | Change the current scope.          |
 | `history`  | Show command history.              |
 | `clear`    | Clear the terminal screen.         |
 | `help`     | Display help for the current scope.|
