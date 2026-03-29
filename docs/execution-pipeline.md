@@ -152,12 +152,14 @@ See [configuration-reference.md](configuration-reference.md) for options configu
 precedence:
 
 1. `CancellationToken` — injected from the execution context
-2. Explicit attributes — parameters decorated with binding attributes
-3. Route values — values extracted during route resolution
-4. Named options — values from command option parsing
-5. Context/services — resolved from the DI container or execution context
-6. Positional arguments — remaining unmatched tokens, in order
-7. Default values — parameter defaults from the method signature
+2. Explicit attributes — `[FromServices]`, `[FromContext]`
+3. Options groups — `[ReplOptionsGroup]` for multi-property binding
+4. Route values — values extracted during route resolution
+5. Named options — values from command option parsing
+6. Context/services — resolved from the DI container or execution context
+7. Positional arguments — remaining unmatched tokens, in order
+8. Default values — parameter defaults from the method signature
+9. Null — for nullable types without other source
 
 See [parameter-system.md](parameter-system.md) for full parameter binding details.
 
