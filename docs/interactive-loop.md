@@ -10,8 +10,7 @@ There are two ways to start an interactive session:
 2. **Returning `Results.EnterInteractive()`** — Any handler can return this result to transition from CLI mode into an interactive session.
 
 ```csharp
-var app = new ReplApp();
-app.UseDefaultInteractive(); // enter interactive mode when no args provided
+var app = ReplApp.Create().UseDefaultInteractive(); // enter interactive mode when no args provided
 
 app.Map("setup", () => Results.EnterInteractive()); // explicit transition
 ```
@@ -78,10 +77,7 @@ Ambient commands are built-in commands available in every scope during interacti
 Register additional ambient commands via `AmbientCommandOptions.MapAmbient()`:
 
 ```csharp
-app.ConfigureAmbientCommands(o =>
-{
-    o.MapAmbient("ping", () => "pong");
-});
+app.Options(o => o.AmbientCommands.MapAmbient("ping", () => "pong"));
 ```
 
 Custom ambient commands follow the same resolution rules — they take priority over graph commands with the same name.
