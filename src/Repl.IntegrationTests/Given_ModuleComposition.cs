@@ -83,8 +83,8 @@ public sealed class Given_ModuleComposition
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies module handlers follow ambiguity rules so that context-versus-service collisions fail unless explicit attributes are used.")]
-	public void When_ContextAndServiceCanBindSameType_Then_AmbiguityErrorsAndExplicitBindingWorks()
+	[Description("Option-schema parameters skip implicit context resolution; explicit [FromContext]/[FromServices] still works.")]
+	public void When_ContextAndServiceCanBindSameType_Then_OptionParamUsesServiceAndExplicitBindingWorks()
 	{
 		var sut = ReplApp.Create(services =>
 		{
@@ -92,6 +92,7 @@ public sealed class Given_ModuleComposition
 		});
 		sut.Context("client {scope}", client => client.MapModule(new AmbiguousScopeModule()));
 
+		// 'ambiguous' handler has bare (string value) — option-schema param skips context, service wins.
 		var ambiguous = ConsoleCaptureHelper.Capture(
 			() => sut.Run(["client", "context-scope", "insights", "ambiguous", "--no-logo"]));
 		var explicitContext = ConsoleCaptureHelper.Capture(
@@ -99,8 +100,8 @@ public sealed class Given_ModuleComposition
 		var explicitService = ConsoleCaptureHelper.Capture(
 			() => sut.Run(["client", "context-scope", "insights", "from-services", "--no-logo"]));
 
-		ambiguous.ExitCode.Should().Be(1);
-		ambiguous.Text.Should().Contain("Ambiguous binding");
+		ambiguous.ExitCode.Should().Be(0);
+		ambiguous.Text.Should().Contain("service-scope");
 		explicitContext.ExitCode.Should().Be(0);
 		explicitContext.Text.Should().Contain("context-scope");
 		explicitService.ExitCode.Should().Be(0);
