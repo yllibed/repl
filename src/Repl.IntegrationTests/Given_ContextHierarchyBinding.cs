@@ -126,8 +126,8 @@ public sealed class Given_ContextHierarchyBinding
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies ambiguous default binding between context and services so that command fails with structured validation output.")]
-	public void When_BindingIsAmbiguousBetweenContextAndServices_Then_ValidationErrorIsReturned()
+	[Description("Option-schema parameters skip implicit context resolution, so services win without ambiguity.")]
+	public void When_OptionParamMatchesContextAndService_Then_ServiceWinsWithoutAmbiguity()
 	{
 		var sut = ReplApp.Create(services => services.AddSingleton<string>("service-name"));
 		sut.Context("contact {name}", map =>
@@ -137,8 +137,8 @@ public sealed class Given_ContextHierarchyBinding
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "alice", "show", "--no-logo"]));
 
-		output.ExitCode.Should().Be(1);
-		output.Text.Should().Contain("Validation: Ambiguous binding for parameter 'value'.");
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("service-name");
 	}
 
 	[TestMethod]

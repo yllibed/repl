@@ -44,7 +44,7 @@ internal static class HandlerArgumentBinder
 
 		if (HasExplicitBindingDirection(parameter))
 		{
-			if (TryResolveFromContextOrServices(parameter, context, out var explicitValue))
+			if (TryResolveFromContextOrServices(parameter, context, skipContext: false, out var explicitValue))
 			{
 				return explicitValue;
 			}
@@ -87,7 +87,8 @@ internal static class HandlerArgumentBinder
 					enumIgnoreCase);
 			}
 
-		if (TryResolveFromContextOrServices(parameter, context, out var resolved))
+		var isUserOption = context.OptionSchema.TryGetParameter(parameterName, out _);
+		if (TryResolveFromContextOrServices(parameter, context, skipContext: isUserOption, out var resolved))
 		{
 			return resolved;
 		}
@@ -126,6 +127,7 @@ internal static class HandlerArgumentBinder
 	private static bool TryResolveFromContextOrServices(
 		System.Reflection.ParameterInfo parameter,
 		InvocationBindingContext context,
+		bool skipContext,
 		out object? resolved)
 	{
 		var fromContext = parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true)
@@ -150,7 +152,7 @@ internal static class HandlerArgumentBinder
 			return ResolveExplicitFromServices(parameter, context.ServiceProvider, fromServices!, out resolved);
 		}
 
-		return ResolveImplicitFromContextOrServices(parameter, context, out resolved);
+		return ResolveImplicitFromContextOrServices(parameter, context, skipContext, out resolved);
 	}
 
 	private static bool ResolveExplicitFromContext(
@@ -201,6 +203,7 @@ internal static class HandlerArgumentBinder
 	private static bool ResolveImplicitFromContextOrServices(
 		System.Reflection.ParameterInfo parameter,
 		InvocationBindingContext context,
+		bool skipContext,
 		out object? resolved)
 	{
 		if (InteractionProgressFactory.TryCreate(parameter.ParameterType, context, out resolved))
@@ -208,7 +211,9 @@ internal static class HandlerArgumentBinder
 			return true;
 		}
 
-		var foundContext = TryResolveFromContext(parameter.ParameterType, context.ContextValues, out var contextValue);
+		object? contextValue = null;
+		var foundContext = !skipContext
+			&& TryResolveFromContext(parameter.ParameterType, context.ContextValues, out contextValue);
 		var serviceValue = context.ServiceProvider.GetService(parameter.ParameterType);
 		if (foundContext && serviceValue is not null)
 		{

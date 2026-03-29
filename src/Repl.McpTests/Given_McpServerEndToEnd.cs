@@ -218,6 +218,7 @@ public sealed class Given_McpServerEndToEnd
 		text.Should().NotBeNull();
 		text!.Should().Contain("s1");
 		text.Should().Contain("file.png");
+		text.Should().Contain("null", "optional string? params should be null when omitted, not resolved from context");
 	}
 
 	[TestMethod]
