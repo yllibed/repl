@@ -1,4 +1,5 @@
 # 01 — Core Basics
+
 **From “parse args” to a real command surface (Repl.Core only)**
 
 This first demo is intentionally small and dependency-light. It uses **Repl.Core only** (no DI, no hosting extras) to show the **essentials**:
@@ -101,40 +102,29 @@ myapp
 ## The code (single file, no DI)
 
 ```csharp
-using Repl;
 using System.ComponentModel;
+using Repl;
+using Repl.Parameters;
 
-var store = new ContactStore(); // simple in-memory store
+var store = new ContactStore();
+var commands = new ContactCommands(store);
 
-CoreReplApp.Create()
-    .UseDefaultInteractive()
-    .Map("list",
-        [Description("List all contacts")]
-        () => store.List())
+var app = CoreReplApp.Create()
+    .WithDescription("Core basics sample: minimal contacts REPL without DI dependencies.")
+    .WithBanner("""
+          Try: list, add Alice alice@test.com, show 1, count
+          Also: error (exception handling), debug reset
+        """);
 
-    .Map("add {name} {email}",
-        [Description("Add a contact")]
-        ([Description("Full name")] string name,
-         [Description("Email address")] string email) =>
-        {
-            var contact = store.Add(name, email);
-            return contact;
-        })
+app.Map("list", commands.List);
+app.Map("add {name} {email:email}", commands.Add);
+app.Map("show {id:int}", commands.Show);
+app.Map("count", commands.Count);
+app.Map("report period", commands.ReportPeriod);
+app.Map("error", ErrorCommand);
+app.Map("debug reset", commands.Reset);
 
-    .Map("show {id:int}",
-        [Description("Show a contact by id")]
-        (int id) => store.Show(id))
-
-    .Map("count",
-        [Description("Count contacts")]
-        () => store.Count())
-
-    // Hidden utility for demos/tests
-    .Map("debug reset",
-        [Browsable(false)]
-        () => store.Reset())
-
-    .Run(args);
+return app.Run(args);
 ```
 
 ### Key things to notice
@@ -177,6 +167,7 @@ Arguments:
 ```
 
 From this alone, an agent can:
+
 - discover the available commands,
 - understand required arguments,
 - and call them with `--json` to get structured results.
@@ -195,10 +186,10 @@ This sample also demonstrates two advanced parameter features:
 Try these commands:
 
 ```text
-$ myapp list --format json
-$ myapp show 1 --no-verbose
-$ myapp report period --period 2024-01-15..2024-02-15
-$ myapp report period --period 2024-01-15@30d
+myapp list --format json
+myapp show 1 --no-verbose
+myapp report period --period 2024-01-15..2024-02-15
+myapp report period --period 2024-01-15@30d
 ```
 
 Expected behavior:
@@ -235,6 +226,7 @@ Those come next.
 ## What’s next?
 
 Now that you’ve seen:
+
 - routes,
 - constraints,
 - help/discovery,
@@ -243,4 +235,5 @@ Now that you’ve seen:
 the next demo introduces **scopes and navigation**:
 
 👉 [**02 — Scoped Contacts**](../02-scoped-contacts/): enter contexts, navigate with `..`, and see how the command graph becomes *stateful* without turning into a shell you have to invent yourself.
+
 ```

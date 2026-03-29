@@ -7,6 +7,7 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
 
 **A .NET framework for building composable command surfaces.**
+
 - Define your commands once — run them as a CLI, explore them in an interactive REPL,
 - host them in session-based terminals, expose them as MCP servers for AI agents,
 - or drive them from automation scripts.
@@ -26,22 +27,6 @@ var app = ReplApp.Create().UseDefaultInteractive();
 app.Map("hello", () => "world");
 return app.Run(args);
 ```
-
-## Features
-
-- **Unified command graph** — one route map shared by CLI, REPL, and hosted sessions
-- **POSIX-like semantics** — familiar flag syntax, `--` separator, predictable parsing
-- **Hierarchical scopes** — stateful navigation with `..`, contexts, route constraints (`{id:int}`, `{when:date}`)
-- **Multiple output formats** — `--json`, `--xml`, `--yaml`, `--markdown`, or `--human`
-- **MCP server** — expose your commands as tools for AI agents with `app.UseMcpServer()` — zero boilerplate
-- **AI/agent-friendly** — machine-readable contracts, deterministic outputs, pre-answered prompts (`--answer:*`)
-- **Typed results** — `Ok`, `Error`, `NotFound`, `Cancelled` with payloads — not raw strings
-- **Typed interactions** — prompts, progress, status, timeouts, cancellation
-- **Session-aware DI** — per-session services and metadata (transport, terminal, window size)
-- **Hosting primitives** — run sessions over WebSocket, Telnet, or custom carriers
-- **Shell completion** — Bash, PowerShell, Zsh, Fish, Nushell with auto-install
-- **Testing toolkit** — in-memory multi-session harness with typed assertions
-- **Cross-platform** — same behavior on Windows, Linux, macOS, containers, and CI
 
 ## Example
 
@@ -100,23 +85,28 @@ app.UseMcpServer();  // add one line
 
 One command graph. CLI, REPL, remote sessions, and AI agents — all from the same code.
 
-## Packages
+## What's included
 
-| Package | Description |
-|---------|-------------|
-| **[`Repl`](https://www.nuget.org/packages/Repl)** | Meta-package — bundles Core + Defaults + Protocol (**start here**) |
-| [`Repl.Core`](https://www.nuget.org/packages/Repl.Core) | Runtime: routing, parsing, binding, results, help, middleware |
-| [`Repl.Defaults`](https://www.nuget.org/packages/Repl.Defaults) | DI, host composition, interactive mode, terminal UX |
-| [`Repl.Protocol`](https://www.nuget.org/packages/Repl.Protocol) | Machine-readable contracts (help, errors, tool schemas) |
-| [`Repl.WebSocket`](https://www.nuget.org/packages/Repl.WebSocket) | Session hosting over WebSocket |
-| [`Repl.Telnet`](https://www.nuget.org/packages/Repl.Telnet) | Telnet framing, negotiation, session adapters |
-| [`Repl.Mcp`](https://www.nuget.org/packages/Repl.Mcp) | MCP server: expose commands as AI agent tools, resources, and prompts |
-| [`Repl.Spectre`](https://www.nuget.org/packages/Repl.Spectre) | Spectre.Console integration: rich prompts, `IAnsiConsole`, table rendering |
-| [`Repl.Testing`](https://www.nuget.org/packages/Repl.Testing) | In-memory multi-session test harness |
+| Feature | Package | Guides |
+|---------|---------|--------|
+| Unified command graph — routing, constraints, binding | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Route system](docs/route-system.md)</li><li>[Execution pipeline](docs/execution-pipeline.md)</li><li>[Commands](docs/commands.md)</li></ul> |
+| Interactive REPL — scopes, history, autocomplete | [![Repl.Defaults](https://img.shields.io/nuget/vpre/Repl.Defaults?logo=nuget&label=Repl.Defaults)](https://www.nuget.org/packages/Repl.Defaults) | <ul><li>[Interactive loop](docs/interactive-loop.md)</li><li>[Configuration](docs/configuration-reference.md)</li></ul> |
+| Parameters & options — typed binding, options groups, response files | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Parameter system](docs/parameter-system.md)</li><li>[Route system](docs/route-system.md)</li></ul> |
+| Multiple output formats — JSON, XML, YAML, Markdown | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Output system](docs/output-system.md)</li></ul> |
+| MCP server — expose commands as AI agent tools | [![Repl.Mcp](https://img.shields.io/nuget/vpre/Repl.Mcp?logo=nuget&label=Repl.Mcp)](https://www.nuget.org/packages/Repl.Mcp) | <ul><li>[MCP server](docs/mcp-server.md)</li><li>[MCP advanced](docs/mcp-advanced.md)</li></ul> |
+| Typed results & interactions — prompts, progress, cancellation | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Interaction channel](docs/interaction.md)</li></ul> |
+| Session hosting — WebSocket, Telnet, remote terminals | [![Repl.WebSocket](https://img.shields.io/nuget/vpre/Repl.WebSocket?logo=nuget&label=Repl.WebSocket)](https://www.nuget.org/packages/Repl.WebSocket) [![Repl.Telnet](https://img.shields.io/nuget/vpre/Repl.Telnet?logo=nuget&label=Repl.Telnet)](https://www.nuget.org/packages/Repl.Telnet) | <ul><li>[Runtime channels](docs/runtime-channels.md)</li><li>[Terminal metadata](docs/terminal-metadata.md)</li></ul> |
+| Shell completion — Bash, PowerShell, Zsh, Fish, Nushell | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Shell completion](docs/shell-completion.md)</li></ul> |
+| Spectre.Console — rich prompts, tables, charts | [![Repl.Spectre](https://img.shields.io/nuget/vpre/Repl.Spectre?logo=nuget&label=Repl.Spectre)](https://www.nuget.org/packages/Repl.Spectre) | <ul><li>[Interaction channel](docs/interaction.md)</li><li>[Sample](samples/07-spectre/)</li></ul> |
+| Testing toolkit — in-memory multi-session harness | [![Repl.Testing](https://img.shields.io/nuget/vpre/Repl.Testing?logo=nuget&label=Repl.Testing)](https://www.nuget.org/packages/Repl.Testing) | <ul><li>[Testing toolkit](docs/testing-toolkit.md)</li></ul> |
+| Machine-readable contracts — help schemas, error contracts | [![Repl.Protocol](https://img.shields.io/nuget/vpre/Repl.Protocol?logo=nuget&label=Repl.Protocol)](https://www.nuget.org/packages/Repl.Protocol) | <ul><li>[Help system](docs/help-system.md)</li></ul> |
+| Conditional modules — channel-aware, feature-gated commands | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Module presence](docs/module-presence.md)</li></ul> |
 
-## Samples
+[**`Repl`**](https://www.nuget.org/packages/Repl) is the meta-package that bundles Core + Defaults + Protocol — **start here**.
 
-Progressive learning path — start with 01:
+## Learn by example
+
+Progressive learning path — each sample builds on the previous:
 
 1. **[Core Basics](samples/01-core-basics/)** — routing, constraints, help, output modes
 2. **[Scoped Contacts](samples/02-scoped-contacts/)** — dynamic scoping, `..` navigation
@@ -127,22 +117,13 @@ Progressive learning path — start with 01:
 7. **[Spectre](samples/07-spectre/)** — Spectre.Console renderables, visualizations, rich prompts
 8. **[MCP Server](samples/08-mcp-server/)** — expose commands as MCP tools for AI agents
 
-## Documentation
+## More documentation
 
-| Topic | Link |
-|-------|------|
-| Architecture blueprint | [`docs/architecture.md`](docs/architecture.md) |
-| Command reference | [`docs/commands.md`](docs/commands.md) |
-| Parameter system | [`docs/parameter-system.md`](docs/parameter-system.md) |
-| Terminal & session metadata | [`docs/terminal-metadata.md`](docs/terminal-metadata.md) |
-| Testing toolkit | [`docs/testing-toolkit.md`](docs/testing-toolkit.md) |
-| Shell completion | [`docs/shell-completion.md`](docs/shell-completion.md) |
-| Comparison & migration | [`docs/comparison.md`](docs/comparison.md) |
-| Interaction channel | [`docs/interaction.md`](docs/interaction.md) |
-| MCP server (AI agents) | [`docs/mcp-server.md`](docs/mcp-server.md) |
-| Conditional module presence | [`docs/module-presence.md`](docs/module-presence.md) |
-| Publishing & deployment | [`docs/publishing.md`](docs/publishing.md) |
-| Interactive docs & AI Q\&A | [deepwiki.com/yllibed/repl](https://deepwiki.com/yllibed/repl) |
+| | |
+|---|---|
+| [Architecture blueprint](docs/architecture.md) | [Best practices](docs/best-practices.md) |
+| [Comparison & migration](docs/comparison.md) | [Publishing & deployment](docs/publishing.md) |
+| [Glossary](docs/glossary.md) | [Interactive docs & AI Q&A](https://deepwiki.com/yllibed/repl) |
 
 ## Contributing
 

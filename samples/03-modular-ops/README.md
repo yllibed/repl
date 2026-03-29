@@ -1,4 +1,5 @@
 # 03 — Modular Ops
+
 **Composable modules, generic CRUD, and per-entity stores**
 
 This demo takes the next step: instead of hand-writing every command tree, you **compose** your command surface from **reusable modules** and mount the same module under **multiple contexts**.

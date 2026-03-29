@@ -339,3 +339,26 @@ Practical guidance:
 
 - for protocol commands, prefer writing protocol bytes/messages directly to `io.Output` (or `Console.Out` when SDK-bound)
 - return `Results.Exit(code)` to keep framework rendering silent
+
+## Route constraints
+
+Route templates support typed dynamic segments via constraint syntax: `{name:type}`.
+When no constraint is specified, the framework infers one from the handler parameter type.
+
+See the full constraint table, custom constraint registration, and type inference rules in [`docs/route-system.md`](route-system.md).
+
+## Parameter binding precedence
+
+Handler parameters are resolved in priority order:
+
+1. `CancellationToken` — injected from execution context
+2. Explicit attributes — `[FromServices]`, `[FromContext]`
+3. Options groups — `[ReplOptionsGroup]`
+4. Route values — captured from dynamic segments (`{name}`)
+5. Named options — from `--option value` syntax
+6. Context values / DI services — from context stack or service provider
+7. Positional arguments — remaining tokens consumed left-to-right
+8. Parameter defaults — C# default values
+9. Null — for nullable types without other source
+
+See [`docs/route-system.md`](route-system.md) for details on constraint types and binding modes.

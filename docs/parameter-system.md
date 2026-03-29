@@ -63,20 +63,13 @@ Three public record types represent temporal intervals:
 - `ReplDateTimeRange(DateTime From, DateTime To)`
 - `ReplDateTimeOffsetRange(DateTimeOffset From, DateTimeOffset To)`
 
-These types live under `Repl` namespace and support two parsing syntaxes:
+These types live under the `Repl` namespace and support two parsing syntaxes:
 
 - range: `start..end` (double-dot separator)
 - duration: `start@duration` (at sign with `TimeSpanLiteralParser` duration)
 
 Reversed ranges (`To < From`) are validation errors.
 For `ReplDateRange` (`DateOnly`), `start@duration` accepts whole-day durations only.
-
-These public types live under `Repl.Parameters`.
-Typical app code starts with:
-
-```csharp
-using Repl.Parameters;
-```
 
 ## Public namespace map
 
@@ -131,6 +124,34 @@ This same schema drives:
 - response-file expansion is disabled by default in interactive sessions
 - short-option bundling (`-abc` -> `-a -b -c`) is not enabled implicitly
 - reusable options groups and temporal range literals are first-class in Repl Toolkit, while System.CommandLine typically requires custom composition/parsing for equivalent behavior
+
+## Answer slots
+
+Commands that use interactive prompts (`AskConfirmationAsync`, `AskChoiceAsync`, etc.) can declare **answer slots** to make those prompts visible in help text and MCP tool schemas.
+
+### Attribute form
+
+```csharp
+[Answer("confirm", "bool", Description = "Confirm the deletion")]
+[Answer("name", Description = "Override name")]
+static async Task Delete(IReplInteractionChannel interaction, int id)
+{
+    var ok = await interaction.AskConfirmationAsync("confirm", "Delete?");
+    // ...
+}
+```
+
+### Fluent form
+
+```csharp
+app.Map("delete {id:int}", handler)
+   .WithAnswer("confirm", "bool", "Confirm the deletion")
+   .WithAnswer("name", description: "Override name");
+```
+
+Answer slot types use the same constraint names as route parameters (`string`, `bool`, `int`, `guid`, `email`, etc.).
+Declared answer slots are surfaced in `--help` output and in MCP tool input schemas,
+allowing non-interactive callers (`--answer:confirm=true`) and AI agents to provide values programmatically.
 
 ## Notes
 

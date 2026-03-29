@@ -1,4 +1,5 @@
 # 06 — Testing
+
 **Deterministic, typed tests for your command surface (Repl.Testing)**
 
 This demo is about one thing: **making REPL/CLI apps testable without hacks**.
@@ -200,6 +201,7 @@ If it’s not testable:
 - agents end up screen-scraping like it’s 1999
 
 `Repl.Testing` is the missing building block that lets you treat a REPL app like any other production surface:
+
 - deterministic execution
 - typed results
 - semantic events

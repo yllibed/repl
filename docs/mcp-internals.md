@@ -9,6 +9,7 @@ This guide explains how the Repl MCP integration works internally and what probl
 In MCP, a **root** is a URI the client declares as being in scope for the session.
 
 In practice, a root often represents:
+
 - An opened project folder
 - A working directory
 - A boundary for what the agent should inspect or modify
@@ -38,6 +39,7 @@ That's why `IMcpClientRoots` lives in `Repl.Mcp` and is injected only for MCP ex
 ## Session-aware routing
 
 Repl supports dynamic module presence. For MCP, this matters because available tools may depend on:
+
 - Client capabilities
 - Session state
 - Roots
@@ -47,6 +49,7 @@ Repl supports dynamic module presence. For MCP, this matters because available t
 To support that, the MCP integration builds its documentation model and MCP surfaces using the current MCP session service provider, not just the app root service provider.
 
 That is what makes session-scoped services like `IMcpClientRoots` visible to:
+
 - Module presence predicates
 - Tool handlers
 - Prompt handlers
@@ -57,6 +60,7 @@ That is what makes session-scoped services like `IMcpClientRoots` visible to:
 In a normal CLI app, the command graph is usually static.
 
 In MCP, the effective tool set may change during a session. Examples:
+
 - A login tool disappears after authentication and admin tools appear
 - Tools appear only after a workspace is known
 - Session-scoped modules become active after an initialization call
@@ -73,6 +77,7 @@ The MCP layer then rebuilds the active graph and emits:
 The MCP protocol already has a way to refresh discovery: `list_changed`.
 
 The problem is client support. Some agents:
+
 - don't implement `list_changed`
 - implement it partially
 - receive the notification but keep using a stale tool list
@@ -87,6 +92,7 @@ Instead of assuming the client will refresh properly, the server can:
 4. Fall back to the real tools on later `tools/list`
 
 So even a weak client can still:
+
 - discover the real tools manually
 - call those tools manually
 
@@ -97,11 +103,13 @@ This mode is intentionally opt-in because it adds extra behavior only needed by 
 Native roots are the cleanest solution, but not all clients implement them.
 
 Without roots, the server still needs some way to learn:
+
 - which project the agent is working on
 - which directories are allowed
 - which workspace-specific tools should appear
 
 Soft roots are a simple convention:
+
 - expose an init tool only when roots are unavailable
 - tell the agent to call it first
 - store those roots in the MCP session
@@ -115,6 +123,7 @@ It is an application-level fallback for clients with incomplete capability suppo
 When the compatibility shim is enabled, those two names become part of the protocol surface exposed by the app.
 
 To avoid ambiguity, Repl reserves:
+
 - `discover_tools`
 - `call_tool`
 
@@ -125,9 +134,11 @@ If a real command would flatten to one of those names while the shim is enabled,
 Custom transports and HTTP hosting are advanced too, but they are a separate concern.
 
 They answer:
+
 - How does MCP traffic reach the server?
 
 The topics in this page answer:
+
 - How does the tool graph adapt per session?
 - How does the server reason about roots and client capability gaps?
 

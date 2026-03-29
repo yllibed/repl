@@ -1,4 +1,5 @@
 # 02 — Scoped Contacts
+
 **Dynamic scoping, stateful navigation, and DI-backed handlers**
 
 This demo builds directly on **01 — Core Basics** and introduces three major ideas:
@@ -263,4 +264,5 @@ Now that you’ve seen:
 the next demo introduces **module composition**:
 
 👉 [**03 — Modular Ops**](../03-modular-ops/): reuse the same command sets across multiple contexts and start treating your command surface as a composable architecture.
+
 ```
