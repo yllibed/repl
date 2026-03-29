@@ -195,7 +195,7 @@ public sealed class Given_McpServerEndToEnd
 		result.IsError.Should().BeFalse("call with optional param should succeed");
 		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
 		text.Should().NotBeNull();
-		text.Should().Contain("s1");
+		text!.Should().Contain("s1");
 		text.Should().Contain("file.png");
 	}
 
@@ -216,7 +216,7 @@ public sealed class Given_McpServerEndToEnd
 		result.IsError.Should().BeFalse("omitting optional params should not cause a binding failure");
 		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
 		text.Should().NotBeNull();
-		text.Should().Contain("s1");
+		text!.Should().Contain("s1");
 		text.Should().Contain("file.png");
 	}
 
