@@ -1,4 +1,5 @@
 using System.IO.Pipelines;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -41,19 +42,28 @@ internal sealed class McpTestFixture : IAsyncDisposable
 	public static Task<McpTestFixture> CreateAsync(Action<ReplApp> configure) =>
 		CreateAsync(configure, configureOptions: null, clientOptions: null);
 
+	public static Task<McpTestFixture> CreateAsync(
+		Action<ReplApp> configure,
+		Action<IServiceCollection>? configureServices) =>
+		CreateAsync(configure, configureOptions: null, clientOptions: null, configureServices: configureServices);
+
 	public static async Task<McpTestFixture> CreateAsync(
 		Action<ReplApp> configure,
 		Action<ReplMcpServerOptions>? configureOptions,
-		McpClientOptions? clientOptions = null)
+		McpClientOptions? clientOptions = null,
+		Action<IServiceCollection>? configureServices = null)
 	{
-		var app = ReplApp.Create();
+		var app = configureServices is not null
+			? ReplApp.Create(configureServices)
+			: ReplApp.Create();
 		app.UseMcpServer(configureOptions);
 		configure(app);
 
 		var options = new ReplMcpServerOptions();
 		configureOptions?.Invoke(options);
 
-		var handler = new McpServerHandler(app.Core, options, EmptyServiceProvider.Instance);
+		var serviceProvider = configureServices is not null ? app.Services : EmptyServiceProvider.Instance;
+		var handler = new McpServerHandler(app.Core, options, serviceProvider);
 
 		var clientToServer = new Pipe();
 		var serverToClient = new Pipe();

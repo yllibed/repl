@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
 
 namespace Repl.McpTests;
@@ -171,6 +172,135 @@ public sealed class Given_McpServerEndToEnd
 
 		tools.Should().ContainSingle(t => string.Equals(t.Name, "contacts", StringComparison.Ordinal));
 	}
+
+	// ── Prompts ────────────────────────────────────────────────────────
+
+	// ── Context parameter binding ─────────────────────────────────────
+
+	[TestMethod]
+	[Description("Context tool call with optional params present dispatches correctly.")]
+	public async Task When_ContextToolCallWithOptionalParams_Then_Succeeds()
+	{
+		await using var fixture = await CreateContextFixtureAsync();
+
+		var result = await fixture.Client.CallToolAsync(
+			"session_screenshot",
+			new Dictionary<string, object?>(StringComparer.Ordinal)
+			{
+				["id"] = "s1",
+				["path"] = @"C:\out\file.png",
+				["zone"] = "status",
+			});
+
+		result.IsError.Should().BeFalse("call with optional param should succeed");
+		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
+		text.Should().NotBeNull();
+		text.Should().Contain("s1");
+		text.Should().Contain("file.png");
+	}
+
+	[TestMethod]
+	[Description("Context tool call without optional params dispatches correctly.")]
+	public async Task When_ContextToolCallWithoutOptionalParams_Then_Succeeds()
+	{
+		await using var fixture = await CreateContextFixtureAsync();
+
+		var result = await fixture.Client.CallToolAsync(
+			"session_screenshot",
+			new Dictionary<string, object?>(StringComparer.Ordinal)
+			{
+				["id"] = "s1",
+				["path"] = @"C:\out\file.png",
+			});
+
+		result.IsError.Should().BeFalse("omitting optional params should not cause a binding failure");
+		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
+		text.Should().NotBeNull();
+		text.Should().Contain("s1");
+		text.Should().Contain("file.png");
+	}
+
+	[TestMethod]
+	[Description("[FromServices] parameters must not appear in tool schema properties.")]
+	public async Task When_HandlerHasFromServicesParams_Then_SchemaExcludesThem()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Context("session", session =>
+			{
+				session.Context("{id}", scoped =>
+				{
+					scoped.Map("screenshot", async (
+						string id,
+						[System.ComponentModel.Description("File path")] string path,
+						[System.ComponentModel.Description("Named zone")] string? zone,
+						[FromServices] MarkerService svc,
+						[FromServices] AnotherService svc2) =>
+					{
+						await Task.CompletedTask.ConfigureAwait(false);
+						return (object)new { id, path, zone };
+					});
+				});
+			});
+		}, configureServices: services =>
+		{
+			services.AddSingleton<MarkerService>();
+			services.AddSingleton<AnotherService>();
+		});
+
+		var tools = await fixture.Client.ListToolsAsync();
+		var tool = tools.Single(t => string.Equals(t.Name, "session_screenshot", StringComparison.Ordinal));
+		var properties = tool.JsonSchema.GetProperty("properties");
+
+		properties.TryGetProperty("id", out _).Should().BeTrue("id is a route argument");
+		properties.TryGetProperty("path", out _).Should().BeTrue("path is a command option");
+		properties.TryGetProperty("zone", out _).Should().BeTrue("zone is a command option");
+		properties.TryGetProperty("svc", out _).Should().BeFalse("[FromServices] params must not leak into schema");
+		properties.TryGetProperty("svc2", out _).Should().BeFalse("[FromServices] params must not leak into schema");
+	}
+
+	private static Task<McpTestFixture> CreateContextFixtureAsync() =>
+		McpTestFixture.CreateAsync(app =>
+		{
+			app.Context("session", session =>
+			{
+				session.Map("list", ([FromServices] MarkerService svc) => "all")
+					.WithDescription("List sessions").ReadOnly();
+
+				session.Context("{id}", scoped =>
+				{
+					scoped.Map("info", (
+						string id,
+						[System.ComponentModel.Description("Process id")] int? pid,
+						[System.ComponentModel.Description("Show details")] bool? detailed,
+						[FromServices] MarkerService svc) =>
+						(object)new { id, pid, detailed }).ReadOnly();
+
+					scoped.Map("screenshot", async (
+						string id,
+						[System.ComponentModel.Description("File path")] string path,
+						[System.ComponentModel.Description("Crop region")] string? region,
+						[System.ComponentModel.Description("Named zone")] string? zone,
+						[FromServices] MarkerService svc,
+						[FromServices] AnotherService svc2) =>
+					{
+						await Task.CompletedTask.ConfigureAwait(false);
+						return (object)new { id, path, zone, region };
+					});
+				});
+			});
+		}, configureServices: services =>
+		{
+			services.AddSingleton<MarkerService>();
+			services.AddSingleton<AnotherService>();
+		});
+
+	private sealed class MarkerService
+	{
+		public static string Marker => "ok";
+	}
+
+	private sealed class AnotherService;
 
 	// ── Prompts ────────────────────────────────────────────────────────
 

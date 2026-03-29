@@ -231,6 +231,8 @@ public sealed partial class CoreReplApp
 				&& parameter.ParameterType != typeof(CancellationToken)
 				&& !routeParameterNames.Contains(parameter.Name!)
 				&& !IsFrameworkInjectedParameter(parameter.ParameterType)
+				&& parameter.GetCustomAttribute<FromServicesAttribute>() is null
+				&& parameter.GetCustomAttribute<FromContextAttribute>() is null
 				&& !Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
 			.Select(parameter => BuildDocumentationOption(route.OptionSchema, parameter));
 		var groupOptions = handlerParams
