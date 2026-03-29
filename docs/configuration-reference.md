@@ -83,7 +83,7 @@ Accessed via `ReplOptions.Output`.
 
 Built-in transformers: `human`, `json`, `xml`, `yaml`, `markdown`.
 
-### Methods
+### OutputOptions Methods
 
 - `AddTransformer(name, transformer)` — Register a custom output transformer.
 - `AddAlias(alias, format)` — Register a format alias.
@@ -108,7 +108,7 @@ Accessed via `ReplOptions.AmbientCommands`.
 - `ShowHistoryInHelp` (`bool`, default: `false`) — Show the `history` command in help output.
 - `ShowCompleteInHelp` (`bool`, default: `false`) — Show the `complete` command in help output.
 
-### Methods
+### AmbientCommandOptions Methods
 
 - `MapAmbient(name, handler, description)` — Register a custom ambient command.
 

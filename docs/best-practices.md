@@ -3,6 +3,7 @@
 ## Use rich parameter types
 
 Prefer typed route constraints over raw strings. Typed parameters give you:
+
 - Automatic validation at route matching time
 - Better help text and MCP schema generation
 - Correct .NET types in handler parameters
@@ -21,6 +22,7 @@ app.Map("user {id}", (string id) => int.Parse(id));
 Available types: `int`, `long`, `bool`, `email`, `uri`, `url`, `date`, `datetime`, `timespan`, `guid`, and implicit `FileInfo`/`DirectoryInfo`. See [Route System](route-system.md).
 
 For temporal queries, use `ReplDateRange` for human-friendly range syntax:
+
 ```csharp
 app.Map("logs {range}", (ReplDateRange range) => ...);
 // Accepts: "today", "last-7d", "2024-01-01..2024-03-01"
@@ -59,12 +61,14 @@ var app = ReplApp.Create(services =>
 ```
 
 Use `[FromServices]` only when disambiguation is needed (e.g., same type available from both context and DI). Otherwise, implicit injection works:
+
 ```csharp
 app.Map("show", static (IContactStore store) => store.All());  // implicit
 app.Map("show", static ([FromServices] IContactStore store) => store.All());  // explicit (same result)
 ```
 
 Use `[FromContext]` to access route values from parent contexts:
+
 ```csharp
 app.Context("project {id:int}", project =>
 {
@@ -129,6 +133,7 @@ public sealed class ContactModule : IReplModule
 ```
 
 Mount modules in contexts, reuse across scopes:
+
 ```csharp
 app.Context("contacts", contacts => contacts.MapModule<ContactModule>());
 ```
@@ -136,6 +141,7 @@ app.Context("contacts", contacts => contacts.MapModule<ContactModule>());
 ## Use conditional module presence
 
 Control command visibility per runtime channel:
+
 ```csharp
 app.MapModule(
     new AdminModule(),
@@ -194,6 +200,7 @@ app.Map("clear", static async (IReplInteractionChannel ch, CancellationToken ct)
 ```
 
 Declare answer slots for interactive prompts so agents and `--answer:` flags can provide values:
+
 ```csharp
 app.Map("delete {id:int}", handler)
     .Destructive()
@@ -222,6 +229,7 @@ list.OutputText.Should().Contain("Alice");
 ## Polish the interactive experience
 
 Register ambient commands for common actions:
+
 ```csharp
 app.Options(o => o.AmbientCommands.MapAmbient(
     "clear",
@@ -231,6 +239,7 @@ app.Options(o => o.AmbientCommands.MapAmbient(
 ```
 
 Seed history for discoverability:
+
 ```csharp
 services.AddSingleton<IHistoryProvider>(new InMemoryHistoryProvider([
     "contacts list", "contacts add", "status"
@@ -238,6 +247,7 @@ services.AddSingleton<IHistoryProvider>(new InMemoryHistoryProvider([
 ```
 
 Use Spectre.Console for rich UI — prompts auto-upgrade transparently:
+
 ```csharp
 app.UseSpectreConsole();  // existing IReplInteractionChannel calls render as Spectre prompts
 ```

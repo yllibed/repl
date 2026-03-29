@@ -43,7 +43,7 @@ Interactive sessions maintain a **scope** — the current position in the comman
 
 Type the context name (plus any required route values) to navigate into it:
 
-```
+```text
 > user 42
 user(42)>
 ```
@@ -52,7 +52,7 @@ user(42)>
 
 Type `..` to move up one level:
 
-```
+```text
 user(42)> ..
 >
 ```
@@ -61,7 +61,7 @@ user(42)> ..
 
 Type `.` to return to the root scope regardless of depth:
 
-```
+```text
 user(42)/settings> .
 >
 ```

@@ -3,7 +3,7 @@
 This document describes the command execution pipeline in the Repl Toolkit,
 from raw input to final output. The pipeline is driven by `CoreReplApp.ExecuteCoreAsync`.
 
-```
+```text
 Input
   |
   v
@@ -238,7 +238,7 @@ Errors at each stage produce targeted diagnostics:
 When the application enters interactive mode (empty invocation or `--interactive`),
 execution follows a loop:
 
-```
+```text
 Prompt --> Input Tokenization --> History
   ^                                  |
   |                                  v
