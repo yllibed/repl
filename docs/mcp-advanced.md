@@ -18,6 +18,7 @@ This guide covers advanced MCP usage patterns for Repl apps:
 Most Repl MCP servers don't need any of this.
 
 Use the techniques in this page when:
+
 - Available tools depend on login state, tenant, feature flags, or workspace
 - The agent needs to know which directories it is allowed to work in
 - Your MCP client does not support native roots
@@ -30,6 +31,7 @@ If your tool list is static, stay with the default setup from [mcp-server.md](mc
 A **root** is a workspace or directory that the MCP client declares as being in scope for the session.
 
 Examples:
+
 - The folder the user opened in the editor
 - The project workspace attached to the agent
 - A set of directories the agent is allowed to inspect
@@ -73,6 +75,7 @@ app.MapModule(
 ```
 
 Typical session-aware conditions:
+
 - Roots are available
 - Soft roots were initialized
 - The current tenant or login is known
@@ -97,6 +100,7 @@ app.MapModule(
 ```
 
 This is the simplest option when:
+
 - the command exists only to help an agent initialize MCP session state
 - the command depends directly on MCP capabilities
 - showing it in CLI or interactive Repl would be confusing
@@ -151,6 +155,7 @@ This pattern is often better than making everything MCP-only.
 When a command needs a working directory or workspace, design it around a **workspace resolution strategy** instead of assuming one single source.
 
 That usually makes the command:
+
 - more reusable
 - easier to test
 - usable from CLI, hosted sessions, and MCP
@@ -217,17 +222,20 @@ When enabled:
 3. Later `tools/list` calls return the real tool set
 
 This lets limited clients continue operating:
+
 - `discover_tools` returns the current real tools and schemas
 - `call_tool` invokes a real tool by name and arguments
 
 Use this only when you need it.
 
 Good candidates:
+
 - Tools appear after authentication
 - Tools depend on roots or soft roots
 - Tools vary by session or runtime context
 
 Avoid it when:
+
 - Your tool list is static
 - Your client already handles `list_changed` correctly
 
@@ -245,6 +253,7 @@ Avoid it when:
 ### The agent doesn't see tools that should appear later
 
 Check:
+
 - Your app calls `InvalidateRouting()` when session-driven state changes
 - The client actually refreshes after `list_changed`
 - `DynamicToolCompatibility` is enabled if the client is weak on dynamic discovery
@@ -254,6 +263,7 @@ If needed, see [mcp-server.md](mcp-server.md#troubleshooting) for the quick chec
 ### The agent doesn't know which workspace to use
 
 Check:
+
 - Whether the client supports native roots
 - Whether a roots-aware tool can inspect `IMcpClientRoots`
 - Whether you need a soft-roots init tool
@@ -261,6 +271,7 @@ Check:
 ### My module predicate depends on roots but never activates
 
 Check:
+
 - Whether the client actually advertises roots support
 - Whether you need `await roots.GetAsync(...)` in a handler rather than only a predicate
 - Whether soft roots are a better fit for that client

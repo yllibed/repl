@@ -12,6 +12,7 @@ When `--help` is requested, `HelpTextBuilder` determines what to display:
    - Groups commands hierarchically
 
 The decision flow:
+
 - Try exact match on registered routes (`IsExactMatch()`)
 - Try prefix match (`MatchesPrefix()`)
 - Check for dynamic continuations at next segment level
@@ -45,6 +46,7 @@ var model = app.CreateDocumentationModel();
 ```
 
 Each `ReplDocCommand` includes:
+
 - Route template, description, details
 - Arguments (from dynamic segments) with types and constraints
 - Options (from handler parameters) with aliases, defaults, arity
@@ -52,6 +54,7 @@ Each `ReplDocCommand` includes:
 - Behavioral flags (read-only, destructive, idempotent, etc.)
 
 This model powers:
+
 - `--help` text rendering
 - MCP tool/resource/prompt schema generation
 - Shell completion candidate generation

@@ -9,6 +9,7 @@ This guide covers advanced transport and hosting scenarios beyond the default st
 The MCP protocol is JSON-RPC over stdin/stdout. The `TransportFactory` option lets you replace the physical transport while keeping the same protocol.
 
 Use this for:
+
 - WebSocket bridges
 - Named pipes
 - SSH tunnels
@@ -64,6 +65,7 @@ You can then pass those options to the MCP SDK's HTTP integration.
 ## Session isolation
 
 Each connection or HTTP session is isolated:
+
 - its own MCP session
 - its own I/O capture
 - its own session-aware routing state

@@ -71,6 +71,7 @@ execution.InteractionEvents
 ### Timeline events
 
 `TimelineEvents` includes:
+
 - `OutputWrittenEvent`
 - `InteractionObservedEvent`
 - `ResultProducedEvent`
@@ -113,6 +114,7 @@ var all = await host.QuerySessionsAsync();
 ```
 
 Fields available on `SessionSnapshot`:
+
 - `SessionId`
 - `Transport`
 - `Remote`

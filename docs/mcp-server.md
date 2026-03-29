@@ -5,6 +5,7 @@ Expose your Repl command graph as an [MCP](https://modelcontextprotocol.io) (Mod
 See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working demo.
 
 Related guides:
+
 - [mcp-advanced.md](mcp-advanced.md) for roots, soft roots, and dynamic tool patterns
 - [mcp-transports.md](mcp-transports.md) for custom transports and HTTP hosting
 - [mcp-internals.md](mcp-internals.md) for concepts and under-the-hood behavior
@@ -73,6 +74,7 @@ app.Map("wizard", handler).AutomationHidden();                    // excluded fr
 | `.AutomationHidden()` | _(excluded from list)_ | Not visible to agents at all |
 
 **`OpenWorld`** signals that the tool reaches beyond the MCP server boundary — network calls, third-party APIs, filesystem, cloud resources. Agents use this for:
+
 - **Latency expectations** — the call may be slow, plan accordingly
 - **Failure handling** — the call may fail for reasons outside the agent's control (network, rate limits)
 - **Security scope** — the action has effects beyond the local app. An agent with strict policies may treat `OpenWorld` + `Destructive` (e.g. deleting a cloud resource) differently from a purely local `Destructive` operation
@@ -82,6 +84,7 @@ app.Map("wizard", handler).AutomationHidden();                    // excluded fr
 ### Why annotations matter
 
 When a tool has **no annotations**, agents must assume the worst case: potentially destructive, non-idempotent, stateful. This means:
+
 - Every call requires user confirmation
 - No parallel execution
 - No automatic retries
@@ -137,6 +140,7 @@ app.Map("deploy {env}", handler)
 | Parameters | Any types | Any types | All optional (MCP constraint) |
 
 **When to use each:**
+
 - **Tool**: operations that change state (`add`, `delete`, `deploy`, `import`)
 - **Resource**: data sources an agent should consult before acting (`contacts`, `config`, `status`)
 - **Prompt**: reusable instruction templates that shape agent behavior (`summarize-data`, `review-changes`, `troubleshoot`)
@@ -252,6 +256,7 @@ app.Map("import", async (IReplInteractionChannel interaction, CancellationToken 
 In MCP mode, each tool call runs in an isolated session. Repl commands should communicate through return values and `IReplInteractionChannel`, not through `Console.*`.
 
 This is not just a style preference:
+
 - In normal Repl code, `Console.*` bypasses the framework's output model
 - In MCP mode, some console writes can corrupt the protocol stream
 - Even when captured, ad-hoc console output makes tool results ambiguous and harder to consume correctly
@@ -326,6 +331,7 @@ app.UseMcpServer(o =>
 ### New tools are not visible to the agent
 
 Check:
+
 - Whether your app calls `InvalidateRouting()` when the effective command graph changes
 - Whether the MCP client actually refreshes after `notifications/tools/list_changed`
 - Whether your tool list is truly dynamic per session
@@ -337,6 +343,7 @@ If your client seems to ignore dynamic tool refreshes, see [mcp-advanced.md](mcp
 Some MCP clients do not support native roots.
 
 If you need workspace-aware behavior:
+
 - Use `IMcpClientRoots` when native roots are supported
 - Add a soft-roots initialization tool when they are not
 
@@ -345,6 +352,7 @@ See [mcp-advanced.md](mcp-advanced.md) for the full pattern.
 ### I need to understand why this behaves that way
 
 See [mcp-internals.md](mcp-internals.md) for:
+
 - what roots are
 - how session-aware routing works
 - why `list_changed` is not always enough
@@ -388,6 +396,7 @@ Feature support varies across agent clients. The table below reflects the state 
 | Elicitation | — | — | — | Yes | — | — | ~11% |
 
 **Implications:**
+
 - `PrefillThenFail` is the safest default (works with all clients)
 - `PrefillThenElicitation` provides the best UX but requires elicitation support, degrading gracefully through sampling then failure
 - Resources should be annotated `.ReadOnly()` as well, so they're always accessible as tools even when the client doesn't support resources
@@ -612,6 +621,7 @@ await app.RunAsync(args);
 ```
 
 MCP exposure for this example:
+
 - **Tool** `contacts` + **Resource** `repl://contacts` (explicit `AsResource()`)
 - **Tool** `contact` + **Resource template** `repl://contact/{id}` (auto-promoted via `ReadOnly`)
 - **Tool** `contact_add` (open world)

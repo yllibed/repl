@@ -51,6 +51,7 @@ The framework resolves ANSI support through an 8-step chain (highest priority fi
 8. **Default** — enabled
 
 Configure explicitly:
+
 ```csharp
 app.Options(o => o.Output.AnsiMode = AnsiMode.Never);  // force off
 // or

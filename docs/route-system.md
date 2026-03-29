@@ -12,6 +12,7 @@ app.Map("item {id?}", handler);         // optional trailing segment
 ```
 
 Syntax: `{name}`, `{name:type}`, `{name?}`, `{name:type?}`
+
 - Optional segments must be trailing (required cannot follow optional)
 - One constraint per segment (no multiple `:type` per segment)
 
@@ -38,6 +39,7 @@ Complete table of built-in constraint types:
 | `guid` | `Guid` | GUID | `"123e4567-e89b-..."` |
 
 Implicit types (inferred from handler parameter type, not usable as constraint names):
+
 - `FileInfo` — file path
 - `DirectoryInfo` — directory path
 - `ReplDateRange`, `ReplDateTimeRange`, `ReplDateTimeOffsetRange` — range syntax with `..` and `@`
@@ -89,6 +91,7 @@ Handler parameters are resolved in this order:
 9. Null — for nullable types without other source
 
 Binding mode can be controlled per parameter:
+
 - `OptionAndPositional` (default) — accept from both `--name` and positional
 - `OptionOnly` — require `--name` form
 - `ArgumentOnly` — require positional form
