@@ -73,6 +73,41 @@ app.Context("project {id:int}", project =>
 });
 ```
 
+## Group related options with `[ReplOptionsGroup]`
+
+When a command has many options, group them into a class instead of listing them all as handler parameters. This keeps handlers clean and makes option sets reusable across commands.
+
+```csharp
+[ReplOptionsGroup]
+public class PagingOptions
+{
+    [ReplOption(Aliases = ["-n"])]
+    public int Limit { get; set; } = 20;
+
+    [ReplOption]
+    public int Offset { get; set; }
+}
+
+[ReplOptionsGroup]
+public class FilterOptions
+{
+    [ReplOption(Aliases = ["-q"])]
+    public string? Query { get; set; }
+
+    [ReplOption]
+    public bool IncludeArchived { get; set; }
+}
+```
+
+Inject them directly into handlers — the framework binds each property from parsed options:
+
+```csharp
+app.Map("list", static (IContactStore store, PagingOptions paging, FilterOptions filter) =>
+    store.Query(filter.Query, filter.IncludeArchived, paging.Offset, paging.Limit));
+```
+
+Options groups compose well — you can combine multiple groups in the same handler, and reuse them across different commands.
+
 ## Structure commands with modules
 
 Use `IReplModule` for reusable command groups. Modules keep command definitions cohesive and composable.
