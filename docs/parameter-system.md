@@ -132,6 +132,34 @@ This same schema drives:
 - short-option bundling (`-abc` -> `-a -b -c`) is not enabled implicitly
 - reusable options groups and temporal range literals are first-class in Repl Toolkit, while System.CommandLine typically requires custom composition/parsing for equivalent behavior
 
+## Answer slots
+
+Commands that use interactive prompts (`AskConfirmationAsync`, `AskChoiceAsync`, etc.) can declare **answer slots** to make those prompts visible in help text and MCP tool schemas.
+
+### Attribute form
+
+```csharp
+[Answer("confirm", "bool", Description = "Confirm the deletion")]
+[Answer("name", Description = "Override name")]
+static async Task Delete(IReplInteractionChannel interaction, int id)
+{
+    var ok = await interaction.AskConfirmationAsync("confirm", "Delete?");
+    // ...
+}
+```
+
+### Fluent form
+
+```csharp
+app.Map("delete {id:int}", handler)
+   .WithAnswer("confirm", "bool", "Confirm the deletion")
+   .WithAnswer("name", description: "Override name");
+```
+
+Answer slot types use the same constraint names as route parameters (`string`, `bool`, `int`, `guid`, `email`, etc.).
+Declared answer slots are surfaced in `--help` output and in MCP tool input schemas,
+allowing non-interactive callers (`--answer:confirm=true`) and AI agents to provide values programmatically.
+
 ## Notes
 
 - this document is intentionally focused on parameter-system behavior and tradeoffs

@@ -139,12 +139,15 @@ Progressive learning path — start with 01:
 | Configuration reference | [`docs/configuration-reference.md`](docs/configuration-reference.md) |
 | Interactive loop | [`docs/interactive-loop.md`](docs/interactive-loop.md) |
 | Output system | [`docs/output-system.md`](docs/output-system.md) |
+| Runtime channels | [`docs/runtime-channels.md`](docs/runtime-channels.md) |
+| Help system | [`docs/help-system.md`](docs/help-system.md) |
 | Interaction channel | [`docs/interaction.md`](docs/interaction.md) |
 | Terminal & session metadata | [`docs/terminal-metadata.md`](docs/terminal-metadata.md) |
 | Shell completion | [`docs/shell-completion.md`](docs/shell-completion.md) |
 | Testing toolkit | [`docs/testing-toolkit.md`](docs/testing-toolkit.md) |
 | MCP server (AI agents) | [`docs/mcp-server.md`](docs/mcp-server.md) |
 | Conditional module presence | [`docs/module-presence.md`](docs/module-presence.md) |
+| Best practices | [`docs/best-practices.md`](docs/best-practices.md) |
 | Comparison & migration | [`docs/comparison.md`](docs/comparison.md) |
 | Publishing & deployment | [`docs/publishing.md`](docs/publishing.md) |
 | Glossary | [`docs/glossary.md`](docs/glossary.md) |

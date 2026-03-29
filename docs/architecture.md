@@ -72,6 +72,24 @@
 	- Transport-native signaling (DTTERM push, Telnet NAWS/TERMINAL-TYPE) is preferred.
 	- `@@repl:*` control messages and out-of-band metadata are supported extension patterns.
 
+## CoreReplApp vs ReplApp
+
+The toolkit provides two application entry points for different scenarios.
+
+**CoreReplApp** (`Repl.Core`)
+- Zero external dependencies — pure .NET
+- No built-in DI container, no interactive defaults
+- Best for: libraries, embedded REPL, test harnesses, or apps that manage DI externally
+- Internally uses `ScopedMap` to implement nested contexts (each `Context()` call creates a scoped map that prefixes routes with the context path)
+
+**ReplApp** (`Repl.Defaults`)
+- Wraps `CoreReplApp` with `Microsoft.Extensions.DependencyInjection`
+- Provides `UseDefaultInteractive()`, `UseCliProfile()`, and other composition profiles
+- Lazily builds a shared `ServiceProvider` for module resolution and handler injection
+- Best for: standalone CLI/REPL applications with service layers
+
+**`InvalidateRouting()`** — call this when module presence conditions may have changed at runtime (e.g., feature flags toggled, dynamic module discovery). Increments the routing cache version so the next execution re-evaluates all module presence predicates.
+
 ## Related docs
 
 - Command reference: `docs/commands.md`
