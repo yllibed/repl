@@ -96,11 +96,25 @@ public sealed class ParsingOptions
 	/// <summary>
 	/// Registers a custom global option consumed before command routing.
 	/// </summary>
-	/// <typeparam name="T">Declared value type (metadata only for now).</typeparam>
+	/// <typeparam name="T">Declared value type.</typeparam>
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value metadata.</param>
-	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default)
+	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default) =>
+		AddGlobalOptionCore(name, typeof(T), aliases, defaultValue?.ToString());
+
+	/// <summary>
+	/// Registers a custom global option using a type name (for example: "int", "guid", "bool")
+	/// similar to route constraint names.
+	/// </summary>
+	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
+	/// <param name="typeName">Type name: "string", "int", "long", "bool", "guid", "uri", "date", "datetime", "timespan".</param>
+	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
+	/// <param name="defaultValue">Optional default value as string.</param>
+	public void AddGlobalOption(string name, string typeName, string[]? aliases = null, string? defaultValue = null) =>
+		AddGlobalOptionCore(name, ResolveTypeName(typeName), aliases, defaultValue);
+
+	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue)
 	{
 		name = string.IsNullOrWhiteSpace(name)
 			? throw new ArgumentException("Global option name cannot be empty.", nameof(name))
@@ -123,8 +137,26 @@ public sealed class ParsingOptions
 			Name: name,
 			CanonicalToken: normalizedCanonical,
 			Aliases: normalizedAliases,
-			DefaultValue: defaultValue?.ToString());
+			DefaultValue: defaultValue,
+			ValueType: valueType);
 	}
+
+	private static Type ResolveTypeName(string typeName) =>
+		(typeName ?? throw new ArgumentNullException(nameof(typeName))).ToLowerInvariant() switch
+		{
+			"string" or "alpha" => typeof(string),
+			"int" => typeof(int),
+			"long" => typeof(long),
+			"bool" => typeof(bool),
+			"guid" => typeof(Guid),
+			"uri" or "url" or "urn" => typeof(Uri),
+			"date" or "dateonly" or "date-only" => typeof(DateOnly),
+			"datetime" or "date-time" => typeof(DateTime),
+			"datetimeoffset" or "date-time-offset" => typeof(DateTimeOffset),
+			"time" or "timeonly" or "time-only" => typeof(TimeOnly),
+			"timespan" or "time-span" => typeof(TimeSpan),
+			_ => throw new ArgumentException($"Unknown type name '{typeName}'. Use a known name (string, int, long, bool, guid, uri, date, datetime, timespan) or the generic AddGlobalOption<T> overload.", nameof(typeName)),
+		};
 
 	private static string NormalizeLongToken(string name) =>
 		name.StartsWith("--", StringComparison.Ordinal)

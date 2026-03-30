@@ -33,13 +33,16 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private Delegate? _banner;
 	private readonly AsyncLocal<bool> _bannerRendered = new();
 	private readonly AsyncLocal<bool> _allBannersSuppressed = new();
+	private readonly GlobalOptionsSnapshot _globalOptionsSnapshot;
 
 	internal ReplOptions OptionsSnapshot => _options;
+	internal IGlobalOptionsAccessor GlobalOptionsAccessor => _globalOptionsSnapshot;
 	internal IReplExecutionObserver? ExecutionObserver { get; set; }
 
 	private CoreReplApp()
 	{
 		_options.Output.SetHostAnsiSupportResolver(() => _options.Capabilities.SupportsAnsi);
+		_globalOptionsSnapshot = new GlobalOptionsSnapshot(_options.Parsing);
 		_services = CreateDefaultServiceProvider();
 		_shellCompletionRuntime = new ShellCompletionRuntime(
 			_options,
@@ -416,6 +419,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		try
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
+			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions);
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
@@ -1399,6 +1403,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		{
 			[typeof(CoreReplApp)] = this,
 			[typeof(ICoreReplApp)] = this,
+			[typeof(IGlobalOptionsAccessor)] = _globalOptionsSnapshot,
 			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
 			[typeof(IReplInteractionChannel)] = new ConsoleInteractionChannel(
 				_options.Interaction, _options.Output,

@@ -20,6 +20,8 @@ public sealed class ReplApp : IReplApp
 	// as handler parameters resolved at runtime.
 	private ServiceProvider? _sharedProvider;
 
+	internal IServiceCollection ServiceDescriptors => _services;
+
 	private ReplApp(IServiceCollection services)
 	{
 		_services = services;
@@ -684,6 +686,7 @@ public sealed class ReplApp : IReplApp
 		services.TryAddSingleton<IReplIoContext, LiveReplIoContext>();
 		services.TryAddSingleton<ITerminalInfo>(
 			_ => new ConsoleTerminalInfo(core.OptionsSnapshot.Output));
+		services.TryAddSingleton(_ => core.GlobalOptionsAccessor);
 	}
 
 	private sealed class ScopedReplApp(ICoreReplApp map, ReplApp root) : IReplApp
