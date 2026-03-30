@@ -83,6 +83,8 @@ any routing takes place. Recognized options:
 - Custom global options registered through configuration
 
 These tokens are consumed and removed from the argument list before the next stage.
+Parsed custom global option values are stored in `IGlobalOptionsAccessor` (registered in DI),
+making them available to middleware, DI service factories, and handlers in subsequent stages.
 
 ### 2. Prefix Resolution
 

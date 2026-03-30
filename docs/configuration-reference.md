@@ -40,6 +40,22 @@ Accessed via `ReplOptions.Parsing`.
 
 - `AddRouteConstraint(name, predicate)` — Register a named route constraint.
 - `AddGlobalOption<T>(name, aliases, defaultValue)` — Register a global option available to all commands.
+- `AddGlobalOption(name, typeName, aliases, defaultValue)` — Register a global option using a type name string (`"int"`, `"bool"`, `"guid"`, etc.).
+
+### IGlobalOptionsAccessor
+
+Registered automatically in DI. Provides typed access to parsed global option values from middleware, DI factories, and handlers.
+
+- `GetValue<T>(name, defaultValue)` — Get typed value, falling back to registration default then caller default.
+- `GetRawValues(name)` — Get all raw string values (supports repeated options).
+- `HasValue(name)` — Check if the option was explicitly provided.
+- `GetOptionNames()` — Enumerate all option names with values.
+
+Values are updated after each global option parsing pass (per-invocation in interactive mode).
+
+### UseGlobalOptions&lt;T&gt;()
+
+Extension method on `ReplApp`. Registers a typed class whose public settable properties become global options. The class is available via DI, populated from parsed values. Property names are converted to kebab-case (`MaxRetries` → `--max-retries`). See [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers).
 
 ## InteractiveOptions
 

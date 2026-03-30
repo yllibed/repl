@@ -53,6 +53,59 @@ app.Map(
 
 Root help now includes a dedicated `Global Options:` section with built-ins plus custom options registered through `options.Parsing.AddGlobalOption<T>(...)`.
 
+### Accessing global options outside handlers
+
+Parsed global option values are available via `IGlobalOptionsAccessor`, registered in DI automatically. This enables access from middleware, DI service factories, and handlers:
+
+```csharp
+// Register a global option
+app.Options(o => o.Parsing.AddGlobalOption<string>("tenant"));
+
+// Access in middleware
+app.Use(async (ctx, next) =>
+{
+    var globals = ctx.Services.GetRequiredService<IGlobalOptionsAccessor>();
+    var tenant = globals.GetValue<string>("tenant");
+    await next();
+});
+
+// Access in a DI factory (lazy — resolved after parsing)
+services.AddSingleton<ITenantClient>(sp =>
+{
+    var globals = sp.GetRequiredService<IGlobalOptionsAccessor>();
+    return new TenantClient(globals.GetValue<string>("tenant", "default")!);
+});
+
+// Access in a handler
+app.Map("show", (IGlobalOptionsAccessor globals) =>
+    globals.GetValue<string>("tenant") ?? "none");
+```
+
+For applications with many global options, use `UseGlobalOptions<T>()` to register a typed class:
+
+```csharp
+public class MyGlobalOptions
+{
+    public string? Tenant { get; set; }
+    public int Port { get; set; } = 8080;
+}
+
+app.UseGlobalOptions<MyGlobalOptions>();
+
+// Access via DI
+app.Map("show", (MyGlobalOptions opts) => $"{opts.Tenant}:{opts.Port}");
+```
+
+Property names are converted to kebab-case option names (`Port` → `--port`). Use `[ReplOption]` on properties for custom names or aliases.
+
+You can also register global options using a type name string instead of a generic parameter:
+
+```csharp
+app.Options(o => o.Parsing.AddGlobalOption("port", "int"));
+```
+
+Supported type names: `string`, `int`, `long`, `bool`, `guid`, `uri`, `date`, `datetime`, `timespan`.
+
 ## Parse diagnostics model
 
 Command option parsing returns structured diagnostics through the internal `OptionParsingResult` model:
