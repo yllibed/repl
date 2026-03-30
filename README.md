@@ -125,6 +125,16 @@ Progressive learning path — each sample builds on the previous:
 | [Comparison & migration](docs/comparison.md) | [Publishing & deployment](docs/publishing.md) |
 | [Glossary](docs/glossary.md) | [Interactive docs & AI Q&A](https://deepwiki.com/yllibed/repl) |
 
+## AI-assisted development
+
+If you use an AI coding agent (Claude Code, Cursor, Windsurf, Copilot, Codex, OpenCode, etc.) to build your Repl Toolkit app, install [Context7](https://context7.com) to give it access to Repl Toolkit documentation and code snippets.
+
+**Library ID:** `/yllibed/repl`
+
+Most agents that support [MCP](https://modelcontextprotocol.io/) can use Context7 directly. Refer to your agent's documentation for MCP server configuration.
+
+> You can also explore the toolkit architecture and ask questions on [DeepWiki](https://deepwiki.com/yllibed/repl).
+
 ## Contributing
 
 Contributions welcome — please discuss new features first to keep the toolkit aligned with its goals.
