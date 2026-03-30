@@ -134,8 +134,8 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
-	[Description("AddGlobalOption with string type name works.")]
-	public void When_RegisteredWithStringTypeName_Then_GetValueConvertsCorrectly()
+	[Description("AddGlobalOption with string type name 'int' works.")]
+	public void When_RegisteredWithStringTypeName_Int_Then_GetValueConvertsCorrectly()
 	{
 		var parsing = new ParsingOptions();
 		parsing.AddGlobalOption("port", "int");
@@ -143,6 +143,203 @@ public sealed class Given_GlobalOptionsAccessor
 		sut.Update(Values(("port", "9090")));
 
 		sut.GetValue<int>("port").Should().Be(9090);
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'bool' works.")]
+	public void When_RegisteredWithStringTypeName_Bool_Then_GetValueConvertsCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("verbose", "bool");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("verbose", "true")));
+
+		sut.GetValue<bool>("verbose").Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'long' works.")]
+	public void When_RegisteredWithStringTypeName_Long_Then_GetValueConvertsCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("size", "long");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("size", "9999999999")));
+
+		sut.GetValue<long>("size").Should().Be(9_999_999_999L);
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'guid' works.")]
+	public void When_RegisteredWithStringTypeName_Guid_Then_GetValueConvertsCorrectly()
+	{
+		var id = Guid.NewGuid();
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("id", "guid");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("id", id.ToString())));
+
+		sut.GetValue<Guid>("id").Should().Be(id);
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'uri' works.")]
+	public void When_RegisteredWithStringTypeName_Uri_Then_GetValueConvertsCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("endpoint", "uri");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("endpoint", "https://example.com")));
+
+		sut.GetValue<Uri>("endpoint").Should().Be(new Uri("https://example.com"));
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'date' works.")]
+	public void When_RegisteredWithStringTypeName_Date_Then_GetValueConvertsCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("since", "date");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("since", "2026-03-30")));
+
+		sut.GetValue<DateOnly>("since").Should().Be(new DateOnly(2026, 3, 30));
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'timespan' works.")]
+	public void When_RegisteredWithStringTypeName_TimeSpan_Then_GetValueConvertsCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("timeout", "timespan");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("timeout", "00:05:00")));
+
+		sut.GetValue<TimeSpan>("timeout").Should().Be(TimeSpan.FromMinutes(5));
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'datetime' works.")]
+	public void When_RegisteredWithStringTypeName_DateTime_Then_GetValueConvertsCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("at", "datetime");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("at", "2026-03-30T14:00:00")));
+
+		sut.GetValue<DateTime>("at").Day.Should().Be(30);
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'string' works.")]
+	public void When_RegisteredWithStringTypeName_String_Then_GetValueReturnsIt()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("name", "string");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("name", "hello")));
+
+		sut.GetValue<string>("name").Should().Be("hello");
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with unknown type name throws ArgumentException.")]
+	public void When_RegisteredWithUnknownTypeName_Then_Throws()
+	{
+		var parsing = new ParsingOptions();
+
+		var act = () => parsing.AddGlobalOption("x", "foobar");
+
+		act.Should().Throw<ArgumentException>()
+			.Which.Message.Should().Contain("foobar");
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with case-variant type name works.")]
+	public void When_RegisteredWithUpperCaseTypeName_Then_ResolvesCorrectly()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("port", "INT");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("port", "443")));
+
+		sut.GetValue<int>("port").Should().Be(443);
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption preserves ValueType from generic overload.")]
+	public void When_RegisteredWithGenericOverload_Then_ValueTypeIsPreserved()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption<Guid>("id");
+
+		parsing.GlobalOptions["id"].ValueType.Should().Be(typeof(Guid));
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption preserves ValueType from string type name overload.")]
+	public void When_RegisteredWithStringTypeNameOverload_Then_ValueTypeIsPreserved()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("port", "int");
+
+		parsing.GlobalOptions["port"].ValueType.Should().Be(typeof(int));
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with custom route constraint type name resolves as string.")]
+	public void When_RegisteredWithCustomConstraintTypeName_Then_ResolvesAsString()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddRouteConstraint("hex", value => value.All(c => "0123456789abcdefABCDEF".Contains(c, StringComparison.Ordinal)));
+		parsing.AddGlobalOption("color", "hex");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("color", "ff00aa")));
+
+		sut.GetValue<string>("color").Should().Be("ff00aa");
+		parsing.GlobalOptions["color"].ValueType.Should().Be(typeof(string));
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with custom constraint that doesn't exist still throws.")]
+	public void When_RegisteredWithUnregisteredConstraintName_Then_Throws()
+	{
+		var parsing = new ParsingOptions();
+
+		var act = () => parsing.AddGlobalOption("x", "nonexistent");
+
+		act.Should().Throw<ArgumentException>()
+			.Which.Message.Should().Contain("nonexistent");
+	}
+
+	[TestMethod]
+	[Description("Duplicate global option name throws.")]
+	public void When_RegisteringDuplicateName_Then_Throws()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption<string>("tenant");
+
+		var act = () => parsing.AddGlobalOption("tenant", "int");
+
+		act.Should().Throw<InvalidOperationException>()
+			.Which.Message.Should().Contain("tenant");
+	}
+
+	[TestMethod]
+	[Description("GetValue with enum type converts string to enum.")]
+	public void When_EnumOptionParsed_Then_GetValueReturnsTypedEnum()
+	{
+		var sut = CreateAccessor<LogLevel>("level");
+		sut.Update(Values(("level", "Warning")));
+
+		sut.GetValue<LogLevel>("level").Should().Be(LogLevel.Warning);
+	}
+
+	private enum LogLevel
+	{
+		Info,
+		Warning,
+		Error,
 	}
 
 	private static GlobalOptionsSnapshot CreateAccessor(string name)

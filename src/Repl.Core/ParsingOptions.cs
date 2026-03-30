@@ -112,7 +112,7 @@ public sealed class ParsingOptions
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value as string.</param>
 	public void AddGlobalOption(string name, string typeName, string[]? aliases = null, string? defaultValue = null) =>
-		AddGlobalOptionCore(name, ResolveTypeName(typeName), aliases, defaultValue);
+		AddGlobalOptionCore(name, ResolveTypeName(typeName, _customRouteConstraints), aliases, defaultValue);
 
 	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue)
 	{
@@ -141,8 +141,13 @@ public sealed class ParsingOptions
 			ValueType: valueType);
 	}
 
-	private static Type ResolveTypeName(string typeName) =>
-		(typeName ?? throw new ArgumentNullException(nameof(typeName))).ToLowerInvariant() switch
+	private static Type ResolveTypeName(
+		string typeName,
+		Dictionary<string, Func<string, bool>> customConstraints)
+	{
+		ArgumentNullException.ThrowIfNull(typeName);
+
+		return typeName.ToLowerInvariant() switch
 		{
 			"string" or "alpha" => typeof(string),
 			"int" => typeof(int),
@@ -155,8 +160,12 @@ public sealed class ParsingOptions
 			"datetimeoffset" or "date-time-offset" => typeof(DateTimeOffset),
 			"time" or "timeonly" or "time-only" => typeof(TimeOnly),
 			"timespan" or "time-span" => typeof(TimeSpan),
-			_ => throw new ArgumentException($"Unknown type name '{typeName}'. Use a known name (string, int, long, bool, guid, uri, date, datetime, timespan) or the generic AddGlobalOption<T> overload.", nameof(typeName)),
+			_ when customConstraints.ContainsKey(typeName) => typeof(string),
+			_ => throw new ArgumentException(
+				$"Unknown type name '{typeName}'. Use a known name (string, int, long, bool, guid, uri, date, datetime, timespan), a registered custom route constraint, or the generic AddGlobalOption<T> overload.",
+				nameof(typeName)),
 		};
+	}
 
 	private static string NormalizeLongToken(string name) =>
 		name.StartsWith("--", StringComparison.Ordinal)
