@@ -140,6 +140,32 @@ public sealed class Given_GlobalOptionsAccessor
 		output.Text.Should().Contain("acme");
 	}
 
+	[TestMethod]
+	[Description("UseGlobalOptions<T> returns fresh values on each resolution (not stale singleton).")]
+	public async Task When_TypedOptionsResolvedMultipleTimes_Then_ReflectsLatestValues()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+		var results = new List<string>();
+		sut.Map("show", (TestGlobalOptions opts) =>
+		{
+			results.Add($"{opts.Tenant}:{opts.Port}");
+			return "ok";
+		});
+
+		// First invocation
+		ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "first", "--port", "1111", "--no-logo"]));
+
+		// Second invocation with different values
+		ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "second", "--port", "2222", "--no-logo"]));
+
+		results.Should().HaveCount(2);
+		results[0].Should().Be("first:1111");
+		results[1].Should().Be("second:2222");
+	}
+
 	private sealed record TenantConfig(string Name);
 
 	private sealed class TestGlobalOptions

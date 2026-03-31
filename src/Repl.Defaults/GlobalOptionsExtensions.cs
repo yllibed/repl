@@ -36,7 +36,7 @@ public static class GlobalOptionsExtensions
 			}
 		});
 
-		app.ServiceDescriptors.TryAddSingleton(sp =>
+		app.ServiceDescriptors.TryAddTransient(sp =>
 		{
 			var accessor = sp.GetRequiredService<IGlobalOptionsAccessor>();
 			return PopulateInstance<T>(accessor);
