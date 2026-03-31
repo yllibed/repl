@@ -2,12 +2,26 @@ namespace Repl;
 
 internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGlobalOptionsAccessor
 {
+	private IReadOnlyDictionary<string, IReadOnlyList<string>> _sessionBaseline =
+		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
 	private IReadOnlyDictionary<string, IReadOnlyList<string>> _currentValues =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 
+	internal void SetSessionBaseline()
+	{
+		_sessionBaseline = _currentValues;
+	}
+
 	internal void Update(IReadOnlyDictionary<string, IReadOnlyList<string>> parsedValues)
 	{
-		_currentValues = parsedValues;
+		var merged = new Dictionary<string, IReadOnlyList<string>>(_sessionBaseline, StringComparer.OrdinalIgnoreCase);
+		foreach (var (key, value) in parsedValues)
+		{
+			merged[key] = value;
+		}
+
+		_currentValues = merged;
 	}
 
 	public T? GetValue<T>(string name, T? defaultValue = default)

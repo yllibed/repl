@@ -420,6 +420,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
 			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions);
+			_globalOptionsSnapshot.SetSessionBaseline();
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };

@@ -106,6 +106,19 @@ app.Options(o => o.Parsing.AddGlobalOption("port", "int"));
 
 Supported type names: `string`, `int`, `long`, `bool`, `guid`, `uri`, `date`, `datetime`, `timespan`.
 
+### Session-sticky behavior in interactive mode
+
+Global options passed at CLI launch persist as session defaults throughout the interactive session. Per-command overrides are temporary — they apply to that single command, then the session defaults take effect again:
+
+```
+$ myapp --env staging         # launches interactive with env=staging
+> deploy                      # env=staging (inherited from session)
+> deploy --env prod           # env=prod (override for this command only)
+> status                      # env=staging (session default restored)
+```
+
+This eliminates the need to re-specify global options on every interactive command.
+
 ## Parse diagnostics model
 
 Command option parsing returns structured diagnostics through the internal `OptionParsingResult` model:

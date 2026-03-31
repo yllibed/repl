@@ -134,6 +134,70 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
+	[Description("Session baseline values persist when interactive command provides no override.")]
+	public void When_BaselineSet_Then_UpdateWithEmptyPreservesBaseline()
+	{
+		var sut = CreateAccessor("env");
+		sut.Update(Values(("env", "staging")));
+		sut.SetSessionBaseline();
+		sut.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+
+		sut.GetValue<string>("env").Should().Be("staging");
+	}
+
+	[TestMethod]
+	[Description("Per-command override takes precedence over session baseline.")]
+	public void When_BaselineSetAndOverridden_Then_OverrideTakesPrecedence()
+	{
+		var sut = CreateAccessor("env");
+		sut.Update(Values(("env", "staging")));
+		sut.SetSessionBaseline();
+		sut.Update(Values(("env", "prod")));
+
+		sut.GetValue<string>("env").Should().Be("prod");
+	}
+
+	[TestMethod]
+	[Description("Session baseline is restored after override is gone.")]
+	public void When_OverrideRemovedOnNextUpdate_Then_BaselineRestored()
+	{
+		var sut = CreateAccessor("env");
+		sut.Update(Values(("env", "staging")));
+		sut.SetSessionBaseline();
+
+		// Command with override
+		sut.Update(Values(("env", "prod")));
+		sut.GetValue<string>("env").Should().Be("prod");
+
+		// Next command without override — baseline restored
+		sut.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+		sut.GetValue<string>("env").Should().Be("staging");
+	}
+
+	[TestMethod]
+	[Description("Override does not mutate the session baseline.")]
+	public void When_OverrideApplied_Then_BaselineRemainsUnchanged()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption<string>("env");
+		parsing.AddGlobalOption<int>("port");
+		var sut = new GlobalOptionsSnapshot(parsing);
+
+		sut.Update(Values(("env", "staging"), ("port", "3000")));
+		sut.SetSessionBaseline();
+
+		// Override only env
+		sut.Update(Values(("env", "prod")));
+		sut.GetValue<string>("env").Should().Be("prod");
+		sut.GetValue<int>("port").Should().Be(3000); // baseline preserved
+
+		// Next command — both baseline values restored
+		sut.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+		sut.GetValue<string>("env").Should().Be("staging");
+		sut.GetValue<int>("port").Should().Be(3000);
+	}
+
+	[TestMethod]
 	[Description("AddGlobalOption with string type name 'int' works.")]
 	public void When_RegisteredWithStringTypeName_Int_Then_GetValueConvertsCorrectly()
 	{
