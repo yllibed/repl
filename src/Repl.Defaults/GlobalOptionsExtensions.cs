@@ -24,8 +24,10 @@ public static class GlobalOptionsExtensions
 	{
 		ArgumentNullException.ThrowIfNull(app);
 
+		ParsingOptions? capturedParsing = null;
 		app.Options(options =>
 		{
+			capturedParsing = options.Parsing;
 			var prototype = new T();
 			foreach (var property in GetOptionProperties<T>())
 			{
@@ -41,13 +43,13 @@ public static class GlobalOptionsExtensions
 		app.ServiceDescriptors.TryAddTransient(sp =>
 		{
 			var accessor = sp.GetRequiredService<IGlobalOptionsAccessor>();
-			return PopulateInstance<T>(accessor);
+			return PopulateInstance<T>(accessor, capturedParsing!.NumericFormatProvider);
 		});
 
 		return app;
 	}
 
-	internal static T PopulateInstance<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(IGlobalOptionsAccessor accessor)
+	internal static T PopulateInstance<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(IGlobalOptionsAccessor accessor, IFormatProvider numericFormatProvider)
 		where T : class, new()
 	{
 		var instance = new T();
@@ -70,7 +72,7 @@ public static class GlobalOptionsExtensions
 			var value = ParameterValueConverter.ConvertSingle(
 				rawValues[0],
 				property.PropertyType,
-				System.Globalization.CultureInfo.InvariantCulture);
+				numericFormatProvider);
 			property.SetValue(instance, value);
 		}
 

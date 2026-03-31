@@ -104,15 +104,18 @@ public sealed class ParsingOptions
 		AddGlobalOptionCore(name, typeof(T), aliases, defaultValue?.ToString());
 
 	/// <summary>
-	/// Registers a custom global option using a type name (for example: "int", "guid", "bool")
-	/// similar to route constraint names.
+	/// Registers a custom global option using a type or constraint name
+	/// (for example: "int", "guid", "bool", or a registered custom route constraint name).
 	/// </summary>
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
-	/// <param name="typeName">Type name: "string", "int", "long", "bool", "guid", "uri", "date", "datetime", "timespan".</param>
+	/// <param name="constraintOrTypeName">
+	/// Built-in type name ("string", "int", "long", "bool", "guid", "uri", "date", "datetime", "timespan")
+	/// or a registered custom route constraint name. Custom constraints resolve to <c>string</c>.
+	/// </param>
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value as string.</param>
-	public void AddGlobalOption(string name, string typeName, string[]? aliases = null, string? defaultValue = null) =>
-		AddGlobalOptionCore(name, ResolveTypeName(typeName, _customRouteConstraints), aliases, defaultValue);
+	public void AddGlobalOption(string name, string constraintOrTypeName, string[]? aliases = null, string? defaultValue = null) =>
+		AddGlobalOptionCore(name, ResolveConstraintOrTypeName(constraintOrTypeName, _customRouteConstraints), aliases, defaultValue);
 
 	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue)
 	{
@@ -141,13 +144,13 @@ public sealed class ParsingOptions
 			ValueType: valueType);
 	}
 
-	private static Type ResolveTypeName(
-		string typeName,
+	private static Type ResolveConstraintOrTypeName(
+		string constraintOrTypeName,
 		Dictionary<string, Func<string, bool>> customConstraints)
 	{
-		ArgumentNullException.ThrowIfNull(typeName);
+		ArgumentNullException.ThrowIfNull(constraintOrTypeName);
 
-		return typeName.ToLowerInvariant() switch
+		return constraintOrTypeName.ToLowerInvariant() switch
 		{
 			"string" or "alpha" => typeof(string),
 			"int" => typeof(int),
@@ -160,10 +163,10 @@ public sealed class ParsingOptions
 			"datetimeoffset" or "date-time-offset" => typeof(DateTimeOffset),
 			"time" or "timeonly" or "time-only" => typeof(TimeOnly),
 			"timespan" or "time-span" => typeof(TimeSpan),
-			_ when customConstraints.ContainsKey(typeName) => typeof(string),
+			_ when customConstraints.ContainsKey(constraintOrTypeName) => typeof(string),
 			_ => throw new ArgumentException(
-				$"Unknown type name '{typeName}'. Use a known name (string, int, long, bool, guid, uri, date, datetime, timespan), a registered custom route constraint, or the generic AddGlobalOption<T> overload.",
-				nameof(typeName)),
+				$"Unknown type or constraint name '{constraintOrTypeName}'. Use a known name (string, int, long, bool, guid, uri, date, datetime, timespan), a registered custom route constraint, or the generic AddGlobalOption<T> overload.",
+				nameof(constraintOrTypeName)),
 		};
 	}
 

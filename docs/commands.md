@@ -98,13 +98,13 @@ app.Map("show", (MyGlobalOptions opts) => $"{opts.Tenant}:{opts.Port}");
 
 Property names are converted to kebab-case option names (`Port` → `--port`). Use `[ReplOption]` on properties for custom names or aliases.
 
-You can also register global options using a type name string instead of a generic parameter:
+You can also register global options using a type or constraint name instead of a generic parameter:
 
 ```csharp
 app.Options(o => o.Parsing.AddGlobalOption("port", "int"));
 ```
 
-Supported type names: `string`, `int`, `long`, `bool`, `guid`, `uri`, `date`, `datetime`, `timespan`.
+Built-in type names: `string`, `alpha`, `int`, `long`, `bool`, `guid`, `uri`/`url`/`urn`, `date`/`dateonly`/`date-only`, `datetime`/`date-time`, `datetimeoffset`/`date-time-offset`, `time`/`timeonly`/`time-only`, `timespan`/`time-span`. Custom route constraint names are also accepted and resolve to `string`.
 
 ### Session-sticky behavior in interactive mode
 

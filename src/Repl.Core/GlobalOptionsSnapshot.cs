@@ -2,11 +2,13 @@ namespace Repl;
 
 internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGlobalOptionsAccessor
 {
-	private IReadOnlyDictionary<string, IReadOnlyList<string>> _sessionBaseline =
+	private volatile IReadOnlyDictionary<string, IReadOnlyList<string>> _sessionBaseline =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 
-	private IReadOnlyDictionary<string, IReadOnlyList<string>> _currentValues =
+	private volatile IReadOnlyDictionary<string, IReadOnlyList<string>> _currentValues =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+	private volatile HashSet<string> _explicitKeys = new(StringComparer.OrdinalIgnoreCase);
 
 	internal void SetSessionBaseline()
 	{
@@ -15,6 +17,7 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 
 	internal void Update(IReadOnlyDictionary<string, IReadOnlyList<string>> parsedValues)
 	{
+		_explicitKeys = new HashSet<string>(parsedValues.Keys, StringComparer.OrdinalIgnoreCase);
 		var merged = new Dictionary<string, IReadOnlyList<string>>(_sessionBaseline, StringComparer.OrdinalIgnoreCase);
 		foreach (var (key, value) in parsedValues)
 		{
@@ -61,7 +64,7 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-		return _currentValues.ContainsKey(name);
+		return _explicitKeys.Contains(name);
 	}
 
 	public IEnumerable<string> GetOptionNames() => _currentValues.Keys;

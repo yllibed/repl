@@ -146,6 +146,31 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
+	[Description("HasValue returns false for baseline-only keys not explicitly provided.")]
+	public void When_BaselineKeyNotExplicitlyProvided_Then_HasValueReturnsFalse()
+	{
+		var sut = CreateAccessor("env");
+		sut.Update(Values(("env", "staging")));
+		sut.SetSessionBaseline();
+		sut.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+
+		sut.HasValue("env").Should().BeFalse();
+		sut.GetValue<string>("env").Should().Be("staging"); // still accessible via GetValue
+	}
+
+	[TestMethod]
+	[Description("HasValue returns true when option is explicitly provided even with baseline.")]
+	public void When_BaselineKeyExplicitlyOverridden_Then_HasValueReturnsTrue()
+	{
+		var sut = CreateAccessor("env");
+		sut.Update(Values(("env", "staging")));
+		sut.SetSessionBaseline();
+		sut.Update(Values(("env", "prod")));
+
+		sut.HasValue("env").Should().BeTrue();
+	}
+
+	[TestMethod]
 	[Description("Per-command override takes precedence over session baseline.")]
 	public void When_BaselineSetAndOverridden_Then_OverrideTakesPrecedence()
 	{

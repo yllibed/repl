@@ -78,6 +78,7 @@ internal static class GlobalOptionParser
 				ref index,
 				argument,
 				customTokenMap,
+				parsingOptions.GlobalOptions,
 				customGlobalValues))
 			{
 				continue;
@@ -164,6 +165,7 @@ internal static class GlobalOptionParser
 		ref int index,
 		string argument,
 		IReadOnlyDictionary<string, string> tokenMap,
+		IReadOnlyDictionary<string, GlobalOptionDefinition> definitions,
 		Dictionary<string, List<string>> customGlobalValues)
 	{
 		if (!TryResolveCustomGlobalName(argument, tokenMap, out var optionName, out var inlineValue))
@@ -171,8 +173,10 @@ internal static class GlobalOptionParser
 			return false;
 		}
 
+		var isBool = definitions.TryGetValue(optionName, out var def) && def.ValueType == typeof(bool);
+
 		var value = inlineValue;
-		if (value is null
+		if (value is null && !isBool
 			&& index + 1 < args.Count
 			&& (!args[index + 1].StartsWith('-') || IsSignedNumericLiteral(args[index + 1])))
 		{

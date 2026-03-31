@@ -73,4 +73,36 @@ public sealed class Given_GlobalOptionParser
 		parsed.CustomGlobalNamedOptions.Should().ContainKey("tenant");
 		parsed.CustomGlobalNamedOptions["tenant"].Should().ContainSingle().Which.Should().Be("-1");
 	}
+
+	[TestMethod]
+	[Description("Bool-typed global option does not consume next positional token.")]
+	public void When_BoolGlobalOptionFollowedByCommand_Then_CommandNotConsumed()
+	{
+		var parsingOptions = new ParsingOptions();
+		parsingOptions.AddGlobalOption<bool>("verbose");
+
+		var parsed = GlobalOptionParser.Parse(
+			["--verbose", "deploy"],
+			new OutputOptions(),
+			parsingOptions);
+
+		parsed.RemainingTokens.Should().Equal("deploy");
+		parsed.CustomGlobalNamedOptions["verbose"].Should().ContainSingle().Which.Should().Be("true");
+	}
+
+	[TestMethod]
+	[Description("Bool-typed global option with inline value still works.")]
+	public void When_BoolGlobalOptionWithInlineValue_Then_ValueIsUsed()
+	{
+		var parsingOptions = new ParsingOptions();
+		parsingOptions.AddGlobalOption<bool>("verbose");
+
+		var parsed = GlobalOptionParser.Parse(
+			["--verbose=false", "deploy"],
+			new OutputOptions(),
+			parsingOptions);
+
+		parsed.RemainingTokens.Should().Equal("deploy");
+		parsed.CustomGlobalNamedOptions["verbose"].Should().ContainSingle().Which.Should().Be("false");
+	}
 }

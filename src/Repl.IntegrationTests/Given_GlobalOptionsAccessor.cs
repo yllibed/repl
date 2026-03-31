@@ -181,6 +181,35 @@ public sealed class Given_GlobalOptionsAccessor
 		results[1].Should().Be("second:2222");
 	}
 
+	[TestMethod]
+	[Description("UseGlobalOptions<T> uses configured NumericFormatProvider, not invariant culture.")]
+	public void When_NumericCultureIsCurrent_Then_TypedOptionsUsesConfiguredCulture()
+	{
+		var previousCulture = System.Globalization.CultureInfo.CurrentCulture;
+		try
+		{
+			// Set a culture that uses comma as decimal separator
+			System.Globalization.CultureInfo.CurrentCulture =
+				new System.Globalization.CultureInfo("fr-FR");
+
+			var sut = ReplApp.Create();
+			sut.Options(o => o.Parsing.NumericCulture = NumericParsingCulture.Current);
+			sut.UseGlobalOptions<DecimalGlobalOptions>();
+			sut.Map("show", (DecimalGlobalOptions opts) => opts.Rate.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+			// fr-FR uses comma, but we pass "1,5" which should parse with current culture
+			var output = ConsoleCaptureHelper.Capture(
+				() => sut.Run(["show", "--rate", "1,5", "--no-logo"]));
+
+			output.ExitCode.Should().Be(0);
+			output.Text.Should().Contain("1.5");
+		}
+		finally
+		{
+			System.Globalization.CultureInfo.CurrentCulture = previousCulture;
+		}
+	}
+
 	private sealed record TenantConfig(string Name);
 
 	private sealed class TestGlobalOptions
@@ -188,5 +217,10 @@ public sealed class Given_GlobalOptionsAccessor
 		public string? Tenant { get; set; }
 
 		public int Port { get; set; } = 8080;
+	}
+
+	private sealed class DecimalGlobalOptions
+	{
+		public double Rate { get; set; }
 	}
 }
