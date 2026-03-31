@@ -26,13 +26,15 @@ public static class GlobalOptionsExtensions
 
 		app.Options(options =>
 		{
+			var prototype = new T();
 			foreach (var property in GetOptionProperties<T>())
 			{
 				var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
 				var name = optionAttr?.Name ?? ToKebabCase(property.Name);
 				var aliases = optionAttr?.Aliases;
+				var defaultValue = property.GetValue(prototype)?.ToString();
 
-				options.Parsing.AddGlobalOptionCore(name, property.PropertyType, aliases, defaultValue: null);
+				options.Parsing.AddGlobalOptionCore(name, property.PropertyType, aliases, defaultValue);
 			}
 		});
 

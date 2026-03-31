@@ -111,6 +111,21 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
+	[Description("UseGlobalOptions<T> property defaults are visible via IGlobalOptionsAccessor.")]
+	public void When_UsingTypedGlobalOptionsWithoutValues_Then_AccessorReturnsPropertyDefaults()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+		sut.Map("show", (IGlobalOptionsAccessor globals) => globals.GetValue<int>("port"));
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("8080");
+	}
+
+	[TestMethod]
 	[Description("Global option registered with string type name works end to end.")]
 	public void When_GlobalOptionRegisteredWithStringTypeName_Then_TypedAccessWorks()
 	{
