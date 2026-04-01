@@ -105,7 +105,7 @@ services.AddSingleton<ITenantClient>(sp =>
 });
 ```
 
-Note: DI singleton factories are resolved lazily, so the values are available after global option parsing completes. See [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers).
+Note: DI singleton factories are resolved lazily, so the values are available after global option parsing completes. However, singleton factories capture values once — in interactive mode, global options can change between commands. If your service needs to see updated values per command, inject `IGlobalOptionsAccessor` directly and read values at call time instead of capturing them in a factory. See [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers).
 
 ## Group related options with `[ReplOptionsGroup]`
 

@@ -219,8 +219,28 @@ public sealed class Given_GlobalOptionsAccessor
 		public int Port { get; set; } = 8080;
 	}
 
+	[TestMethod]
+	[Description("UseGlobalOptions<T> converts consecutive uppercase property names to kebab-case correctly.")]
+	public void When_PropertyHasConsecutiveUppercase_Then_KebabCaseIsCorrect()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<AcronymGlobalOptions>();
+		sut.Map("show", (AcronymGlobalOptions opts) => $"{opts.XMLPort}");
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--xml-port", "9090", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("9090");
+	}
+
 	private sealed class DecimalGlobalOptions
 	{
 		public double Rate { get; set; }
+	}
+
+	private sealed class AcronymGlobalOptions
+	{
+		public int XMLPort { get; set; }
 	}
 }

@@ -97,7 +97,15 @@ public static class GlobalOptionsExtensions
 			var c = pascalCase[i];
 			if (char.IsUpper(c) && i > 0)
 			{
-				builder.Append('-');
+				// Only insert hyphen at the start of an uppercase run or
+				// at the transition from an uppercase run to a lowercase char.
+				// "XMLPort" → "xml-port", "MaxRetries" → "max-retries"
+				var prevIsUpper = char.IsUpper(pascalCase[i - 1]);
+				var nextIsLower = i + 1 < pascalCase.Length && char.IsLower(pascalCase[i + 1]);
+				if (!prevIsUpper || nextIsLower)
+				{
+					builder.Append('-');
+				}
 			}
 
 			builder.Append(char.ToLowerInvariant(c));
