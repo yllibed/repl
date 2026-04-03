@@ -408,6 +408,17 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		string[] args,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
+		ExecuteCoreAsync(args, serviceProvider, cancellationToken: cancellationToken);
+
+	/// <summary>
+	/// Executes a nested command invocation that preserves the session baseline.
+	/// Used by MCP tool calls where the global options from the initial session
+	/// must remain in effect even though the sub-invocation tokens don't contain them.
+	/// </summary>
+	internal ValueTask<int> RunSubInvocationAsync(
+		string[] args,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken = default) =>
 		ExecuteCoreAsync(args, serviceProvider, isSubInvocation: true, cancellationToken);
 
 	private async ValueTask<int> ExecuteCoreAsync(
