@@ -77,6 +77,36 @@ app.Context("project {id:int}", project =>
 });
 ```
 
+## Use global options for cross-cutting configuration
+
+When configuration applies to all commands (tenant, environment, verbosity), register global options and access them via `IGlobalOptionsAccessor`:
+
+```csharp
+app.Options(o =>
+{
+    o.Parsing.AddGlobalOption<string>("tenant");
+    o.Parsing.AddGlobalOption<bool>("verbose");
+});
+```
+
+For many global options, prefer `UseGlobalOptions<T>()` with a typed class:
+
+```csharp
+app.UseGlobalOptions<MyGlobalOptions>();
+```
+
+Use `IGlobalOptionsAccessor` in DI factories for services that depend on global option values:
+
+```csharp
+services.AddSingleton<ITenantClient>(sp =>
+{
+    var globals = sp.GetRequiredService<IGlobalOptionsAccessor>();
+    return new TenantClient(globals.GetValue<string>("tenant", "default")!);
+});
+```
+
+Note: DI singleton factories are resolved lazily, so the values are available after global option parsing completes. However, singleton factories capture values once — in interactive mode, global options can change between commands. If your service needs to see updated values per command, inject `IGlobalOptionsAccessor` directly and read values at call time instead of capturing them in a factory. See [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers).
+
 ## Group related options with `[ReplOptionsGroup]`
 
 When a command has many options, group them into a class instead of listing them all as handler parameters. This keeps handlers clean and makes option sets reusable across commands.

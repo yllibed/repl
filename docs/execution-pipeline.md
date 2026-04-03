@@ -83,6 +83,12 @@ any routing takes place. Recognized options:
 - Custom global options registered through configuration
 
 These tokens are consumed and removed from the argument list before the next stage.
+Parsed custom global option values are stored in `IGlobalOptionsAccessor` (registered in DI),
+making them available to middleware, DI service factories, and handlers in subsequent stages.
+
+In interactive mode, CLI-level global options become session defaults — they persist across
+all commands unless explicitly overridden per-command. Overrides are temporary and revert
+to the session baseline on the next command.
 
 ### 2. Prefix Resolution
 
