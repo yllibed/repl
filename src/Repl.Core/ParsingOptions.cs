@@ -152,7 +152,7 @@ public sealed class ParsingOptions
 
 		return constraintOrTypeName.ToLowerInvariant() switch
 		{
-			"string" or "alpha" => typeof(string),
+			"string" or "alpha" or "email" => typeof(string),
 			"int" => typeof(int),
 			"long" => typeof(long),
 			"bool" => typeof(bool),

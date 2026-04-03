@@ -58,11 +58,6 @@ public static class GlobalOptionsExtensions
 			var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
 			var name = optionAttr?.Name ?? ToKebabCase(property.Name);
 
-			if (!accessor.HasValue(name))
-			{
-				continue;
-			}
-
 			var rawValues = accessor.GetRawValues(name);
 			if (rawValues.Count == 0)
 			{

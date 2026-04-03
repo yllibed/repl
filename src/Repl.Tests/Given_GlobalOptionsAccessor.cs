@@ -424,6 +424,50 @@ public sealed class Given_GlobalOptionsAccessor
 		sut.GetValue<LogLevel>("level").Should().Be(LogLevel.Warning);
 	}
 
+	[TestMethod]
+	[Description("PopulateInstance picks up session-baseline values not explicitly provided.")]
+	public void When_BaselineSetAndNoExplicitValue_Then_PopulateInstanceUsesBaseline()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption<string>("tenant");
+		parsing.AddGlobalOption<int>("port");
+		var snapshot = new GlobalOptionsSnapshot(parsing);
+
+		// Simulate CLI launch with --tenant acme --port 3000
+		snapshot.Update(Values(("tenant", "acme"), ("port", "3000")));
+		snapshot.SetSessionBaseline();
+
+		// Simulate interactive command with no global options
+		snapshot.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+
+		// PopulateInstance should still see baseline values
+		var result = GlobalOptionsExtensions.PopulateInstance<TestTypedOptions>(
+			snapshot, System.Globalization.CultureInfo.InvariantCulture);
+
+		result.Tenant.Should().Be("acme");
+		result.Port.Should().Be(3000);
+	}
+
+	[TestMethod]
+	[Description("AddGlobalOption with string type name 'email' resolves as string.")]
+	public void When_RegisteredWithStringTypeName_Email_Then_ResolvesAsString()
+	{
+		var parsing = new ParsingOptions();
+		parsing.AddGlobalOption("contact", "email");
+		var sut = new GlobalOptionsSnapshot(parsing);
+		sut.Update(Values(("contact", "test@example.com")));
+
+		sut.GetValue<string>("contact").Should().Be("test@example.com");
+		parsing.GlobalOptions["contact"].ValueType.Should().Be(typeof(string));
+	}
+
+	private sealed class TestTypedOptions
+	{
+		public string? Tenant { get; set; }
+
+		public int Port { get; set; }
+	}
+
 	private enum LogLevel
 	{
 		Info,
