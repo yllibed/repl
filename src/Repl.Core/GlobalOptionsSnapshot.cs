@@ -12,7 +12,19 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 
 	internal void SetSessionBaseline()
 	{
-		_sessionBaseline = _currentValues;
+		// Capture only the explicitly parsed values as the new baseline.
+		// This prevents stale baselines from leaking across separate Run() calls.
+		var baseline = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+		foreach (var key in _explicitKeys)
+		{
+			if (_currentValues.TryGetValue(key, out var values))
+			{
+				baseline[key] = values;
+			}
+		}
+
+		_sessionBaseline = baseline;
+		_currentValues = baseline;
 	}
 
 	internal void Update(IReadOnlyDictionary<string, IReadOnlyList<string>> parsedValues)

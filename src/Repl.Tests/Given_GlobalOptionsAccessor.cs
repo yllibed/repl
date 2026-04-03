@@ -171,6 +171,23 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
+	[Description("Session baseline does not leak across separate Run() cycles.")]
+	public void When_SecondRunOmitsOption_Then_BaselineFromFirstRunDoesNotLeak()
+	{
+		var sut = CreateAccessor("tenant");
+
+		// First Run() cycle
+		sut.Update(Values(("tenant", "acme")));
+		sut.SetSessionBaseline();
+
+		// Second Run() cycle — no --tenant provided
+		sut.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+		sut.SetSessionBaseline();
+
+		sut.GetValue<string>("tenant").Should().BeNull();
+	}
+
+	[TestMethod]
 	[Description("Per-command override takes precedence over session baseline.")]
 	public void When_BaselineSetAndOverridden_Then_OverrideTakesPrecedence()
 	{
