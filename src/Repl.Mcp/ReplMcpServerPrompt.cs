@@ -65,7 +65,7 @@ internal sealed class ReplMcpServerPrompt : McpServerPrompt
 		CancellationToken cancellationToken = default)
 	{
 		// Prompt arguments are already JsonElement — pass through directly.
-		var jsonArgs = request.Params?.Arguments is { } args
+		var jsonArgs = request.Params.Arguments is { } args
 			? new Dictionary<string, System.Text.Json.JsonElement>(args, StringComparer.Ordinal)
 			: new Dictionary<string, System.Text.Json.JsonElement>(StringComparer.Ordinal);
 

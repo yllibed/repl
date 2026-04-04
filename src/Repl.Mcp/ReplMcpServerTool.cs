@@ -48,9 +48,9 @@ internal sealed class ReplMcpServerTool : McpServerTool
 		RequestContext<CallToolRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
-		var arguments = request.Params?.Arguments
+		var arguments = request.Params.Arguments
 			?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-		var progressToken = request.Params?.ProgressToken;
+		var progressToken = request.Params.ProgressToken;
 
 		return await _adapter.InvokeAsync(
 			_protocolTool.Name, arguments, request.Server, progressToken, cancellationToken)

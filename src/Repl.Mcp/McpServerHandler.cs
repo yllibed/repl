@@ -183,9 +183,9 @@ internal sealed class McpServerHandler
 	{
 		AttachServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
-		IDictionary<string, JsonElement> arguments = request.Params?.Arguments ?? EmptyArguments;
-		var toolName = request.Params?.Name ?? string.Empty;
-		var progressToken = request.Params?.ProgressToken;
+		IDictionary<string, JsonElement> arguments = request.Params.Arguments ?? EmptyArguments;
+		var toolName = request.Params.Name ?? string.Empty;
+		var progressToken = request.Params.ProgressToken;
 
 		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim)
 		{
@@ -249,7 +249,7 @@ internal sealed class McpServerHandler
 	{
 		AttachServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
-		var uri = request.Params?.Uri ?? string.Empty;
+		var uri = request.Params.Uri ?? string.Empty;
 		var resource = snapshot.Resources.FirstOrDefault(candidate => candidate.IsMatch(uri));
 		if (resource is null)
 		{
@@ -277,7 +277,7 @@ internal sealed class McpServerHandler
 	{
 		AttachServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
-		var promptName = request.Params?.Name ?? string.Empty;
+		var promptName = request.Params.Name ?? string.Empty;
 		var prompt = snapshot.Prompts.FirstOrDefault(candidate =>
 			string.Equals(candidate.ProtocolPrompt.Name, promptName, StringComparison.OrdinalIgnoreCase));
 		if (prompt is null)
