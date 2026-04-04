@@ -105,7 +105,7 @@ internal sealed partial class McpToolAdapter
 			isHostedSession: true))
 		{
 			ReplSessionIO.IsProgrammatic = true;
-			var exitCode = await coreApp.RunWithServicesAsync(
+			var exitCode = await coreApp.RunSubInvocationAsync(
 				effectiveTokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
 
 			var output = outputWriter.ToString().Trim();

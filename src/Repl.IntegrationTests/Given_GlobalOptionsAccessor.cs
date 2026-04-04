@@ -234,6 +234,58 @@ public sealed class Given_GlobalOptionsAccessor
 		output.Text.Should().Contain("9090");
 	}
 
+	[TestMethod]
+	[Description("Sub-invocation via RunSubInvocationAsync preserves baseline from top-level Run.")]
+	public async Task When_SubInvocationAfterRun_Then_BaselineGlobalOptionsArePreserved()
+	{
+		string? capturedTenant = null;
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+		sut.Map("show", (TestGlobalOptions opts) => $"{opts.Tenant}:{opts.Port}");
+		sut.Map("check", (IGlobalOptionsAccessor globals) =>
+		{
+			capturedTenant = globals.GetValue<string>("tenant");
+			return "ok";
+		});
+
+		// Top-level Run establishes baseline with --tenant acme.
+		ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "acme", "--no-logo"]));
+
+		// Sub-invocation without --tenant must still see the baseline value.
+		await sut.Core.RunSubInvocationAsync(
+			["--no-logo", "check"], sut.Services).ConfigureAwait(false);
+
+		capturedTenant.Should().Be("acme");
+	}
+
+	[TestMethod]
+	[Description("Sub-invocation does not reset baseline for subsequent sub-invocations.")]
+	public async Task When_MultipleSubInvocations_Then_BaselineRemainsStable()
+	{
+		var captured = new List<string?>();
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+		sut.Map("show", (TestGlobalOptions opts) => "ok");
+		sut.Map("check", (IGlobalOptionsAccessor globals) =>
+		{
+			captured.Add(globals.GetValue<string>("tenant"));
+			return "ok";
+		});
+
+		// Top-level Run establishes baseline.
+		ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "acme", "--no-logo"]));
+
+		// Two consecutive sub-invocations — baseline must survive both.
+		await sut.Core.RunSubInvocationAsync(
+			["--no-logo", "check"], sut.Services).ConfigureAwait(false);
+		await sut.Core.RunSubInvocationAsync(
+			["--no-logo", "check"], sut.Services).ConfigureAwait(false);
+
+		captured.Should().AllBe("acme");
+	}
+
 	private sealed class DecimalGlobalOptions
 	{
 		public double Rate { get; set; }

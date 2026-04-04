@@ -381,7 +381,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		_ = _middleware.Count;
 		_ = _options;
 		cancellationToken.ThrowIfCancellationRequested();
-		return ExecuteCoreAsync(args, _services, cancellationToken);
+		return ExecuteCoreAsync(args, _services, cancellationToken: cancellationToken);
 	}
 
 	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens)
@@ -408,19 +408,34 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		string[] args,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
-		ExecuteCoreAsync(args, serviceProvider, cancellationToken);
+		ExecuteCoreAsync(args, serviceProvider, cancellationToken: cancellationToken);
+
+	/// <summary>
+	/// Executes a nested command invocation that preserves the session baseline.
+	/// Used by MCP tool calls where the global options from the initial session
+	/// must remain in effect even though the sub-invocation tokens don't contain them.
+	/// </summary>
+	internal ValueTask<int> RunSubInvocationAsync(
+		string[] args,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken = default) =>
+		ExecuteCoreAsync(args, serviceProvider, isSubInvocation: true, cancellationToken);
 
 	private async ValueTask<int> ExecuteCoreAsync(
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
-		CancellationToken cancellationToken)
+		bool isSubInvocation = false,
+		CancellationToken cancellationToken = default)
 	{
 		_options.Interaction.SetObserver(observer: ExecutionObserver);
 		try
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions);
-			_globalOptionsSnapshot.SetSessionBaseline();
+			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions); // volatile ref swap — safe under concurrent sub-invocations
+			if (!isSubInvocation)
+			{
+				_globalOptionsSnapshot.SetSessionBaseline();
+			}
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
