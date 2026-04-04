@@ -191,6 +191,24 @@ public sealed class Given_ModuleComposition
 		output.Text.Should().Contain("1");
 	}
 
+	[TestMethod]
+	[Description("MapModule<T>() auto-creates the module when it is not registered in DI, using ActivatorUtilities to inject constructor dependencies.")]
+	public void When_ModuleNotRegisteredInDI_Then_ActivatorUtilitiesCreatesItWithInjectedDependencies()
+	{
+		var sut = ReplApp.Create(services =>
+		{
+			// Register the dependency but NOT the module itself.
+			services.AddSingleton<DisposableCounter>();
+		});
+		sut.MapModule<ModuleWithDisposableDependency>();
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["counter", "increment", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("1");
+	}
+
 	private sealed class ScopedOpsModule : IReplModule
 	{
 		public void Map(IReplMap map)

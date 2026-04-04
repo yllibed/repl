@@ -469,7 +469,7 @@ public sealed class ReplApp : IReplApp
 		// Resolve from the shared provider — its lifetime spans the entire app,
 		// so disposable dependencies captured by the module stay alive.
 		// Uses GetServiceOrCreateInstance so callers don't need to register the
-		// module explicitly — a parameterless constructor is enough.
+		// module explicitly — constructor dependencies are resolved from DI.
 		var provider = EnsureSharedProvider();
 		return Microsoft.Extensions.DependencyInjection.ActivatorUtilities
 			.GetServiceOrCreateInstance<TModule>(provider);
