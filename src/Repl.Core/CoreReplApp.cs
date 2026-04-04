@@ -431,7 +431,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		try
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions);
+			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions); // volatile ref swap — safe under concurrent sub-invocations
 			if (!isSubInvocation)
 			{
 				_globalOptionsSnapshot.SetSessionBaseline();
