@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Repl;
 
 /// <summary>
@@ -19,7 +21,7 @@ public interface IReplApp : ICoreReplApp
 	/// </summary>
 	/// <typeparam name="TModule">Module type.</typeparam>
 	/// <returns>The same app contract for fluent chaining.</returns>
-	IReplApp MapModule<TModule>()
+	IReplApp MapModule<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule;
 
 	/// <summary>

@@ -1,9 +1,10 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Repl.Documentation;
-using System.Linq.Expressions;
-using System.Reflection;
 
 namespace Repl;
 
@@ -132,7 +133,7 @@ public sealed class ReplApp : IReplApp
 	/// <summary>
 	/// Maps a module resolved through runtime DI activation.
 	/// </summary>
-	public ReplApp MapModule<TModule>()
+	public ReplApp MapModule<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule
 	{
 		var module = ResolveModuleFromServices<TModule>();
@@ -435,6 +436,8 @@ public sealed class ReplApp : IReplApp
 	IReplApp IReplApp.MapModule(IReplModule module, Delegate isPresent) =>
 		MapModule(module, isPresent);
 
+	[UnconditionalSuppressMessage("Trimming", "IL2091", Justification = "Annotation flows from IReplApp.MapModule<TModule>().")]
+	[UnconditionalSuppressMessage("Trimming", "IL2095", Justification = "Annotation flows from IReplApp.MapModule<TModule>().")]
 	IReplApp IReplApp.MapModule<TModule>() => MapModule<TModule>();
 
 	IReplApp IReplApp.WithBanner(Delegate bannerProvider) => WithBanner(bannerProvider);
@@ -460,15 +463,16 @@ public sealed class ReplApp : IReplApp
 	private ServiceProvider EnsureSharedProvider() =>
 		_sharedProvider ??= _services.BuildServiceProvider();
 
-	private TModule ResolveModuleFromServices<TModule>()
+	private TModule ResolveModuleFromServices<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule
 	{
 		// Resolve from the shared provider — its lifetime spans the entire app,
 		// so disposable dependencies captured by the module stay alive.
+		// Uses GetServiceOrCreateInstance so callers don't need to register the
+		// module explicitly — constructor dependencies are resolved from DI.
 		var provider = EnsureSharedProvider();
-		return provider.GetService<TModule>()
-			?? throw new InvalidOperationException(
-				$"Unable to resolve module '{typeof(TModule).FullName}'. Register it in services or call MapModule(IReplModule).");
+		return Microsoft.Extensions.DependencyInjection.ActivatorUtilities
+			.GetServiceOrCreateInstance<TModule>(provider);
 	}
 
 	private static Func<ModulePresenceContext, bool> AdaptModulePresencePredicate(Delegate isPresent)
@@ -704,7 +708,7 @@ public sealed class ReplApp : IReplApp
 				validation);
 		}
 
-		public IReplApp MapModule<TModule>()
+		public IReplApp MapModule<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 			where TModule : class, IReplModule
 		{
 			return MapModule(root.ResolveModuleFromServices<TModule>());
