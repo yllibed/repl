@@ -3,7 +3,7 @@ namespace Repl;
 /// <summary>
 /// Defines a custom ambient command available in all interactive scopes.
 /// </summary>
-public sealed class AmbientCommandDefinition
+internal sealed class AmbientCommandDefinition
 {
 	/// <summary>
 	/// Gets the command name (matched case-insensitively).
