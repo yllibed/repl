@@ -6,7 +6,7 @@ namespace Repl;
 
 public sealed partial class CoreReplApp
 {
-	private ContextDefinition RegisterContext(string template, Delegate? validation, string? description)
+	internal ContextDefinition RegisterContext(string template, Delegate? validation, string? description)
 	{
 		var parsedTemplate = RouteTemplateParser.Parse(template, _options.Parsing);
 		var moduleId = ResolveCurrentMappingModuleId();
@@ -23,7 +23,7 @@ public sealed partial class CoreReplApp
 		return context;
 	}
 
-	private async ValueTask<IReplResult?> ValidateContextsForPathAsync(
+	internal async ValueTask<IReplResult?> ValidateContextsForPathAsync(
 		IReadOnlyList<string> matchedPathTokens,
 		IReadOnlyList<ContextDefinition> contexts,
 		IServiceProvider serviceProvider,
@@ -42,7 +42,7 @@ public sealed partial class CoreReplApp
 		return null;
 	}
 
-	private async ValueTask<IReplResult?> ValidateContextsForMatchAsync(
+	internal async ValueTask<IReplResult?> ValidateContextsForMatchAsync(
 		RouteMatch match,
 		IReadOnlyList<string> matchedPathTokens,
 		IReadOnlyList<ContextDefinition> contexts,
@@ -62,7 +62,7 @@ public sealed partial class CoreReplApp
 		return null;
 	}
 
-	private List<object?> BuildContextHierarchyValues(
+	internal List<object?> BuildContextHierarchyValues(
 		RouteTemplate matchedRouteTemplate,
 		IReadOnlyList<string> matchedPathTokens,
 		IReadOnlyList<ContextDefinition> contexts)
@@ -165,7 +165,7 @@ public sealed partial class CoreReplApp
 			_ => routeValue,
 		};
 
-	private async ValueTask<ContextValidationOutcome> ValidateContextAsync(
+	internal async ValueTask<ContextValidationOutcome> ValidateContextAsync(
 		ContextMatch contextMatch,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
@@ -268,7 +268,7 @@ public sealed partial class CoreReplApp
 		return Results.Validation($"Missing values for parameters: {names}.");
 	}
 
-	private IReplResult CreateRouteResolutionFailureResult(
+	internal IReplResult CreateRouteResolutionFailureResult(
 		IReadOnlyList<string> tokens,
 		RouteResolver.RouteConstraintFailure? constraintFailure,
 		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure)
@@ -291,7 +291,7 @@ public sealed partial class CoreReplApp
 			? segment.CustomConstraintName!
 			: GetConstraintTypeName(segment.ConstraintKind);
 
-	private async ValueTask TryRenderCommandBannerAsync(
+	internal async ValueTask TryRenderCommandBannerAsync(
 		CommandBuilder command,
 		string? outputFormat,
 		IServiceProvider serviceProvider,
@@ -308,7 +308,7 @@ public sealed partial class CoreReplApp
 		}
 	}
 
-	private bool ShouldRenderBanner(string? requestedOutputFormat)
+	internal bool ShouldRenderBanner(string? requestedOutputFormat)
 	{
 		if (_allBannersSuppressed.Value || !_options.Output.BannerEnabled)
 		{
@@ -321,7 +321,7 @@ public sealed partial class CoreReplApp
 		return _options.Output.BannerFormats.Contains(format);
 	}
 
-	private async ValueTask InvokeBannerAsync(
+	internal async ValueTask InvokeBannerAsync(
 		Delegate banner,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
@@ -372,7 +372,7 @@ public sealed partial class CoreReplApp
 			: $"{header}{Environment.NewLine}{description}";
 	}
 
-	private PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens)
+	internal PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		if (tokens.Count == 0)
@@ -465,7 +465,7 @@ public sealed partial class CoreReplApp
 		}
 	}
 
-	private RouteDefinition[] ResolveDiscoverableRoutes(
+	internal RouteDefinition[] ResolveDiscoverableRoutes(
 		IReadOnlyList<RouteDefinition> routes,
 		IReadOnlyList<ContextDefinition> contexts,
 		IReadOnlyList<string> scopeTokens,
@@ -473,7 +473,7 @@ public sealed partial class CoreReplApp
 		[.. routes.Where(route =>
 			!IsRouteSuppressedForDiscovery(route.Template, contexts, scopeTokens, comparison)),];
 
-	private ContextDefinition[] ResolveDiscoverableContexts(
+	internal ContextDefinition[] ResolveDiscoverableContexts(
 		IReadOnlyList<ContextDefinition> contexts,
 		IReadOnlyList<string> scopeTokens,
 		StringComparison comparison) =>

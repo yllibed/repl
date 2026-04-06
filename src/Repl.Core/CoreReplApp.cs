@@ -419,7 +419,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			: ReplRuntimeChannel.Cli;
 	}
 
-	private ActiveRoutingGraph ResolveActiveRoutingGraph()
+	internal ActiveRoutingGraph ResolveActiveRoutingGraph()
 	{
 		var runtime = _runtimeState.Value;
 		var serviceProvider = runtime?.ServiceProvider ?? _services;
@@ -518,7 +518,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		];
 	}
 
-	private RuntimeStateScope PushRuntimeState(IServiceProvider serviceProvider, bool isInteractiveSession)
+	internal RuntimeStateScope PushRuntimeState(IServiceProvider serviceProvider, bool isInteractiveSession)
 	{
 		var previous = _runtimeState.Value;
 		_runtimeState.Value = new InvocationRuntimeState(serviceProvider, isInteractiveSession);
@@ -667,7 +667,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		|| string.Equals(token, "?", StringComparison.Ordinal);
 
 
-	private string BuildHumanHelp(IReadOnlyList<string> scopeTokens)
+	internal string BuildHumanHelp(IReadOnlyList<string> scopeTokens)
 	{
 		var activeGraph = ResolveActiveRoutingGraph();
 		var discoverableRoutes = ResolveDiscoverableRoutes(
@@ -691,30 +691,12 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			palette: settings.Palette);
 	}
 
-	private readonly record struct ContextValidationOutcome(bool IsValid, IReplResult? Failure)
-	{
-		public static ContextValidationOutcome Success { get; } =
-			new(IsValid: true, Failure: null);
-
-		public static ContextValidationOutcome FromFailure(IReplResult failure) =>
-			new(IsValid: false, Failure: failure);
-	}
-
-	private readonly record struct PrefixTemplate(
-		RouteTemplate Template,
-		bool IsHidden,
-		IReadOnlyList<string> Aliases);
-
-	private readonly record struct ActiveRoutingGraph(
-		RouteDefinition[] Routes,
-		ContextDefinition[] Contexts,
-		ReplRuntimeChannel Channel);
 
 	private readonly record struct ModuleRegistration(
 		int ModuleId,
 		Func<ModulePresenceContext, bool> IsPresent);
 
-	private readonly record struct InvocationRuntimeState(
+	internal readonly record struct InvocationRuntimeState(
 		IServiceProvider ServiceProvider,
 		bool IsInteractiveSession);
 
@@ -725,15 +707,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		public ActiveRoutingGraph Graph { get; } = graph;
 	}
 
-	private enum AmbientCommandOutcome
-	{
-		NotHandled,
-		Handled,
-		HandledError,
-		Exit,
-	}
-
-	private sealed class RuntimeStateScope(
+	internal sealed class RuntimeStateScope(
 		AsyncLocal<InvocationRuntimeState?> state,
 		InvocationRuntimeState? previous) : IDisposable
 	{
