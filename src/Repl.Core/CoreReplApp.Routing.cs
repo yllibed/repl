@@ -289,7 +289,7 @@ public sealed partial class CoreReplApp
 	private static string GetConstraintDisplayName(DynamicRouteSegment segment) =>
 		segment.ConstraintKind == RouteConstraintKind.Custom && !string.IsNullOrWhiteSpace(segment.CustomConstraintName)
 			? segment.CustomConstraintName!
-			: GetConstraintTypeName(segment.ConstraintKind);
+			: DocumentationEngine.GetConstraintTypeName(segment.ConstraintKind);
 
 	internal async ValueTask TryRenderCommandBannerAsync(
 		CommandBuilder command,

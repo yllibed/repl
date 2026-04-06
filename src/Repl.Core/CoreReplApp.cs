@@ -36,6 +36,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private readonly GlobalOptionsSnapshot _globalOptionsSnapshot;
 
 	internal ReplOptions OptionsSnapshot => _options;
+	internal string? Description => _description;
 	internal IGlobalOptionsAccessor GlobalOptionsAccessor => _globalOptionsSnapshot;
 	internal IReplExecutionObserver? ExecutionObserver { get; set; }
 
@@ -531,20 +532,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return entryAssembly?.GetName().Name
 			?? Assembly.GetExecutingAssembly().GetName().Name
 			?? string.Empty;
-	}
-
-	private static string? NormalizePath(string? path)
-	{
-		if (string.IsNullOrWhiteSpace(path))
-		{
-			return null;
-		}
-
-		var parts = path
-			.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		return parts.Length == 0
-			? null
-			: string.Join(' ', parts);
 	}
 
 	[SuppressMessage(
