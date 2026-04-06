@@ -357,7 +357,9 @@ public sealed class Given_InteractiveAutocomplete_LiveHint
 			ReplSessionIO.WindowSize = (80, 12);
 			ReplSessionIO.AnsiSupport = true;
 			ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.VtInput;
+#pragma warning disable MA0045 // Sync Run is required here — console I/O drives the test.
 			_ = sut.Run([]);
+#pragma warning restore MA0045
 		}
 		finally
 		{

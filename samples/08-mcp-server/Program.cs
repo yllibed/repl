@@ -47,7 +47,7 @@ app.Context("contact", contact =>
 	contact.Map("delete {id:int}",
 		async ([Description("Contact numeric id")] int id, Repl.Interaction.IReplInteractionChannel interaction, CancellationToken ct) =>
 		{
-			if (!await interaction.AskConfirmationAsync("confirm", $"Delete contact {id}?", options: new(ct)))
+			if (!await interaction.AskConfirmationAsync("confirm", $"Delete contact {id}?", options: new(CancellationToken: ct)))
 			{
 				return Results.Cancelled("Delete cancelled by user.");
 			}

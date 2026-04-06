@@ -267,7 +267,9 @@ internal static partial class ConsoleLineReader
 
 	private static ReadResult ReadLineSync(HistoryNavigator? navigator, LineEditorState? editor, CancellationToken ct)
 	{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadLineAsync
 		ConsoleInputGate.Gate.Wait(ct);
+#pragma warning restore MA0045
 		try
 		{
 			return ReadLineCore(navigator, editor, ct);
@@ -278,6 +280,7 @@ internal static partial class ConsoleLineReader
 		}
 	}
 
+	[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Sync polling loop with inline pragma suppressions slightly exceeds threshold.")]
 	private static ReadResult ReadLineCore(HistoryNavigator? navigator, LineEditorState? editor, CancellationToken ct)
 	{
 		var buffer = new StringBuilder();
@@ -289,16 +292,20 @@ internal static partial class ConsoleLineReader
 
 			if (!Console.KeyAvailable)
 			{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadLineAsync
 				Thread.Sleep(15);
+#pragma warning restore MA0045
 				continue;
 			}
 
 			var key = Console.ReadKey(intercept: true);
 #pragma warning disable VSTHRD002
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run; cannot await in sync polling loop
 			var autocompleteHandling = TryHandleAutocompleteKeyAsync(key, editor, buffer, cursor, echo, ct)
 				.AsTask()
 				.GetAwaiter()
 				.GetResult();
+#pragma warning restore MA0045
 #pragma warning restore VSTHRD002
 			cursor = autocompleteHandling.Cursor;
 			if (!autocompleteHandling.Handled)
@@ -307,11 +314,13 @@ internal static partial class ConsoleLineReader
 				if (result is null)
 				{
 #pragma warning disable VSTHRD002
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run; cannot await in sync polling loop
 					RefreshAssistAfterEditingAsync(editor, buffer, cursor, echo, ct)
 						.AsTask()
 						.GetAwaiter()
 						.GetResult();
 #pragma warning restore VSTHRD002
+#pragma warning restore MA0045
 				}
 
 				if (echo.Length > 0)

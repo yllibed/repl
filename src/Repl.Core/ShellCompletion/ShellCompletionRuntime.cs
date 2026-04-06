@@ -251,7 +251,7 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 						"shell_completion_install",
 						$"Install shell completion for {FormatShellKind(detection.Kind)} now?",
 						defaultValue: true,
-						new AskOptions(cancellationToken))
+						new AskOptions(CancellationToken: cancellationToken))
 					.ConfigureAwait(false);
 			}
 			else
@@ -403,8 +403,10 @@ internal sealed partial class ShellCompletionRuntime : IShellCompletionRuntime
 
 		try
 		{
+#pragma warning disable MA0045 // Synchronous by design — sync delegate used for profile content probing
 			return File.ReadAllText(profilePath);
 		}
+#pragma warning restore MA0045
 		catch
 		{
 			return null;

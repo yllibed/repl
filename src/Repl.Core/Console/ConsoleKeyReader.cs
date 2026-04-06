@@ -24,7 +24,9 @@ internal sealed class ConsoleKeyReader : IReplKeyReader
 
 	private static ConsoleKeyInfo ReadKeySync(CancellationToken ct)
 	{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadKeyAsync
 		ConsoleInputGate.Gate.Wait(ct);
+#pragma warning restore MA0045
 		try
 		{
 			while (true)
@@ -36,7 +38,9 @@ internal sealed class ConsoleKeyReader : IReplKeyReader
 					return Console.ReadKey(intercept: true);
 				}
 
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadKeyAsync
 				Thread.Sleep(15);
+#pragma warning restore MA0045
 			}
 		}
 		finally

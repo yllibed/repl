@@ -136,13 +136,13 @@ internal sealed partial class ConsoleInteractionChannel(
 			return (int)dispatched.Value!;
 		}
 
-		return await ReadChoiceTextFallbackAsync(name, prompt, choices, effectiveDefaultIndex, effectiveCt, options?.Timeout)
+		return await ReadChoiceTextFallbackAsync(name, prompt, choices, effectiveDefaultIndex, options?.Timeout, effectiveCt)
 			.ConfigureAwait(false);
 	}
 
 	private async ValueTask<int> ReadChoiceTextFallbackAsync(
 		string name, string prompt, IReadOnlyList<string> choices,
-		int effectiveDefaultIndex, CancellationToken ct, TimeSpan? timeout)
+		int effectiveDefaultIndex, TimeSpan? timeout, CancellationToken ct)
 	{
 		var shortcuts = MnemonicParser.AssignShortcuts(choices);
 		var parsedChoices = new (string Display, char? Shortcut)[choices.Count];
@@ -395,7 +395,7 @@ internal sealed partial class ConsoleInteractionChannel(
 			{
 				if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 				{
-					line = await ReadWithTimeoutRedirectedAsync(ct, options.Timeout.Value)
+					line = await ReadWithTimeoutRedirectedAsync(options.Timeout.Value, ct)
 						.ConfigureAwait(false);
 				}
 				else
@@ -480,7 +480,7 @@ internal sealed partial class ConsoleInteractionChannel(
 
 		return await ReadMultiChoiceTextFallbackAsync(
 			name, prompt, choices, effectiveDefaults, choiceDisplay, defaultLabel,
-			minSelections, maxSelections, effectiveCt, options?.Timeout).ConfigureAwait(false);
+			minSelections, maxSelections, options?.Timeout, effectiveCt).ConfigureAwait(false);
 	}
 
 	private static void ValidateMultiChoiceArgs(
@@ -522,7 +522,7 @@ internal sealed partial class ConsoleInteractionChannel(
 	private async ValueTask<IReadOnlyList<int>> ReadMultiChoiceTextFallbackAsync(
 		string name, string prompt, IReadOnlyList<string> choices,
 		IReadOnlyList<int> effectiveDefaults, string choiceDisplay, string? defaultLabel,
-		int minSelections, int? maxSelections, CancellationToken ct, TimeSpan? timeout)
+		int minSelections, int? maxSelections, TimeSpan? timeout, CancellationToken ct)
 	{
 		while (true)
 		{
