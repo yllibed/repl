@@ -185,6 +185,25 @@ public sealed class Given_McpApps
 	}
 
 	[TestMethod]
+	[Description("WithMcpAppPermissions can include browser permission metadata.")]
+	public async Task When_CommandHasPermissions_Then_ResourceMetaIncludesThem()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("contacts dashboard", () => "<html><body>Contacts</body></html>")
+				.AsMcpAppResource()
+				.WithMcpAppPermissions(new McpAppPermissions { ClipboardWrite = true });
+		}).ConfigureAwait(false);
+
+		var result = await fixture.Client.ReadResourceAsync("ui://contacts/dashboard").ConfigureAwait(false);
+		var content = result.Contents.OfType<TextResourceContents>().Single();
+		var ui = content.Meta!["ui"]!.AsObject();
+		var permissions = ui["permissions"]!.AsObject();
+
+		permissions["clipboardWrite"]!.AsObject().Should().BeEmpty();
+	}
+
+	[TestMethod]
 	[Description("AsMcpAppResource exposes a launcher tool that does not return raw HTML.")]
 	public async Task When_McpAppResourceToolIsCalled_Then_ModelToolDoesNotReturnHtml()
 	{

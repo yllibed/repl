@@ -106,13 +106,12 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 			return arguments;
 		}
 
-		foreach (var name in _variableNames)
+		foreach (var pair in _variableNames
+			.Select(name => (Name: name, Group: match.Groups[name]))
+			.Where(pair => pair.Group.Success))
 		{
-			if (match.Groups[name] is { Success: true } group)
-			{
-				var value = Uri.UnescapeDataString(group.Value);
-				arguments[name] = JsonSerializer.SerializeToElement(value, McpJsonContext.Default.String);
-			}
+			var value = Uri.UnescapeDataString(pair.Group.Value);
+			arguments[pair.Name] = JsonSerializer.SerializeToElement(value, McpJsonContext.Default.String);
 		}
 
 		return arguments;

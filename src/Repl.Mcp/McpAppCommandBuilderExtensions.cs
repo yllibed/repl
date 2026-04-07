@@ -131,11 +131,9 @@ public static class McpAppCommandBuilderExtensions
 	/// </summary>
 	public static CommandBuilder WithMcpAppPermissions(
 		this CommandBuilder builder,
-		Action<McpAppPermissions> configure)
+		McpAppPermissions permissions)
 	{
-		ArgumentNullException.ThrowIfNull(configure);
-		var permissions = GetResourceOptions(builder).Permissions ?? new McpAppPermissions();
-		configure(permissions);
+		ArgumentNullException.ThrowIfNull(permissions);
 		GetResourceOptions(builder).Permissions = permissions;
 		return builder;
 	}

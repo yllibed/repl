@@ -21,7 +21,8 @@ internal static class McpAppResourceInvoker
 		}
 		catch (TargetInvocationException ex) when (ex.InnerException is not null)
 		{
-			throw ex.InnerException;
+			System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+			throw;
 		}
 
 		return await ConvertResultAsync(result).ConfigureAwait(false);

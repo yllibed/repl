@@ -748,20 +748,12 @@ internal sealed class McpServerHandler
 		McpToolAdapter adapter,
 		char separator)
 	{
-		var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
-		if (nameSet.TryGetValue(toolName, out var existingPath))
+		var toolName = TryReserveToolName(command, nameSet, separator);
+		if (toolName is null)
 		{
-			if (string.Equals(command.Path, existingPath, StringComparison.OrdinalIgnoreCase))
-			{
-				return;
-			}
-
-			throw new InvalidOperationException(
-				$"MCP tool name collision: '{toolName}' from routes '{existingPath}' and '{command.Path}'. " +
-				"Consider a different ToolNamingSeparator or rename one of the commands.");
+			return;
 		}
 
-		nameSet[toolName] = command.Path;
 		adapter.RegisterRoute(toolName, command);
 		tools.Add(new ReplMcpServerTool(command, toolName, adapter));
 	}
@@ -774,12 +766,29 @@ internal sealed class McpServerHandler
 		McpToolAdapter adapter,
 		char separator)
 	{
+		var toolName = TryReserveToolName(command, nameSet, separator);
+		if (toolName is null)
+		{
+			return;
+		}
+
+		adapter.RegisterStaticResult(
+			toolName,
+			ReplMcpAppLauncherTool.BuildFallbackTextCore(command, appResourceOptions));
+		tools.Add(new ReplMcpAppLauncherTool(command, toolName, appResourceOptions));
+	}
+
+	private static string? TryReserveToolName(
+		ReplDocCommand command,
+		Dictionary<string, string> nameSet,
+		char separator)
+	{
 		var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
 		if (nameSet.TryGetValue(toolName, out var existingPath))
 		{
 			if (string.Equals(command.Path, existingPath, StringComparison.OrdinalIgnoreCase))
 			{
-				return;
+				return null;
 			}
 
 			throw new InvalidOperationException(
@@ -788,10 +797,7 @@ internal sealed class McpServerHandler
 		}
 
 		nameSet[toolName] = command.Path;
-		adapter.RegisterStaticResult(
-			toolName,
-			ReplMcpAppLauncherTool.BuildFallbackTextCore(command, appResourceOptions));
-		tools.Add(new ReplMcpAppLauncherTool(command, toolName, appResourceOptions));
+		return toolName;
 	}
 
 	// ── Resource generation ────────────────────────────────────────────

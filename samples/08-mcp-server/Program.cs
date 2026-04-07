@@ -130,5 +130,7 @@ internal sealed class ContactStore
 
 	public IReadOnlyList<Contact> All => _contacts;
 
-	public Contact Get(int id) => id == 1 ? _contacts[0] : _contacts[1];
+	public Contact? Get(int id) => id >= 1 && id <= _contacts.Length
+		? _contacts[id - 1]
+		: null;
 }
