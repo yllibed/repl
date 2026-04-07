@@ -41,6 +41,23 @@ public sealed class Given_McpToolNameFlattener
 	}
 
 	[TestMethod]
+	[Description("Constrained dynamic segments with hyphenated constraint names are removed.")]
+	public void When_HyphenatedConstraintDynamicSegment_Then_Removed()
+	{
+		McpToolNameFlattener.Flatten("event {start:date-time} show", '_').Should().Be("event_show");
+	}
+
+	[TestMethod]
+	[Description("Resource URI generation strips constraints and includes contexts.")]
+	public void When_ResourceUriBuiltFromConstrainedRoute_Then_UsesVariableNamesOnly()
+	{
+		McpToolNameFlattener.BuildResourceUri("viewer session {id:int} attach", "ui")
+			.Should().Be("ui://viewer/session/{id}/attach");
+		McpToolNameFlattener.BuildResourceUri("tenant {slug:tenant-slug} panel", "ui")
+			.Should().Be("ui://tenant/{slug}/panel");
+	}
+
+	[TestMethod]
 	[Description("Slash separator works.")]
 	public void When_SlashSeparator_Then_UsesSlash()
 	{

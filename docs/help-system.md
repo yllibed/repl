@@ -56,7 +56,7 @@ Each `ReplDocCommand` includes:
 This model powers:
 
 - `--help` text rendering
-- MCP tool/resource/prompt schema generation
+- MCP tool/resource/prompt schema generation and MCP Apps metadata
 - Shell completion candidate generation
 
 See also: [Commands](commands.md) | [MCP Server](mcp-server.md) | [Parameter System](parameter-system.md)

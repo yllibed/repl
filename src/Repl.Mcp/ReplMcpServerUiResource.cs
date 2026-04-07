@@ -7,46 +7,40 @@ using Repl.Documentation;
 
 namespace Repl.Mcp;
 
-/// <summary>
-/// Custom <see cref="McpServerResource"/> subclass that extracts URI template variables
-/// and dispatches reads through the Repl pipeline via <see cref="McpToolAdapter"/>.
-/// </summary>
-internal sealed partial class ReplMcpServerResource : McpServerResource
+internal sealed partial class ReplMcpServerUiResource : McpServerResource
 {
 	private readonly string _resourceName;
 	private readonly McpToolAdapter _adapter;
+	private readonly McpAppCommandResourceOptions _options;
 	private readonly ResourceTemplate _protocolResourceTemplate;
 	private readonly Regex? _uriParser;
 	private readonly string[] _variableNames;
 
-	public ReplMcpServerResource(
-		ReplDocResource resource,
+	public ReplMcpServerUiResource(
+		ReplDocCommand command,
 		string resourceName,
-		string uriTemplate,
+		McpAppCommandResourceOptions options,
 		McpToolAdapter adapter)
 	{
 		_resourceName = resourceName;
 		_adapter = adapter;
+		_options = options;
 		_protocolResourceTemplate = new ResourceTemplate
 		{
-			Name = resourceName,
-			Description = resource.Description,
-			UriTemplate = uriTemplate,
-			MimeType = "text/plain",
+			Name = options.ResourceOptions.Name ?? BuildDefaultResourceName(command.Path),
+			Description = options.ResourceOptions.Description ?? command.Description,
+			UriTemplate = options.ResourceUri,
+			MimeType = McpAppValidation.ResourceMimeType,
+			Meta = McpAppMetadata.BuildResourceMeta(options.ResourceOptions),
 		};
 
-		// Build a regex to extract template variables from the URI.
-		// Each {varName} becomes (?<varName>[^/]+), literals are Regex.Escape'd.
-		_variableNames = BuildUriParser(uriTemplate, out _uriParser);
+		_variableNames = BuildUriParser(options.ResourceUri, out _uriParser);
 	}
 
-	/// <inheritdoc />
 	public override ResourceTemplate ProtocolResourceTemplate => _protocolResourceTemplate;
 
-	/// <inheritdoc />
 	public override IReadOnlyList<object> Metadata { get; } = [];
 
-	/// <inheritdoc />
 	public override bool IsMatch(string uri)
 	{
 		ArgumentNullException.ThrowIfNull(uri);
@@ -56,10 +50,9 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 			return _uriParser.IsMatch(uri);
 		}
 
-		return string.Equals(uri, _protocolResourceTemplate.UriTemplate, StringComparison.OrdinalIgnoreCase);
+		return string.Equals(uri, _options.ResourceUri, StringComparison.OrdinalIgnoreCase);
 	}
 
-	/// <inheritdoc />
 	public override async ValueTask<ReadResourceResult> ReadAsync(
 		RequestContext<ReadResourceRequestParams> request,
 		CancellationToken cancellationToken = default)
@@ -67,18 +60,18 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 		var arguments = ExtractArguments(request.Params.Uri);
 
 		var result = await _adapter.InvokeAsync(
-			_resourceName,
-			arguments,
-			request.Server,
-			progressToken: null,
-			cancellationToken,
-			allowStaticResults: false)
+				_resourceName,
+				arguments,
+				request.Server,
+				progressToken: null,
+				cancellationToken,
+				allowStaticResults: false)
 			.ConfigureAwait(false);
 
 		if (result.IsError == true)
 		{
 			var errorText = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
-				?? "Resource read failed.";
+				?? "UI resource read failed.";
 			throw new McpException(errorText);
 		}
 
@@ -90,8 +83,9 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 				new TextResourceContents
 				{
 					Uri = request.Params.Uri,
-					MimeType = "text/plain",
-					Text = text,
+					MimeType = McpAppValidation.ResourceMimeType,
+					Text = UnwrapJsonString(text),
+					Meta = McpAppMetadata.BuildResourceMeta(_options.ResourceOptions),
 				},
 			],
 		};
@@ -112,13 +106,12 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 			return arguments;
 		}
 
-		foreach (var name in _variableNames)
+		foreach (var pair in _variableNames
+			.Select(name => (Name: name, Group: match.Groups[name]))
+			.Where(pair => pair.Group.Success))
 		{
-			if (match.Groups[name] is { Success: true } group)
-			{
-				var value = Uri.UnescapeDataString(group.Value);
-				arguments[name] = JsonSerializer.SerializeToElement(value, McpJsonContext.Default.String);
-			}
+			var value = Uri.UnescapeDataString(pair.Group.Value);
+			arguments[pair.Name] = JsonSerializer.SerializeToElement(value, McpJsonContext.Default.String);
 		}
 
 		return arguments;
@@ -139,7 +132,6 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 				break;
 			}
 
-			// Literal before the brace.
 			if (braceIndex > 0)
 			{
 				regexParts.Append(Regex.Escape(remaining[..braceIndex].ToString()));
@@ -165,5 +157,31 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 			RegexOptions.IgnoreCase | RegexOptions.ExplicitCapture,
 			TimeSpan.FromSeconds(1));
 		return [.. variableNames];
+	}
+
+	private static string UnwrapJsonString(string text)
+	{
+		if (text.Length == 0 || text[0] != '"')
+		{
+			return text;
+		}
+
+		try
+		{
+			return JsonSerializer.Deserialize(text, McpJsonContext.Default.String) ?? text;
+		}
+		catch (JsonException)
+		{
+			return text;
+		}
+	}
+
+	private static string BuildDefaultResourceName(string path)
+	{
+		var parts = path
+			.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Where(static segment => segment.Length == 0 || segment[0] != '{')
+			.ToArray();
+		return parts.Length == 0 ? path : string.Join(' ', parts);
 	}
 }

@@ -33,6 +33,9 @@ internal sealed class ReplMcpServerTool : McpServerTool
 			Execution = command.Annotations?.LongRunning == true
 				? new ToolExecution { TaskSupport = ToolTaskSupport.Optional }
 				: null,
+			Meta = TryGetAppOptions(command, out var appOptions)
+				? McpAppMetadata.BuildToolMeta(appOptions)
+				: null,
 		};
 	}
 #pragma warning restore MCPEXP001
@@ -55,5 +58,19 @@ internal sealed class ReplMcpServerTool : McpServerTool
 		return await _adapter.InvokeAsync(
 			_protocolTool.Name, arguments, request.Server, progressToken, cancellationToken)
 			.ConfigureAwait(false);
+	}
+
+	private static bool TryGetAppOptions(ReplDocCommand command, out McpAppToolOptions options)
+	{
+		if (command.Metadata is not null
+			&& command.Metadata.TryGetValue(McpAppMetadata.CommandMetadataKey, out var value)
+			&& value is McpAppToolOptions appOptions)
+		{
+			options = appOptions;
+			return true;
+		}
+
+		options = null!;
+		return false;
 	}
 }

@@ -66,6 +66,10 @@ Static text in a route template matched exactly.
 
 Model Context Protocol. Allows AI agents to discover and invoke commands.
 
+### MCP App
+
+MCP UI extension that lets a command open a `ui://` HTML resource. Repl maps this with `.AsMcpAppResource()` on the HTML-producing command and returns launcher text for normal tool calls.
+
 ### Middleware
 
 Pipeline function registered via `app.Use()` that wraps handler execution.

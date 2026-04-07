@@ -20,6 +20,8 @@ If you’re new, start with **01**, then follow the sequence.
    `Repl.Testing` harness: multi-step + multi-session, typed results, interaction/timeline events, metadata snapshots.
 7. [07 — Spectre](07-spectre/)
    `Repl.Spectre` integration: FigletText, Table, Panel, Tree, BarChart, BreakdownChart, Calendar, JsonText, TextPath, Grid, Columns, Rule, Status, Progress, and all Spectre-powered prompts.
+8. [08 — MCP Server](08-mcp-server/)
+   MCP server mode: tools, resources, prompts, behavioral annotations, automation visibility, and a minimal MCP Apps UI.
 
 ## Run
 
@@ -37,6 +39,7 @@ Replace the project path with the one you want:
 - `samples/05-hosting-remote/HostingRemoteSample.csproj`
 - `samples/06-testing/TestingSample.csproj`
 - `samples/07-spectre/SpectreOpsSample.csproj`
+- `samples/08-mcp-server/McpServerSample.csproj`
 
 ## Suggested reading (existing docs)
 

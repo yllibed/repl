@@ -1,4 +1,4 @@
-# MCP Advanced: Dynamic Tools, Roots, and Session-Aware Patterns
+# MCP Advanced: Dynamic Tools, Roots, MCP Apps, and Session-Aware Patterns
 
 This guide covers advanced MCP usage patterns for Repl apps:
 
@@ -6,6 +6,7 @@ This guide covers advanced MCP usage patterns for Repl apps:
 - Native MCP client roots
 - Soft roots for clients that don't support roots
 - Compatibility shims for clients that don't refresh dynamic tool lists well
+- Advanced MCP Apps patterns
 
 > **Prerequisite**: read [mcp-server.md](mcp-server.md) first for the basic setup.
 >
@@ -23,6 +24,7 @@ Use the techniques in this page when:
 - The agent needs to know which directories it is allowed to work in
 - Your MCP client does not support native roots
 - Your MCP client does not seem to refresh its tool list after `list_changed`
+- Your MCP App should render HTML without exposing that HTML as the model-facing tool result
 
 If your tool list is static, stay with the default setup from [mcp-server.md](mcp-server.md).
 
@@ -248,7 +250,141 @@ Avoid it when:
 | Client supports tools but misses dynamic refreshes | Enable `DiscoverAndCallShim` |
 | Client has both issues | Use soft roots and, if needed, the dynamic tool shim |
 
+## MCP Apps advanced patterns
+
+For the basic MCP Apps setup, start with [mcp-server.md](mcp-server.md#mcp-apps). This section covers the patterns that matter once the UI is more than a trivial inline HTML card.
+
+MCP Apps support is experimental in this version. Resource handlers should return generated HTML as `string`, `Task<string>`, or `ValueTask<string>`; the API is expected to become more flexible as host support and Repl's asset story evolve.
+
+### One mapping, two MCP surfaces
+
+`AsMcpAppResource()` keeps the Repl authoring model simple: one mapping produces both the launcher tool metadata and the UI resource.
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource();
+```
+
+The handler return value is used for `resources/read` and is returned as `text/html;profile=mcp-app`. When a client calls the MCP tool, Repl returns launcher text instead of raw HTML, using `WithMcpAppLauncherText(...)`, `WithDescription(...)`, or a generated fallback.
+
+Use `WithMcpAppLauncherText(...)` when the description is not the text you want in the chat transcript:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource()
+    .WithMcpAppLauncherText("Opening the contacts dashboard.");
+```
+
+`WithMcpApp("ui://...")` remains available for advanced cases where a normal tool should point at a separately registered UI resource, but it is not the default pattern.
+
+```csharp
+app.Map("status dashboard", (IStatusStore store) => store.GetSummary())
+    .ReadOnly()
+    .WithMcpApp("ui://status/dashboard");
+```
+
+### Generated UI resource URIs
+
+`AsMcpAppResource()` generates a `ui://` URI from the route path, matching how `AsResource()` generates `repl://` URIs:
+
+```csharp
+app.Map("contact {id:int} panel", (int id, IContactDb contacts) => BuildHtml(contacts.Get(id)))
+    .AsMcpAppResource();
+```
+
+This produces a resource template like `ui://contact/{id}/panel`.
+
+The generated URI uses the full route path, including contexts:
+
+```csharp
+app.Context("viewer", viewer =>
+{
+    viewer.Context("session {id:int}", session =>
+    {
+        session.Map("attach", (int id) => BuildHtml(id))
+            .AsMcpAppResource();
+    });
+});
+```
+
+This produces `ui://viewer/session/{id}/attach`. MCP URI templates keep the variable name but not the Repl route constraint, so `{id:int}` becomes `{id}` in the URI and is validated when Repl dispatches the resource read through the normal command pipeline.
+
+Pass an explicit URI only when you need a stable public URI that is decoupled from the route path:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource("ui://contacts/summary");
+```
+
+### Display preferences
+
+MCP Apps standard display modes are `inline`, `fullscreen`, and `pip`, but hosts decide what they support. Repl can express a preference:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource()
+    .WithMcpAppDisplayMode(McpAppDisplayModes.Fullscreen);
+```
+
+As of April 2026, VS Code renders MCP Apps inline only. Microsoft 365 Copilot declarative agents support fullscreen display requests for widgets. Other hosts vary; check [mcp-server.md](mcp-server.md#mcp-apps-host-compatibility) for the current compatibility notes.
+
+If the HTML uses the MCP Apps JavaScript bridge, it should still ask the host what is available before requesting a different display mode:
+
+```javascript
+const modes = app.getHostContext()?.availableDisplayModes ?? [];
+if (modes.includes("fullscreen")) {
+  await app.requestDisplayMode({ mode: "fullscreen" });
+}
+```
+
+For host-specific hints that are not yet modeled by Repl, use simple string metadata:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource()
+    .WithMcpAppUiMetadata("presentation", "flyout");
+```
+
+### HTML now, assets later
+
+The v1 Repl API expects the UI resource handler to return generated HTML. This is enough for small cards, forms, and proof-of-concept dashboards.
+
+For WebAssembly UIs such as Uno-Wasm, the likely shape is:
+
+1. Map a `ui://` app resource that returns a small HTML shell.
+2. Serve published static assets such as `embedded.js`, `_framework/*`, `.wasm`, fonts, and images from an HTTP endpoint.
+3. Inject the HTTP base URL into the generated shell.
+4. Set CSP metadata for asset and fetch domains.
+
+```csharp
+var assetBaseUri = new Uri("http://127.0.0.1:5123/");
+
+app.Map("contacts dashboard", () => BuildUnoShellHtml(assetBaseUri))
+    .AsMcpAppResource()
+    .WithMcpAppCsp(new McpAppCsp
+    {
+        ResourceDomains = [assetBaseUri.ToString()],
+        ConnectDomains = [assetBaseUri.ToString()],
+    });
+```
+
+Keep the shell and asset server host-aware: clients may preload or cache UI resources, and not every host supports every display mode or browser capability.
+
 ## Troubleshooting patterns
+
+### My MCP App shows HTML text in the chat
+
+Use `.AsMcpAppResource()` on the HTML-producing command instead of linking a normal tool to raw HTML manually. Repl will return launcher text for tool calls and reserve the HTML for `resources/read`.
+
+Also restart or reload the MCP server in the client. Some hosts cache tool lists and will not pick up MCP Apps metadata changes until the server is refreshed.
+
+### My MCP App does not open fullscreen
+
+Check whether the host supports fullscreen. VS Code currently renders MCP Apps inline only, even when Repl sets `preferredDisplayMode: McpAppDisplayModes.Fullscreen`.
+
+For hosts that support display mode changes, request fullscreen from inside the HTML app after checking host capabilities.
 
 ### The agent doesn't see tools that should appear later
 

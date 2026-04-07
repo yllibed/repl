@@ -229,6 +229,16 @@ app.Map("clear", static async (IReplInteractionChannel ch, CancellationToken ct)
     .AutomationHidden();  // not exposed to agents
 ```
 
+For MCP Apps, mark the HTML-producing command as an app resource:
+
+```csharp
+app.Map("contacts dashboard", static (IContactStore contacts) => BuildHtml(contacts))
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource();
+```
+
+This lets capable hosts render the UI while keeping raw HTML out of the model-facing transcript. The handler is still a normal Repl mapping, so it can use DI, cancellation tokens, and the usual command pipeline.
+
 Declare answer slots for interactive prompts so agents and `--answer:` flags can provide values:
 
 ```csharp
