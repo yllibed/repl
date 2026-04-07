@@ -325,7 +325,7 @@ internal static partial class ConsoleLineReader
 
 				if (echo.Length > 0)
 				{
-					Console.Write(echo.ToString());
+					Console.Write(echo);
 					echo.Clear();
 				}
 
@@ -339,7 +339,7 @@ internal static partial class ConsoleLineReader
 
 			if (echo.Length > 0)
 			{
-				Console.Write(echo.ToString());
+				Console.Write(echo);
 				echo.Clear();
 			}
 		}

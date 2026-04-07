@@ -553,9 +553,9 @@ internal static class InvocationOptionParser
 				continue;
 			}
 
-	#pragma warning disable MA0045 // Synchronous by design — Parse is a synchronous API; response file expansion cannot be async
-		var content = File.ReadAllText(path);
-#pragma warning restore MA0045
+			#pragma warning disable MA0045 // Synchronous by design — Parse is a synchronous API; response file expansion cannot be async
+			var content = File.ReadAllText(path);
+			#pragma warning restore MA0045
 			var tokenization = ResponseFileTokenizer.Tokenize(content);
 			expanded.AddRange(tokenization.Tokens);
 			if (tokenization.HasTrailingEscape)

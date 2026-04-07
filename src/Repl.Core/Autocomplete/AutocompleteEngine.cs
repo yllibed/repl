@@ -1165,7 +1165,6 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				if (quote is not null && input[index] == quote.Value)
 				{
 					index++; // skip closing quote
-					quote = null;
 					break;
 				}
 

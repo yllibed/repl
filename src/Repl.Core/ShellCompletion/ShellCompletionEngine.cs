@@ -267,13 +267,15 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		}
 	}
 
-	private static void AddRouteShellOptionCandidates(
+	private void AddRouteShellOptionCandidates(
 		RouteDefinition route,
 		string currentTokenPrefix,
 		HashSet<string> dedupe,
 		List<string> candidates)
 	{
-		var comparison = StringComparison.OrdinalIgnoreCase;
+		var comparison = app.OptionsSnapshot.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparison.OrdinalIgnoreCase
+			: StringComparison.Ordinal;
 		foreach (var token in route.OptionSchema.KnownTokens)
 		{
 			if (token.StartsWith(currentTokenPrefix, comparison))

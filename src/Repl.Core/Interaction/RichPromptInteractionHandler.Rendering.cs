@@ -303,8 +303,8 @@ internal sealed partial class RichPromptInteractionHandler
 #pragma warning disable MA0045 // Intentionally synchronous — sync menu loop for remote key reader
 			var key = keyReader.ReadKeyAsync(ct).AsTask().GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002
-			var result = HandleMultiChoiceKey(
 #pragma warning restore MA0045
+			var result = HandleMultiChoiceKey(
 				key, ctx, selected, ref cursor, ref hasError, ref escaped,
 				menuLines, minSelections, maxSelections);
 			Flush(ct);
