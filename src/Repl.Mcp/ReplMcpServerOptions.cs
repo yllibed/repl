@@ -13,6 +13,13 @@ namespace Repl.Mcp;
 public sealed class ReplMcpServerOptions
 {
 	/// <summary>
+	/// When <c>true</c>, the server advertises the MCP Apps UI extension.
+	/// Mapped MCP App resources and <see cref="UiResource(string, string, Action{McpAppResourceOptions}?)"/> registrations
+	/// enable this automatically.
+	/// </summary>
+	public bool EnableApps { get; set; }
+
+	/// <summary>
 	/// Server name reported in the MCP <c>initialize</c> response.
 	/// Defaults to the assembly product name.
 	/// </summary>
@@ -86,6 +93,7 @@ public sealed class ReplMcpServerOptions
 	public DynamicToolCompatibilityMode DynamicToolCompatibility { get; set; } = DynamicToolCompatibilityMode.Disabled;
 
 	private readonly List<McpPromptRegistration> _prompts = [];
+	private readonly List<McpAppResourceRegistration> _uiResources = [];
 
 	/// <summary>
 	/// Registers an MCP prompt with a DI-injectable handler.
@@ -102,7 +110,157 @@ public sealed class ReplMcpServerOptions
 	}
 
 	/// <summary>
+	/// Registers a static MCP App HTML resource.
+	/// </summary>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="html">Complete HTML document returned for the resource.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource(
+		string uri,
+		string html,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(html);
+		return UiResource(uri, () => html, configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource.
+	/// </summary>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="htmlFactory">Factory returning a complete HTML document. Parameters are resolved from services or the MCP App resource context.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource(
+		string uri,
+		Func<string> htmlFactory,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(htmlFactory);
+		return UiResource(
+			uri,
+			(_, _) => ValueTask.FromResult(htmlFactory()),
+			configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource.
+	/// </summary>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="htmlFactory">Factory returning a complete HTML document. Parameters are resolved from services or the MCP App resource context.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource(
+		string uri,
+		Func<CancellationToken, ValueTask<string>> htmlFactory,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(htmlFactory);
+		return UiResource(
+			uri,
+			(_, cancellationToken) => htmlFactory(cancellationToken),
+			configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource.
+	/// </summary>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="htmlFactory">Factory returning a complete HTML document. Parameters are resolved from services or the MCP App resource context.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource(
+		string uri,
+		Func<McpAppResourceContext, CancellationToken, ValueTask<string>> htmlFactory,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		McpAppValidation.ThrowIfInvalidUiUri(uri);
+		return UiResource(uri, (Delegate)htmlFactory, configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource with a single DI-injected service parameter.
+	/// </summary>
+	/// <typeparam name="TService">Service type resolved from the Repl app service provider.</typeparam>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="htmlFactory">Factory returning a complete HTML document.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource<TService>(
+		string uri,
+		Func<TService, string> htmlFactory,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(htmlFactory);
+		return UiResource(uri, (Delegate)htmlFactory, configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource with a single DI-injected service parameter.
+	/// </summary>
+	/// <typeparam name="TService">Service type resolved from the Repl app service provider.</typeparam>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="htmlFactory">Factory returning a complete HTML document.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource<TService>(
+		string uri,
+		Func<TService, Task<string>> htmlFactory,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(htmlFactory);
+		return UiResource(uri, (Delegate)htmlFactory, configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource with a single DI-injected service parameter.
+	/// </summary>
+	/// <typeparam name="TService">Service type resolved from the Repl app service provider.</typeparam>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="htmlFactory">Factory returning a complete HTML document.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource<TService>(
+		string uri,
+		Func<TService, ValueTask<string>> htmlFactory,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(htmlFactory);
+		return UiResource(uri, (Delegate)htmlFactory, configure);
+	}
+
+	/// <summary>
+	/// Registers an MCP App HTML resource with a DI-injectable handler.
+	/// </summary>
+	/// <param name="uri">The <c>ui://</c> resource URI.</param>
+	/// <param name="handler">Handler returning a complete HTML document. Parameters are resolved from services or the MCP App resource context.</param>
+	/// <param name="configure">Optional resource metadata configuration.</param>
+	/// <returns>The same options instance.</returns>
+	public ReplMcpServerOptions UiResource(
+		string uri,
+		Delegate handler,
+		Action<McpAppResourceOptions>? configure = null)
+	{
+		McpAppValidation.ThrowIfInvalidUiUri(uri);
+		ArgumentNullException.ThrowIfNull(handler);
+
+		var options = new McpAppResourceOptions();
+		configure?.Invoke(options);
+		options.Name ??= uri;
+
+		EnableApps = true;
+		_uiResources.Add(new McpAppResourceRegistration(uri, handler, options));
+		return this;
+	}
+
+	/// <summary>
 	/// Gets the registered prompt definitions.
 	/// </summary>
 	internal IReadOnlyList<McpPromptRegistration> Prompts => _prompts;
+
+	/// <summary>
+	/// Gets the registered MCP App UI resources.
+	/// </summary>
+	internal IReadOnlyList<McpAppResourceRegistration> UiResources => _uiResources;
 }

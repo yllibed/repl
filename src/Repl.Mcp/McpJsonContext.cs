@@ -10,5 +10,6 @@ namespace Repl.Mcp;
 [JsonSerializable(typeof(JsonObject))]
 [JsonSerializable(typeof(Tool[]))]
 [JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(bool))]
 internal sealed partial class McpJsonContext : JsonSerializerContext;

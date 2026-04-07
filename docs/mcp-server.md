@@ -2,7 +2,7 @@
 
 Expose your Repl command graph as an [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server so AI agents can discover and invoke your commands as typed tools.
 
-See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working demo.
+See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working MCP server demo with a minimal inline MCP Apps UI.
 
 Related guides:
 
@@ -169,6 +169,90 @@ app.Map("deploy {env}", handler)
 >     o.AutoPromoteReadOnlyToResources = false;        // opt out of ReadOnly → resource auto-promotion
 > });
 > ```
+
+## MCP Apps
+
+MCP Apps let a tool render an interactive HTML UI inline in clients that support the `io.modelcontextprotocol/ui` extension. Repl.Mcp exposes this through `ui://` resources and tool metadata.
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) =>
+        $"""
+        <!doctype html>
+        <html>
+        <body>
+          <h1>Contacts</h1>
+          <p>{contacts.GetAll().Count} contacts loaded from Repl.</p>
+        </body>
+        </html>
+        """)
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource(resource =>
+    {
+        resource.Name = "Contacts Dashboard";
+        resource.Description = "Minimal contacts dashboard.";
+        resource.PrefersBorder = true;
+    });
+```
+
+What happens:
+
+- `AsMcpAppResource(...)` marks the mapped command as an MCP App resource and links the tool declaration to it with `_meta.ui.resourceUri`.
+- The `ui://` resource URI is generated from the route path, the same way `AsResource()` generates `repl://` URIs.
+- The command handler runs through the normal Repl pipeline, so services can be injected just like other mapped commands.
+- `resources/read` returns `text/html;profile=mcp-app`.
+- Clients that support MCP Apps render the HTML inline.
+- Clients that do not support MCP Apps ignore the UI metadata and still receive the tool's normal text result.
+
+If the mapped command only exists to render app HTML, keep a small model-visible launcher tool and mark the HTML-producing resource command as app-only:
+
+```csharp
+app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
+    .ReadOnly()
+    .WithMcpApp("ui://contacts/dashboard");
+
+app.Map("contacts dashboard app", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource(
+        "ui://contacts/dashboard",
+        visibility: McpAppVisibility.App,
+        preferredDisplayMode: McpAppDisplayModes.Fullscreen);
+```
+
+Use the default `ModelAndApp` visibility only when the same command returns a useful plain-text fallback for the model.
+Hosts decide which display modes they support; standard MCP Apps display mode values are `inline`, `fullscreen`, and `pip`.
+For experimental or host-specific presentation hints, add custom UI metadata:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource(resource =>
+    {
+        resource.UiMetadata["presentation"] = "flyout";
+    });
+```
+
+For UI that loads external assets, declare the domains with CSP metadata:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource(resource =>
+    {
+        resource.Csp = new McpAppCsp
+        {
+            ResourceDomains = ["https://cdn.example.com"],
+            ConnectDomains = ["https://api.example.com"],
+        };
+    });
+```
+
+Pass an explicit URI when you need a stable custom value:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .AsMcpAppResource("ui://contacts/summary");
+```
+
+For advanced cases where the UI resource is not backed by a Repl command, `ReplMcpServerOptions.UiResource(...)` can register a raw `ui://` HTML resource directly.
+
+For WebAssembly UIs such as Uno-Wasm, serve the published assets from an HTTP endpoint and inject that endpoint into the generated HTML. The `ui://` resource should return the shell HTML, while the HTTP server serves assets such as `embedded.js`, `_framework/*`, `.wasm`, fonts, and other static files.
 
 ## JSON Schema generation
 

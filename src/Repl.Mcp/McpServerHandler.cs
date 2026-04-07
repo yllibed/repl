@@ -523,12 +523,45 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	private static ServerCapabilities BuildCapabilities() => new()
+	private ServerCapabilities BuildCapabilities()
 	{
-		Tools = new ToolsCapability { ListChanged = true },
-		Resources = new ResourcesCapability { ListChanged = true },
-		Prompts = new PromptsCapability { ListChanged = true },
-	};
+		var capabilities = new ServerCapabilities
+		{
+			Tools = new ToolsCapability { ListChanged = true },
+			Resources = new ResourcesCapability { ListChanged = true },
+			Prompts = new PromptsCapability { ListChanged = true },
+		};
+
+		if (_options.EnableApps || HasMcpAppResources())
+		{
+#pragma warning disable MCPEXP001
+			capabilities.Extensions = new Dictionary<string, object>(StringComparer.Ordinal)
+			{
+				[McpAppMetadata.ExtensionName] = new JsonObject
+				{
+					["mimeTypes"] = JsonSerializer.SerializeToNode(
+						new[] { McpAppValidation.ResourceMimeType },
+						McpJsonContext.Default.StringArray),
+				},
+			};
+#pragma warning restore MCPEXP001
+		}
+
+		return capabilities;
+	}
+
+	private bool HasMcpAppResources()
+	{
+		if (_options.UiResources.Count > 0)
+		{
+			return true;
+		}
+
+		var model = CreateDocumentationModel();
+		return model.Commands.Any(static command =>
+			command.Metadata?.ContainsKey(McpAppMetadata.ResourceMetadataKey) == true
+			|| command.Metadata?.ContainsKey(McpAppMetadata.CommandMetadataKey) == true);
+	}
 
 	private static Tool CreateCompatibilityDiscoverTool() => new()
 	{
@@ -755,6 +788,18 @@ internal sealed class McpServerHandler
 			}
 
 			var resourceName = McpToolNameFlattener.Flatten(resource.Path, separator);
+			if (TryGetAppResourceOptions(docCommand, out var appResourceOptions))
+			{
+				var mcpAppResource = new ReplMcpServerUiResource(
+					docCommand!,
+					resourceName,
+					appResourceOptions,
+					adapter);
+				adapter.RegisterRoute(resourceName, docCommand!);
+				resources.Add(mcpAppResource);
+				continue;
+			}
+
 			var uriTemplate = McpToolNameFlattener.BuildResourceUri(resource.Path, _options.ResourceUriScheme);
 			var mcpResource = new ReplMcpServerResource(resource, resourceName, uriTemplate, adapter);
 
@@ -766,7 +811,28 @@ internal sealed class McpServerHandler
 			resources.Add(mcpResource);
 		}
 
+		foreach (var uiResource in _options.UiResources)
+		{
+			resources.Add(new McpAppResource(uiResource, _sessionServices));
+		}
+
 		return resources;
+	}
+
+	private static bool TryGetAppResourceOptions(
+		ReplDocCommand? command,
+		[NotNullWhen(true)] out McpAppCommandResourceOptions? options)
+	{
+		if (command?.Metadata is not null
+			&& command.Metadata.TryGetValue(McpAppMetadata.ResourceMetadataKey, out var value)
+			&& value is McpAppCommandResourceOptions appResourceOptions)
+		{
+			options = appResourceOptions;
+			return true;
+		}
+
+		options = null;
+		return false;
 	}
 
 	// ── Prompt generation ──────────────────────────────────────────────
