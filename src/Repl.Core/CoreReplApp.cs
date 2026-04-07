@@ -37,6 +37,10 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	internal string? Description => _description;
 	internal IGlobalOptionsAccessor GlobalOptionsAccessor => _globalOptionsSnapshot;
 	internal IReplExecutionObserver? ExecutionObserver { get; set; }
+	internal List<ContextDefinition> Contexts => _contexts;
+	internal AsyncLocal<bool> BannerRendered => _bannerRendered;
+	internal AsyncLocal<bool> AllBannersSuppressed => _allBannersSuppressed;
+	internal Delegate? Banner => _banner;
 
 	private CoreReplApp()
 	{
@@ -398,7 +402,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return moduleId;
 	}
 
-	private int ResolveCurrentMappingModuleId() =>
+	internal int ResolveCurrentMappingModuleId() =>
 		_moduleMappingScope.Count == 0 ? 0 : _moduleMappingScope.Peek();
 
 	private ReplRuntimeChannel ResolveCurrentRuntimeChannel()
@@ -536,7 +540,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		"Maintainability",
 		"MA0051:Method is too long",
 		Justification = "Levenshtein implementation keeps pooling and fast-path logic explicit for readability.")]
-	private static int ComputeLevenshteinDistance(string source, string target)
+	internal static int ComputeLevenshteinDistance(string source, string target)
 	{
 		if (string.Equals(source, target, StringComparison.Ordinal))
 		{
