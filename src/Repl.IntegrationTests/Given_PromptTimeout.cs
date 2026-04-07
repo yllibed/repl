@@ -37,7 +37,7 @@ public sealed class Given_PromptTimeout
 		{
 			var result = await channel.AskTextAsync(
 				"name", "Name?", defaultValue: "default",
-				new AskOptions(CancellationToken.None)).ConfigureAwait(false);
+				new AskOptions(CancellationToken: CancellationToken.None)).ConfigureAwait(false);
 			return result;
 		});
 

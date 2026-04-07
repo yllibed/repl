@@ -228,7 +228,9 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 
 	private static string RenderToString(IRenderable renderable)
 	{
+#pragma warning disable MA0045 // StringWriter is disposed synchronously; no async benefit here.
 		using var writer = new StringWriter();
+#pragma warning restore MA0045
 
 		var width = 120;
 		if (ReplSessionIO.WindowSize is { } size && size.Width > 0)

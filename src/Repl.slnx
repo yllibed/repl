@@ -1,4 +1,11 @@
 <Solution>
+	<Folder Name="/_Files/">
+		<File Path="../.editorconfig" />
+		<File Path="../global.json" />
+		<File Path="../README.md" />
+		<File Path="Directory.Build.props" />
+		<File Path="Directory.Packages.props" />
+	</Folder>
 	<Project Path="Repl.Core/Repl.Core.csproj" />
 	<Project Path="Repl.Defaults/Repl.Defaults.csproj" />
 	<Project Path="Repl/Repl.csproj" />

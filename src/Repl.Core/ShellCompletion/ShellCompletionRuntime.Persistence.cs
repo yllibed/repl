@@ -283,8 +283,10 @@ internal sealed partial class ShellCompletionRuntime
 
 		try
 		{
+#pragma warning disable MA0045 // Synchronous by design — called from sync status-checking method
 			var content = File.ReadAllText(profilePath);
 			return ContainsShellCompletionManagedBlock(content, shellKind, appId);
+#pragma warning restore MA0045
 		}
 		catch
 		{

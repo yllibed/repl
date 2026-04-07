@@ -16,7 +16,9 @@ internal static class Program
 			app.UseDefaultInteractive();
 		}
 
+#pragma warning disable MA0045 // Sync entry point is intentional for this test host.
 		return app.Run(args);
+#pragma warning restore MA0045
 	}
 
 	private static void ConfigureScenario(ReplApp app, string? scenario)

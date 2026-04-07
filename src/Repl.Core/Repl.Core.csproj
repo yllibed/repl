@@ -4,6 +4,8 @@
 		<TargetFramework>net10.0</TargetFramework>
 		<Description>Dependency-free runtime core for routing, parsing/binding, results, help, and middleware.</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
+
+		<RootNamespace>Repl</RootNamespace>
 	</PropertyGroup>
 
 	<ItemGroup>

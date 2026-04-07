@@ -310,7 +310,9 @@ internal sealed partial class ShellCompletionRuntime
 				return false;
 			}
 
-			var stat = File.ReadAllText(statPath);
+	#pragma warning disable MA0045 // Synchronous by design — process tree walking is synchronous utility code
+		var stat = File.ReadAllText(statPath);
+#pragma warning restore MA0045
 			var endCommand = stat.LastIndexOf(')');
 			if (endCommand < 0 || endCommand + 2 >= stat.Length)
 			{
@@ -352,7 +354,9 @@ internal sealed partial class ShellCompletionRuntime
 				return false;
 			}
 
-			var output = process.StandardOutput.ReadToEnd();
+	#pragma warning disable MA0045 // Synchronous by design — process tree walking is synchronous utility code
+		var output = process.StandardOutput.ReadToEnd();
+#pragma warning restore MA0045
 			process.WaitForExit(milliseconds: 250);
 			return int.TryParse(output.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out parentProcessId);
 		}

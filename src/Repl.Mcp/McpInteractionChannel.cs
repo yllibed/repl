@@ -52,9 +52,9 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			return ResolveChoiceIndex(sampled, choices);
 		}
 
-		if (defaultIndex.HasValue)
+		if (defaultIndex is { } idx)
 		{
-			return defaultIndex.Value;
+			return idx;
 		}
 
 		if (_mode == InteractivityMode.PrefillThenDefaults)
@@ -88,9 +88,9 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			return ParseBool(sampled);
 		}
 
-		if (defaultValue.HasValue)
+		if (defaultValue is { } val)
 		{
-			return defaultValue.Value;
+			return val;
 		}
 
 		if (_mode == InteractivityMode.PrefillThenDefaults)

@@ -22,7 +22,9 @@ internal sealed partial class RichPromptInteractionHandler
 			return ReadChoiceInteractiveRemote(choices, defaultIndex, keyReader, ct);
 		}
 
+#pragma warning disable MA0045 // Intentionally synchronous — interactive menu rendering runs on calling thread
 		ConsoleInputGate.Gate.Wait(ct);
+#pragma warning restore MA0045
 		try
 		{
 			return ReadChoiceInteractiveCore(choices, defaultIndex, ct);
@@ -64,7 +66,9 @@ internal sealed partial class RichPromptInteractionHandler
 		{
 			if (!Console.KeyAvailable)
 			{
+#pragma warning disable MA0045 // Intentionally synchronous — interactive menu rendering runs on calling thread
 				Thread.Sleep(15);
+#pragma warning restore MA0045
 				continue;
 			}
 
@@ -113,8 +117,10 @@ internal sealed partial class RichPromptInteractionHandler
 		while (!ct.IsCancellationRequested)
 		{
 #pragma warning disable VSTHRD002
+#pragma warning disable MA0045 // Intentionally synchronous — sync menu loop for remote key reader
 			var key = keyReader.ReadKeyAsync(ct).AsTask().GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002
+#pragma warning restore MA0045
 			var result = HandleChoiceKey(key, ctx, ref cursor, menuLines);
 			Flush(ct);
 			if (result is not null)
@@ -179,8 +185,10 @@ internal sealed partial class RichPromptInteractionHandler
 				choices, defaults, minSelections, maxSelections, keyReader, ct);
 		}
 
+#pragma warning disable MA0045 // Intentionally synchronous — interactive menu rendering runs on calling thread
 		ConsoleInputGate.Gate.Wait(ct);
 		try
+#pragma warning restore MA0045
 		{
 			return ReadMultiChoiceInteractiveCore(choices, defaults, minSelections, maxSelections, ct);
 		}
@@ -228,8 +236,10 @@ internal sealed partial class RichPromptInteractionHandler
 		{
 			if (!Console.KeyAvailable)
 			{
+#pragma warning disable MA0045 // Intentionally synchronous — interactive menu rendering runs on calling thread
 				Thread.Sleep(15);
 				continue;
+#pragma warning restore MA0045
 			}
 
 			var key = Console.ReadKey(intercept: true);
@@ -290,8 +300,10 @@ internal sealed partial class RichPromptInteractionHandler
 		while (!ct.IsCancellationRequested)
 		{
 #pragma warning disable VSTHRD002
+#pragma warning disable MA0045 // Intentionally synchronous — sync menu loop for remote key reader
 			var key = keyReader.ReadKeyAsync(ct).AsTask().GetAwaiter().GetResult();
 #pragma warning restore VSTHRD002
+#pragma warning restore MA0045
 			var result = HandleMultiChoiceKey(
 				key, ctx, selected, ref cursor, ref hasError, ref escaped,
 				menuLines, minSelections, maxSelections);
@@ -592,14 +604,18 @@ internal sealed partial class RichPromptInteractionHandler
 
 	// ---------- I/O routing ----------
 
+#pragma warning disable MA0045 // Intentionally synchronous wrappers — used by sync menu rendering loops
 	private static void Out(string text) => ReplSessionIO.Output.Write(text);
 
 	private static void OutLine(string text) => ReplSessionIO.Output.WriteLine(text);
+#pragma warning restore MA0045
 
 	private static void Flush(CancellationToken ct)
 	{
 #pragma warning disable VSTHRD002
+#pragma warning disable MA0045 // Intentionally synchronous — sync menu rendering cannot use async flush
 		ReplSessionIO.Output.FlushAsync(ct).GetAwaiter().GetResult();
+#pragma warning restore MA0045
 #pragma warning restore VSTHRD002
 	}
 

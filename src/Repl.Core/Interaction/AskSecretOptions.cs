@@ -3,10 +3,6 @@ namespace Repl.Interaction;
 /// <summary>
 /// Options for <see cref="IReplInteractionChannel.AskSecretAsync"/>.
 /// </summary>
-/// <param name="CancellationToken">
-/// Explicit cancellation token. When <c>default</c>, the channel uses the
-/// ambient per-command token set by the framework before each command dispatch.
-/// </param>
 /// <param name="Timeout">
 /// Optional timeout for the prompt. When the timeout elapses, an empty string
 /// is returned and a countdown is displayed inline.
@@ -18,8 +14,12 @@ namespace Repl.Interaction;
 /// <param name="AllowEmpty">
 /// When <c>false</c>, the prompt loops until a non-empty value is entered.
 /// </param>
+/// <param name="CancellationToken">
+/// Explicit cancellation token. When <c>default</c>, the channel uses the
+/// ambient per-command token set by the framework before each command dispatch.
+/// </param>
 public record AskSecretOptions(
-	CancellationToken CancellationToken = default,
 	TimeSpan? Timeout = null,
 	char? Mask = '*',
-	bool AllowEmpty = false);
+	bool AllowEmpty = false,
+	CancellationToken CancellationToken = default);

@@ -82,3 +82,31 @@ dotnet_naming_symbols.private_fields.applicable_accessibilities = private
 
 dotnet_naming_style.camel_case_underscore.required_prefix = _
 dotnet_naming_style.camel_case_underscore.capitalization = camel_case
+
+# CAxxxx analyzers
+dotnet_diagnostic.CA1066.severity = warning
+dotnet_diagnostic.CA1068.severity = warning
+dotnet_diagnostic.CA1819.severity = suggestion # byte[] in record DTOs is acceptable; ImmutableArray<byte> would be too invasive
+dotnet_diagnostic.CA1823.severity = warning
+dotnet_diagnostic.CA2207.severity = warning
+
+# IDExxxx analyzers
+dotnet_diagnostic.IDE1006.severity = warning
+
+# Meziantou Analyzers
+dotnet_diagnostic.MA0032.severity = suggestion # CancellationToken is good practice but shouldn't block compilation
+dotnet_diagnostic.MA0045.severity = warning # Do not use blocking calls in a sync method (need to make calling method async)
+dotnet_diagnostic.MA0080.severity = error # Use a cancellation token using .WithCancellation()
+dotnet_diagnostic.MA0155.severity = error # No async void
+dotnet_diagnostic.MA0162.severity = error # Correctly use Process.Start()
+dotnet_diagnostic.MA0167.severity = warning # Force usage of TimeProvider whenever possible
+dotnet_diagnostic.MA0168.severity = error # Correctly use readonly structs
+dotnet_diagnostic.MA0171.severity = warning # Don't use the ugly .HasValue on nullable types
+dotnet_diagnostic.MA0180.severity = warning # Correctly use ILogging types
+dotnet_diagnostic.MA0181.severity = none # Explicit casts are idiomatic in low-level serialization/rendering code
+dotnet_diagnostic.MA0186.severity = warning # Correctly use [NotNullWhen()]
+
+# Relax certain analyzers in test projects and samples — intentional sync patterns are common.
+[{src/Repl.IntegrationTests/**.cs,src/Repl.McpTests/**.cs,src/Repl.Tests/**.cs,src/Repl.ShellCompletionTestHost/**.cs,samples/**/**.cs}]
+dotnet_diagnostic.MA0045.severity = suggestion
+dotnet_diagnostic.MA0167.severity = suggestion

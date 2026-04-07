@@ -17,7 +17,9 @@ internal sealed partial class ConsoleInteractionChannel
 
 	private static string? ReadSecretSync(char? mask, CancellationToken ct)
 	{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadSecretLineAsync
 		ConsoleInputGate.Gate.Wait(ct);
+#pragma warning restore MA0045
 		try
 		{
 			return ReadSecretCore(mask, ct);
@@ -35,7 +37,9 @@ internal sealed partial class ConsoleInteractionChannel
 		{
 			if (!Console.KeyAvailable)
 			{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadSecretLineAsync
 				Thread.Sleep(15);
+#pragma warning restore MA0045
 				continue;
 			}
 
@@ -58,8 +62,10 @@ internal sealed partial class ConsoleInteractionChannel
 		using var timer = _timeProvider.CreateTimer(
 			callback: static state =>
 			{
+#pragma warning disable MA0045 // Timer callback is non-async; Cancel is the only option here
 				try { ((CancellationTokenSource)state!).Cancel(); }
 				catch (ObjectDisposedException) { /* CTS disposed before timer fired. */ }
+#pragma warning restore MA0045
 			},
 			state: timeoutCts, dueTime: timeout, period: Timeout.InfiniteTimeSpan);
 
@@ -82,7 +88,9 @@ internal sealed partial class ConsoleInteractionChannel
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadSecretWithCountdownAsync
 		ConsoleInputGate.Gate.Wait(externalCt);
+#pragma warning restore MA0045
 		try
 		{
 			return ReadSecretWithCountdownCore(timeout, mask, timeoutCt, externalCt);
@@ -130,7 +138,9 @@ internal sealed partial class ConsoleInteractionChannel
 				continue;
 			}
 
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadSecretWithCountdownAsync
 			Thread.Sleep(15);
+#pragma warning restore MA0045
 
 			if (!userTyping && remaining > 0)
 			{
@@ -217,7 +227,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
-			return await ReadWithTimeoutRedirectedAsync(cancellationToken, timeout.Value)
+			return await ReadWithTimeoutRedirectedAsync(timeout.Value, cancellationToken)
 				.ConfigureAwait(false);
 		}
 
@@ -226,15 +236,17 @@ internal sealed partial class ConsoleInteractionChannel
 	}
 
 	private async ValueTask<string?> ReadWithTimeoutRedirectedAsync(
-		CancellationToken cancellationToken,
-		TimeSpan timeout)
+		TimeSpan timeout,
+		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		using var _ = _timeProvider.CreateTimer(
 			static state =>
 			{
+#pragma warning disable MA0045 // Timer callback is non-async; Cancel is the only option here
 				try { ((CancellationTokenSource)state!).Cancel(); }
 				catch (ObjectDisposedException) { /* CTS disposed before timer fired. */ }
+#pragma warning restore MA0045
 			},
 			timeoutCts, timeout, Timeout.InfiniteTimeSpan);
 		try
@@ -256,8 +268,10 @@ internal sealed partial class ConsoleInteractionChannel
 		using var _ = _timeProvider.CreateTimer(
 			static state =>
 			{
+#pragma warning disable MA0045 // Timer callback is non-async; Cancel is the only option here
 				try { ((CancellationTokenSource)state!).Cancel(); }
 				catch (ObjectDisposedException) { /* CTS disposed before timer fired. */ }
+#pragma warning restore MA0045
 			},
 			timeoutCts, timeout, Timeout.InfiniteTimeSpan);
 
@@ -285,7 +299,9 @@ internal sealed partial class ConsoleInteractionChannel
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadLineWithCountdownAsync
 		ConsoleInputGate.Gate.Wait(externalCt);
+#pragma warning restore MA0045
 		try
 		{
 			return ReadLineWithCountdownCore(timeout, defaultLabel, timeoutCt, externalCt);
@@ -333,7 +349,9 @@ internal sealed partial class ConsoleInteractionChannel
 				continue;
 			}
 
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadLineWithCountdownAsync
 			Thread.Sleep(15);
+#pragma warning restore MA0045
 
 			if (!userTyping && remaining > 0)
 			{

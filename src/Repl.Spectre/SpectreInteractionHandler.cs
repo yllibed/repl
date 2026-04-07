@@ -68,7 +68,10 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 			prompt.HighlightStyle(new Style(Color.Blue));
 		}
 
+		// Spectre.Console's Prompt() is inherently synchronous (console I/O); Task.Run is the intended pattern.
+#pragma warning disable MA0045
 		var selected = await Task.Run(() => console.Prompt(prompt), ct).ConfigureAwait(false);
+#pragma warning restore MA0045
 
 		// Map back to original index (account for potential reorder).
 		var selectedIndex = MapBackToOriginalIndex(selected, r.Choices);
@@ -97,7 +100,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 			prompt.Required();
 		}
 
+#pragma warning disable MA0045
 		var selected = await Task.Run(() => console.Prompt(prompt), ct).ConfigureAwait(false);
+#pragma warning restore MA0045
 
 		var indices = selected
 			.Select(s => MapBackToOriginalIndex(s, r.Choices))
@@ -117,7 +122,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 			DefaultValue = r.DefaultValue,
 		};
 
+#pragma warning disable MA0045
 		var result = await Task.Run(() => console.Prompt(prompt), ct).ConfigureAwait(false);
+#pragma warning restore MA0045
 		return InteractionResult.Success(result);
 	}
 
@@ -133,7 +140,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 			prompt.DefaultValue(r.DefaultValue);
 		}
 
+#pragma warning disable MA0045
 		var result = await Task.Run(() => console.Prompt(prompt), ct).ConfigureAwait(false);
+#pragma warning restore MA0045
 		return InteractionResult.Success(result);
 	}
 
@@ -151,7 +160,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 			prompt.AllowEmpty();
 		}
 
+#pragma warning disable MA0045
 		var result = await Task.Run(() => console.Prompt(prompt), ct).ConfigureAwait(false);
+#pragma warning restore MA0045
 		return InteractionResult.Success(result);
 	}
 

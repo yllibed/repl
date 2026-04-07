@@ -81,7 +81,7 @@ public static class ReplInteractionChannelExtensions
 	{
 		var decoratedPrompt = BuildNumberPrompt(prompt, defaultValue, options);
 		var askOptions = options is not null
-			? new AskOptions(options.CancellationToken, options.Timeout)
+			? new AskOptions(options.Timeout, options.CancellationToken)
 			: null;
 		var defaultText = defaultValue?.ToString();
 		string? previousLine = null;
@@ -177,7 +177,7 @@ public static class ReplInteractionChannelExtensions
 		CancellationToken cancellationToken = default)
 	{
 		await channel.AskTextAsync("__press_any_key__", prompt, string.Empty,
-				new AskOptions(cancellationToken))
+				new AskOptions(CancellationToken: cancellationToken))
 			.ConfigureAwait(false);
 	}
 
