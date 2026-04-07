@@ -14,8 +14,6 @@ namespace Repl;
 /// </summary>
 public sealed partial class CoreReplApp : ICoreReplApp
 {
-	private const string AutocompleteModeSessionStateKey = "__repl.autocomplete.mode";
-
 	private readonly List<CommandBuilder> _commands = [];
 	private readonly List<ContextDefinition> _contexts = [];
 	private readonly List<RouteDefinition> _routes = [];
@@ -649,7 +647,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return new DefaultServiceProvider(defaults);
 	}
 
-	private static bool IsHelpToken(string token) =>
+	internal static bool IsHelpToken(string token) =>
 		string.Equals(token, "help", StringComparison.OrdinalIgnoreCase)
 		|| string.Equals(token, "?", StringComparison.Ordinal);
 

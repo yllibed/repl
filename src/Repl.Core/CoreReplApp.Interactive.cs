@@ -88,14 +88,14 @@ public sealed partial class CoreReplApp
 	{
 		await ReplSessionIO.Output.WriteAsync(BuildPrompt(scopeTokens)).ConfigureAwait(false);
 		await ReplSessionIO.Output.WriteAsync(' ').ConfigureAwait(false);
-		var effectiveMode = ResolveEffectiveAutocompleteMode(serviceProvider);
-		var renderMode = ResolveAutocompleteRenderMode(effectiveMode);
-		var colorStyles = ResolveAutocompleteColorStyles(renderMode == ConsoleLineReader.AutocompleteRenderMode.Rich);
+		var effectiveMode = Autocomplete.ResolveEffectiveAutocompleteMode(serviceProvider);
+		var renderMode = AutocompleteEngine.ResolveAutocompleteRenderMode(effectiveMode);
+		var colorStyles = Autocomplete.ResolveAutocompleteColorStyles(renderMode == ConsoleLineReader.AutocompleteRenderMode.Rich);
 		return await ConsoleLineReader.ReadLineAsync(
 				historyProvider,
 				effectiveMode == AutocompleteMode.Off
 					? null
-					: (request, ct) => ResolveAutocompleteAsync(request, scopeTokens, serviceProvider, ct),
+					: (request, ct) => Autocomplete.ResolveAutocompleteAsync(request, scopeTokens, serviceProvider, ct),
 				renderMode,
 				_options.Interactive.Autocomplete.MaxVisibleSuggestions,
 				_options.Interactive.Autocomplete.Presentation,
@@ -398,8 +398,8 @@ public sealed partial class CoreReplApp
 			|| (commandTokens.Length == 1 && string.Equals(commandTokens[0], "show", StringComparison.OrdinalIgnoreCase)))
 		{
 			var configured = _options.Interactive.Autocomplete.Mode;
-			var overrideMode = sessionState?.Get<string>(AutocompleteModeSessionStateKey);
-			var effective = ResolveEffectiveAutocompleteMode(serviceProvider);
+			var overrideMode = sessionState?.Get<string>(AutocompleteEngine.AutocompleteModeSessionStateKey);
+			var effective = Autocomplete.ResolveEffectiveAutocompleteMode(serviceProvider);
 			await ReplSessionIO.Output.WriteLineAsync(
 					$"Autocomplete mode: configured={configured}, override={(overrideMode ?? "none")}, effective={effective}")
 				.ConfigureAwait(false);
@@ -415,8 +415,8 @@ public sealed partial class CoreReplApp
 				return AmbientCommandOutcome.HandledError;
 			}
 
-			sessionState?.Set(AutocompleteModeSessionStateKey, mode.ToString());
-			var effective = ResolveEffectiveAutocompleteMode(serviceProvider);
+			sessionState?.Set(AutocompleteEngine.AutocompleteModeSessionStateKey, mode.ToString());
+			var effective = Autocomplete.ResolveEffectiveAutocompleteMode(serviceProvider);
 			await ReplSessionIO.Output.WriteLineAsync($"Autocomplete mode set to {mode} (effective: {effective}).")
 				.ConfigureAwait(false);
 			return AmbientCommandOutcome.Handled;

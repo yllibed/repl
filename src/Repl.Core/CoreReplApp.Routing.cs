@@ -480,7 +480,7 @@ public sealed partial class CoreReplApp
 		[.. contexts.Where(context =>
 			!IsContextSuppressedForDiscovery(context, scopeTokens, comparison)),];
 
-	private bool IsRouteSuppressedForDiscovery(
+	internal bool IsRouteSuppressedForDiscovery(
 		RouteTemplate routeTemplate,
 		IReadOnlyList<ContextDefinition> contexts,
 		IReadOnlyList<string> scopeTokens,
@@ -501,7 +501,7 @@ public sealed partial class CoreReplApp
 		return false;
 	}
 
-	private bool IsContextSuppressedForDiscovery(
+	internal bool IsContextSuppressedForDiscovery(
 		ContextDefinition context,
 		IReadOnlyList<string> scopeTokens,
 		StringComparison comparison)

@@ -33,7 +33,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 				count: state.PriorTokens.Length - 1));
 		var commandPrefix = parsed.PositionalArguments as string[] ?? [.. parsed.PositionalArguments];
 		var currentTokenPrefix = state.CurrentTokenPrefix;
-		var currentTokenIsOption = CoreReplApp.IsGlobalOptionToken(currentTokenPrefix);
+		var currentTokenIsOption = AutocompleteEngine.IsGlobalOptionToken(currentTokenPrefix);
 		var routeMatch = app.Resolve(commandPrefix, activeGraph.Routes);
 		var hasTerminalRoute = routeMatch is not null && routeMatch.RemainingTokens.Count == 0;
 		var dedupe = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -131,7 +131,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		}
 
 		var previousToken = commandTokens[^1];
-		if (!CoreReplApp.IsGlobalOptionToken(previousToken))
+		if (!AutocompleteEngine.IsGlobalOptionToken(previousToken))
 		{
 			return false;
 		}
@@ -181,7 +181,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		HashSet<string> dedupe,
 		List<string> candidates)
 	{
-		var matchingRoutes = app.CollectVisibleMatchingRoutes(
+		var matchingRoutes = app.Autocomplete.CollectVisibleMatchingRoutes(
 			commandPrefix,
 			StringComparison.OrdinalIgnoreCase,
 			routes,
@@ -287,7 +287,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	{
 		input ??= string.Empty;
 		cursor = Math.Clamp(cursor, 0, input.Length);
-		var tokens = CoreReplApp.TokenizeInputSpans(input);
+		var tokens = AutocompleteEngine.TokenizeInputSpans(input);
 		for (var i = 0; i < tokens.Count; i++)
 		{
 			var token = tokens[i];
