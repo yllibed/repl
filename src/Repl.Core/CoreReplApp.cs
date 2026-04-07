@@ -36,6 +36,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	internal ReplOptions OptionsSnapshot => _options;
 	internal string? Description => _description;
 	internal IGlobalOptionsAccessor GlobalOptionsAccessor => _globalOptionsSnapshot;
+	internal GlobalOptionsSnapshot GlobalOptionsSnapshotInstance => _globalOptionsSnapshot;
+	internal ShellCompletionRuntime ShellCompletionRuntimeInstance => _shellCompletionRuntime;
 	internal IReplExecutionObserver? ExecutionObserver { get; set; }
 	internal List<ContextDefinition> Contexts => _contexts;
 	internal AsyncLocal<bool> BannerRendered => _bannerRendered;
