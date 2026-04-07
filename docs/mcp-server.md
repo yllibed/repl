@@ -6,7 +6,7 @@ See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working MCP se
 
 Related guides:
 
-- [mcp-advanced.md](mcp-advanced.md) for roots, soft roots, and dynamic tool patterns
+- [mcp-advanced.md](mcp-advanced.md) for roots, soft roots, dynamic tool patterns, and advanced MCP Apps patterns
 - [mcp-transports.md](mcp-transports.md) for custom transports and HTTP hosting
 - [mcp-internals.md](mcp-internals.md) for concepts and under-the-hood behavior
 
@@ -172,62 +172,44 @@ app.Map("deploy {env}", handler)
 
 ## MCP Apps
 
-MCP Apps let a tool render an interactive HTML UI inline in clients that support the `io.modelcontextprotocol/ui` extension. Repl.Mcp exposes this through `ui://` resources and tool metadata.
-
-```csharp
-app.Map("contacts dashboard", (IContactDb contacts) =>
-        $"""
-        <!doctype html>
-        <html>
-        <body>
-          <h1>Contacts</h1>
-          <p>{contacts.GetAll().Count} contacts loaded from Repl.</p>
-        </body>
-        </html>
-        """)
-    .WithDescription("Open the contacts dashboard")
-    .AsMcpAppResource(resource =>
-    {
-        resource.Name = "Contacts Dashboard";
-        resource.Description = "Minimal contacts dashboard.";
-        resource.PrefersBorder = true;
-    });
-```
-
-What happens:
-
-- `AsMcpAppResource(...)` marks the mapped command as an MCP App resource and links the tool declaration to it with `_meta.ui.resourceUri`.
-- The `ui://` resource URI is generated from the route path, the same way `AsResource()` generates `repl://` URIs.
-- The command handler runs through the normal Repl pipeline, so services can be injected just like other mapped commands.
-- `resources/read` returns `text/html;profile=mcp-app`.
-- Clients that support MCP Apps render the HTML inline.
-- Clients that do not support MCP Apps ignore the UI metadata and still receive the tool's normal text result.
-
-If the mapped command only exists to render app HTML, keep a small model-visible launcher tool and mark the HTML-producing resource command as app-only:
+MCP Apps let a tool render an interactive HTML UI in clients that support the `io.modelcontextprotocol/ui` extension. Repl.Mcp exposes this through `ui://` resources and tool metadata.
 
 ```csharp
 app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
+    .WithDescription("Open the contacts dashboard")
     .ReadOnly()
     .WithMcpApp("ui://contacts/dashboard");
 
 app.Map("contacts dashboard app", (IContactDb contacts) => BuildHtml(contacts))
-    .AsMcpAppResource(
-        "ui://contacts/dashboard",
-        visibility: McpAppVisibility.App,
-        preferredDisplayMode: McpAppDisplayModes.Fullscreen);
+    .WithDescription("Render the contacts dashboard app")
+    .AsMcpAppResource("ui://contacts/dashboard", resource =>
+    {
+        resource.Name = "Contacts Dashboard";
+        resource.Description = "Minimal contacts dashboard.";
+        resource.PrefersBorder = true;
+    }, visibility: McpAppVisibility.App);
+```
+
+What happens:
+
+- `WithMcpApp(...)` links the model-visible launcher tool to the UI resource with `_meta.ui.resourceUri`.
+- `AsMcpAppResource(...)` maps the HTML-producing command as the `ui://` resource and hides that command from the model with `visibility: ["app"]`.
+- The HTML command handler runs through the normal Repl pipeline, so services can be injected just like other mapped commands.
+- `resources/read` returns `text/html;profile=mcp-app`.
+- Clients that support MCP Apps render the HTML.
+- Clients that do not support MCP Apps ignore the UI metadata and still receive the tool's normal text result.
+
+For simpler cases where one command returns both a useful text fallback and useful UI metadata, use a single command:
+
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => contacts.GetSummary())
+    .ReadOnly()
+    .WithMcpApp("ui://contacts/dashboard");
 ```
 
 Use the default `ModelAndApp` visibility only when the same command returns a useful plain-text fallback for the model.
 Hosts decide which display modes they support; standard MCP Apps display mode values are `inline`, `fullscreen`, and `pip`.
-For experimental or host-specific presentation hints, add custom UI metadata:
-
-```csharp
-app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
-    .AsMcpAppResource(resource =>
-    {
-        resource.UiMetadata["presentation"] = "flyout";
-    });
-```
+See [mcp-advanced.md](mcp-advanced.md#mcp-apps-advanced-patterns) for launcher/resource patterns, app-only tools, display modes, and WebAssembly assets.
 
 For UI that loads external assets, declare the domains with CSP metadata:
 
@@ -461,8 +443,10 @@ app.UseMcpServer(o =>
     o.ResourceFallbackToTools = false;                          // opt-in: also expose resources as tools
     o.PromptFallbackToTools = false;                             // opt-in: also expose prompts as tools
     o.DynamicToolCompatibility = DynamicToolCompatibilityMode.Disabled; // opt-in shim for clients that miss dynamic tool refresh
+    o.EnableApps = false;                                        // usually enabled automatically by MCP App mappings
     o.CommandFilter = cmd => true;                              // filter which commands become tools
     o.Prompt("summarize", (string topic) => ...);               // explicit prompt registration
+    o.UiResource("ui://custom/app", () => "...");               // advanced: raw MCP App HTML resource
 });
 ```
 
@@ -484,6 +468,18 @@ Feature support varies across agent clients. The table below reflects the state 
 - `PrefillThenFail` is the safest default (works with all clients)
 - `PrefillThenElicitation` provides the best UX but requires elicitation support, degrading gracefully through sampling then failure
 - Resources should be annotated `.ReadOnly()` as well, so they're always accessible as tools even when the client doesn't support resources
+
+### MCP Apps host compatibility
+
+MCP Apps host support is newer and changes quickly. As of **April 2026**, known public behavior is:
+
+| Host | MCP Apps UI | `fullscreen` | `pip` | Notes |
+|---|---|---|---|---|
+| VS Code Copilot | Yes | No | No | Renders MCP Apps inline in chat only; see the [VS Code MCP developer guide](https://code.visualstudio.com/api/extension-guides/ai/mcp) |
+| Microsoft 365 Copilot declarative agents | Yes | Yes | No | Supports display mode requests for fullscreen widgets; see [Microsoft 365 Copilot UI widgets](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/declarative-agent-ui-widgets) |
+| Other MCP Apps hosts | Varies | Varies | Varies | Check `availableDisplayModes` or gracefully fall back to inline |
+
+`preferredDisplayMode` in Repl is a host-facing preference, not a guarantee. If your HTML app uses the MCP Apps bridge, it should still check host capabilities before requesting a display mode.
 
 ## Agent configuration
 
