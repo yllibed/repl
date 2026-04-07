@@ -620,7 +620,7 @@ public sealed partial class CoreReplApp
 		return string.Join('/', tokens);
 	}
 
-	private List<RouteDefinition> CollectVisibleMatchingRoutes(
+	internal List<RouteDefinition> CollectVisibleMatchingRoutes(
 		string[] commandPrefix,
 		StringComparison prefixComparison,
 		IReadOnlyList<RouteDefinition> routes,
@@ -903,7 +903,7 @@ public sealed partial class CoreReplApp
 		return output;
 	}
 
-	private static bool IsGlobalOptionToken(string token) =>
+	internal static bool IsGlobalOptionToken(string token) =>
 		token.StartsWith("--", StringComparison.Ordinal) && token.Length >= 2;
 
 	[SuppressMessage(
@@ -1129,7 +1129,7 @@ public sealed partial class CoreReplApp
 		return true;
 	}
 
-	private static List<TokenSpan> TokenizeInputSpans(string input)
+	internal static List<TokenSpan> TokenizeInputSpans(string input)
 	{
 		var tokens = new List<TokenSpan>();
 		var index = 0;
@@ -1233,5 +1233,5 @@ public sealed partial class CoreReplApp
 		int ReplaceStart,
 		int ReplaceLength);
 
-	private readonly record struct TokenSpan(string Value, int Start, int End);
+	internal readonly record struct TokenSpan(string Value, int Start, int End);
 }

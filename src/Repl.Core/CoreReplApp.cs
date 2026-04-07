@@ -367,10 +367,10 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return ResolveWithDiagnostics(inputTokens, activeGraph.Routes);
 	}
 
-	private RouteMatch? Resolve(IReadOnlyList<string> inputTokens, IReadOnlyList<RouteDefinition> routes) =>
+	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens, IReadOnlyList<RouteDefinition> routes) =>
 		RouteResolver.Resolve(routes, inputTokens, _options.Parsing);
 
-	private RouteResolver.RouteResolutionResult ResolveWithDiagnostics(
+	internal RouteResolver.RouteResolutionResult ResolveWithDiagnostics(
 		IReadOnlyList<string> inputTokens,
 		IReadOnlyList<RouteDefinition> routes) =>
 		RouteResolver.ResolveWithDiagnostics(routes, inputTokens, _options.Parsing);
