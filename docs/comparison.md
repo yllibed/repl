@@ -88,6 +88,8 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 | Structured help output | ❌ Text only | ❌ Text only | ✅ JSON / XML / YAML |
 | Documentation export | ❌ | ❌ | ✅ `doc export` command |
 | Protocol passthrough (MCP, LSP...) | ❌ | ❌ | ✅ `AsProtocolPassthrough()` |
+| MCP server tools/resources/prompts | ❌ | ❌ | ✅ `Repl.Mcp` |
+| MCP Apps UI resources | ❌ | ❌ | ✅ `WithMcpApp()` + `AsMcpAppResource()` |
 | Shell completion | ⚠️ Tab completion API | ❌ | ✅ Bash, PS, Zsh, Fish, Nu |
 
 ## When to Use What
@@ -113,7 +115,7 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 - Commands involve multi-step guided workflows (prompts, progress, confirmations)
 - Remote terminal hosting is planned (WebSocket, Telnet)
 - The command model must be testable in both one-shot and interactive contexts
-- AI/LLM agent readiness matters (structured help, protocol passthrough, pre-answered prompts)
+- AI/LLM agent readiness matters (structured help, MCP tools/resources/prompts, MCP Apps UI, protocol passthrough, pre-answered prompts)
 
 ## Migration from System.CommandLine
 

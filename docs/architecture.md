@@ -20,7 +20,7 @@
 - `Repl.Spectre`
  	- Spectre.Console integration: `SpectreInteractionHandler` for rich prompts, `IAnsiConsole` DI injection, `"spectre"` output transformer for auto-rendered tables, `SpectreConsoleOptions` for capability configuration.
 - `Repl.Mcp`
- 	- MCP (Model Context Protocol) integration: `UseMcpServer()`, `BuildMcpServerOptions()`, tool/resource/prompt mapping, client roots, transport factory.
+  - MCP (Model Context Protocol) integration: `UseMcpServer()`, `BuildMcpServerOptions()`, tool/resource/prompt mapping, MCP Apps UI resources, client roots, transport factory.
 - `Repl.Testing`
  	- In-memory multi-session testing toolkit (`ReplTestHost`, `ReplSessionHandle`, typed execution results/events).
 - `Repl.Tests`
@@ -30,7 +30,7 @@
 - `Repl.ProtocolTests`
  	- Contract tests for machine-readable help/error payloads.
 - `Repl.McpTests`
- 	- Tests for MCP server options, tool mapping, and transport integration.
+  - Tests for MCP server options, tool/resource/prompt/app mapping, and transport integration.
 - `Repl.SpectreTests`
  	- Tests for Spectre.Console integration.
 - `Repl.ShellCompletionTestHost`

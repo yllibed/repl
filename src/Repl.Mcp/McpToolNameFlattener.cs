@@ -50,8 +50,8 @@ internal static partial class McpToolNameFlattener
 			var match = DynamicSegmentPattern().Match(segment);
 			if (match.Success)
 			{
-				// Strip the constraint: {name:constraint} → {name}
-				var name = segment.TrimStart('{').TrimEnd('}').Split(':')[0];
+				// Strip optional markers and constraints: {name?:constraint} -> {name}
+				var name = match.Groups["name"].Value;
 				parts.Add($"{{{name}}}");
 			}
 			else
@@ -74,6 +74,6 @@ internal static partial class McpToolNameFlattener
 		_ => '_',
 	};
 
-	[GeneratedRegex(@"^\{\w+(?::\w+)?\}$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
+	[GeneratedRegex(@"^\{(?<name>[^:{}?]+)(?:\?)?(?::[^{}:]+)?\}$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
 	private static partial Regex DynamicSegmentPattern();
 }

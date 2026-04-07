@@ -50,6 +50,7 @@ Commands map to MCP primitives:
 | `Map().AsResource()` | Resource | Explicit — marks data-to-consult |
 | `.ReadOnly()` | Resource (auto-promoted) | ReadOnly tools are also exposed as resources |
 | `Map().AsPrompt()` | Prompt | Explicit — handler return becomes prompt template |
+| `Map().AsMcpAppResource()` | MCP App UI resource | Explicit — handler return becomes `text/html;profile=mcp-app` behind a `ui://` URI |
 | `options.Prompt()` | Prompt | Explicit — registered in `ReplMcpServerOptions` |
 
 ## Annotations
@@ -157,6 +158,7 @@ app.Map("deploy {env}", handler)
 | `.ReadOnly().AsResource()` | Yes | Yes | No |
 | `.AsPrompt()` | No | No | Yes |
 | `.AsPrompt()` + `PromptFallbackToTools = true` | Yes | No | Yes |
+| `.AsMcpAppResource()` | Yes, unless app-only | Yes (`ui://` HTML resource) | No |
 | `.AutomationHidden()` | No | No | No |
 
 > **Compatibility fallback:** Since only ~39% of clients support resources and ~38% support prompts, you can opt in to expose them as tools too. Enable `ResourceFallbackToTools` and/or `PromptFallbackToTools` in `ReplMcpServerOptions`. `AutoPromoteReadOnlyToResources` (default: `true`) controls whether `.ReadOnly()` commands are automatically exposed as resources.
@@ -196,6 +198,7 @@ What happens:
 - `AsMcpAppResource(...)` maps the HTML-producing command as the `ui://` resource and hides that command from the model with `visibility: ["app"]`.
 - The HTML command handler runs through the normal Repl pipeline, so services can be injected just like other mapped commands.
 - `resources/read` returns `text/html;profile=mcp-app`.
+- CSP, permissions, borders, and domain hints are emitted as `_meta.ui` on the UI resource content, not on the launcher tool result.
 - Clients that support MCP Apps render the HTML.
 - Clients that do not support MCP Apps ignore the UI metadata and still receive the tool's normal text result.
 
@@ -231,6 +234,8 @@ Pass an explicit URI when you need a stable custom value:
 app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
     .AsMcpAppResource("ui://contacts/summary");
 ```
+
+When no explicit URI is provided, Repl generates a `ui://` template from the full route path, including nested contexts. For example, `viewer session {id:int} attach` becomes `ui://viewer/session/{id}/attach`. MCP URI templates do not encode route constraints, so Repl validates `{id:int}` when the resource read is dispatched through the command pipeline.
 
 For advanced cases where the UI resource is not backed by a Repl command, `ReplMcpServerOptions.UiResource(...)` can register a raw `ui://` HTML resource directly.
 

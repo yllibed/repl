@@ -249,5 +249,59 @@ public sealed class Given_McpApps
 		content.Text.Should().Contain("Contact 42");
 	}
 
+	[TestMethod]
+	[Description("AsMcpAppResource includes nested context paths when it generates ui:// URI templates.")]
+	public async Task When_CommandIsNestedMcpAppResource_Then_UiUriTemplateIncludesContexts()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Context("viewer", viewer =>
+			{
+				viewer.Context("session {id:int}", session =>
+				{
+					session.Map("attach", (int id) =>
+							$"<!doctype html><html><body>Session {id}</body></html>")
+						.AsMcpAppResource();
+				});
+			});
+		}).ConfigureAwait(false);
+
+		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		var tool = tools.Single(tool =>
+			string.Equals(tool.Name, "viewer_session_attach", StringComparison.Ordinal));
+		var ui = tool.ProtocolTool.Meta!["ui"]!.AsObject();
+		var result = await fixture.Client.ReadResourceAsync("ui://viewer/session/42/attach").ConfigureAwait(false);
+		var content = result.Contents.OfType<TextResourceContents>().Single();
+
+		ui["resourceUri"]!.GetValue<string>().Should().Be("ui://viewer/session/{id}/attach");
+		content.Text.Should().Contain("Session 42");
+	}
+
+	[TestMethod]
+	[Description("AsMcpAppResource supports custom route constraints when it generates ui:// URI templates.")]
+	public async Task When_CommandUsesCustomConstraint_Then_UiUriTemplateBindsRouteArgument()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Options(options => options.Parsing.AddRouteConstraint(
+				"tenant-slug",
+				static value => value.All(static character => char.IsAsciiLetterOrDigit(character) || character == '-')));
+
+			app.Map("tenant {slug:tenant-slug} panel", (string slug) =>
+					$"<!doctype html><html><body>Tenant {slug}</body></html>")
+				.AsMcpAppResource();
+		}).ConfigureAwait(false);
+
+		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		var tool = tools.Single(tool =>
+			string.Equals(tool.Name, "tenant_panel", StringComparison.Ordinal));
+		var ui = tool.ProtocolTool.Meta!["ui"]!.AsObject();
+		var result = await fixture.Client.ReadResourceAsync("ui://tenant/acme-prod/panel").ConfigureAwait(false);
+		var content = result.Contents.OfType<TextResourceContents>().Single();
+
+		ui["resourceUri"]!.GetValue<string>().Should().Be("ui://tenant/{slug}/panel");
+		content.Text.Should().Contain("Tenant acme-prod");
+	}
+
 	private sealed record DashboardService(string Title);
 }

@@ -203,6 +203,6 @@ internal sealed partial class McpToolAdapter
 		IsError = true,
 	};
 
-	[GeneratedRegex(@"^\{(?<name>\w+)(?::\w+)?\}$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
+	[GeneratedRegex(@"^\{(?<name>[^:{}?]+)(?:\?)?(?::[^{}:]+)?\}$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
 	private static partial Regex DynamicSegmentPattern();
 }

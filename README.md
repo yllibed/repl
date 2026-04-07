@@ -9,7 +9,7 @@
 **A .NET framework for building composable command surfaces.**
 
 - Define your commands once — run them as a CLI, explore them in an interactive REPL,
-- host them in session-based terminals, expose them as MCP servers for AI agents,
+- host them in session-based terminals, expose them as MCP servers and MCP Apps for AI agents,
 - or drive them from automation scripts.
 
 > **New here?** The [DeepWiki](https://deepwiki.com/yllibed/repl) has full architecture docs, diagrams, and an AI assistant you can ask questions about the toolkit.
@@ -83,6 +83,17 @@ app.UseMcpServer();  // add one line
 { "command": "myapp", "args": ["mcp", "serve"] }
 ```
 
+**MCP Apps** (same server, host-rendered UI for capable clients):
+
+```csharp
+app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
+    .ReadOnly()
+    .WithMcpApp("ui://contacts/dashboard");
+
+app.Map("contacts dashboard app", (IContactStore contacts) => BuildHtml(contacts))
+    .AsMcpAppResource("ui://contacts/dashboard", visibility: McpAppVisibility.App);
+```
+
 One command graph. CLI, REPL, remote sessions, and AI agents — all from the same code.
 
 ## What's included
@@ -93,7 +104,7 @@ One command graph. CLI, REPL, remote sessions, and AI agents — all from the sa
 | Interactive REPL — scopes, history, autocomplete | [![Repl.Defaults](https://img.shields.io/nuget/vpre/Repl.Defaults?logo=nuget&label=Repl.Defaults)](https://www.nuget.org/packages/Repl.Defaults) | <ul><li>[Interactive loop](docs/interactive-loop.md)</li><li>[Configuration](docs/configuration-reference.md)</li></ul> |
 | Parameters & options — typed binding, options groups, response files | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Parameter system](docs/parameter-system.md)</li><li>[Route system](docs/route-system.md)</li></ul> |
 | Multiple output formats — JSON, XML, YAML, Markdown | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Output system](docs/output-system.md)</li></ul> |
-| MCP server — expose commands as AI agent tools and inline MCP Apps | [![Repl.Mcp](https://img.shields.io/nuget/vpre/Repl.Mcp?logo=nuget&label=Repl.Mcp)](https://www.nuget.org/packages/Repl.Mcp) | <ul><li>[MCP server](docs/mcp-server.md)</li><li>[MCP advanced](docs/mcp-advanced.md)</li><li>[MCP sample](samples/08-mcp-server/)</li></ul> |
+| MCP server + MCP Apps — expose commands as agent tools, resources, prompts, and UI | [![Repl.Mcp](https://img.shields.io/nuget/vpre/Repl.Mcp?logo=nuget&label=Repl.Mcp)](https://www.nuget.org/packages/Repl.Mcp) | <ul><li>[MCP server](docs/mcp-server.md)</li><li>[MCP advanced](docs/mcp-advanced.md)</li><li>[MCP sample](samples/08-mcp-server/)</li></ul> |
 | Typed results & interactions — prompts, progress, cancellation | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Interaction channel](docs/interaction.md)</li></ul> |
 | Session hosting — WebSocket, Telnet, remote terminals | [![Repl.WebSocket](https://img.shields.io/nuget/vpre/Repl.WebSocket?logo=nuget&label=Repl.WebSocket)](https://www.nuget.org/packages/Repl.WebSocket) [![Repl.Telnet](https://img.shields.io/nuget/vpre/Repl.Telnet?logo=nuget&label=Repl.Telnet)](https://www.nuget.org/packages/Repl.Telnet) | <ul><li>[Runtime channels](docs/runtime-channels.md)</li><li>[Terminal metadata](docs/terminal-metadata.md)</li></ul> |
 | Shell completion — Bash, PowerShell, Zsh, Fish, Nushell | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Shell completion](docs/shell-completion.md)</li></ul> |
@@ -115,7 +126,7 @@ Progressive learning path — each sample builds on the previous:
 5. **[Hosting Remote](samples/05-hosting-remote/)** — WebSocket / Telnet session hosting
 6. **[Testing](samples/06-testing/)** — multi-session typed assertions
 7. **[Spectre](samples/07-spectre/)** — Spectre.Console renderables, visualizations, rich prompts
-8. **[MCP Server](samples/08-mcp-server/)** — expose commands as MCP tools for AI agents, including a minimal MCP Apps UI
+8. **[MCP Server](samples/08-mcp-server/)** — expose commands as MCP tools, resources, prompts, and a minimal MCP Apps UI
 
 ## More documentation
 

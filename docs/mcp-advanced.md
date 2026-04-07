@@ -297,6 +297,21 @@ app.Map("contact {id:int} panel", (int id, IContactDb contacts) => BuildHtml(con
 
 This produces a resource template like `ui://contact/{id}/panel`.
 
+The generated URI uses the full route path, including contexts:
+
+```csharp
+app.Context("viewer", viewer =>
+{
+    viewer.Context("session {id:int}", session =>
+    {
+        session.Map("attach", (int id) => BuildHtml(id))
+            .AsMcpAppResource();
+    });
+});
+```
+
+This produces `ui://viewer/session/{id}/attach`. MCP URI templates keep the variable name but not the Repl route constraint, so `{id:int}` becomes `{id}` in the URI and is validated when Repl dispatches the resource read through the normal command pipeline.
+
 Pass an explicit URI when a launcher tool and app-only resource command need to share the same app resource:
 
 ```csharp
