@@ -158,7 +158,7 @@ app.Map("deploy {env}", handler)
 | `.ReadOnly().AsResource()` | Yes | Yes | No |
 | `.AsPrompt()` | No | No | Yes |
 | `.AsPrompt()` + `PromptFallbackToTools = true` | Yes | No | Yes |
-| `.AsMcpAppResource()` | Yes, unless app-only | Yes (`ui://` HTML resource) | No |
+| `.AsMcpAppResource()` | Yes (launcher text) | Yes (`ui://` HTML resource) | No |
 | `.AutomationHidden()` | No | No | No |
 
 > **Compatibility fallback:** Since only ~39% of clients support resources and ~38% support prompts, you can opt in to expose them as tools too. Enable `ResourceFallbackToTools` and/or `PromptFallbackToTools` in `ReplMcpServerOptions`. `AutoPromoteReadOnlyToResources` (default: `true`) controls whether `.ReadOnly()` commands are automatically exposed as resources.
@@ -176,55 +176,37 @@ app.Map("deploy {env}", handler)
 
 MCP Apps let a tool render an interactive HTML UI in clients that support the `io.modelcontextprotocol/ui` extension. Repl.Mcp exposes this through `ui://` resources and tool metadata.
 
-```csharp
-app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
-    .WithDescription("Open the contacts dashboard")
-    .ReadOnly()
-    .WithMcpApp("ui://contacts/dashboard");
+> **Experimental:** MCP Apps support is intentionally small in this version. `AsMcpAppResource()` handlers should return generated HTML as `string`, `Task<string>`, or `ValueTask<string>`. Richer return types, static asset helpers, and WebAssembly-oriented hosting may be added as the feature matures.
 
-app.Map("contacts dashboard app", (IContactDb contacts) => BuildHtml(contacts))
-    .WithDescription("Render the contacts dashboard app")
-    .AsMcpAppResource("ui://contacts/dashboard", resource =>
-    {
-        resource.Name = "Contacts Dashboard";
-        resource.Description = "Minimal contacts dashboard.";
-        resource.PrefersBorder = true;
-    }, visibility: McpAppVisibility.App);
+```csharp
+app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource()
+    .WithMcpAppBorder();
 ```
 
 What happens:
 
-- `WithMcpApp(...)` links the model-visible launcher tool to the UI resource with `_meta.ui.resourceUri`.
-- `AsMcpAppResource(...)` maps the HTML-producing command as the `ui://` resource and hides that command from the model with `visibility: ["app"]`.
+- `AsMcpAppResource()` maps the command as a `ui://` HTML resource and adds the tool metadata that lets capable hosts render it.
 - The HTML command handler runs through the normal Repl pipeline, so services can be injected just like other mapped commands.
+- Tool calls return launcher text, not raw HTML.
 - `resources/read` returns `text/html;profile=mcp-app`.
 - CSP, permissions, borders, and domain hints are emitted as `_meta.ui` on the UI resource content, not on the launcher tool result.
 - Clients that support MCP Apps render the HTML.
 - Clients that do not support MCP Apps ignore the UI metadata and still receive the tool's normal text result.
 
-For simpler cases where one command returns both a useful text fallback and useful UI metadata, use a single command:
-
-```csharp
-app.Map("contacts dashboard", (IContactDb contacts) => contacts.GetSummary())
-    .ReadOnly()
-    .WithMcpApp("ui://contacts/dashboard");
-```
-
-Use the default `ModelAndApp` visibility only when the same command returns a useful plain-text fallback for the model.
 Hosts decide which display modes they support; standard MCP Apps display mode values are `inline`, `fullscreen`, and `pip`.
-See [mcp-advanced.md](mcp-advanced.md#mcp-apps-advanced-patterns) for launcher/resource patterns, app-only tools, display modes, and WebAssembly assets.
+See [mcp-advanced.md](mcp-advanced.md#mcp-apps-advanced-patterns) for generated URIs, display modes, and WebAssembly assets.
 
 For UI that loads external assets, declare the domains with CSP metadata:
 
 ```csharp
 app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
-    .AsMcpAppResource(resource =>
+    .AsMcpAppResource()
+    .WithMcpAppCsp(new McpAppCsp
     {
-        resource.Csp = new McpAppCsp
-        {
-            ResourceDomains = ["https://cdn.example.com"],
-            ConnectDomains = ["https://api.example.com"],
-        };
+        ResourceDomains = ["https://cdn.example.com"],
+        ConnectDomains = ["https://api.example.com"],
     });
 ```
 

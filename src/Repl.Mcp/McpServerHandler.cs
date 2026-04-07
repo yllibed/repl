@@ -706,6 +706,12 @@ internal sealed class McpServerHandler
 				continue;
 			}
 
+			if (TryGetAppResourceOptions(command, out var appResourceOptions))
+			{
+				AddMcpAppLauncherTool(command, appResourceOptions, tools, nameSet, adapter, separator);
+				continue;
+			}
+
 			AddTool(command, tools, nameSet, adapter, separator);
 		}
 
@@ -758,6 +764,34 @@ internal sealed class McpServerHandler
 		nameSet[toolName] = command.Path;
 		adapter.RegisterRoute(toolName, command);
 		tools.Add(new ReplMcpServerTool(command, toolName, adapter));
+	}
+
+	private static void AddMcpAppLauncherTool(
+		ReplDocCommand command,
+		McpAppCommandResourceOptions appResourceOptions,
+		List<McpServerTool> tools,
+		Dictionary<string, string> nameSet,
+		McpToolAdapter adapter,
+		char separator)
+	{
+		var toolName = McpToolNameFlattener.Flatten(command.Path, separator);
+		if (nameSet.TryGetValue(toolName, out var existingPath))
+		{
+			if (string.Equals(command.Path, existingPath, StringComparison.OrdinalIgnoreCase))
+			{
+				return;
+			}
+
+			throw new InvalidOperationException(
+				$"MCP tool name collision: '{toolName}' from routes '{existingPath}' and '{command.Path}'. " +
+				"Consider a different ToolNamingSeparator or rename one of the commands.");
+		}
+
+		nameSet[toolName] = command.Path;
+		adapter.RegisterStaticResult(
+			toolName,
+			ReplMcpAppLauncherTool.BuildFallbackTextCore(command, appResourceOptions));
+		tools.Add(new ReplMcpAppLauncherTool(command, toolName, appResourceOptions));
 	}
 
 	// ── Resource generation ────────────────────────────────────────────

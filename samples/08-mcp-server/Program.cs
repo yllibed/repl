@@ -29,13 +29,7 @@ app.Map("contacts", (ContactStore contacts) => contacts.All)
 	.ReadOnly()
 	.AsResource();
 
-app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
-	.WithDescription("Open the contacts dashboard")
-	.ReadOnly()
-	.WithMcpApp("ui://contacts/dashboard");
-
-app.Map("contacts dashboard app",
-		(ContactStore contacts) =>
+app.Map("contacts dashboard", (ContactStore contacts) =>
 	{
 		var items = string.Join(
 			"",
@@ -60,13 +54,10 @@ app.Map("contacts dashboard app",
 			</html>
 			""";
 	})
-	.WithDescription("Render the contacts dashboard app")
-	.AsMcpAppResource("ui://contacts/dashboard", resource =>
-	{
-		resource.Name = "Contacts Dashboard";
-		resource.Description = "Minimal contacts dashboard.";
-		resource.PrefersBorder = true;
-	}, visibility: McpAppVisibility.App, preferredDisplayMode: McpAppDisplayModes.Fullscreen);
+	.WithDescription("Open the contacts dashboard")
+	.AsMcpAppResource()
+	.WithMcpAppBorder()
+	.WithMcpAppDisplayMode(McpAppDisplayModes.Fullscreen);
 
 // ── Contact operations (grouped context) ───────────────────────────
 

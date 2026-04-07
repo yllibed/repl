@@ -113,11 +113,8 @@ public sealed class Given_McpApps
 				app.Map("contacts dashboard", (DashboardService service) =>
 						$"<!doctype html><html><body>{service.Title}</body></html>")
 					.WithDescription("Open dashboard")
-					.AsMcpAppResource(resource =>
-					{
-						resource.Name = "Contacts Dashboard";
-						resource.PrefersBorder = true;
-					});
+					.AsMcpAppResource()
+					.WithMcpAppBorder();
 			},
 			configureServices: services =>
 			{
@@ -152,15 +149,14 @@ public sealed class Given_McpApps
 	}
 
 	[TestMethod]
-	[Description("AsMcpAppResource can add preferred display metadata for hosts that support it.")]
+	[Description("WithMcpAppDisplayMode can add preferred display metadata for hosts that support it.")]
 	public async Task When_CommandHasPreferredDisplayMode_Then_ResourceMetaContainsDisplayPreference()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app =>
 		{
 			app.Map("contacts dashboard", () => "<html><body>Contacts</body></html>")
-				.AsMcpAppResource(
-					visibility: McpAppVisibility.App,
-					preferredDisplayMode: McpAppDisplayModes.Fullscreen);
+				.AsMcpAppResource(visibility: McpAppVisibility.App)
+				.WithMcpAppDisplayMode(McpAppDisplayModes.Fullscreen);
 		}).ConfigureAwait(false);
 
 		var result = await fixture.Client.ReadResourceAsync("ui://contacts/dashboard").ConfigureAwait(false);
@@ -171,16 +167,14 @@ public sealed class Given_McpApps
 	}
 
 	[TestMethod]
-	[Description("MCP App resource options can include host-specific UI metadata.")]
+	[Description("WithMcpAppUiMetadata can include host-specific UI metadata.")]
 	public async Task When_CommandHasCustomUiMetadata_Then_ResourceMetaIncludesIt()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app =>
 		{
 			app.Map("contacts dashboard", () => "<html><body>Contacts</body></html>")
-				.AsMcpAppResource(resource =>
-				{
-					resource.UiMetadata["presentation"] = "flyout";
-				});
+				.AsMcpAppResource()
+				.WithMcpAppUiMetadata("presentation", "flyout");
 		}).ConfigureAwait(false);
 
 		var result = await fixture.Client.ReadResourceAsync("ui://contacts/dashboard").ConfigureAwait(false);
@@ -191,39 +185,49 @@ public sealed class Given_McpApps
 	}
 
 	[TestMethod]
-	[Description("A model-visible launcher tool can point at an app-only HTML resource command.")]
-	public async Task When_ModelLauncherUsesAppOnlyResource_Then_ModelToolDoesNotReturnHtml()
+	[Description("AsMcpAppResource exposes a launcher tool that does not return raw HTML.")]
+	public async Task When_McpAppResourceToolIsCalled_Then_ModelToolDoesNotReturnHtml()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app =>
 		{
-			app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
-				.ReadOnly()
-				.WithMcpApp("ui://contacts/dashboard");
-
-			app.Map("contacts dashboard app", () => "<html><body>Contacts</body></html>")
-				.AsMcpAppResource("ui://contacts/dashboard", visibility: McpAppVisibility.App);
+			app.Map("contacts dashboard", () => "<html><body>Contacts</body></html>")
+				.WithDescription("Open the contacts dashboard")
+				.AsMcpAppResource();
 		}).ConfigureAwait(false);
 
 		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
 		var launcher = tools.Single(tool =>
 			string.Equals(tool.Name, "contacts_dashboard", StringComparison.Ordinal));
-		var appOnly = tools.Single(tool =>
-			string.Equals(tool.Name, "contacts_dashboard_app", StringComparison.Ordinal));
 		var launcherUi = launcher.ProtocolTool.Meta!["ui"]!.AsObject();
-		var appOnlyUi = appOnly.ProtocolTool.Meta!["ui"]!.AsObject();
 
 		launcherUi["visibility"]!.AsArray().Select(static node => node!.GetValue<string>())
 			.Should().BeEquivalentTo(["model", "app"]);
-		appOnlyUi["visibility"]!.AsArray().Select(static node => node!.GetValue<string>())
-			.Should().ContainSingle("app");
 
 		var toolResult = await fixture.Client.CallToolAsync("contacts_dashboard").ConfigureAwait(false);
 		toolResult.Content.OfType<TextContentBlock>().Single().Text
-			.Should().Contain("Opening the contacts dashboard.");
+			.Should().Contain("Open the contacts dashboard")
+			.And.NotContain("<html");
 
 		var resourceResult = await fixture.Client.ReadResourceAsync("ui://contacts/dashboard").ConfigureAwait(false);
 		resourceResult.Contents.OfType<TextResourceContents>().Single().Text
 			.Should().Contain("Contacts");
+	}
+
+	[TestMethod]
+	[Description("WithMcpAppLauncherText customizes the launcher tool fallback text.")]
+	public async Task When_McpAppLauncherTextIsConfigured_Then_ToolReturnsThatText()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("contacts dashboard", () => "<html><body>Contacts</body></html>")
+				.AsMcpAppResource()
+				.WithMcpAppLauncherText("Opening the dashboard.");
+		}).ConfigureAwait(false);
+
+		var toolResult = await fixture.Client.CallToolAsync("contacts_dashboard").ConfigureAwait(false);
+
+		toolResult.Content.OfType<TextContentBlock>().Single().Text
+			.Should().Be("Opening the dashboard.");
 	}
 
 	[TestMethod]

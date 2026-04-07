@@ -18,6 +18,7 @@ internal sealed partial class McpToolAdapter
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
 	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ReplDocCommand> _toolRoutes = new(StringComparer.OrdinalIgnoreCase);
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _staticToolResults = new(StringComparer.OrdinalIgnoreCase);
 
 	public McpToolAdapter(ICoreReplApp app, ReplMcpServerOptions options, IServiceProvider services)
 	{
@@ -29,7 +30,11 @@ internal sealed partial class McpToolAdapter
 	/// <summary>
 	/// Clears all registered routes. Called before rebuilding on routing invalidation.
 	/// </summary>
-	public void ClearRoutes() => _toolRoutes.Clear();
+	public void ClearRoutes()
+	{
+		_toolRoutes.Clear();
+		_staticToolResults.Clear();
+	}
 
 	/// <summary>
 	/// Atomically replaces all routes from another adapter instance.
@@ -38,9 +43,15 @@ internal sealed partial class McpToolAdapter
 	public void ReplaceRoutes(McpToolAdapter source)
 	{
 		_toolRoutes.Clear();
+		_staticToolResults.Clear();
 		foreach (var (key, value) in source._toolRoutes)
 		{
 			_toolRoutes[key] = value;
+		}
+
+		foreach (var (key, value) in source._staticToolResults)
+		{
+			_staticToolResults[key] = value;
 		}
 	}
 
@@ -53,6 +64,14 @@ internal sealed partial class McpToolAdapter
 	}
 
 	/// <summary>
+	/// Registers a static text result for launcher-style tools.
+	/// </summary>
+	public void RegisterStaticResult(string toolName, string text)
+	{
+		_staticToolResults[toolName] = text;
+	}
+
+	/// <summary>
 	/// Invokes a Repl command through the pipeline for an MCP tool call.
 	/// </summary>
 	public async Task<CallToolResult> InvokeAsync(
@@ -60,8 +79,17 @@ internal sealed partial class McpToolAdapter
 		IDictionary<string, JsonElement> arguments,
 		McpServer? server,
 		ProgressToken? progressToken,
-		CancellationToken ct)
+		CancellationToken ct,
+		bool allowStaticResults = true)
 	{
+		if (allowStaticResults && _staticToolResults.TryGetValue(toolName, out var staticResult))
+		{
+			return new CallToolResult
+			{
+				Content = [new TextContentBlock { Text = staticResult }],
+			};
+		}
+
 		if (!_toolRoutes.TryGetValue(toolName, out var command))
 		{
 			return ErrorResult($"Unknown tool: {toolName}");

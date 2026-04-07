@@ -21,23 +21,18 @@ myapp              # still a CLI / interactive REPL
 
 Repl.Mcp can also expose MCP Apps UI resources:
 
-```csharp
-app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
-    .WithDescription("Open the contacts dashboard")
-    .ReadOnly()
-    .WithMcpApp("ui://contacts/dashboard");
+This support is experimental in the current version. `AsMcpAppResource()` handlers should return generated HTML as `string`, `Task<string>`, or `ValueTask<string>`; richer return shapes and asset helpers may be added later.
 
-app.Map("contacts dashboard app", (ContactStore contacts) =>
+```csharp
+app.Map("contacts dashboard", (ContactStore contacts) =>
         $"<!doctype html><html><body>{contacts.All.Count} contacts</body></html>")
-    .WithDescription("Render the contacts dashboard app")
-    .AsMcpAppResource("ui://contacts/dashboard", resource =>
-    {
-        resource.Name = "Contacts Dashboard";
-        resource.PrefersBorder = true;
-    }, visibility: McpAppVisibility.App, preferredDisplayMode: McpAppDisplayModes.Fullscreen);
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource()
+    .WithMcpAppBorder()
+    .WithMcpAppDisplayMode(McpAppDisplayModes.Fullscreen);
 ```
 
-Clients with MCP Apps support render the `ui://` resource. Other MCP clients still receive the launcher tool's normal text result.
+Clients with MCP Apps support render the generated `ui://` resource. Other MCP clients still receive the command's normal launcher text instead of raw HTML.
 
 ## What agents see
 
@@ -47,10 +42,9 @@ Clients with MCP Apps support render the `ui://` resource. Other MCP clients sti
 | `.Destructive()` | `destructiveHint` — ask for confirmation |
 | `.AsResource()` | MCP resource with `repl://` URI |
 | `.AsMcpAppResource()` | MCP Apps HTML resource with `ui://` URI |
-| `.AsMcpAppResource(visibility: McpAppVisibility.App)` | MCP Apps tool hidden from the model |
-| `.AsMcpAppResource(preferredDisplayMode: McpAppDisplayModes.Fullscreen)` | MCP Apps display preference |
+| `.WithMcpAppBorder()` | MCP Apps border/background preference |
+| `.WithMcpAppDisplayMode(McpAppDisplayModes.Fullscreen)` | MCP Apps display preference |
 | `.AsPrompt()` | MCP prompt template |
-| `.WithMcpApp("ui://...")` | MCP Apps UI resource link |
 | `.AutomationHidden()` | Not visible to agents |
 | `{id:guid}` | `{ "type": "string", "format": "uuid" }` |
 | `[Description("...")]` | Schema `description` field |

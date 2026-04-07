@@ -43,6 +43,12 @@ public sealed class McpAppResourceOptions
 	public string? PreferredDisplayMode { get; set; }
 
 	/// <summary>
+	/// Optional fallback text returned when an MCP client calls the launcher tool.
+	/// The HTML-producing handler is used only for the UI resource.
+	/// </summary>
+	public string? LauncherText { get; set; }
+
+	/// <summary>
 	/// Additional host-specific <c>_meta.ui</c> fields.
 	/// Use this for experimental or host-specific presentation options.
 	/// </summary>

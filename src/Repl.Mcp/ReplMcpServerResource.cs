@@ -67,7 +67,12 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 		var arguments = ExtractArguments(request.Params.Uri);
 
 		var result = await _adapter.InvokeAsync(
-			_resourceName, arguments, request.Server, progressToken: null, cancellationToken)
+			_resourceName,
+			arguments,
+			request.Server,
+			progressToken: null,
+			cancellationToken,
+			allowStaticResults: false)
 			.ConfigureAwait(false);
 
 		if (result.IsError == true)

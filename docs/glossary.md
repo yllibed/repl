@@ -68,7 +68,7 @@ Model Context Protocol. Allows AI agents to discover and invoke commands.
 
 ### MCP App
 
-MCP UI extension that lets a tool point to a `ui://` HTML resource. Repl maps this with `.WithMcpApp(...)` on the launcher command and `.AsMcpAppResource(...)` on the HTML-producing resource command.
+MCP UI extension that lets a command open a `ui://` HTML resource. Repl maps this with `.AsMcpAppResource()` on the HTML-producing command and returns launcher text for normal tool calls.
 
 ### Middleware
 

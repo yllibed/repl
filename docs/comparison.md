@@ -89,7 +89,7 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 | Documentation export | ❌ | ❌ | ✅ `doc export` command |
 | Protocol passthrough (MCP, LSP...) | ❌ | ❌ | ✅ `AsProtocolPassthrough()` |
 | MCP server tools/resources/prompts | ❌ | ❌ | ✅ `Repl.Mcp` |
-| MCP Apps UI resources | ❌ | ❌ | ✅ `WithMcpApp()` + `AsMcpAppResource()` |
+| MCP Apps UI resources | ❌ | ❌ | ✅ `AsMcpAppResource()` |
 | Shell completion | ⚠️ Tab completion API | ❌ | ✅ Bash, PS, Zsh, Fish, Nu |
 
 ## When to Use What

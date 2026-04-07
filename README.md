@@ -86,12 +86,9 @@ app.UseMcpServer();  // add one line
 **MCP Apps** (same server, host-rendered UI for capable clients):
 
 ```csharp
-app.Map("contacts dashboard", () => "Opening the contacts dashboard.")
-    .ReadOnly()
-    .WithMcpApp("ui://contacts/dashboard");
-
-app.Map("contacts dashboard app", (IContactStore contacts) => BuildHtml(contacts))
-    .AsMcpAppResource("ui://contacts/dashboard", visibility: McpAppVisibility.App);
+app.Map("contacts dashboard", (IContactStore contacts) => BuildHtml(contacts))
+    .WithDescription("Open the contacts dashboard")
+    .AsMcpAppResource();
 ```
 
 One command graph. CLI, REPL, remote sessions, and AI agents — all from the same code.

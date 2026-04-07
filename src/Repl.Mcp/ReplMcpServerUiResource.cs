@@ -27,7 +27,7 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 		_options = options;
 		_protocolResourceTemplate = new ResourceTemplate
 		{
-			Name = options.ResourceOptions.Name ?? resourceName,
+			Name = options.ResourceOptions.Name ?? BuildDefaultResourceName(command.Path),
 			Description = options.ResourceOptions.Description ?? command.Description,
 			UriTemplate = options.ResourceUri,
 			MimeType = McpAppValidation.ResourceMimeType,
@@ -64,7 +64,8 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 				arguments,
 				request.Server,
 				progressToken: null,
-				cancellationToken)
+				cancellationToken,
+				allowStaticResults: false)
 			.ConfigureAwait(false);
 
 		if (result.IsError == true)
@@ -174,5 +175,14 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 		{
 			return text;
 		}
+	}
+
+	private static string BuildDefaultResourceName(string path)
+	{
+		var parts = path
+			.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Where(static segment => segment.Length == 0 || segment[0] != '{')
+			.ToArray();
+		return parts.Length == 0 ? path : string.Join(' ', parts);
 	}
 }
