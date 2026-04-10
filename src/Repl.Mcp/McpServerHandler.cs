@@ -26,6 +26,8 @@ internal sealed class McpServerHandler
 	private readonly TimeProvider _timeProvider;
 	private readonly char _separator;
 	private readonly McpClientRootsService _roots;
+	private readonly McpSamplingService _sampling;
+	private readonly McpElicitationService _elicitation;
 	private readonly IServiceProvider _sessionServices;
 	private readonly SemaphoreSlim _snapshotGate = new(initialCount: 1, maxCount: 1);
 	private readonly Lock _refreshLock = new();
@@ -52,11 +54,15 @@ internal sealed class McpServerHandler
 		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		_separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
 		_roots = new McpClientRootsService(app);
+		_sampling = new McpSamplingService();
+		_elicitation = new McpElicitationService();
 		_sessionServices = new McpServiceProviderOverlay(
 			services,
 			new Dictionary<Type, object>
 			{
 				[typeof(IMcpClientRoots)] = _roots,
+				[typeof(IMcpSampling)] = _sampling,
+				[typeof(IMcpElicitation)] = _elicitation,
 			});
 	}
 
@@ -410,6 +416,8 @@ internal sealed class McpServerHandler
 
 			_server = server;
 			_roots.AttachServer(server);
+			_sampling.AttachServer(server);
+			_elicitation.AttachServer(server);
 			EnsureRoutingSubscription();
 			EnsureRootsNotificationHandler(server);
 		}
