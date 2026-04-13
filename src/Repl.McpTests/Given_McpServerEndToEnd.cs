@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
+using Repl.Parameters;
 
 namespace Repl.McpTests;
 
@@ -343,5 +344,121 @@ public sealed class Given_McpServerEndToEnd
 		var text = (result.Messages[0].Content as TextContentBlock)?.Text;
 		text.Should().NotBeNull();
 		text.Should().Contain("Diagnose: missing data");
+	}
+
+	// ── Options group camelCase naming ─────────────────────────────────
+
+	[TestMethod]
+	[Description("Options group PascalCase properties are exposed as camelCase in MCP tool schema.")]
+	public async Task When_OptionsGroupWithPascalCaseProperties_Then_SchemaUsesCamelCase()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("report", (ReportOptions opts) => $"{opts.IncludeSegments}:{opts.MaxResults}")
+				.WithDescription("Generate report")
+				.ReadOnly();
+		});
+
+		var tools = await fixture.Client.ListToolsAsync();
+		var tool = tools.Single(t => string.Equals(t.Name, "report", StringComparison.Ordinal));
+		var properties = tool.JsonSchema.GetProperty("properties");
+
+		properties.TryGetProperty("includeSegments", out _).Should().BeTrue(
+			"PascalCase property 'IncludeSegments' must be exposed as camelCase 'includeSegments'");
+		properties.TryGetProperty("maxResults", out _).Should().BeTrue(
+			"PascalCase property 'MaxResults' must be exposed as camelCase 'maxResults'");
+
+		properties.TryGetProperty("IncludeSegments", out _).Should().BeFalse(
+			"PascalCase 'IncludeSegments' must not leak into the schema");
+		properties.TryGetProperty("MaxResults", out _).Should().BeFalse(
+			"PascalCase 'MaxResults' must not leak into the schema");
+	}
+
+	[TestMethod]
+	[Description("Options group tool call with camelCase keys dispatches correctly.")]
+	public async Task When_OptionsGroupToolCallWithCamelCaseKeys_Then_Succeeds()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("report", (ReportOptions opts) => $"{opts.IncludeSegments}|{opts.MaxResults}")
+				.ReadOnly();
+		});
+
+		var result = await fixture.Client.CallToolAsync(
+			"report",
+			new Dictionary<string, object?>(StringComparer.Ordinal)
+			{
+				["includeSegments"] = true,
+				["maxResults"] = 50,
+			});
+
+		result.IsError.Should().BeFalse("camelCase keys should bind correctly to the options group");
+		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
+		text.Should().NotBeNull();
+		text!.Should().Contain("True");
+		text.Should().Contain("50");
+	}
+
+	[TestMethod]
+	[Description("Options group with explicit ReplOption.Name override uses the override in MCP schema.")]
+	public async Task When_OptionsGroupWithExplicitOptionName_Then_SchemaUsesOverride()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("export", (ExportOptions opts) => opts.OutputPath ?? "default")
+				.ReadOnly();
+		});
+
+		var tools = await fixture.Client.ListToolsAsync();
+		var tool = tools.Single(t => string.Equals(t.Name, "export", StringComparison.Ordinal));
+		var properties = tool.JsonSchema.GetProperty("properties");
+
+		properties.TryGetProperty("out", out _).Should().BeTrue(
+			"Explicit Name='out' override should be used");
+		properties.TryGetProperty("OutputPath", out _).Should().BeFalse();
+		properties.TryGetProperty("outputPath", out _).Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Prompt with options group exposes camelCase argument names.")]
+	public async Task When_PromptWithOptionsGroup_Then_ArgumentNamesAreCamelCase()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("analyze", (ReportOptions opts) => $"Analyze: {opts.IncludeSegments}")
+				.WithDescription("Analyze data")
+				.AsPrompt();
+		});
+
+		var prompts = await fixture.Client.ListPromptsAsync();
+		var prompt = prompts.Single(p =>
+			string.Equals(p.Name, "analyze", StringComparison.Ordinal));
+
+		prompt.ProtocolPrompt.Arguments.Should().Contain(a =>
+			string.Equals(a.Name, "includeSegments", StringComparison.Ordinal),
+			"PascalCase property should be exposed as camelCase prompt argument");
+		prompt.ProtocolPrompt.Arguments.Should().NotContain(a =>
+			string.Equals(a.Name, "IncludeSegments", StringComparison.Ordinal),
+			"PascalCase name should not leak into prompt arguments");
+	}
+
+	// ── Options group helper classes ───────────────────────────────────
+
+	[ReplOptionsGroup]
+	private sealed class ReportOptions
+	{
+		[System.ComponentModel.Description("Include segment details")]
+		public bool IncludeSegments { get; set; }
+
+		[System.ComponentModel.Description("Maximum results to return")]
+		public int MaxResults { get; set; } = 25;
+	}
+
+	[ReplOptionsGroup]
+	private sealed class ExportOptions
+	{
+		[ReplOption(Name = "out")]
+		[System.ComponentModel.Description("Output file path")]
+		public string? OutputPath { get; set; }
 	}
 }

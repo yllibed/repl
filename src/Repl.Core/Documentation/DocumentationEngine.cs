@@ -418,7 +418,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			? propDefault.ToString()
 			: null;
 		return new ReplDocOption(
-			Name: property.Name,
+			Name: aliases.Length > 0 ? aliases[0].TrimStart('-') : property.Name,
 			Type: GetFriendlyTypeName(property.PropertyType),
 			Required: false,
 			Description: property.GetCustomAttribute<DescriptionAttribute>()?.Description,
@@ -458,7 +458,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			? parameter.DefaultValue.ToString()
 			: null;
 		return new ReplDocOption(
-			Name: parameter.Name!,
+			Name: aliases.Length > 0 ? aliases[0].TrimStart('-') : parameter.Name!,
 			Type: GetFriendlyTypeName(parameter.ParameterType),
 			Required: IsRequiredParameter(parameter),
 			Description: parameter.GetCustomAttribute<DescriptionAttribute>()?.Description,
