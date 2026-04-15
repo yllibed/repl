@@ -13,6 +13,7 @@
 	<ItemGroup Label="Runtime dependencies">
 		<PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5"/>
 		<PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.5"/>
+		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.5"/>
 		<PackageVersion Include="ModelContextProtocol" Version="1.2.0"/>
 		<PackageVersion Include="Spectre.Console" Version="0.55.0"/>
 	</ItemGroup>

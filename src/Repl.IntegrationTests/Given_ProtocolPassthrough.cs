@@ -1,8 +1,10 @@
+using Microsoft.Extensions.Logging;
+
 namespace Repl.IntegrationTests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class Given_ProtocolPassthrough
+public sealed partial class Given_ProtocolPassthrough
 {
 	[TestMethod]
 	[Description("Regression guard: verifies protocol passthrough suppresses banners so stdout only contains handler protocol output.")]
@@ -69,6 +71,27 @@ public sealed class Given_ProtocolPassthrough
 		output.StdOut.Should().Contain("rpc-ready");
 		output.StdOut.Should().NotContain("Test banner");
 		output.StdOut.Should().NotContain("Command banner");
+		output.StdErr.Should().BeNullOrWhiteSpace();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies default ILogger usage stays silent during protocol passthrough unless the app opts into a provider.")]
+	public void When_ProtocolPassthroughUsesDefaultLogging_Then_LogsStayOffStdOutAndStdErr()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+				"mcp log",
+				(ILogger<Given_ProtocolPassthrough> logger) =>
+				{
+					LogMessages.TransportDiagnostic(logger);
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "log", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().BeNullOrWhiteSpace();
 		output.StdErr.Should().BeNullOrWhiteSpace();
 	}
 
@@ -334,7 +357,13 @@ public sealed class Given_ProtocolPassthrough
 							})
 						.AsProtocolPassthrough();
 				},
-				() => Results.Validation("context gate failed"));
+			() => Results.Validation("context gate failed"));
 		}
+	}
+
+	private static partial class LogMessages
+	{
+		[LoggerMessage(Level = LogLevel.Information, Message = "transport diagnostic")]
+		public static partial void TransportDiagnostic(ILogger logger);
 	}
 }

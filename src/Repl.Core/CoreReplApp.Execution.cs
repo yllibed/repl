@@ -244,6 +244,8 @@ public sealed partial class CoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		using var protocolPassthroughScope = ReplSessionIO.PushProtocolPassthrough();
+
 		if (ReplSessionIO.IsSessionActive)
 		{
 			var (exitCode, _) = await ExecuteMatchedCommandAsync(
