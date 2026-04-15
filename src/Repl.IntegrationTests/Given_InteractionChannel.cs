@@ -23,6 +23,29 @@ public sealed class Given_InteractionChannel
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies user-facing notice, warning, and problem feedback render semantically.")]
+	public void When_HandlerUsesStructuredUserFeedback_Then_FeedbackIsRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.WriteNoticeAsync("Connection established", ct).ConfigureAwait(false);
+			await channel.WriteWarningAsync("Cache is warming up", ct).ConfigureAwait(false);
+			await channel.WriteProblemAsync("Sync failed", "Check connectivity and retry.", "sync_failed", ct).ConfigureAwait(false);
+			return "done";
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Connection established");
+		output.Text.Should().Contain("Warning: Cache is warming up");
+		output.Text.Should().Contain("Problem [sync_failed]: Sync failed");
+		output.Text.Should().Contain("Check connectivity and retry.");
+		output.Text.Should().Contain("done");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies percentage progress injection so that handlers can report progress through IProgress<double>.")]
 	public void When_HandlerUsesInjectedPercentageProgress_Then_ProgressIsRendered()
 	{

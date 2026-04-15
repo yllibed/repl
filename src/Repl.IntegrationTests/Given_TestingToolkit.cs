@@ -116,6 +116,36 @@ public sealed class Given_TestingToolkit
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies semantic notice, warning, and problem events are captured by the testing toolkit.")]
+	public async Task When_CommandEmitsSemanticFeedback_Then_FeedbackEventsAreCaptured()
+	{
+		await using var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create().UseDefaultInteractive();
+			app.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
+			{
+				await channel.WriteNoticeAsync("Connected", ct).ConfigureAwait(false);
+				await channel.WriteWarningAsync("Token expires soon", ct).ConfigureAwait(false);
+				await channel.WriteProblemAsync("Sync failed", "Retry later.", "sync_failed", ct).ConfigureAwait(false);
+				return "done";
+			});
+			return app;
+		});
+		await using var session = await host.OpenSessionAsync();
+
+		var result = await session.RunCommandAsync("sync --no-logo");
+
+		result.InteractionEvents.OfType<ReplNoticeEvent>()
+			.Should().ContainSingle(evt => string.Equals(evt.Text, "Connected", StringComparison.Ordinal));
+		result.InteractionEvents.OfType<ReplWarningEvent>()
+			.Should().ContainSingle(evt => string.Equals(evt.Text, "Token expires soon", StringComparison.Ordinal));
+		result.InteractionEvents.OfType<ReplProblemEvent>()
+			.Should().ContainSingle(evt =>
+				string.Equals(evt.Summary, "Sync failed", StringComparison.Ordinal)
+				&& string.Equals(evt.Code, "sync_failed", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies metadata snapshots expose transport, remote and terminal information for active sessions.")]
 	public async Task When_QueryingSessions_Then_MetadataSnapshotContainsDescriptorData()
 	{

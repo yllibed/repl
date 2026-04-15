@@ -3,6 +3,8 @@
 The interaction channel is a bidirectional contract between command handlers and the host.
 Handlers emit **semantic requests** (prompts, status, progress); the host decides **how to render** them.
 
+Use `Interaction` for **user-facing feedback**. Keep `ILogger` for operator diagnostics and centralized logging.
+
 See also: [sample 04-interactive-ops](../samples/04-interactive-ops/) for a working demo.
 
 ## Core primitives
@@ -71,10 +73,24 @@ await channel.ClearScreenAsync(cancellationToken);
 
 ### `WriteStatusAsync`
 
-Inline feedback (validation errors, status messages).
+Neutral inline feedback (validation errors, transient status).
 
 ```csharp
 await channel.WriteStatusAsync("Import started", cancellationToken);
+```
+
+### User-facing feedback helpers
+
+These extension methods live in `Repl.Interaction` and are intended for messages the current user should actually see.
+
+```csharp
+await channel.WriteNoticeAsync("Connection established", cancellationToken);
+await channel.WriteWarningAsync("Token expires soon", cancellationToken);
+await channel.WriteProblemAsync(
+    "Sync failed",
+    details: "Check connectivity and retry.",
+    code: "sync_failed",
+    cancellationToken: cancellationToken);
 ```
 
 ---
@@ -263,8 +279,11 @@ Each core primitive has a corresponding request record:
 | `AskSecretRequest`        | `string`               | `AskSecretAsync`           |
 | `AskMultiChoiceRequest`   | `IReadOnlyList<int>`   | `AskMultiChoiceAsync`      |
 | `ClearScreenRequest`      | —                      | `ClearScreenAsync`         |
-| `WriteStatusRequest`      | —                      | `WriteStatusAsync`         |
-| `WriteProgressRequest`    | —                      | `WriteProgressAsync`       |
+| `WriteStatusRequest`      | `bool`                 | `WriteStatusAsync`         |
+| `WriteProgressRequest`    | `bool`                 | `WriteProgressAsync`       |
+| `WriteNoticeRequest`      | `bool`                 | `WriteNoticeAsync`         |
+| `WriteWarningRequest`     | `bool`                 | `WriteWarningAsync`        |
+| `WriteProblemRequest`     | `bool`                 | `WriteProblemAsync`        |
 
 All request types derive from `InteractionRequest<TResult>` (or `InteractionRequest` for void operations) and carry the same parameters as the corresponding channel method.
 

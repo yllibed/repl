@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -207,6 +208,49 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 	public async ValueTask WriteStatusAsync(string text, CancellationToken cancellationToken)
 	{
+		await SendFeedbackAsync(
+				LoggingLevel.Info,
+				JsonSerializer.SerializeToElement(text, McpJsonContext.Default.String),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	public ValueTask ClearScreenAsync(CancellationToken cancellationToken) =>
+		ValueTask.CompletedTask;
+
+	public ValueTask<TResult> DispatchAsync<TResult>(
+		InteractionRequest<TResult> request,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+
+		return request switch
+		{
+			WriteNoticeRequest notice => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Info,
+					JsonSerializer.SerializeToElement(notice.Text, McpJsonContext.Default.String),
+					cancellationToken)),
+			WriteWarningRequest warning => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Warning,
+					JsonSerializer.SerializeToElement(warning.Text, McpJsonContext.Default.String),
+					cancellationToken)),
+			WriteProblemRequest problem => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Error,
+					SerializeProblem(problem),
+					cancellationToken)),
+			_ => throw new NotSupportedException(
+				$"No MCP interaction handler is registered for '{request.GetType().Name}'."),
+		};
+	}
+
+	private async ValueTask SendFeedbackAsync(
+		LoggingLevel level,
+		JsonElement data,
+		CancellationToken cancellationToken)
+	{
 		if (_server is null)
 		{
 			return;
@@ -216,21 +260,38 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			NotificationMethods.LoggingMessageNotification,
 			new LoggingMessageNotificationParams
 			{
-				Level = LoggingLevel.Info,
-				Data = JsonSerializer.SerializeToElement(text, McpJsonContext.Default.String),
+				Level = level,
+				Logger = "repl.interaction",
+				Data = data,
 			},
 			cancellationToken: cancellationToken).ConfigureAwait(false);
 	}
 
-	public ValueTask ClearScreenAsync(CancellationToken cancellationToken) =>
-		ValueTask.CompletedTask;
+	private static JsonElement SerializeProblem(WriteProblemRequest problem)
+	{
+		var payload = new JsonObject
+		{
+			["summary"] = problem.Summary,
+		};
 
-	public ValueTask<TResult> DispatchAsync<TResult>(
-		InteractionRequest<TResult> request,
-		CancellationToken cancellationToken) =>
-		throw new NotSupportedException(
-			"Custom interaction dispatch is not supported in MCP mode. " +
-			"Consider marking the command as AutomationHidden().");
+		if (!string.IsNullOrWhiteSpace(problem.Details))
+		{
+			payload["details"] = problem.Details;
+		}
+
+		if (!string.IsNullOrWhiteSpace(problem.Code))
+		{
+			payload["code"] = problem.Code;
+		}
+
+		return JsonSerializer.SerializeToElement(payload, McpJsonContext.Default.JsonObject);
+	}
+
+	private static async ValueTask<TResult> CompleteBuiltInDispatchAsync<TResult>(ValueTask operation)
+	{
+		await operation.ConfigureAwait(false);
+		return (TResult)(object)true;
+	}
 
 	// ── Elicitation (Tier 2) ───────────────────────────────────────────
 

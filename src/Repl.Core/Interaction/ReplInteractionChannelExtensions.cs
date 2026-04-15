@@ -12,6 +12,53 @@ namespace Repl.Interaction;
 public static class ReplInteractionChannelExtensions
 {
 	/// <summary>
+	/// Writes an informational user-facing notice.
+	/// </summary>
+	public static async ValueTask WriteNoticeAsync(
+		this IReplInteractionChannel channel,
+		string text,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteNoticeRequest(text, cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Writes a user-facing warning.
+	/// </summary>
+	public static async ValueTask WriteWarningAsync(
+		this IReplInteractionChannel channel,
+		string text,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteWarningRequest(text, cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Writes a user-facing problem summary.
+	/// </summary>
+	public static async ValueTask WriteProblemAsync(
+		this IReplInteractionChannel channel,
+		string summary,
+		string? details = null,
+		string? code = null,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteProblemRequest(summary, details, code, cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
 	/// Prompts the user to select a value from an enum type.
 	/// Uses <see cref="DescriptionAttribute"/> or <see cref="DisplayAttribute"/> names when present,
 	/// otherwise humanizes the enum member name (<c>CamelCase</c> becomes <c>Camel case</c>).

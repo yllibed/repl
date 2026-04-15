@@ -47,8 +47,65 @@ internal sealed partial class ConsoleInteractionChannel(
 			return (TResult)dispatched.Value!;
 		}
 
+		if (await TryHandleBuiltInDispatchAsync(request, cancellationToken).ConfigureAwait(false) is { Handled: true } builtIn)
+		{
+			return (TResult)builtIn.Value!;
+		}
+
 		throw new NotSupportedException(
 			$"No handler registered for interaction request '{request.GetType().Name}'.");
+	}
+
+	private async ValueTask<InteractionResult> TryHandleBuiltInDispatchAsync(
+		InteractionRequest request,
+		CancellationToken cancellationToken)
+	{
+		switch (request)
+		{
+			case WriteNoticeRequest notice:
+				await PresentFeedbackAsync(
+						notice.Text,
+						new ReplNoticeEvent(notice.Text),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			case WriteWarningRequest warning:
+				await PresentFeedbackAsync(
+						warning.Text,
+						new ReplWarningEvent(warning.Text),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			case WriteProblemRequest problem:
+				if (string.IsNullOrWhiteSpace(problem.Summary))
+				{
+					throw new ArgumentException("Problem summary cannot be empty.", nameof(request));
+				}
+
+				await _presenter.PresentAsync(
+						new ReplProblemEvent(problem.Summary, problem.Details, problem.Code),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			default:
+				return InteractionResult.Unhandled;
+		}
+	}
+
+	private async ValueTask PresentFeedbackAsync(
+		string text,
+		ReplInteractionEvent interactionEvent,
+		CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			throw new ArgumentException("Feedback text cannot be empty.", nameof(text));
+		}
+
+		await _presenter.PresentAsync(interactionEvent, cancellationToken).ConfigureAwait(false);
 	}
 
 	/// <summary>

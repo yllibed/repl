@@ -28,6 +28,29 @@ internal sealed class ConsoleReplInteractionPresenter(
 				await ReplSessionIO.Output.WriteLineAsync(Styled(status.Text, _palette?.StatusStyle)).ConfigureAwait(false);
 				break;
 
+			case ReplNoticeEvent notice:
+				await CloseProgressLineIfNeededAsync().ConfigureAwait(false);
+				await ReplSessionIO.Output.WriteLineAsync(Styled(notice.Text, _palette?.NoticeStyle)).ConfigureAwait(false);
+				break;
+
+			case ReplWarningEvent warning:
+				await CloseProgressLineIfNeededAsync().ConfigureAwait(false);
+				await ReplSessionIO.Output.WriteLineAsync(Styled($"Warning: {warning.Text}", _palette?.WarningStyle)).ConfigureAwait(false);
+				break;
+
+			case ReplProblemEvent problem:
+				await CloseProgressLineIfNeededAsync().ConfigureAwait(false);
+				var header = string.IsNullOrWhiteSpace(problem.Code)
+					? $"Problem: {problem.Summary}"
+					: $"Problem [{problem.Code}]: {problem.Summary}";
+				await ReplSessionIO.Output.WriteLineAsync(Styled(header, _palette?.ProblemStyle)).ConfigureAwait(false);
+				if (!string.IsNullOrWhiteSpace(problem.Details))
+				{
+					await ReplSessionIO.Output.WriteLineAsync(Styled(problem.Details, _palette?.ProblemStyle)).ConfigureAwait(false);
+				}
+
+				break;
+
 			case ReplPromptEvent prompt:
 				await CloseProgressLineIfNeededAsync().ConfigureAwait(false);
 				await ReplSessionIO.Output.WriteAsync($"{Styled(prompt.PromptText, _palette?.PromptStyle)}: ").ConfigureAwait(false);

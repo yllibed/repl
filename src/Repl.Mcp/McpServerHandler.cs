@@ -535,6 +535,7 @@ internal sealed class McpServerHandler
 	{
 		var capabilities = new ServerCapabilities
 		{
+			Logging = new LoggingCapability(),
 			Tools = new ToolsCapability { ListChanged = true },
 			Resources = new ResourcesCapability { ListChanged = true },
 			Prompts = new PromptsCapability { ListChanged = true },
