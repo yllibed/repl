@@ -130,12 +130,79 @@ internal sealed class RemoteModule(
 				return Results.Ok("Cancelled.");
 			});
 
+		map.Context(
+			"feedback",
+			[Description("Demonstrate hosted user feedback states")]
+			(IReplMap m) =>
+			{
+				m.Map(
+					"demo",
+					[Description("Run a successful feedback sequence with progress, warning, and indeterminate states")]
+					async (IReplInteractionChannel channel, IReplSessionInfo session, CancellationToken ct) =>
+					{
+						await channel.WriteNoticeAsync(
+							session.TerminalCapabilities.HasFlag(TerminalCapabilities.ProgressReporting)
+								? "Advanced progress reporting is available for this hosted session."
+								: "This client is using the text fallback for progress updates.",
+							ct).ConfigureAwait(false);
+						await channel.WriteProgressAsync("Preparing session", 10, ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteIndeterminateProgressAsync(
+							"Waiting for remote worker",
+							"Negotiating with upstream services",
+							ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteWarningProgressAsync(
+							"Retrying sync",
+							55,
+							"Transient network jitter",
+							ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteProgressAsync("Finalizing", 85, ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteNoticeAsync("Feedback demo completed.", ct).ConfigureAwait(false);
+						return Results.Success("Feedback demo completed.");
+					});
+
+				m.Map(
+					"fail",
+					[Description("Run a failing feedback sequence with warning, error, and problem output")]
+					async (IReplInteractionChannel channel, CancellationToken ct) =>
+					{
+						await channel.WriteNoticeAsync("Starting the failing feedback demo.", ct).ConfigureAwait(false);
+						await channel.WriteProgressAsync("Preparing session", 15, ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteWarningProgressAsync(
+							"Retrying sync",
+							45,
+							"Remote worker timed out",
+							ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteErrorProgressAsync(
+							"Remote job failed",
+							80,
+							"Final retry exhausted",
+							ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await channel.WriteProblemAsync(
+							"Remote feedback demo failed",
+							"The remote worker stayed unavailable after several retries.",
+							"remote_feedback_failed",
+							ct).ConfigureAwait(false);
+						return Results.Error("remote_feedback_failed", "Remote feedback demo failed.");
+					});
+			});
+
 		map.Map(
 			"debug",
 			[Description("Show terminal capabilities for this session")]
 			(IReplSessionInfo session) => new StatusRow[]
 			{
 				new("AnsiSupported", session.AnsiSupported.ToString(), session.AnsiSupported ? "ok" : "warning"),
+				new(
+					"ProgressReporting",
+					session.TerminalCapabilities.HasFlag(TerminalCapabilities.ProgressReporting) ? "supported" : "text fallback",
+					session.TerminalCapabilities.HasFlag(TerminalCapabilities.ProgressReporting) ? "ok" : "idle"),
 				new("Capabilities", session.TerminalCapabilities.ToString(), "ok"),
 				new("WindowSize", session.WindowSize is { } sz ? $"{sz.Width}x{sz.Height}" : "unknown", "ok"),
 				new("Terminal", session.TerminalIdentity ?? "unknown", "ok"),
@@ -168,6 +235,12 @@ internal sealed class RemoteModule(
 					new("Maintenance", settings.Get("maintenance") ?? "unknown", settings.Get("maintenance") == "on" ? "warning" : "ok"),
 					new("Uptime", FormatUptime(), "ok"),
 					new("Screen", session.WindowSize is { } sz ? $"{sz.Width}x{sz.Height}" : "unknown", "ok"),
+					new(
+						"Feedback",
+						session.TerminalCapabilities.HasFlag(TerminalCapabilities.ProgressReporting)
+							? "advanced VT progress"
+							: "text fallback",
+						session.TerminalCapabilities.HasFlag(TerminalCapabilities.ProgressReporting) ? "ok" : "idle"),
 					new("Transport", FormatTransport(session), "ok"),
 					new("Terminal", FormatTerminal(session), "ok"),
 					new("Server", Environment.MachineName, "ok"),
@@ -282,4 +355,7 @@ internal sealed class RemoteModule(
 			// Expected when user presses Enter.
 		}
 	}
+
+	private static Task DelayFeedbackStepAsync(CancellationToken cancellationToken) =>
+		Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
 }

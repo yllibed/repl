@@ -20,6 +20,11 @@ builder.Services.AddSingleton<SessionTracker>();
 builder.Services.AddRepl((sp, replApp) =>
 {
 	replApp.UseEmbeddedConsoleProfile();
+	replApp.Options(options =>
+	{
+		options.Interaction.AdvancedProgressMode = AdvancedProgressMode.Auto;
+		options.Interaction.ProgressTemplate = "{label}: {percent:0}%";
+	});
 	replApp.WithDescription("Remote REPL sample — settings, messaging, session tracking.");
 	replApp.MapModule(new RemoteModule(
 		sp.GetRequiredService<ISettingsService>(),

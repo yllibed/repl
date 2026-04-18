@@ -196,6 +196,150 @@
       padding: 4px 7px;
     }
 
+    .feedback-panel {
+      display: grid;
+      gap: 12px;
+      padding: 12px 14px;
+    }
+
+    .feedback-header {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .feedback-header h2 {
+      margin: 0;
+      font-size: 0.86rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--accent);
+    }
+
+    .feedback-header p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.45;
+      max-width: 70ch;
+    }
+
+    .feedback-state {
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: rgba(15, 23, 42, 0.62);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .feedback-state.normal {
+      color: #082f49;
+      background: rgba(102, 217, 239, 0.92);
+      border-color: rgba(34, 211, 238, 0.7);
+    }
+
+    .feedback-state.warning {
+      color: #3d2f00;
+      background: rgba(250, 204, 21, 0.9);
+      border-color: rgba(234, 179, 8, 0.7);
+    }
+
+    .feedback-state.error {
+      color: #450a0a;
+      background: rgba(248, 113, 113, 0.92);
+      border-color: rgba(239, 68, 68, 0.7);
+    }
+
+    .feedback-state.indeterminate {
+      color: #ecfeff;
+      background: rgba(14, 116, 144, 0.92);
+      border-color: rgba(6, 182, 212, 0.7);
+    }
+
+    .feedback-track {
+      position: relative;
+      height: 12px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(100, 116, 139, 0.32);
+    }
+
+    .feedback-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0%;
+      border-radius: inherit;
+      transition: width 180ms ease;
+      background: linear-gradient(90deg, rgba(56, 189, 248, 0.92), rgba(102, 217, 239, 0.82));
+    }
+
+    .feedback-fill.warning {
+      background: linear-gradient(90deg, rgba(250, 204, 21, 0.95), rgba(245, 158, 11, 0.86));
+    }
+
+    .feedback-fill.error {
+      background: linear-gradient(90deg, rgba(248, 113, 113, 0.95), rgba(239, 68, 68, 0.86));
+    }
+
+    .feedback-fill.indeterminate {
+      width: 34%;
+      background: linear-gradient(90deg, rgba(34, 211, 238, 0.88), rgba(8, 145, 178, 0.78));
+      animation: feedbackLoop 1.1s ease-in-out infinite;
+    }
+
+    .feedback-copy {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--muted);
+      font-size: 0.79rem;
+      line-height: 1.45;
+    }
+
+    .feedback-copy strong {
+      color: var(--text);
+      font-size: 0.8rem;
+    }
+
+    .feedback-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .feedback-actions button {
+      border: 1px solid rgba(102, 217, 239, 0.35);
+      background: rgba(8, 47, 73, 0.48);
+      color: #dbeafe;
+      border-radius: 10px;
+      padding: 7px 10px;
+      font-family: inherit;
+      font-size: 0.76rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .feedback-actions button:hover {
+      border-color: rgba(102, 217, 239, 0.7);
+      background: rgba(14, 116, 144, 0.35);
+    }
+
+    @keyframes feedbackLoop {
+      0% { transform: translateX(-110%); }
+      50% { transform: translateX(95%); }
+      100% { transform: translateX(240%); }
+    }
+
     .terminal-shell {
       overflow: hidden;
       border-radius: 16px;
@@ -254,6 +398,11 @@
       .terminal-shell {
         min-height: 260px;
       }
+
+      .feedback-copy {
+        flex-direction: column;
+        align-items: start;
+      }
     }
   </style>
 </head>
@@ -264,8 +413,9 @@
         <h1>Remote REPL Playground</h1>
         <p>
           Multi-transport sample for WebSocket, Telnet-over-WebSocket, and SignalR.
-          Try <code>status</code>, <code>sessions</code>, <code>who</code>, <code>watch</code>, and <code>send hello</code>
-          to explore shared state and live session activity.
+          Try <code>status</code>, <code>sessions</code>, <code>feedback demo</code>, <code>feedback fail</code>,
+          <code>watch</code>, and <code>send hello</code> to explore shared state, live session activity,
+          and hosted progress feedback.
         </p>
       </div>
       <div id="connStatus" class="status-pill">Disconnected</div>
@@ -286,18 +436,49 @@
       <p>
         Inspect the runtime with <code>status</code>, list active clients with <code>sessions</code>,
         try interactive menus with <code>configure</code> and <code>maintenance</code>,
-        update shared settings, and broadcast messages across tabs.
+        then run <code>feedback demo</code> and <code>feedback fail</code> to mirror OSC 9;4 progress
+        signals in the panel below.
       </p>
       <div class="chips">
         <code>status</code>
         <code>sessions</code>
         <code>who</code>
+        <code>feedback demo</code>
+        <code>feedback fail</code>
         <code>configure</code>
         <code>maintenance</code>
         <code>settings show maintenance</code>
         <code>settings set maintenance on</code>
         <code>watch</code>
         <code>send hello</code>
+      </div>
+    </section>
+
+    <section class="panel feedback-panel">
+      <div class="feedback-header">
+        <div>
+          <h2>Feedback Mirror</h2>
+          <p>
+            Mirrors the hosted session's OSC <code>9;4</code> progress signals.
+            ANSI transports light up the advanced state badge and bar; plain mode falls back to text only.
+          </p>
+        </div>
+        <div id="feedbackState" class="feedback-state idle">Idle</div>
+      </div>
+      <div class="feedback-track">
+        <div id="feedbackFill" class="feedback-fill idle"></div>
+      </div>
+      <div class="feedback-copy">
+        <div>
+          <strong id="feedbackSummary">Waiting for a feedback command.</strong>
+          <div id="feedbackDetail">Run <code>feedback demo</code> to watch the hosted session update this panel.</div>
+        </div>
+        <div id="feedbackPercent">0%</div>
+      </div>
+      <div class="feedback-actions">
+        <button type="button" data-command="status">status</button>
+        <button type="button" data-command="feedback demo">feedback demo</button>
+        <button type="button" data-command="feedback fail">feedback fail</button>
       </div>
     </section>
 
@@ -339,10 +520,19 @@
     const btn = document.getElementById('go');
     const connStatus = document.getElementById('connStatus');
     const modeBadge = document.getElementById('modeBadge');
+    const feedbackState = document.getElementById('feedbackState');
+    const feedbackFill = document.getElementById('feedbackFill');
+    const feedbackSummary = document.getElementById('feedbackSummary');
+    const feedbackDetail = document.getElementById('feedbackDetail');
+    const feedbackPercent = document.getElementById('feedbackPercent');
+    const quickActionButtons = Array.from(document.querySelectorAll('.feedback-actions button'));
     const query = new URLSearchParams(location.search);
+    const textDecoder = new TextDecoder();
+    const oscProgressPrefix = '\u001b]9;4;';
     let send = null;
     let resizeHandler = null;
     let inputHandler = null;
+    let progressChunkBuffer = '';
 
     function setConnectionState(state) {
       connStatus.classList.remove('connected', 'connecting');
@@ -356,6 +546,139 @@
         connStatus.textContent = 'Disconnected';
       }
     }
+
+    function resetFeedbackMirror() {
+      progressChunkBuffer = '';
+      feedbackState.className = 'feedback-state idle';
+      feedbackState.textContent = 'Idle';
+      feedbackFill.className = 'feedback-fill idle';
+      feedbackFill.style.width = '0%';
+      feedbackSummary.textContent = 'Waiting for a feedback command.';
+      feedbackDetail.textContent = 'Run feedback demo to watch the hosted session update this panel.';
+      feedbackPercent.textContent = '0%';
+    }
+
+    function updateFeedbackMirror(state, percent, summary, detail) {
+      const clamped = Math.max(0, Math.min(100, Math.round(percent ?? 0)));
+      const label = state === 'normal'
+        ? 'Running'
+        : state === 'warning'
+          ? 'Warning'
+          : state === 'error'
+            ? 'Error'
+            : state === 'indeterminate'
+              ? 'Working'
+              : 'Idle';
+
+      feedbackState.className = `feedback-state ${state}`;
+      feedbackState.textContent = label;
+      feedbackFill.className = `feedback-fill ${state}`;
+      feedbackFill.style.width = state === 'indeterminate' ? '34%' : `${clamped}%`;
+      feedbackSummary.textContent = summary;
+      feedbackDetail.textContent = detail;
+      feedbackPercent.textContent = state === 'indeterminate' ? '...' : `${clamped}%`;
+    }
+
+    function applyProgressSequence(sequence) {
+      const match = /\u001b\]9;4;(\d+);(\d+)\u0007/.exec(sequence);
+      if (!match) {
+        return;
+      }
+
+      const stateCode = Number(match[1]);
+      const percent = Number(match[2]);
+      if (stateCode === 0) {
+        resetFeedbackMirror();
+        return;
+      }
+
+      if (stateCode === 1) {
+        updateFeedbackMirror(
+          'normal',
+          percent,
+          'Remote work is progressing.',
+          `The hosted session reported ${percent}% completion through OSC 9;4.`);
+      } else if (stateCode === 2) {
+        updateFeedbackMirror(
+          'error',
+          percent,
+          'The remote step reported an error.',
+          `The hosted session entered an error state at ${percent}% progress.`);
+      } else if (stateCode === 3) {
+        updateFeedbackMirror(
+          'indeterminate',
+          0,
+          'The host is waiting on remote work.',
+          'This state is indeterminate, so the hosted session reports activity without a fixed percentage.');
+      } else if (stateCode === 4) {
+        updateFeedbackMirror(
+          'warning',
+          percent,
+          'The host is retrying after a warning.',
+          `The hosted session raised a warning state at ${percent}% progress.`);
+      }
+    }
+
+    function splitTailCandidate(text) {
+      const max = Math.min(text.length, oscProgressPrefix.length - 1);
+      for (let length = max; length > 0; length--) {
+        if (oscProgressPrefix.startsWith(text.slice(-length))) {
+          return {
+            visible: text.slice(0, text.length - length),
+            remainder: text.slice(-length)
+          };
+        }
+      }
+
+      return { visible: text, remainder: '' };
+    }
+
+    function consumeTerminalChunk(chunk) {
+      progressChunkBuffer += chunk;
+      let visible = '';
+
+      while (progressChunkBuffer.length > 0) {
+        const start = progressChunkBuffer.indexOf(oscProgressPrefix);
+        if (start < 0) {
+          const split = splitTailCandidate(progressChunkBuffer);
+          visible += split.visible;
+          progressChunkBuffer = split.remainder;
+          break;
+        }
+
+        visible += progressChunkBuffer.slice(0, start);
+        const end = progressChunkBuffer.indexOf('\u0007', start);
+        if (end < 0) {
+          progressChunkBuffer = progressChunkBuffer.slice(start);
+          break;
+        }
+
+        applyProgressSequence(progressChunkBuffer.slice(start, end + 1));
+        progressChunkBuffer = progressChunkBuffer.slice(end + 1);
+      }
+
+      return visible;
+    }
+
+    function writeTerminalOutput(chunk) {
+      const visible = consumeTerminalChunk(chunk);
+      if (visible) {
+        term.write(visible);
+      }
+    }
+
+    function runQuickAction(command) {
+      if (!send) {
+        return;
+      }
+
+      send(`${command}\r`);
+      term.focus();
+    }
+
+    quickActionButtons.forEach(button => {
+      button.addEventListener('click', () => runQuickAction(button.dataset.command));
+    });
 
     function normalizeTransport(value) {
       const token = (value ?? '').trim().toLowerCase();
@@ -372,6 +695,7 @@
       btn.disabled = true;
       setConnectionState('connecting');
       term.clear();
+      resetFeedbackMirror();
       if (resizeHandler) { resizeHandler.dispose(); resizeHandler = null; }
       if (inputHandler) { inputHandler.dispose(); inputHandler = null; }
       if (mode === 'ws') connectWS();
@@ -398,7 +722,7 @@
         term.cols,
         term.rows,
         true,
-        ['Ansi', 'ResizeReporting', 'IdentityReporting', 'VtInput']);
+        ['Ansi', 'ResizeReporting', 'IdentityReporting', 'VtInput', 'ProgressReporting']);
     }
 
     function buildResize(cols, rows) {
@@ -411,7 +735,7 @@
         cols: String(term.cols),
         rows: String(term.rows),
         ansi: 'true',
-        capabilities: 'Ansi,ResizeReporting,IdentityReporting,VtInput'
+        capabilities: 'Ansi,ResizeReporting,IdentityReporting,VtInput,ProgressReporting'
       });
       return `?${params.toString()}`;
     }
@@ -425,8 +749,8 @@
 
     function connectWS() {
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl${buildConnectionQuery()}`);
-      ws.onmessage = e => term.write(e.data);
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+      ws.onmessage = e => writeTerminalOutput(e.data);
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
       send = d => { if (ws.readyState === 1) ws.send(d); };
       inputHandler = term.onData(send);
       // Send initial DTTERM size so the VT probe detects it.
@@ -451,12 +775,12 @@
       const ws = new WebSocket(`${wsProto}://${location.host}/ws/telnet${buildConnectionQuery()}`);
       ws.binaryType = 'arraybuffer';
 
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
 
       ws.onmessage = e => {
         const raw = new Uint8Array(e.data);
         const vt = telnetParse(raw);
-        if (vt.length > 0) term.write(vt);
+        if (vt.length > 0) writeTerminalOutput(textDecoder.decode(vt));
       };
 
       send = d => {
@@ -560,8 +884,8 @@
         capabilities: ''
       });
       const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl?${params.toString()}`);
-      ws.onmessage = e => term.write(e.data);
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+      ws.onmessage = e => writeTerminalOutput(e.data);
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
       send = d => { if (ws.readyState === 1) ws.send(d); };
       inputHandler = term.onData(send);
       // Send hello with ansi=false so server knows this is a dumb terminal
@@ -574,8 +898,8 @@
 
     function connectSR() {
       const hub = new signalR.HubConnectionBuilder().withUrl(`/hub/repl${buildConnectionQuery()}`).withAutomaticReconnect().build();
-      hub.on('Output', t => term.write(t));
-      hub.onclose(() => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; });
+      hub.on('Output', t => writeTerminalOutput(t));
+      hub.onclose(() => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); btn.disabled = false; });
       send = d => { if (hub.state === signalR.HubConnectionState.Connected) hub.invoke('OnInput', d); };
       inputHandler = term.onData(send);
       // DTTERM in-band VT resize sequence.
