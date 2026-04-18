@@ -179,6 +179,58 @@ app.Map("import", async (IProgress<ReplProgressEvent> progress, CancellationToke
 });
 ```
 
+### Progress states and helpers
+
+When you need richer user feedback, use the `IReplInteractionChannel` progress helpers instead of treating progress like logs.
+
+```csharp
+await channel.WriteProgressAsync("Preparing import", 10, cancellationToken);
+await channel.WriteIndeterminateProgressAsync(
+    "Waiting for agent review",
+    "Sampling is still running.",
+    cancellationToken);
+await channel.WriteWarningProgressAsync(
+    "Retrying duplicate check",
+    55,
+    "The remote worker timed out once.",
+    cancellationToken);
+await channel.WriteErrorProgressAsync(
+    "Import failed",
+    80,
+    "The final retry window was exhausted.",
+    cancellationToken);
+await channel.ClearProgressAsync(cancellationToken);
+```
+
+`ReplProgressEvent` now carries a `State` value:
+
+| State | Meaning |
+|---|---|
+| `Normal` | Regular progress update |
+| `Warning` | Work is continuing, but the user should pay attention |
+| `Error` | The current workflow has entered an error state |
+| `Indeterminate` | Work is active but there is no meaningful percentage yet |
+| `Clear` | Clear any visible progress indicator |
+
+Notes:
+
+- `WriteProgressAsync(string, double?)` remains the simple, backward-compatible API.
+- `percent: null` does **not** imply indeterminate mode. Use `WriteIndeterminateProgressAsync(...)` or `State = Indeterminate` explicitly.
+- Hosts can render these states differently. The built-in console presenter keeps the text fallback and, when enabled, also emits advanced terminal progress sequences.
+- The framework clears visible progress automatically when a command completes, fails, or is cancelled.
+
+### Advanced terminal progress
+
+`InteractionOptions.AdvancedProgressMode` controls whether hosts should emit advanced progress sequences in addition to the normal text feedback:
+
+| Value | Behavior |
+|---|---|
+| `Auto` | Emit advanced progress when the host is interactive and the terminal looks compatible |
+| `Always` | Always emit advanced progress when the host can write terminal control sequences |
+| `Never` | Disable advanced progress and keep the text-only fallback |
+
+The built-in console presenter maps progress states to `OSC 9;4` when advanced terminal progress is enabled. This is intended for user-facing execution feedback such as taskbar progress bars or mirrored hosted-session UI, not for application logging.
+
 ---
 
 ## Prefill with `--answer:*`

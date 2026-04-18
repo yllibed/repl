@@ -1,26 +1,26 @@
-# Agent Capabilities: Sampling and Elicitation
+# Agent Capabilities: Sampling, Elicitation, and Feedback
 
-Use MCP [sampling](https://modelcontextprotocol.io/specification/2025-11-05/client/sampling) and [elicitation](https://modelcontextprotocol.io/specification/2025-11-05/client/elicitation) directly from your command handlers to interact with the connected agent client.
+> **This page is for you if** you want your commands to call the LLM, ask the user for structured input, or send MCP-specific runtime feedback during execution.
+>
+> **Purpose:** Direct MCP sampling, elicitation, and feedback from command handlers.
+> **Prerequisite:** [MCP overview](mcp-overview.md)
+> **Related:** [Reference](mcp-reference.md) · [Advanced patterns](mcp-advanced.md) · [Interaction degradation](mcp-reference.md#interaction-in-mcp-mode)
 
-See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working example that uses both in a CSV import workflow.
-
-Related guides:
-
-- [mcp-server.md](mcp-server.md) — interaction degradation (prefill/elicitation/sampling via `IReplInteractionChannel`)
-- [mcp-advanced.md](mcp-advanced.md) — roots, dynamic tools, MCP Apps
+See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working example that uses all three in a CSV import and feedback workflow.
 
 ## Overview
 
-Repl provides two MCP capabilities as injectable interfaces:
+Repl provides three MCP-oriented injectable interfaces:
 
 | Interface | MCP capability | What it does |
 |---|---|---|
 | `IMcpSampling` | [Sampling](https://modelcontextprotocol.io/specification/2025-11-05/client/sampling) | Ask the connected LLM to generate a completion |
 | `IMcpElicitation` | [Elicitation](https://modelcontextprotocol.io/specification/2025-11-05/client/elicitation) | Ask the user for structured input through the agent client |
+| `IMcpFeedback` | Progress + logging/message notifications | Send MCP-specific runtime feedback during a tool call |
 
-Both work like `IMcpClientRoots` — inject them into any command handler, check `IsSupported`, and use them. They are automatically excluded from MCP tool schemas.
+They work like `IMcpClientRoots` — inject them into any command handler, check capability flags, and use them. They are automatically excluded from MCP tool schemas.
 
-> **Note:** These interfaces give your commands _direct_ access to MCP capabilities. This is different from `IReplInteractionChannel`, which uses sampling and elicitation _internally_ as part of its [interaction degradation](mcp-server.md#interaction-in-mcp-mode) strategy. Use `IReplInteractionChannel` when you want portable prompts that work across CLI, REPL, and MCP. Use `IMcpSampling` / `IMcpElicitation` when you want MCP-specific behavior that only makes sense when an agent is connected.
+> **Note:** These interfaces give your commands _direct_ access to MCP capabilities. This is different from `IReplInteractionChannel`, which uses sampling and elicitation _internally_ as part of its [interaction degradation](mcp-reference.md#interaction-in-mcp-mode) strategy and now maps user-facing notices/progress to MCP feedback automatically. Use `IReplInteractionChannel` when you want portable prompts and feedback that work across CLI, REPL, hosted sessions, and MCP. Use `IMcpSampling`, `IMcpElicitation`, or `IMcpFeedback` when you want behavior that only makes sense while an agent is connected.
 
 ## When to use these
 
@@ -134,7 +134,7 @@ public interface IMcpElicitation
     bool IsSupported { get; }
     ValueTask<string?> ElicitTextAsync(string message, CancellationToken ct = default);
     ValueTask<bool?> ElicitBooleanAsync(string message, CancellationToken ct = default);
-    ValueTask<string?> ElicitChoiceAsync(string message, IReadOnlyList<string> choices, CancellationToken ct = default);
+    ValueTask<int?> ElicitChoiceAsync(string message, IReadOnlyList<string> choices, CancellationToken ct = default);
     ValueTask<double?> ElicitNumberAsync(string message, CancellationToken ct = default);
 }
 ```
@@ -221,9 +221,90 @@ The most powerful pattern uses sampling and elicitation as successive steps: the
 
 Both steps are optional — the command works without them but produces better results when the agent supports them.
 
+## Feedback
+
+`IMcpFeedback` gives you direct access to MCP progress and message notifications during a tool invocation. Unlike `IReplInteractionChannel`, this interface is intentionally MCP-specific.
+
+### API
+
+```csharp
+public interface IMcpFeedback
+{
+    bool IsProgressSupported { get; }
+    bool IsLoggingSupported { get; }
+
+    ValueTask ReportProgressAsync(
+        ReplProgressEvent progress,
+        CancellationToken cancellationToken = default);
+
+    ValueTask SendMessageAsync(
+        LoggingLevel level,
+        object? data,
+        CancellationToken cancellationToken = default);
+}
+```
+
+Use it when:
+
+- you need to control MCP progress/message notifications directly
+- the behavior is meaningful only during an MCP tool call
+- you do not need the same code path to render nicely in console or hosted sessions
+
+### Example: MCP-only feedback
+
+```csharp
+app.Map("sync contacts",
+    async (IMcpFeedback feedback, CancellationToken ct) =>
+{
+    if (feedback.IsLoggingSupported)
+    {
+        await feedback.SendMessageAsync(LoggingLevel.Info, "Starting sync.", ct);
+    }
+
+    if (feedback.IsProgressSupported)
+    {
+        await feedback.ReportProgressAsync(
+            new ReplProgressEvent("Syncing", Percent: 25),
+            ct);
+        await feedback.ReportProgressAsync(
+            new ReplProgressEvent(
+                "Waiting for approval",
+                State: ReplProgressState.Indeterminate,
+                Details: "The remote agent is still reviewing the batch."),
+            ct);
+    }
+
+    return Results.Success("Sync completed.");
+});
+```
+
+### Prefer the portable path first
+
+In most cases, this is better:
+
+```csharp
+await interaction.WriteNoticeAsync("Starting sync", ct);
+await interaction.WriteProgressAsync("Syncing", 25, ct);
+await interaction.WriteIndeterminateProgressAsync(
+    "Waiting for approval",
+    "The remote agent is still reviewing the batch.",
+    ct);
+```
+
+That single code path works in:
+
+- console REPL sessions
+- hosted remote sessions
+- MCP clients
+
+So the rule of thumb is simple:
+
+- use `IReplInteractionChannel` for user-facing execution feedback
+- use `IMcpFeedback` only when the behavior should exist in MCP and nowhere else
+
 ## Graceful degradation
 
-Both interfaces return `null` when the client does not support the capability. Design commands so the capability is an **enhancement**, not a requirement:
+Design commands so these capabilities are **enhancements**, not hard requirements:
 
 ```csharp
 // Best: optional enhancement — command works either way
@@ -238,6 +319,12 @@ if (!elicitation.IsSupported)
     return Results.Error("needs-elicitation", "This command requires elicitation support.");
 ```
 
+For `IMcpFeedback`, the same idea applies:
+
+- check `IsProgressSupported` before sending MCP-only progress directly
+- check `IsLoggingSupported` before sending MCP-only messages directly
+- prefer `IReplInteractionChannel` when the feedback should still render well outside MCP
+
 ## Client compatibility
 
 Not all MCP clients support sampling and elicitation. The table below lists agents with **confirmed support** — agents not listed either do not support these capabilities or have not been validated.
@@ -248,12 +335,12 @@ Not all MCP clients support sampling and elicitation. The table below lists agen
 
 Check [mcp-availability.com](https://mcp-availability.com/) for the latest data. Support is expanding rapidly — design your commands to degrade gracefully so they work everywhere even when a capability is missing.
 
-## IMcpSampling vs IReplInteractionChannel
+## Direct MCP interfaces vs IReplInteractionChannel
 
-| | `IMcpSampling` / `IMcpElicitation` | `IReplInteractionChannel` |
+| | `IMcpSampling` / `IMcpElicitation` / `IMcpFeedback` | `IReplInteractionChannel` |
 |---|---|---|
-| **Purpose** | Direct MCP capability access for data processing and user input | Portable user interaction (prompts, confirmations) |
+| **Purpose** | Direct MCP capability access for data processing, user input, or runtime feedback | Portable user interaction and execution feedback |
 | **Works in CLI/REPL** | No (`IsSupported` = false) | Yes (renders console prompts) |
-| **Works in MCP** | When client supports the capability | Always (with [degradation tiers](mcp-server.md#interaction-in-mcp-mode)) |
-| **Who answers** | Sampling: the LLM. Elicitation: the user. | The user (or LLM as fallback in MCP) |
-| **Use when** | The command needs AI processing or rich structured input as part of a workflow | You need a simple confirmation, choice, or text prompt that works everywhere |
+| **Works in MCP** | When the capability is available during the current tool call | Always (with [degradation tiers](mcp-reference.md#interaction-in-mcp-mode)) |
+| **Who answers** | Sampling: the LLM. Elicitation: the user. Feedback: the tool emits notifications. | The user (or LLM as fallback in MCP), plus portable notices/progress from the tool |
+| **Use when** | The command needs MCP-only behavior as part of a workflow | You need prompts or user-facing feedback that should work everywhere |
