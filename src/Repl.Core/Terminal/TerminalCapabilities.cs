@@ -20,4 +20,7 @@ public enum TerminalCapabilities
 
 	/// <summary>Terminal sends VT-style input sequences (arrows/home/end/etc.).</summary>
 	VtInput = 1 << 3,
+
+	/// <summary>Terminal supports advanced progress reporting sequences.</summary>
+	ProgressReporting = 1 << 4,
 }

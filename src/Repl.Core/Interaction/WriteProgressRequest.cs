@@ -6,4 +6,6 @@ namespace Repl.Interaction;
 public sealed record WriteProgressRequest(
 	string Label,
 	double? Percent,
+	ReplProgressState State = ReplProgressState.Normal,
+	string? Details = null,
 	CancellationToken CancellationToken = default) : InteractionRequest<bool>("__progress__", Label);

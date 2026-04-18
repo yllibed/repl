@@ -90,6 +90,17 @@ internal sealed partial class ConsoleInteractionChannel(
 					.ConfigureAwait(false);
 				return InteractionResult.Success(value: true);
 
+			case WriteProgressRequest progress:
+				await _presenter.PresentAsync(
+						new ReplProgressEvent(
+							progress.Label,
+							Percent: progress.Percent,
+							State: progress.State,
+							Details: progress.Details),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
 			default:
 				return InteractionResult.Unhandled;
 		}
@@ -123,7 +134,12 @@ internal sealed partial class ConsoleInteractionChannel(
 			: label;
 		cancellationToken.ThrowIfCancellationRequested();
 
-		var dispatched = await TryDispatchAsync(new WriteProgressRequest(label, percent, cancellationToken), cancellationToken)
+		var dispatched = await TryDispatchAsync(
+				new WriteProgressRequest(
+					Label: label,
+					Percent: percent,
+					CancellationToken: cancellationToken),
+				cancellationToken)
 			.ConfigureAwait(false);
 		if (dispatched.Handled)
 		{

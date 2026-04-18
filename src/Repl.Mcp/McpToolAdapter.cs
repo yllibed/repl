@@ -112,14 +112,17 @@ internal sealed partial class McpToolAdapter
 
 		var outputWriter = new StringWriter();
 		var inputReader = new StringReader(string.Empty);
+		var feedback = _services.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
 		var interactionChannel = new McpInteractionChannel(
-			prefills, _options.InteractivityMode, server, progressToken);
+			prefills, _options.InteractivityMode, server, progressToken, feedback);
 		var mcpServices = new McpServiceProviderOverlay(
 			_services,
 			new Dictionary<Type, object>
 			{
 				[typeof(IReplInteractionChannel)] = interactionChannel,
 			});
+		using var feedbackScope = (_services.GetService(typeof(IMcpFeedback)) as McpFeedbackService)
+			?.PushProgressToken(progressToken);
 
 		// Force JSON output — agents consume structured data, not human tables/banners.
 		var effectiveTokens = new List<string>(tokens.Count + 1) { "--output:json" };

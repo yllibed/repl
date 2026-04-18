@@ -55,9 +55,18 @@ internal static class InteractionProgressFactory
 	{
 		public void Report(ReplProgressEvent value)
 		{
-			var percent = value.ResolvePercent();
 #pragma warning disable VSTHRD002 // IProgress<T>.Report is sync by contract; we bridge to async channel intentionally.
-			channel.WriteProgressAsync(value.Label, percent, cancellationToken).AsTask().GetAwaiter().GetResult();
+			channel.DispatchAsync(
+					new WriteProgressRequest(
+						value.Label,
+						value.ResolvePercent(),
+						value.State,
+						value.Details,
+						cancellationToken),
+					cancellationToken)
+				.AsTask()
+				.GetAwaiter()
+				.GetResult();
 #pragma warning restore VSTHRD002
 		}
 	}

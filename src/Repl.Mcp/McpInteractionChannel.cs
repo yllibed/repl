@@ -17,17 +17,20 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 	private readonly InteractivityMode _mode;
 	private readonly McpServer? _server;
 	private readonly ProgressToken? _progressToken;
+	private readonly IMcpFeedback? _feedback;
 
 	public McpInteractionChannel(
 		IReadOnlyDictionary<string, string> prefillAnswers,
 		InteractivityMode mode,
 		McpServer? server = null,
-		ProgressToken? progressToken = null)
+		ProgressToken? progressToken = null,
+		IMcpFeedback? feedback = null)
 	{
 		_prefillAnswers = prefillAnswers;
 		_mode = mode;
 		_server = server;
 		_progressToken = progressToken;
+		_feedback = feedback;
 	}
 
 	public async ValueTask<int> AskChoiceAsync(
@@ -192,6 +195,15 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 	public async ValueTask WriteProgressAsync(string label, double? percent, CancellationToken cancellationToken)
 	{
+		if (_feedback is not null)
+		{
+			await _feedback.ReportProgressAsync(
+					new ReplProgressEvent(label, Percent: percent),
+					cancellationToken)
+				.ConfigureAwait(false);
+			return;
+		}
+
 		if (_server is not null && _progressToken is { } token)
 		{
 			await _server.NotifyProgressAsync(
@@ -226,6 +238,8 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		return request switch
 		{
+			WriteProgressRequest progress => CompleteBuiltInDispatchAsync<TResult>(
+				WriteStructuredProgressAsync(progress, cancellationToken)),
 			WriteNoticeRequest notice => CompleteBuiltInDispatchAsync<TResult>(
 				SendFeedbackAsync(
 					LoggingLevel.Info,
@@ -251,6 +265,12 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 		JsonElement data,
 		CancellationToken cancellationToken)
 	{
+		if (_feedback is not null)
+		{
+			await _feedback.SendMessageAsync(level, data, cancellationToken).ConfigureAwait(false);
+			return;
+		}
+
 		if (_server is null)
 		{
 			return;
@@ -265,6 +285,65 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 				Data = data,
 			},
 			cancellationToken: cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask WriteStructuredProgressAsync(
+		WriteProgressRequest progress,
+		CancellationToken cancellationToken)
+	{
+		if (_feedback is not null)
+		{
+			await _feedback.ReportProgressAsync(
+					new ReplProgressEvent(
+						progress.Label,
+						Percent: progress.Percent,
+						State: progress.State,
+						Details: progress.Details),
+					cancellationToken)
+				.ConfigureAwait(false);
+
+			if (progress.State == ReplProgressState.Warning)
+			{
+				await _feedback.SendMessageAsync(
+						LoggingLevel.Warning,
+						BuildProgressPayload(progress),
+						cancellationToken)
+					.ConfigureAwait(false);
+			}
+			else if (progress.State == ReplProgressState.Error)
+			{
+				await _feedback.SendMessageAsync(
+						LoggingLevel.Error,
+						BuildProgressPayload(progress),
+						cancellationToken)
+					.ConfigureAwait(false);
+			}
+
+			return;
+		}
+
+		await WriteProgressAsync(progress.Label, progress.Percent, cancellationToken).ConfigureAwait(false);
+	}
+
+	private static JsonElement BuildProgressPayload(WriteProgressRequest progress)
+	{
+		var payload = new JsonObject
+		{
+			["label"] = progress.Label,
+			["state"] = progress.State.ToString(),
+		};
+
+		if (progress.Percent is { } percent)
+		{
+			payload["percent"] = percent;
+		}
+
+		if (!string.IsNullOrWhiteSpace(progress.Details))
+		{
+			payload["details"] = progress.Details;
+		}
+
+		return JsonSerializer.SerializeToElement(payload, McpJsonContext.Default.JsonObject);
 	}
 
 	private static JsonElement SerializeProblem(WriteProblemRequest problem)

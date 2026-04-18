@@ -228,6 +228,19 @@ public sealed class Given_McpAgentCapabilities
 		schema.Should().NotContain("elicitation", because: "IMcpElicitation is a framework-injected parameter and must not appear in the tool schema");
 	}
 
+	[TestMethod]
+	[Description("IMcpFeedback parameter does not appear in the tool's JSON schema.")]
+	public async Task When_ToolInjectsFeedback_Then_SchemaHasNoFeedbackParameter()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app => app.MapModule(new FeedbackModule()));
+
+		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		var tool = tools.Single(t => string.Equals(t.Name, "feedback_test", StringComparison.Ordinal));
+		var schema = tool.JsonSchema.GetRawText();
+		schema.Should().NotContain("feedback", because: "IMcpFeedback is a framework-injected parameter and must not appear in the tool schema");
+	}
+
 	// ── Helpers ───────────────────────────────────────────────────────
 
 	private static McpClientOptions CreateElicitationClientOptions(
@@ -302,6 +315,16 @@ public sealed class Given_McpAgentCapabilities
 					var result = await elicitation.ElicitBooleanAsync("Confirm?", ct).ConfigureAwait(false);
 					return result?.ToString() ?? "not-supported";
 				}).ReadOnly();
+		}
+	}
+
+	private sealed class FeedbackModule : IReplModule
+	{
+		public void Map(IReplMap app)
+		{
+			app.Map(
+				"feedback test",
+				(IMcpFeedback feedback) => feedback.IsLoggingSupported.ToString()).ReadOnly();
 		}
 	}
 }

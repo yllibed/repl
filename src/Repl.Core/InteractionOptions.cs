@@ -21,6 +21,11 @@ public sealed class InteractionOptions
 	public string ProgressTemplate { get; set; } = "{label}: {percent:0}%";
 
 	/// <summary>
+	/// Gets or sets whether advanced terminal progress sequences should be emitted.
+	/// </summary>
+	public AdvancedProgressMode AdvancedProgressMode { get; set; } = AdvancedProgressMode.Auto;
+
+	/// <summary>
 	/// Gets or sets fallback behavior for unanswered non-interactive prompts.
 	/// </summary>
 	public PromptFallback PromptFallback { get; set; } = PromptFallback.UseDefault;

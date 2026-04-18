@@ -22,16 +22,29 @@ internal static class TerminalCapabilitiesClassifier
 		    || normalized.Contains("tmux", StringComparison.Ordinal)
 		    || normalized.Contains("wezterm", StringComparison.Ordinal)
 		    || normalized.Contains("iterm", StringComparison.Ordinal)
+		    || normalized.Contains("ghostty", StringComparison.Ordinal)
+		    || normalized.Contains("conemu", StringComparison.Ordinal)
+		    || normalized.Contains("windows terminal", StringComparison.Ordinal)
 		    || normalized.Contains("alacritty", StringComparison.Ordinal)
 		    || normalized.Contains("rxvt", StringComparison.Ordinal)
 		    || normalized.Contains("konsole", StringComparison.Ordinal)
 		    || normalized.Contains("gnome", StringComparison.Ordinal)
 		    || normalized.Contains("linux", StringComparison.Ordinal))
 		{
-			return TerminalCapabilities.IdentityReporting
+			var capabilities = TerminalCapabilities.IdentityReporting
 			       | TerminalCapabilities.Ansi
 			       | TerminalCapabilities.ResizeReporting
 			       | TerminalCapabilities.VtInput;
+			if (normalized.Contains("wezterm", StringComparison.Ordinal)
+				|| normalized.Contains("iterm", StringComparison.Ordinal)
+				|| normalized.Contains("ghostty", StringComparison.Ordinal)
+				|| normalized.Contains("conemu", StringComparison.Ordinal)
+				|| normalized.Contains("windows terminal", StringComparison.Ordinal))
+			{
+				capabilities |= TerminalCapabilities.ProgressReporting;
+			}
+
+			return capabilities;
 		}
 
 		return TerminalCapabilities.IdentityReporting;
