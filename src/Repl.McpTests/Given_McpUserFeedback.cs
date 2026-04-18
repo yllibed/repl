@@ -39,25 +39,23 @@ public sealed class Given_McpUserFeedback
 	public async Task When_ToolEmitsStructuredProgress_Then_McpReceivesProgressAndMessages()
 	{
 		var notifications = new List<(LoggingLevel Level, string Data)>();
-		var progressCapture = new ProgressCapture();
-		var captureState = new NotificationCaptureState(notifications);
+		var progressUpdates = new List<ProgressNotificationValue>();
+		var captureState = new NotificationCaptureState(notifications, progressUpdates);
 		NotificationCaptureState.Current = captureState;
 		try
 		{
 			await using var fixture = await CreateStructuredProgressFixtureAsync(CreateClientOptions()).ConfigureAwait(false);
-			var progressHandler = progressCapture;
 
 			var result = await fixture.Client.CallToolAsync(
 				toolName: "feedback_progress",
 				arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
-				progress: progressHandler).ConfigureAwait(false);
+				progress: new Progress<ProgressNotificationValue>(_ => { })).ConfigureAwait(false);
 
 			await WaitForConditionAsync(() =>
 			{
-				var progressUpdates = progressCapture.Snapshot();
 				return HasExpectedProgressSequence(progressUpdates) && notifications.Count >= 2;
 			}, timeoutMs: 5000).ConfigureAwait(false);
-			AssertStructuredProgressResult(result, progressCapture.Snapshot(), notifications);
+			AssertStructuredProgressResult(result, progressUpdates, notifications);
 		}
 		finally
 		{
@@ -130,6 +128,9 @@ public sealed class Given_McpUserFeedback
 					new KeyValuePair<string, Func<JsonRpcNotification, CancellationToken, ValueTask>>(
 						NotificationMethods.LoggingMessageNotification,
 						HandleLoggingNotificationAsync),
+					new KeyValuePair<string, Func<JsonRpcNotification, CancellationToken, ValueTask>>(
+						NotificationMethods.ProgressNotification,
+						HandleProgressNotificationAsync),
 				],
 			},
 		};
@@ -148,6 +149,26 @@ public sealed class Given_McpUserFeedback
 				payload.Data.ValueKind == JsonValueKind.String
 					? payload.Data.GetString() ?? string.Empty
 					: payload.Data.GetRawText()));
+		}
+
+		return ValueTask.CompletedTask;
+	}
+
+	private static ValueTask HandleProgressNotificationAsync(JsonRpcNotification notification, CancellationToken cancellationToken)
+	{
+		_ = cancellationToken;
+		var state = NotificationCaptureState.Current
+			?? throw new InvalidOperationException("Notification capture state was not initialized.");
+		if (state.ProgressUpdates is null)
+		{
+			return ValueTask.CompletedTask;
+		}
+
+		var payload = notification.Params?.Deserialize<ProgressNotificationParams>()
+			?? throw new InvalidOperationException("Expected progress notification parameters.");
+		lock (state.ProgressUpdates)
+		{
+			state.ProgressUpdates.Add(payload.Progress);
 		}
 
 		return ValueTask.CompletedTask;
@@ -242,39 +263,9 @@ public sealed class Given_McpUserFeedback
 			? "<none>"
 			: string.Join(" | ", notifications.Select(entry => $"{entry.Level}: {entry.Data}"));
 
-	private sealed class ProgressCapture : IProgress<ProgressNotificationValue>
-	{
-		private readonly List<ProgressNotificationValue> _updates = [];
-
-		public int Count
-		{
-			get
-			{
-				lock (_updates)
-				{
-					return _updates.Count;
-				}
-			}
-		}
-
-		public void Report(ProgressNotificationValue value)
-		{
-			lock (_updates)
-			{
-				_updates.Add(value);
-			}
-		}
-
-		public List<ProgressNotificationValue> Snapshot()
-		{
-			lock (_updates)
-			{
-				return [.. _updates];
-			}
-		}
-	}
-
-	private sealed record NotificationCaptureState(List<(LoggingLevel Level, string Data)> Notifications)
+	private sealed record NotificationCaptureState(
+		List<(LoggingLevel Level, string Data)> Notifications,
+		List<ProgressNotificationValue>? ProgressUpdates = null)
 	{
 		public static NotificationCaptureState? Current { get; set; }
 	}
