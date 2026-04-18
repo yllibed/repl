@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Repl;
+using Repl.Interaction;
 using Repl.Mcp;
 
 // ── A Repl app exposed as an MCP server for AI agents ──────────────
@@ -115,7 +116,8 @@ app.Map("import {file}",
 		Repl.Interaction.IReplInteractionChannel interaction, CancellationToken ct) =>
 	{
 		// ── Phase 1: Read the file ─────────────────────────────────
-		await interaction.WriteProgressAsync("Reading CSV...", 0, ct);
+		await interaction.WriteNoticeAsync($"Starting import for '{file}'.", ct);
+		await interaction.WriteProgressAsync("Reading CSV...", 5, ct);
 		var (headers, rawRows) = ContactCsvParser.ReadRaw(file);
 		// ... validate file structure, reject malformed rows ...
 
@@ -127,7 +129,10 @@ app.Map("import {file}",
 
 		if (sampling.IsSupported)
 		{
-			await interaction.WriteProgressAsync("Identifying columns...", 15, ct);
+			await interaction.WriteIndeterminateProgressAsync(
+				"Identifying columns...",
+				"Waiting for the connected MCP client to complete sampling.",
+				ct);
 
 			var sampleRows = string.Join("\n", rawRows.Take(3).Select(
 				row => string.Join(", ", row.Select((cell, i) => $"[{i}] \"{cell}\""))));
@@ -142,12 +147,21 @@ app.Map("import {file}",
 				cancellationToken: ct);
 
 			(nameCol, emailCol) = ContactCsvParser.ParseColumnMapping(mapping, nameCol, emailCol);
+			await interaction.WriteProgressAsync("Columns identified", 25, ct);
+		}
+		else
+		{
+			await interaction.WriteWarningProgressAsync(
+				"Sampling unavailable",
+				25,
+				"Falling back to the default name/email column positions.",
+				ct);
 		}
 
 		var rows = ContactCsvParser.MapRows(rawRows, nameCol, emailCol);
 
 		// ── Phase 3: Duplicate detection ───────────────────────────
-		await interaction.WriteProgressAsync("Checking duplicates...", 40, ct);
+		await interaction.WriteProgressAsync("Checking duplicates...", 45, ct);
 		var duplicates = ContactMatcher.FindCandidates(rows, contacts.All);
 
 		// ── Phase 4: Conflict resolution (elicitation) ─────────────
@@ -155,27 +169,54 @@ app.Map("import {file}",
 		// Ask the user how to handle them through a structured form.
 		var remaining = duplicates;
 
-		if (remaining.Count > 0 && elicitation.IsSupported)
+		if (remaining.Count > 0)
 		{
-			string[] strategies = ["skip", "overwrite", "keep-both"];
-
-			var choice = await elicitation.ElicitChoiceAsync(
-				$"{remaining.Count} contact(s) may already exist. How should they be handled?",
-				strategies,
+			await interaction.WriteWarningProgressAsync(
+				"Possible duplicates detected",
+				60,
+				$"{remaining.Count} potential contact matches need review.",
 				ct);
 
-			if (choice is null)
+			if (elicitation.IsSupported)
 			{
-				return Results.Cancelled("Import cancelled during conflict resolution.");
-			}
+				string[] strategies = ["skip", "overwrite", "keep-both"];
 
-			rows = ContactMatcher.ApplyStrategy(rows, remaining, strategies[choice.Value]);
+				var choice = await elicitation.ElicitChoiceAsync(
+					$"{remaining.Count} contact(s) may already exist. How should they be handled?",
+					strategies,
+					ct);
+
+				if (choice is null)
+				{
+					await interaction.WriteErrorProgressAsync(
+						"Import cancelled",
+						60,
+						"The user cancelled during conflict resolution.",
+						ct);
+					await interaction.WriteProblemAsync(
+						"Import cancelled during conflict resolution.",
+						"No contacts were imported because the duplicate-handling step was cancelled.",
+						"import_cancelled",
+						ct);
+					return Results.Cancelled("Import cancelled during conflict resolution.");
+				}
+
+				rows = ContactMatcher.ApplyStrategy(rows, remaining, strategies[choice.Value]);
+				await interaction.WriteProgressAsync("Conflicts resolved", 72, ct);
+			}
+			else
+			{
+				await interaction.WriteWarningAsync(
+					"Elicitation is unavailable, so duplicate handling falls back to the current rows.",
+					ct);
+			}
 		}
 
-		// ── Phase 4: Commit ────────────────────────────────────────
-		await interaction.WriteProgressAsync("Importing...", 70, ct);
+		// ── Phase 5: Commit ────────────────────────────────────────
+		await interaction.WriteProgressAsync("Importing...", 85, ct);
 		var imported = contacts.Import(rows);
 		await interaction.WriteProgressAsync("Done", 100, ct);
+		await interaction.WriteNoticeAsync($"Imported {imported} of {rows.Count} contacts.", ct);
 
 		return Results.Success($"Imported {imported} of {rows.Count} contacts.");
 	})
@@ -188,6 +229,62 @@ app.Map("import {file}",
 		""")
 	.LongRunning()
 	.OpenWorld();
+
+app.Context("feedback", feedback =>
+{
+	feedback.Map("demo",
+		async (Repl.Interaction.IReplInteractionChannel interaction, CancellationToken ct) =>
+		{
+			await interaction.WriteNoticeAsync("Starting the MCP feedback demo.", ct);
+			await interaction.WriteProgressAsync("Preparing import workspace", 10, ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteIndeterminateProgressAsync(
+				"Waiting for agent review",
+				"Sampling or prompting may still be in progress.",
+				ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteWarningProgressAsync(
+				"Potential conflict detected",
+				55,
+				"A duplicate contact may need user review.",
+				ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteProgressAsync("Finalizing import plan", 90, ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteNoticeAsync("Feedback demo completed.", ct);
+			return Results.Success("Feedback demo completed.");
+		})
+		.WithDescription("Run a deterministic feedback sequence for MCP Inspector demos")
+		.LongRunning();
+
+	feedback.Map("fail",
+		async (Repl.Interaction.IReplInteractionChannel interaction, CancellationToken ct) =>
+		{
+			await interaction.WriteNoticeAsync("Starting the failing MCP feedback demo.", ct);
+			await interaction.WriteProgressAsync("Preparing import workspace", 15, ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteWarningProgressAsync(
+				"Retrying remote validation",
+				50,
+				"The validation worker timed out.",
+				ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteErrorProgressAsync(
+				"Validation failed",
+				80,
+				"The worker stayed unavailable after the retry window.",
+				ct);
+			await FeedbackDemo.DelayAsync(ct);
+			await interaction.WriteProblemAsync(
+				"Feedback demo failed.",
+				"The sample emitted an error-state progress update before returning the tool error.",
+				"feedback_demo_failed",
+				ct);
+			return Results.Error("feedback_demo_failed", "Feedback demo failed.");
+		})
+		.WithDescription("Run a failing feedback sequence that emits warning and error notifications")
+		.LongRunning();
+});
 
 // ── Interactive-only commands ──────────────────────────────────────
 
@@ -287,4 +384,10 @@ internal static class ContactMatcher
 		List<Contact> rows, IReadOnlyList<DuplicatePair> unresolved, string strategy) =>
 		// ... apply user's chosen strategy (skip, overwrite, keep-both) ...
 		rows;
+}
+
+internal static class FeedbackDemo
+{
+	public static Task DelayAsync(CancellationToken cancellationToken) =>
+		Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
 }
