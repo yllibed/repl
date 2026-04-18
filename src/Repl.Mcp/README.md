@@ -18,6 +18,7 @@ myapp              # still a CLI / interactive REPL
 ```
 
 `IReplInteractionChannel` user feedback maps to MCP-native transports:
+
 - progress -> progress notifications
 - notice / warning / problem feedback -> MCP message notifications
 

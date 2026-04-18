@@ -187,22 +187,24 @@ public sealed class Given_McpUserFeedback
 		List<ProgressNotificationValue> progressUpdates,
 		List<(LoggingLevel Level, string Data)> notifications)
 	{
+		const float epsilon = 0.0001f;
+
 		result.IsError.Should().BeFalse();
 		progressUpdates.Exists(update =>
-			update.Progress == 25f
-			&& update.Total == 100f
+			NearlyEqual(update.Progress, 25f, epsilon)
+			&& update.Total is float total && NearlyEqual(total, 100f, epsilon)
 			&& string.Equals(update.Message, "Loading", StringComparison.Ordinal)).Should().BeTrue();
 		progressUpdates.Exists(update =>
-			update.Progress == 0f
+			NearlyEqual(update.Progress, 0f, epsilon)
 			&& update.Total == null
 			&& string.Equals(update.Message, "Waiting: Remote side", StringComparison.Ordinal)).Should().BeTrue();
 		progressUpdates.Exists(update =>
-			update.Progress == 60f
-			&& update.Total == 100f
+			NearlyEqual(update.Progress, 60f, epsilon)
+			&& update.Total is float total && NearlyEqual(total, 100f, epsilon)
 			&& string.Equals(update.Message, "Retrying: Transient issue", StringComparison.Ordinal)).Should().BeTrue();
 		progressUpdates.Exists(update =>
-			update.Progress == 80f
-			&& update.Total == 100f
+			NearlyEqual(update.Progress, 80f, epsilon)
+			&& update.Total is float total && NearlyEqual(total, 100f, epsilon)
 			&& string.Equals(update.Message, "Failed: Permanent issue", StringComparison.Ordinal)).Should().BeTrue();
 		notifications.Should().Contain(entry =>
 			entry.Level == LoggingLevel.Warning
@@ -213,6 +215,9 @@ public sealed class Given_McpUserFeedback
 			&& entry.Data.Contains("\"state\":\"Error\"", StringComparison.Ordinal)
 			&& entry.Data.Contains("\"details\":\"Permanent issue\"", StringComparison.Ordinal));
 	}
+
+	private static bool NearlyEqual(float actual, float expected, float epsilon) =>
+		MathF.Abs(actual - expected) <= epsilon;
 
 	private sealed record NotificationCaptureState(List<(LoggingLevel Level, string Data)> Notifications)
 	{

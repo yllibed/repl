@@ -343,9 +343,10 @@ internal static class ContactCsvParser
 
 		var nameCol = defaultName;
 		var emailCol = defaultEmail;
-		foreach (var part in llmResponse.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+		foreach (var kv in llmResponse
+			.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+			.Select(part => part.Split('=')))
 		{
-			var kv = part.Split('=');
 			if (kv.Length == 2 && int.TryParse(kv[1], out var idx))
 			{
 				if (kv[0].Contains("name", StringComparison.OrdinalIgnoreCase))

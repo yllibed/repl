@@ -85,10 +85,10 @@ internal sealed class ConsoleReplInteractionPresenter(
 		var percent = progress.ResolvePercent();
 		var payload = FormatProgress(progress, percent);
 		await TryWriteAdvancedProgressAsync(progress).ConfigureAwait(false);
-		if (!_rewriteProgress)
+		if (!_rewriteProgress || (progress.State == ReplProgressState.Normal && percent is null))
 		{
 			await CloseProgressLineIfNeededAsync().ConfigureAwait(false);
-			await ReplSessionIO.Output.WriteLineAsync(Styled(payload, _palette?.ProgressStyle)).ConfigureAwait(false);
+			await ReplSessionIO.Output.WriteLineAsync(Styled(payload, ResolveProgressStyle(progress.State))).ConfigureAwait(false);
 			return;
 		}
 
