@@ -75,7 +75,7 @@ internal sealed class McpElicitationService : IMcpElicitation
 		var index = -1;
 		for (var i = 0; i < choices.Count; i++)
 		{
-			if (string.Equals(choices[i], selected, StringComparison.Ordinal))
+			if (string.Equals(choices[i], selected, StringComparison.OrdinalIgnoreCase))
 			{
 				index = i;
 				break;

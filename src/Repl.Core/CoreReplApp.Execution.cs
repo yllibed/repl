@@ -567,9 +567,17 @@ public sealed partial class CoreReplApp
 		{
 			await interaction.ClearProgressAsync().ConfigureAwait(false);
 		}
-		catch (Exception)
+		catch (OperationCanceledException)
 		{
-			// Clearing progress is best-effort cleanup and must not hide the primary result.
+			throw;
+		}
+		catch (ObjectDisposedException)
+		{
+			// Clearing progress is best-effort cleanup and may happen after the channel is disposed.
+		}
+		catch (InvalidOperationException)
+		{
+			// Clearing progress is best-effort cleanup and may race with teardown.
 		}
 	}
 

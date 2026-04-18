@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Globalization;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -51,7 +52,11 @@ public sealed class Given_McpUserFeedback
 				arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
 				progress: progressHandler).ConfigureAwait(false);
 
-			await WaitForConditionAsync(() => progressCapture.Count >= 4 && notifications.Count >= 2, timeoutMs: 5000).ConfigureAwait(false);
+			await WaitForConditionAsync(() =>
+			{
+				var progressUpdates = progressCapture.Snapshot();
+				return HasExpectedProgressSequence(progressUpdates) && notifications.Count >= 2;
+			}, timeoutMs: 5000).ConfigureAwait(false);
 			AssertStructuredProgressResult(result, progressCapture.Snapshot(), notifications);
 		}
 		finally
@@ -178,37 +183,64 @@ public sealed class Given_McpUserFeedback
 		List<ProgressNotificationValue> progressUpdates,
 		List<(LoggingLevel Level, string Data)> notifications)
 	{
-		const float epsilon = 0.0001f;
+		var progressDump = DescribeProgressUpdates(progressUpdates);
+		var notificationDump = DescribeNotifications(notifications);
 
 		result.IsError.Should().BeFalse();
-		progressUpdates.Exists(update =>
-			NearlyEqual(update.Progress, 25f, epsilon)
-			&& update.Total is float total && NearlyEqual(total, 100f, epsilon)
-			&& string.Equals(update.Message, "Loading", StringComparison.Ordinal)).Should().BeTrue();
-		progressUpdates.Exists(update =>
-			NearlyEqual(update.Progress, 0f, epsilon)
-			&& update.Total == null
-			&& string.Equals(update.Message, "Waiting: Remote side", StringComparison.Ordinal)).Should().BeTrue();
-		progressUpdates.Exists(update =>
-			NearlyEqual(update.Progress, 60f, epsilon)
-			&& update.Total is float total && NearlyEqual(total, 100f, epsilon)
-			&& string.Equals(update.Message, "Retrying: Transient issue", StringComparison.Ordinal)).Should().BeTrue();
-		progressUpdates.Exists(update =>
-			NearlyEqual(update.Progress, 80f, epsilon)
-			&& update.Total is float total && NearlyEqual(total, 100f, epsilon)
-			&& string.Equals(update.Message, "Failed: Permanent issue", StringComparison.Ordinal)).Should().BeTrue();
+		if (!HasExpectedProgressSequence(progressUpdates))
+		{
+			Assert.Fail($"Unexpected progress updates: {progressDump}");
+		}
 		notifications.Should().Contain(entry =>
 			entry.Level == LoggingLevel.Warning
 			&& entry.Data.Contains("\"state\":\"Warning\"", StringComparison.Ordinal)
-			&& entry.Data.Contains("\"details\":\"Transient issue\"", StringComparison.Ordinal));
+			&& entry.Data.Contains("\"details\":\"Transient issue\"", StringComparison.Ordinal), $"notifications were: {notificationDump}");
 		notifications.Should().Contain(entry =>
 			entry.Level == LoggingLevel.Error
 			&& entry.Data.Contains("\"state\":\"Error\"", StringComparison.Ordinal)
-			&& entry.Data.Contains("\"details\":\"Permanent issue\"", StringComparison.Ordinal));
+			&& entry.Data.Contains("\"details\":\"Permanent issue\"", StringComparison.Ordinal), $"notifications were: {notificationDump}");
 	}
+
+	private static bool HasExpectedProgressSequence(List<ProgressNotificationValue> progressUpdates) =>
+		ContainsProgressUpdate(progressUpdates, 25f, 100f, "Loading")
+		&& ContainsProgressUpdate(progressUpdates, 0f, expectedTotal: null, "Waiting: Remote side")
+		&& ContainsProgressUpdate(progressUpdates, 60f, 100f, "Retrying: Transient issue")
+		&& ContainsProgressUpdate(progressUpdates, 80f, 100f, "Failed: Permanent issue");
+
+	private static bool ContainsProgressUpdate(
+		List<ProgressNotificationValue> progressUpdates,
+		float expectedProgress,
+		float? expectedTotal,
+		string expectedMessage)
+	{
+		const float epsilon = 0.0001f;
+
+		return progressUpdates.Exists(update =>
+			NearlyEqual(update.Progress, expectedProgress, epsilon)
+			&& TotalsMatch(update.Total, expectedTotal, epsilon)
+			&& string.Equals(update.Message, expectedMessage, StringComparison.Ordinal));
+	}
+
+	private static bool TotalsMatch(float? actual, float? expected, float epsilon) =>
+		expected is null
+			? actual is null
+			: actual is float total && NearlyEqual(total, expected.Value, epsilon);
 
 	private static bool NearlyEqual(float actual, float expected, float epsilon) =>
 		MathF.Abs(actual - expected) <= epsilon;
+
+	private static string DescribeProgressUpdates(List<ProgressNotificationValue> progressUpdates) =>
+		progressUpdates.Count == 0
+			? "<none>"
+			: string.Join(
+				" | ",
+				progressUpdates.Select(update =>
+					$"Progress={update.Progress.ToString(CultureInfo.InvariantCulture)}, Total={(update.Total?.ToString(CultureInfo.InvariantCulture) ?? "null")}, Message={update.Message ?? "<null>"}"));
+
+	private static string DescribeNotifications(List<(LoggingLevel Level, string Data)> notifications) =>
+		notifications.Count == 0
+			? "<none>"
+			: string.Join(" | ", notifications.Select(entry => $"{entry.Level}: {entry.Data}"));
 
 	private sealed class ProgressCapture : IProgress<ProgressNotificationValue>
 	{
