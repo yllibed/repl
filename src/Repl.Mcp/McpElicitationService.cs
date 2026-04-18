@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -31,7 +32,9 @@ internal sealed class McpElicitationService : IMcpElicitation
 			new ElicitRequestParams.StringSchema(),
 			cancellationToken).ConfigureAwait(false);
 
-		return result?.Content?[FieldName].GetString();
+		return TryGetContentValue(result?.Content, out var value)
+			? value.GetString()
+			: null;
 	}
 
 	public async ValueTask<bool?> ElicitBooleanAsync(
@@ -43,7 +46,9 @@ internal sealed class McpElicitationService : IMcpElicitation
 			new ElicitRequestParams.BooleanSchema(),
 			cancellationToken).ConfigureAwait(false);
 
-		return result?.Content?[FieldName].GetBoolean();
+		return TryGetContentValue(result?.Content, out var value)
+			? value.GetBoolean()
+			: null;
 	}
 
 	public async ValueTask<int?> ElicitChoiceAsync(
@@ -59,7 +64,9 @@ internal sealed class McpElicitationService : IMcpElicitation
 			},
 			cancellationToken).ConfigureAwait(false);
 
-		var selected = result?.Content?[FieldName].GetString();
+		var selected = TryGetContentValue(result?.Content, out var value)
+			? value.GetString()
+			: null;
 		if (selected is null)
 		{
 			return null;
@@ -87,7 +94,9 @@ internal sealed class McpElicitationService : IMcpElicitation
 			new ElicitRequestParams.NumberSchema(),
 			cancellationToken).ConfigureAwait(false);
 
-		return result?.Content?[FieldName].GetDouble();
+		return TryGetContentValue(result?.Content, out var value)
+			? value.GetDouble()
+			: null;
 	}
 
 	internal void AttachServer(McpServer server) => _server = server;
@@ -122,5 +131,18 @@ internal sealed class McpElicitationService : IMcpElicitation
 		}
 
 		return result;
+	}
+
+	private static bool TryGetContentValue(
+		IDictionary<string, JsonElement>? content,
+		out JsonElement value)
+	{
+		if (content?.TryGetValue(FieldName, out value) is true)
+		{
+			return true;
+		}
+
+		value = default;
+		return false;
 	}
 }

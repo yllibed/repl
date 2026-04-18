@@ -38,21 +38,21 @@ public sealed class Given_McpUserFeedback
 	public async Task When_ToolEmitsStructuredProgress_Then_McpReceivesProgressAndMessages()
 	{
 		var notifications = new List<(LoggingLevel Level, string Data)>();
-		var progressUpdates = new List<ProgressNotificationValue>();
+		var progressCapture = new ProgressCapture();
 		var captureState = new NotificationCaptureState(notifications);
 		NotificationCaptureState.Current = captureState;
 		try
 		{
 			await using var fixture = await CreateStructuredProgressFixtureAsync(CreateClientOptions()).ConfigureAwait(false);
-			var progressHandler = CreateProgressCollector(progressUpdates);
+			var progressHandler = progressCapture;
 
 			var result = await fixture.Client.CallToolAsync(
 				toolName: "feedback_progress",
 				arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
 				progress: progressHandler).ConfigureAwait(false);
 
-			await WaitForConditionAsync(() => progressUpdates.Count >= 4 && notifications.Count >= 2).ConfigureAwait(false);
-			AssertStructuredProgressResult(result, progressUpdates, notifications);
+			await WaitForConditionAsync(() => progressCapture.Count >= 4 && notifications.Count >= 2, timeoutMs: 5000).ConfigureAwait(false);
+			AssertStructuredProgressResult(result, progressCapture.Snapshot(), notifications);
 		}
 		finally
 		{
@@ -148,15 +148,6 @@ public sealed class Given_McpUserFeedback
 		return ValueTask.CompletedTask;
 	}
 
-	private static Progress<ProgressNotificationValue> CreateProgressCollector(List<ProgressNotificationValue> progressUpdates) =>
-		new Progress<ProgressNotificationValue>(value =>
-		{
-			lock (progressUpdates)
-			{
-				progressUpdates.Add(value);
-			}
-		});
-
 	private static async Task WaitForConditionAsync(Func<bool> predicate, int timeoutMs = 1000)
 	{
 		var started = Environment.TickCount64;
@@ -218,6 +209,38 @@ public sealed class Given_McpUserFeedback
 
 	private static bool NearlyEqual(float actual, float expected, float epsilon) =>
 		MathF.Abs(actual - expected) <= epsilon;
+
+	private sealed class ProgressCapture : IProgress<ProgressNotificationValue>
+	{
+		private readonly List<ProgressNotificationValue> _updates = [];
+
+		public int Count
+		{
+			get
+			{
+				lock (_updates)
+				{
+					return _updates.Count;
+				}
+			}
+		}
+
+		public void Report(ProgressNotificationValue value)
+		{
+			lock (_updates)
+			{
+				_updates.Add(value);
+			}
+		}
+
+		public List<ProgressNotificationValue> Snapshot()
+		{
+			lock (_updates)
+			{
+				return [.. _updates];
+			}
+		}
+	}
 
 	private sealed record NotificationCaptureState(List<(LoggingLevel Level, string Data)> Notifications)
 	{

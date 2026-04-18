@@ -62,6 +62,14 @@ internal sealed partial class ConsoleInteractionChannel(
 	{
 		switch (request)
 		{
+			case WriteStatusRequest status:
+				await PresentFeedbackAsync(
+						status.Text,
+						new ReplStatusEvent(status.Text),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
 			case WriteNoticeRequest notice:
 				await PresentFeedbackAsync(
 						notice.Text,
@@ -79,14 +87,7 @@ internal sealed partial class ConsoleInteractionChannel(
 				return InteractionResult.Success(value: true);
 
 			case WriteProblemRequest problem:
-				if (string.IsNullOrWhiteSpace(problem.Summary))
-				{
-					throw new ArgumentException("Problem summary cannot be empty.", nameof(request));
-				}
-
-				await _presenter.PresentAsync(
-						new ReplProblemEvent(problem.Summary, problem.Details, problem.Code),
-						cancellationToken)
+				await PresentProblemAsync(problem, cancellationToken)
 					.ConfigureAwait(false);
 				return InteractionResult.Success(value: true);
 
@@ -117,6 +118,21 @@ internal sealed partial class ConsoleInteractionChannel(
 		}
 
 		await _presenter.PresentAsync(interactionEvent, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask PresentProblemAsync(
+		WriteProblemRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(request.Summary))
+		{
+			throw new ArgumentException("Problem summary cannot be empty.", nameof(request));
+		}
+
+		await _presenter.PresentAsync(
+				new ReplProblemEvent(request.Summary, request.Details, request.Code),
+				cancellationToken)
+			.ConfigureAwait(false);
 	}
 
 	/// <summary>

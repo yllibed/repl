@@ -238,6 +238,11 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 		return request switch
 		{
+			WriteStatusRequest status => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Info,
+					JsonSerializer.SerializeToElement(status.Text, McpJsonContext.Default.String),
+					cancellationToken)),
 			WriteProgressRequest progress => CompleteBuiltInDispatchAsync<TResult>(
 				WriteStructuredProgressAsync(progress, cancellationToken)),
 			WriteNoticeRequest notice => CompleteBuiltInDispatchAsync<TResult>(

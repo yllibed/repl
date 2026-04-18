@@ -567,9 +567,9 @@ public sealed partial class CoreReplApp
 		{
 			await interaction.ClearProgressAsync().ConfigureAwait(false);
 		}
-		catch (NotSupportedException)
+		catch (Exception)
 		{
-			// Ignore channels that do not implement progress dispatch.
+			// Clearing progress is best-effort cleanup and must not hide the primary result.
 		}
 	}
 

@@ -1,3 +1,5 @@
+using Repl.Interaction;
+
 namespace Repl;
 
 internal static class InteractionProgressFactory
@@ -56,14 +58,7 @@ internal static class InteractionProgressFactory
 		public void Report(ReplProgressEvent value)
 		{
 #pragma warning disable VSTHRD002 // IProgress<T>.Report is sync by contract; we bridge to async channel intentionally.
-			channel.DispatchAsync(
-					new WriteProgressRequest(
-						value.Label,
-						value.ResolvePercent(),
-						value.State,
-						value.Details,
-						cancellationToken),
-					cancellationToken)
+			channel.WriteProgressAsync(value, cancellationToken)
 				.AsTask()
 				.GetAwaiter()
 				.GetResult();

@@ -126,11 +126,19 @@ internal sealed class ConsoleReplInteractionPresenter(
 		var percentOneDecimalText = resolvedPercent.ToString("0.0", CultureInfo.InvariantCulture);
 		var percentZeroDecimalText = resolvedPercent.ToString("0", CultureInfo.InvariantCulture);
 
-		return template
+		var formatted = template
 			.Replace("{label}", safeLabel, StringComparison.Ordinal)
 			.Replace("{percent:0.0}", percentOneDecimalText, StringComparison.Ordinal)
 			.Replace("{percent:0}", percentZeroDecimalText, StringComparison.Ordinal)
 			.Replace("{percent}", percentText, StringComparison.Ordinal);
+
+		if (progress.State is ReplProgressState.Warning or ReplProgressState.Error
+			&& !string.IsNullOrWhiteSpace(progress.Details))
+		{
+			return $"{formatted}: {progress.Details}";
+		}
+
+		return formatted;
 	}
 
 	private async ValueTask TryWriteAdvancedProgressAsync(ReplProgressEvent progress)
