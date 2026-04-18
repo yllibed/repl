@@ -569,7 +569,7 @@ public sealed partial class CoreReplApp
 		}
 		catch (OperationCanceledException)
 		{
-			throw;
+			// Clearing progress is best-effort cleanup and may race with cancellation.
 		}
 		catch (ObjectDisposedException)
 		{
