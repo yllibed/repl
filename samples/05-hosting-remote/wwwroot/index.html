@@ -274,8 +274,9 @@
     }
 
     body.connected-session .controls {
-      padding: 9px 12px;
-      gap: 10px;
+      padding: 8px 12px;
+      gap: 12px;
+      align-items: center;
     }
 
     body.connected-session .controls-grid {
@@ -289,11 +290,21 @@
 
     body.connected-session .connection-summary {
       display: grid;
+      gap: 6px;
+    }
+
+    body.connected-session .connection-summary strong {
+      display: none;
+    }
+
+    body.connected-session .connection-summary-text {
+      font-size: 0.7rem;
     }
 
     body.connected-session #go {
-      min-width: 118px;
-      padding: 7px 12px;
+      min-width: 108px;
+      padding: 6px 11px;
+      font-size: 0.76rem;
     }
 
     .activity-bar {
@@ -605,12 +616,12 @@
           <div class="control-group">
             <div class="control-label">
               <span>Transport</span>
-              <span class="inline-info" title="Choose how the browser connects to the hosted session.">i</span>
+              <span class="inline-info" title="How the browser reaches the hosted REPL.">i</span>
             </div>
             <div class="mode-group">
-              <label class="mode"><input type="radio" name="transport" value="ws" checked /> WebSocket <span class="inline-info" title="Persistent browser transport with the richest interactive behavior in this sample.">i</span></label>
-              <label class="mode"><input type="radio" name="transport" value="telnet" /> Telnet <span class="inline-info" title="Classic line-oriented terminal transport. Great to compare legacy negotiation with the richer browser session.">i</span></label>
-              <label class="mode"><input type="radio" name="transport" value="signalr" /> SignalR <span class="inline-info" title="Browser-friendly transport over ASP.NET Core SignalR. Useful when you want hosted messaging without raw WebSockets.">i</span></label>
+              <label class="mode"><input type="radio" name="transport" value="ws" checked /> WebSocket <span class="inline-info" title="Best default for the hosted browser demo.">i</span></label>
+              <label class="mode"><input type="radio" name="transport" value="telnet" /> Telnet <span class="inline-info" title="Classic terminal negotiation over the browser bridge.">i</span></label>
+              <label class="mode"><input type="radio" name="transport" value="signalr" /> SignalR <span class="inline-info" title="Hosted messaging over ASP.NET Core SignalR.">i</span></label>
             </div>
           </div>
         </div>
@@ -618,13 +629,12 @@
           <div class="control-group">
             <div class="control-label">
               <span>Terminal Profile</span>
-              <span class="inline-info" title="Profiles are presets. Pick one, or switch to Custom to tweak feature flags by hand.">i</span>
+              <span class="inline-info" title="Preset bundles for the feature checkboxes below.">i</span>
             </div>
             <div class="mode-group">
-              <label class="mode"><input type="radio" name="profile" value="basic" /> Basic <span class="inline-info" title="Text-only session. No ANSI styling, no advanced progress, and no extra terminal negotiation.">i</span></label>
-              <label class="mode"><input type="radio" name="profile" value="styled" checked /> Styled <span class="inline-info" title="Keeps ANSI formatting plus resize and identity reporting, without richer VT input or external progress.">i</span></label>
-              <label class="mode"><input type="radio" name="profile" value="rich" /> Rich <span class="inline-info" title="Advertises the full rich-browser preset: ANSI, resize, identity, VT input, and external progress reporting.">i</span></label>
-              <label class="mode"><input type="radio" name="profile" value="custom" /> Custom <span class="inline-info" title="Starts from your current toggles and lets you test a custom capability mix.">i</span></label>
+              <label class="mode"><input type="radio" name="profile" value="basic" /> Basic <span class="inline-info" title="Plain text only.">i</span></label>
+              <label class="mode"><input type="radio" name="profile" value="styled" checked /> Styled <span class="inline-info" title="ANSI plus the usual hosted terminal basics.">i</span></label>
+              <label class="mode"><input type="radio" name="profile" value="rich" /> Rich <span class="inline-info" title="Styled plus VT input and external progress.">i</span></label>
             </div>
           </div>
         </div>
@@ -632,19 +642,19 @@
           <div class="control-group">
             <div class="control-label">
               <span>Advertised Features</span>
-              <span class="inline-info" title="These flags describe what this browser terminal says it can handle. Rich progress needs both ANSI and Progress.">i</span>
+              <span class="inline-info" title="Capabilities this browser session advertises to the host.">i</span>
             </div>
             <div class="feature-grid">
-              <label class="feature-toggle"><input type="checkbox" name="feature" value="ansi" checked /> ANSI <span class="inline-info" title="Lets the host send styled terminal output instead of plain text only.">i</span></label>
-              <label class="feature-toggle"><input type="checkbox" name="feature" value="resize" checked /> Resize <span class="inline-info" title="Reports browser terminal size changes back to the hosted session.">i</span></label>
-              <label class="feature-toggle"><input type="checkbox" name="feature" value="identity" checked /> Identity <span class="inline-info" title="Tells the host what kind of terminal the browser is pretending to be.">i</span></label>
-              <label class="feature-toggle"><input type="checkbox" name="feature" value="vtinput" /> VT Input <span class="inline-info" title="Advertises richer input semantics for browsers that want to behave more like a real VT terminal.">i</span></label>
-              <label class="feature-toggle"><input type="checkbox" name="feature" value="progress" /> Progress <span class="inline-info" title="Turns on external progress reporting so the Current Activity bar mirrors hosted OSC 9;4 updates.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="ansi" checked /> ANSI <span class="inline-info" title="Styled output instead of plain text.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="resize" checked /> Resize <span class="inline-info" title="Send terminal size changes back to the host.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="identity" checked /> Identity <span class="inline-info" title="Tell the host which terminal profile we mimic.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="vtinput" /> VT Input <span class="inline-info" title="Advertise richer VT-style keyboard input.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="progress" /> Progress <span class="inline-info" title="Show the external activity bar for OSC 9;4 progress.">i</span></label>
             </div>
           </div>
         </div>
         <p class="connection-copy">
-          <strong>Basic</strong> stays text-only. <strong>Styled</strong> keeps ANSI formatting, and <strong>Rich</strong> adds VT input plus hosted progress reporting.
+          <strong>Basic</strong> is plain text. <strong>Styled</strong> keeps ANSI on. <strong>Rich</strong> adds VT input and external progress. The checkboxes below can still refine any preset.
         </p>
         <div id="connectionSummary" class="connection-summary" aria-live="polite">
           <strong>Session summary</strong>
@@ -838,7 +848,7 @@
           ? 'Styled'
           : profile === 'basic'
             ? 'Basic'
-            : 'Custom';
+            : 'Modified';
     }
 
     function setFeatureValues(featureMap) {
@@ -873,10 +883,9 @@
     function syncProfileSelection() {
       updateFeatureAvailability();
       const profileName = resolveProfileName(getFeatureValues());
-      const radio = document.querySelector(`input[name="profile"][value="${profileName}"]`);
-      if (radio) {
-        radio.checked = true;
-      }
+      profileRadios.forEach(radio => {
+        radio.checked = radio.value === profileName;
+      });
     }
 
     function applyProfile(profileName) {
@@ -931,7 +940,7 @@
     function applyTerminalAppearance(config) {
       term.options.theme = config.ansi ? richTheme : plainTheme;
       const profileLabel = config.profile === 'custom'
-        ? 'custom'
+        ? 'modified'
         : config.profile;
       const transportLabel = config.transport === 'ws'
         ? 'websocket'
@@ -949,7 +958,7 @@
       if (config.features.vtinput) featureLabels.push('VT Input');
       if (config.features.progress) featureLabels.push('Progress');
 
-      connectionSummaryText.textContent = `${formatTransportLabel(config.transport)} with the ${formatProfileLabel(config.profile)} profile. ${featureLabels.length > 0 ? `Features: ${featureLabels.join(', ')}.` : 'No extra features advertised.'}`;
+      connectionSummaryText.textContent = `${formatTransportLabel(config.transport)} · ${formatProfileLabel(config.profile)}${featureLabels.length > 0 ? ` · ${featureLabels.join(', ')}` : ''}`;
       connectionSummaryPills.innerHTML = [
         `<span class="summary-pill">${formatTransportLabel(config.transport)}</span>`,
         `<span class="summary-pill">${formatProfileLabel(config.profile)}</span>`,
