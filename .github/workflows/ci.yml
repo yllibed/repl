@@ -202,6 +202,7 @@ jobs:
           }
 
       - name: Pack
+        id: pack
         shell: pwsh
         run: |
           if ($env:PUBLIC_RELEASE -eq 'true') {
@@ -212,7 +213,7 @@ jobs:
           }
 
       - name: Package readiness report (non-blocking)
-        if: always()
+        if: always() && steps.pack.conclusion == 'success'
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.IO.Compression

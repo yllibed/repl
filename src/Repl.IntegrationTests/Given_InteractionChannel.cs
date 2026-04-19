@@ -23,6 +23,29 @@ public sealed class Given_InteractionChannel
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies user-facing notice, warning, and problem feedback render semantically.")]
+	public void When_HandlerUsesStructuredUserFeedback_Then_FeedbackIsRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.WriteNoticeAsync("Connection established", ct).ConfigureAwait(false);
+			await channel.WriteWarningAsync("Cache is warming up", ct).ConfigureAwait(false);
+			await channel.WriteProblemAsync("Sync failed", "Check connectivity and retry.", "sync_failed", ct).ConfigureAwait(false);
+			return "done";
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Connection established");
+		output.Text.Should().Contain("Warning: Cache is warming up");
+		output.Text.Should().Contain("Problem [sync_failed]: Sync failed");
+		output.Text.Should().Contain("Check connectivity and retry.");
+		output.Text.Should().Contain("done");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies percentage progress injection so that handlers can report progress through IProgress<double>.")]
 	public void When_HandlerUsesInjectedPercentageProgress_Then_ProgressIsRendered()
 	{
@@ -56,6 +79,67 @@ public sealed class Given_InteractionChannel
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("Importing: 75%");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies indeterminate progress helpers render a user-facing message while the command continues.")]
+	public void When_HandlerUsesIndeterminateProgressHelper_Then_MessageIsRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.WriteIndeterminateProgressAsync("Waiting", "Remote side", ct).ConfigureAwait(false);
+			return "done";
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Waiting: Remote side");
+		output.Text.Should().Contain("done");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies progress is cleared after successful execution so stale progress indicators do not linger.")]
+	public void When_CommandCompletesAfterProgress_Then_ProgressIsCleared()
+	{
+		var sut = ReplApp.Create();
+		var observer = new RecordingObserver();
+		sut.Core.ExecutionObserver = observer;
+		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.WriteProgressAsync("Syncing", 25, ct).ConfigureAwait(false);
+			return "done";
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		observer.Interactions.OfType<ReplProgressEvent>()
+			.Select(evt => evt.State)
+			.Should().ContainInOrder(ReplProgressState.Normal, ReplProgressState.Clear);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies progress is cleared after handler failures so stale progress does not survive exceptions.")]
+	public void When_CommandFailsAfterProgress_Then_ProgressIsCleared()
+	{
+		var sut = ReplApp.Create();
+		var observer = new RecordingObserver();
+		sut.Core.ExecutionObserver = observer;
+		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			await channel.WriteIndeterminateProgressAsync("Waiting", "Remote side", ct).ConfigureAwait(false);
+			throw new InvalidOperationException("boom");
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("boom");
+		observer.Interactions.OfType<ReplProgressEvent>()
+			.Select(evt => evt.State)
+			.Should().ContainInOrder(ReplProgressState.Indeterminate, ReplProgressState.Clear);
 	}
 
 	[TestMethod]
@@ -192,6 +276,17 @@ public sealed class Given_InteractionChannel
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("0,2"); // 1-based "1,3" maps to 0-based [0,2]
+	}
+
+	private sealed class RecordingObserver : IReplExecutionObserver
+	{
+		public List<ReplInteractionEvent> Interactions { get; } = [];
+
+		public void OnResult(object? result)
+		{
+		}
+
+		public void OnInteractionEvent(ReplInteractionEvent evt) => Interactions.Add(evt);
 	}
 
 	[TestMethod]

@@ -244,6 +244,8 @@ public sealed partial class CoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		using var protocolPassthroughScope = ReplSessionIO.PushProtocolPassthrough();
+
 		if (ReplSessionIO.IsSessionActive)
 		{
 			var (exitCode, _) = await ExecuteMatchedCommandAsync(
@@ -502,6 +504,7 @@ public sealed partial class CoreReplApp
 						serviceProvider,
 						cancellationToken)
 					.ConfigureAwait(false);
+				await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 
 				if (TupleDecomposer.IsTupleResult(result, out var tuple))
 				{
@@ -528,16 +531,19 @@ public sealed partial class CoreReplApp
 		}
 		catch (OperationCanceledException)
 		{
+			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			throw;
 		}
 		catch (InvalidOperationException ex)
 		{
+			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			_ = await RenderOutputAsync(Results.Validation(ex.Message), globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
 			return (1, false);
 		}
 		catch (Exception ex)
 		{
+			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			var errorMessage = ex is TargetInvocationException { InnerException: not null } tie
 				? tie.InnerException?.Message ?? ex.Message
 				: ex.Message;
@@ -547,6 +553,31 @@ public sealed partial class CoreReplApp
 					cancellationToken)
 				.ConfigureAwait(false);
 			return (1, false);
+		}
+	}
+
+	private static async ValueTask TryClearProgressAsync(IServiceProvider serviceProvider)
+	{
+		if (serviceProvider.GetService(typeof(IReplInteractionChannel)) is not IReplInteractionChannel interaction)
+		{
+			return;
+		}
+
+		try
+		{
+			await interaction.ClearProgressAsync().ConfigureAwait(false);
+		}
+		catch (OperationCanceledException)
+		{
+			// Clearing progress is best-effort cleanup and may race with cancellation.
+		}
+		catch (ObjectDisposedException)
+		{
+			// Clearing progress is best-effort cleanup and may happen after the channel is disposed.
+		}
+		catch (InvalidOperationException)
+		{
+			// Clearing progress is best-effort cleanup and may race with teardown.
 		}
 	}
 

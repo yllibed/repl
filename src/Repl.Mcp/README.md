@@ -17,6 +17,13 @@ myapp mcp serve   # AI agents connect here
 myapp              # still a CLI / interactive REPL
 ```
 
+`IReplInteractionChannel` user feedback maps to MCP-native transports:
+
+- progress -> progress notifications
+- notice / warning / problem feedback -> MCP message notifications
+
+Keep operator logging on `ILogger`; do not rely on user-facing interaction as a logging sink.
+
 ## MCP Apps
 
 Repl.Mcp can also expose MCP Apps UI resources:
@@ -57,5 +64,6 @@ MCP Apps host support varies. VS Code currently renders MCP Apps inline; hosts t
 
 ## Learn more
 
-- [Full documentation](https://github.com/yllibed/repl/blob/main/docs/mcp-server.md) — annotations, interaction degradation, client compatibility matrix, agent configuration, NuGet publishing
+- [Getting started](https://github.com/yllibed/repl/blob/main/docs/mcp-overview.md) — quick start, annotations, mental model
+- [Full reference](https://github.com/yllibed/repl/blob/main/docs/mcp-reference.md) — interaction degradation, client compatibility, agent configuration, NuGet publishing
 - [Sample app](https://github.com/yllibed/repl/tree/main/samples/08-mcp-server) — resources, tools, prompts, annotations, and a minimal MCP Apps UI in action

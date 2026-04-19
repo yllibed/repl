@@ -12,6 +12,131 @@ namespace Repl.Interaction;
 public static class ReplInteractionChannelExtensions
 {
 	/// <summary>
+	/// Writes an informational user-facing notice.
+	/// </summary>
+	public static async ValueTask WriteNoticeAsync(
+		this IReplInteractionChannel channel,
+		string text,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteNoticeRequest(text, cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Writes a user-facing warning.
+	/// </summary>
+	public static async ValueTask WriteWarningAsync(
+		this IReplInteractionChannel channel,
+		string text,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteWarningRequest(text, cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Writes a user-facing problem summary.
+	/// </summary>
+	public static async ValueTask WriteProblemAsync(
+		this IReplInteractionChannel channel,
+		string summary,
+		string? details = null,
+		string? code = null,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteProblemRequest(summary, details, code, cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Writes a structured progress update.
+	/// </summary>
+	public static async ValueTask WriteProgressAsync(
+		this IReplInteractionChannel channel,
+		ReplProgressEvent progress,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		ArgumentNullException.ThrowIfNull(progress);
+		_ = await channel.DispatchAsync(
+				new WriteProgressRequest(
+					progress.Label,
+					progress.ResolvePercent(),
+					progress.State,
+					progress.Details,
+					cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Writes an indeterminate progress update.
+	/// </summary>
+	public static ValueTask WriteIndeterminateProgressAsync(
+		this IReplInteractionChannel channel,
+		string label,
+		string? details = null,
+		CancellationToken cancellationToken = default) =>
+		channel.WriteProgressAsync(
+			new ReplProgressEvent(label, State: ReplProgressState.Indeterminate, Details: details),
+			cancellationToken);
+
+	/// <summary>
+	/// Writes a warning-state progress update.
+	/// </summary>
+	public static ValueTask WriteWarningProgressAsync(
+		this IReplInteractionChannel channel,
+		string label,
+		double? percent = null,
+		string? details = null,
+		CancellationToken cancellationToken = default) =>
+		channel.WriteProgressAsync(
+			new ReplProgressEvent(label, Percent: percent, State: ReplProgressState.Warning, Details: details),
+			cancellationToken);
+
+	/// <summary>
+	/// Writes an error-state progress update.
+	/// </summary>
+	public static ValueTask WriteErrorProgressAsync(
+		this IReplInteractionChannel channel,
+		string label,
+		double? percent = null,
+		string? details = null,
+		CancellationToken cancellationToken = default) =>
+		channel.WriteProgressAsync(
+			new ReplProgressEvent(label, Percent: percent, State: ReplProgressState.Error, Details: details),
+			cancellationToken);
+
+	/// <summary>
+	/// Clears any currently visible progress indicator.
+	/// </summary>
+	public static async ValueTask ClearProgressAsync(
+		this IReplInteractionChannel channel,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(channel);
+		_ = await channel.DispatchAsync(
+				new WriteProgressRequest(
+					Label: string.Empty,
+					Percent: null,
+					State: ReplProgressState.Clear,
+					Details: null,
+					CancellationToken: cancellationToken),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
 	/// Prompts the user to select a value from an enum type.
 	/// Uses <see cref="DescriptionAttribute"/> or <see cref="DisplayAttribute"/> names when present,
 	/// otherwise humanizes the enum member name (<c>CamelCase</c> becomes <c>Camel case</c>).

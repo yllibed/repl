@@ -132,6 +132,8 @@ Accessed via `ReplOptions.AmbientCommands`.
 
 Accessed via `ReplOptions.Interaction`.
 
+These options are configured through `app.Options(...)`. Repl does not currently auto-bind them from `IConfiguration`.
+
 - `DefaultProgressLabel` (`string`, default: `"Progress"`) — Default label for progress indicators.
 - `ProgressTemplate` (`string`, default: `"{label}: {percent:0}%"`) — Progress display template. Supports placeholders: `{label}`, `{percent}`, `{percent:0}`, `{percent:0.0}`.
 - `PromptFallback` (`PromptFallback`, default: `UseDefault`) — Behavior when interactive prompts are unavailable.

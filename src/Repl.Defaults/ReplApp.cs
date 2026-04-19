@@ -28,6 +28,7 @@ public sealed class ReplApp : IReplApp
 		_services = services;
 		_core = CoreReplApp.Create();
 		EnsureDefaultServices(_services, _core);
+		_core.Use(ReplLoggingMiddleware.InvokeAsync);
 	}
 
 	/// <summary>
@@ -667,6 +668,7 @@ public sealed class ReplApp : IReplApp
 
 	private static void EnsureDefaultServices(IServiceCollection services, CoreReplApp core)
 	{
+		services.AddReplLogging();
 		services.TryAddSingleton(core);
 		services.TryAddSingleton<ICoreReplApp>(core);
 		services.TryAddSingleton<IReplSessionState, DefaultsSessionState>();

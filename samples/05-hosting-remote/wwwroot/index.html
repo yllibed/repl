@@ -9,6 +9,9 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
   <style>
+    /* ============================================================
+       Design tokens & base layout
+       ============================================================ */
     :root {
       --bg: #0b1020;
       --bg-soft: #121934;
@@ -48,7 +51,7 @@
       gap: 14px;
       flex: 1;
       min-height: calc(100dvh - 28px);
-      grid-template-rows: auto auto auto minmax(320px, 1fr);
+      grid-template-rows: auto auto minmax(420px, 1fr);
     }
 
     .panel {
@@ -59,64 +62,111 @@
       backdrop-filter: blur(6px);
     }
 
+    /* ============================================================
+       Hero / header
+       ============================================================ */
     .hero {
       display: flex;
-      gap: 14px;
-      align-items: start;
+      gap: 10px;
+      align-items: center;
       justify-content: space-between;
-      padding: 14px 16px;
+      padding: 10px 14px;
     }
 
     .hero h1 {
       margin: 0;
-      font-size: 1.08rem;
+      font-size: 1rem;
       font-weight: 700;
       letter-spacing: 0.02em;
     }
 
     .hero p {
-      margin: 6px 0 0;
+      margin: 4px 0 0;
       color: var(--muted);
-      font-size: 0.85rem;
-      line-height: 1.5;
-      max-width: 72ch;
+      font-size: 0.78rem;
+      line-height: 1.4;
+      max-width: 58ch;
     }
 
-    .status-pill {
-      padding: 7px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(148, 163, 184, 0.3);
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      color: var(--muted);
-      background: rgba(15, 23, 42, 0.72);
-      white-space: nowrap;
-    }
-
-    .status-pill.connected {
-      color: #052e16;
-      background: rgba(74, 222, 128, 0.92);
-      border-color: rgba(34, 197, 94, 0.7);
-    }
-
-    .status-pill.connecting {
-      color: #3d2f00;
-      background: rgba(250, 204, 21, 0.9);
-      border-color: rgba(234, 179, 8, 0.7);
-    }
-
+    /* ============================================================
+       Connection controls: transport, profile, feature toggles
+       ============================================================ */
     .controls {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      padding: 16px 16px;
+      transition: padding 180ms ease, gap 180ms ease;
+    }
+
+    .controls-grid {
+      display: grid;
+      gap: 14px;
+      transition: gap 180ms ease;
+    }
+
+    .connection-summary {
+      display: none;
+      gap: 10px;
+      align-content: center;
+    }
+
+    .connection-summary strong {
+      color: var(--text);
+      font-size: 0.82rem;
+    }
+
+    .connection-summary-text {
+      color: var(--muted);
+      font-size: 0.74rem;
+      line-height: 1.45;
+    }
+
+    .summary-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .summary-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(102, 217, 239, 0.28);
+      color: #dbeafe;
+      background: rgba(8, 47, 73, 0.35);
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+
+    .control-row {
       display: flex;
       gap: 12px;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 12px;
+      align-items: flex-start;
       flex-wrap: wrap;
     }
 
-    .mode-group {
+    .control-group {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .control-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: none;
+    }
+
+    .mode-group,
+    .feature-grid {
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
@@ -142,60 +192,303 @@
       background: rgba(15, 50, 72, 0.66);
     }
 
+    .feature-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      color: var(--muted);
+      background: rgba(15, 23, 42, 0.56);
+      cursor: pointer;
+      font-size: 0.77rem;
+    }
+
+    .feature-toggle input {
+      margin: 0;
+    }
+
+    .feature-toggle:has(input:checked) {
+      color: #e0f2fe;
+      border-color: rgba(102, 217, 239, 0.55);
+      background: rgba(15, 50, 72, 0.42);
+    }
+
+    .feature-toggle:has(input:disabled) {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
     #go {
       border: 1px solid rgba(102, 217, 239, 0.7);
       background: linear-gradient(180deg, rgba(56, 189, 248, 0.35), rgba(8, 47, 73, 0.85));
       color: #e6faff;
-      border-radius: 10px;
-      padding: 7px 14px;
+      border-radius: 999px;
+      padding: 8px 14px;
+      min-width: 132px;
+      align-self: center;
       font-family: inherit;
       font-weight: 700;
       font-size: 0.82rem;
       letter-spacing: 0.03em;
       cursor: pointer;
+      text-transform: uppercase;
+      transition: background 180ms ease, border-color 180ms ease, color 180ms ease, padding 180ms ease, min-width 180ms ease;
     }
 
     #go:disabled {
-      opacity: 0.58;
       cursor: default;
+      opacity: 1;
     }
 
-    .help {
-      padding: 12px 14px;
+    #go.connected {
+      color: #052e16;
+      background: rgba(74, 222, 128, 0.92);
+      border-color: rgba(34, 197, 94, 0.7);
     }
 
-    .help h2 {
-      margin: 0;
-      font-size: 0.86rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+    #go.connecting {
+      color: #3d2f00;
+      background: rgba(250, 204, 21, 0.9);
+      border-color: rgba(234, 179, 8, 0.7);
+    }
+
+    .inline-info {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      border: 1px solid rgba(102, 217, 239, 0.35);
       color: var(--accent);
+      background: rgba(8, 47, 73, 0.35);
+      font-size: 0.72rem;
+      font-weight: 700;
+      line-height: 1;
+      cursor: help;
+      user-select: none;
     }
 
-    .help p {
-      margin: 8px 0 0;
+    .connection-copy {
+      margin: 0;
       color: var(--muted);
-      font-size: 0.8rem;
-      line-height: 1.5;
-    }
-
-    .chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 10px;
-    }
-
-    .chips code {
-      font-family: inherit;
       font-size: 0.75rem;
-      color: #dbeafe;
-      background: rgba(2, 132, 199, 0.14);
-      border: 1px solid rgba(56, 189, 248, 0.35);
-      border-radius: 7px;
-      padding: 4px 7px;
+      line-height: 1.45;
     }
 
+    .connection-copy strong {
+      color: var(--text);
+    }
+
+    /* ============================================================
+       Post-connection layout compaction
+       Once a session is open, shrink the controls panel so the
+       terminal + activity bar get the remaining viewport height.
+       Driven by `body.connected-session` toggled from JS.
+       ============================================================ */
+    body.connected-session .controls {
+      padding: 8px 12px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    body.connected-session .controls-grid {
+      gap: 10px;
+    }
+
+    body.connected-session .control-row,
+    body.connected-session .connection-copy {
+      display: none;
+    }
+
+    body.connected-session .connection-summary {
+      display: grid;
+      gap: 6px;
+    }
+
+    body.connected-session .connection-summary strong {
+      display: none;
+    }
+
+    body.connected-session .connection-summary-text {
+      font-size: 0.7rem;
+    }
+
+    body.connected-session #go {
+      min-width: 108px;
+      padding: 6px 11px;
+      font-size: 0.76rem;
+    }
+
+    /* ============================================================
+       Activity bar: mirrors hosted OSC 9;4 progress signals
+       ============================================================ */
+    .activity-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(100, 116, 139, 0.28);
+      background: rgba(10, 17, 35, 0.72);
+      flex-wrap: wrap;
+    }
+
+    .activity-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .activity-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1 1 360px;
+      min-width: 260px;
+    }
+
+    .feedback-state {
+      padding: 5px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      font-size: 0.69rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: rgba(15, 23, 42, 0.62);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .feedback-progress {
+      flex: 1 1 200px;
+      min-width: 120px;
+      height: 10px;
+      display: block;
+      border: none;
+      border-radius: 999px;
+      overflow: hidden;
+      accent-color: var(--accent);
+      background: rgba(15, 23, 42, 0.82);
+    }
+
+    .feedback-progress,
+    .feedback-progress::-webkit-progress-value,
+    .feedback-progress::-moz-progress-bar {
+      transition: accent-color 180ms ease, opacity 180ms ease;
+    }
+
+    .activity-copy {
+      min-width: 180px;
+      flex: 1 1 220px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      line-height: 1.35;
+    }
+
+    .activity-copy strong {
+      display: block;
+      color: var(--text);
+      font-size: 0.77rem;
+      font-weight: 700;
+    }
+
+    .activity-detail {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .feedback-state.normal {
+      color: #082f49;
+      background: rgba(102, 217, 239, 0.92);
+      border-color: rgba(34, 211, 238, 0.7);
+    }
+
+    .feedback-state.warning {
+      color: #3d2f00;
+      background: rgba(250, 204, 21, 0.9);
+      border-color: rgba(234, 179, 8, 0.7);
+    }
+
+    .feedback-state.error {
+      color: #450a0a;
+      background: rgba(248, 113, 113, 0.92);
+      border-color: rgba(239, 68, 68, 0.7);
+    }
+
+    .feedback-state.indeterminate {
+      color: #ecfeff;
+      background: rgba(14, 116, 144, 0.92);
+      border-color: rgba(6, 182, 212, 0.7);
+    }
+
+    .feedback-progress::-webkit-progress-bar {
+      background: rgba(15, 23, 42, 0.82);
+      border: 1px solid rgba(100, 116, 139, 0.32);
+      border-radius: 999px;
+    }
+
+    .feedback-progress::-webkit-progress-value {
+      border-radius: 999px;
+    }
+
+    .feedback-progress::-moz-progress-bar {
+      border-radius: 999px;
+    }
+
+    .feedback-progress.warning {
+      accent-color: var(--warn);
+    }
+
+    .feedback-progress.error {
+      accent-color: var(--danger);
+    }
+
+    .feedback-progress.indeterminate {
+      accent-color: var(--accent);
+    }
+
+    .feedback-percent {
+      min-width: 38px;
+      text-align: right;
+      color: var(--muted);
+      font-size: 0.74rem;
+      font-weight: 700;
+    }
+
+    .feedback-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .feedback-actions button {
+      border: 1px solid rgba(102, 217, 239, 0.35);
+      background: rgba(8, 47, 73, 0.48);
+      color: #dbeafe;
+      border-radius: 10px;
+      padding: 6px 9px;
+      font-family: inherit;
+      font-size: 0.72rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .feedback-actions button:hover {
+      border-color: rgba(102, 217, 239, 0.7);
+      background: rgba(14, 116, 144, 0.35);
+    }
+
+    /* ============================================================
+       Terminal shell (xterm host) and tips
+       ============================================================ */
     .terminal-shell {
       overflow: hidden;
       border-radius: 16px;
@@ -206,7 +499,15 @@
       background: rgba(2, 6, 23, 0.92);
       display: flex;
       flex-direction: column;
-      min-height: 320px;
+      min-height: 58vh;
+    }
+
+    body.disconnected-session .terminal-shell {
+      display: none;
+    }
+
+    body[data-progress-visible="false"] .activity-bar {
+      display: none;
     }
 
     .terminal-head {
@@ -232,14 +533,59 @@
     #term {
       flex: 1 1 auto;
       height: 100%;
-      min-height: 300px;
+      min-height: 52vh;
       padding: 10px;
     }
 
+    .tips {
+      margin: 10px 12px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(8, 14, 29, 0.62);
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+
+    .tips summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 10px 12px;
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .tips summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .tips-content {
+      padding: 0 12px 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .tips-content p {
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    .tips-content code {
+      font-family: inherit;
+      font-size: 0.73rem;
+      color: #dbeafe;
+      background: rgba(2, 132, 199, 0.14);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 7px;
+      padding: 3px 6px;
+    }
+
+    /* ============================================================
+       Responsive breakpoints
+       ============================================================ */
     @media (max-width: 780px) {
       .page {
         min-height: calc(100dvh - 20px);
-        grid-template-rows: auto auto auto minmax(260px, 1fr);
+        grid-template-rows: auto auto minmax(260px, 1fr);
       }
 
       .hero {
@@ -247,66 +593,140 @@
         align-items: stretch;
       }
 
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+      #go {
+        justify-self: start;
+      }
+
+      .activity-main {
+        min-width: 0;
+      }
+
+      .activity-copy {
+        min-width: 0;
+      }
+
       #term {
-        min-height: 240px;
+        min-height: 42vh;
       }
 
       .terminal-shell {
-        min-height: 260px;
+        min-height: 46vh;
+      }
+
+      .activity-detail {
+        white-space: normal;
       }
     }
   </style>
 </head>
-<body>
+<body class="disconnected-session">
   <div class="page">
     <section class="panel hero">
       <div>
         <h1>Remote REPL Playground</h1>
         <p>
-          Multi-transport sample for WebSocket, Telnet-over-WebSocket, and SignalR.
-          Try <code>status</code>, <code>sessions</code>, <code>who</code>, <code>watch</code>, and <code>send hello</code>
-          to explore shared state and live session activity.
+          Try a hosted REPL over WebSocket, Telnet, or SignalR, then watch live session activity in the terminal.
         </p>
       </div>
-      <div id="connStatus" class="status-pill">Disconnected</div>
     </section>
 
     <section class="panel controls">
-      <div class="mode-group">
-        <label class="mode"><input type="radio" name="t" value="ws" checked /> WebSocket</label>
-        <label class="mode"><input type="radio" name="t" value="telnet" /> Telnet</label>
-        <label class="mode"><input type="radio" name="t" value="signalr" /> SignalR</label>
-        <label class="mode"><input type="radio" name="t" value="plain" /> Plain (no ANSI)</label>
+      <div class="controls-grid">
+        <div class="control-row">
+          <div class="control-group">
+            <div class="control-label">
+              <span>Transport</span>
+              <span class="inline-info" title="How the browser reaches the hosted REPL.">i</span>
+            </div>
+            <div class="mode-group">
+              <label class="mode"><input type="radio" name="transport" value="ws" checked /> WebSocket <span class="inline-info" title="Best default for the hosted browser demo.">i</span></label>
+              <label class="mode"><input type="radio" name="transport" value="telnet" /> Telnet <span class="inline-info" title="Classic terminal negotiation over the browser bridge.">i</span></label>
+              <label class="mode"><input type="radio" name="transport" value="signalr" /> SignalR <span class="inline-info" title="Hosted messaging over ASP.NET Core SignalR.">i</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="control-row">
+          <div class="control-group">
+            <div class="control-label">
+              <span>Terminal Profile</span>
+              <span class="inline-info" title="Preset bundles for the feature checkboxes below.">i</span>
+            </div>
+            <div class="mode-group">
+              <label class="mode"><input type="radio" name="profile" value="basic" /> Basic <span class="inline-info" title="Plain text only.">i</span></label>
+              <label class="mode"><input type="radio" name="profile" value="styled" checked /> Styled <span class="inline-info" title="ANSI plus the usual hosted terminal basics.">i</span></label>
+              <label class="mode"><input type="radio" name="profile" value="rich" /> Rich <span class="inline-info" title="Styled plus VT input and external progress.">i</span></label>
+            </div>
+          </div>
+        </div>
+        <div class="control-row">
+          <div class="control-group">
+            <div class="control-label">
+              <span>Advertised Features</span>
+              <span class="inline-info" title="Capabilities this browser session advertises to the host.">i</span>
+            </div>
+            <div class="feature-grid">
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="ansi" checked /> ANSI <span class="inline-info" title="Styled output instead of plain text.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="resize" checked /> Resize <span class="inline-info" title="Send terminal size changes back to the host.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="identity" checked /> Identity <span class="inline-info" title="Tell the host which terminal profile we mimic.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="vtinput" /> VT Input <span class="inline-info" title="Advertise richer VT-style keyboard input.">i</span></label>
+              <label class="feature-toggle"><input type="checkbox" name="feature" value="progress" /> Progress <span class="inline-info" title="Show the external activity bar for OSC 9;4 progress.">i</span></label>
+            </div>
+          </div>
+        </div>
+        <p class="connection-copy">
+          <strong>Basic</strong> is plain text. <strong>Styled</strong> keeps ANSI on. <strong>Rich</strong> adds VT input and external progress. The checkboxes below can still refine any preset.
+        </p>
+        <div id="connectionSummary" class="connection-summary" aria-live="polite">
+          <strong>Session summary</strong>
+          <div id="connectionSummaryText" class="connection-summary-text"></div>
+          <div id="connectionSummaryPills" class="summary-pills"></div>
+        </div>
       </div>
       <button id="go">Connect</button>
     </section>
 
-    <section class="panel help">
-      <h2>What You Can Do</h2>
-      <p>
-        Inspect the runtime with <code>status</code>, list active clients with <code>sessions</code>,
-        try interactive menus with <code>configure</code> and <code>maintenance</code>,
-        update shared settings, and broadcast messages across tabs.
-      </p>
-      <div class="chips">
-        <code>status</code>
-        <code>sessions</code>
-        <code>who</code>
-        <code>configure</code>
-        <code>maintenance</code>
-        <code>settings show maintenance</code>
-        <code>settings set maintenance on</code>
-        <code>watch</code>
-        <code>send hello</code>
-      </div>
-    </section>
-
     <section class="terminal-shell">
+      <div class="activity-bar">
+        <div class="activity-title">
+          <span>Current Activity</span>
+          <span class="inline-info" title="Shows hosted progress updates when the session advertises Progress and the server emits OSC 9;4 progress signals.">i</span>
+        </div>
+        <div class="activity-main">
+          <div id="feedbackState" class="feedback-state idle">Idle</div>
+          <progress id="feedbackProgress" class="feedback-progress idle" max="100" value="0"></progress>
+          <div class="activity-copy">
+            <strong id="feedbackSummary">Waiting for a feedback command.</strong>
+            <div id="feedbackDetail" class="activity-detail">Run <code>feedback demo</code> to watch the hosted session update this bar.</div>
+          </div>
+          <div id="feedbackPercent" class="feedback-percent">0%</div>
+        </div>
+        <div class="feedback-actions">
+          <button type="button" data-command="status">status</button>
+          <button type="button" data-command="feedback demo">demo</button>
+          <button type="button" data-command="feedback fail">fail</button>
+        </div>
+      </div>
       <div class="terminal-head">
         <div class="terminal-title"><strong>Terminal</strong> <span id="modeBadge">websocket</span></div>
         <div>Type <code>help</code> to discover commands</div>
       </div>
       <div id="term"></div>
+      <details class="tips">
+        <summary>Help & Tips</summary>
+        <div class="tips-content">
+          <p>
+            Start with <code>status</code>, <code>sessions</code>, <code>feedback demo</code>, and <code>feedback fail</code>.
+            Then try <code>watch</code>, <code>send hello</code>, <code>configure</code>, or <code>maintenance</code>.
+          </p>
+          <p>
+            Use <code>Basic</code> when you want a text-only fallback. Switch to <code>Rich</code> to advertise VT input and progress reporting, or choose <code>Custom</code> to fine-tune features yourself.
+          </p>
+        </div>
+      </details>
     </section>
   </div>
 
@@ -314,104 +734,483 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
   <script>
+    // ============================================================
+    // Terminal themes and xterm bootstrap
+    // ============================================================
+    const richTheme = {
+      background: '#070b16',
+      foreground: '#e5eefc',
+      cursor: '#8be9fd',
+      cursorAccent: '#070b16',
+      selectionBackground: 'rgba(102, 217, 239, 0.22)',
+      black: '#0b1220',
+      brightBlack: '#334155',
+      brightWhite: '#f8fafc'
+    };
+
+    const plainTheme = {
+      background: '#070b16',
+      foreground: '#e5eefc',
+      cursor: '#e5eefc',
+      cursorAccent: '#070b16',
+      selectionBackground: 'rgba(229, 238, 252, 0.16)',
+      black: '#0b1220',
+      brightBlack: '#334155',
+      brightWhite: '#f8fafc'
+    };
+
     const term = new Terminal({
       cursorBlink: true,
       fontSize: 14,
       fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
-      theme: {
-        background: '#070b16',
-        foreground: '#e5eefc',
-        cursor: '#8be9fd',
-        black: '#0b1220',
-        brightBlack: '#334155',
-        brightWhite: '#f8fafc'
-      }
+      theme: richTheme
     });
     const fit = new FitAddon.FitAddon();
+    const terminalHost = document.getElementById('term');
     term.loadAddon(fit);
-    term.open(document.getElementById('term'));
-    fit.fit();
+    term.open(terminalHost);
+    requestAnimationFrame(() => fit.fit());
     if (document.fonts?.ready) {
       document.fonts.ready.then(() => fit.fit());
     }
     addEventListener('resize', () => fit.fit());
+    if (typeof ResizeObserver !== 'undefined') {
+      const fitOnResize = () => requestAnimationFrame(() => fit.fit());
+      new ResizeObserver(fitOnResize).observe(terminalHost);
+    }
 
+    // ============================================================
+    // DOM references
+    // ============================================================
     const btn = document.getElementById('go');
-    const connStatus = document.getElementById('connStatus');
     const modeBadge = document.getElementById('modeBadge');
+    const feedbackState = document.getElementById('feedbackState');
+    const feedbackProgress = document.getElementById('feedbackProgress');
+    const feedbackSummary = document.getElementById('feedbackSummary');
+    const feedbackDetail = document.getElementById('feedbackDetail');
+    const feedbackPercent = document.getElementById('feedbackPercent');
+    const connectionSummaryText = document.getElementById('connectionSummaryText');
+    const connectionSummaryPills = document.getElementById('connectionSummaryPills');
+    const quickActionButtons = Array.from(document.querySelectorAll('.feedback-actions button'));
+    const transportRadios = Array.from(document.querySelectorAll('input[name="transport"]'));
+    const profileRadios = Array.from(document.querySelectorAll('input[name="profile"]'));
+    const featureInputs = Array.from(document.querySelectorAll('input[name="feature"]'));
     const query = new URLSearchParams(location.search);
+    const textDecoder = new TextDecoder();
+    // ============================================================
+    // Constants and lookup tables
+    // ============================================================
+
+    // OSC 9;4 is the ConEmu/Windows Terminal progress sequence: ESC ] 9 ; 4 ; <state> ; <percent> BEL
+    const oscProgressPrefix = '\u001b]9;4;';
+    const progressSequencePattern = /\u001b\]9;4;(\d+);(\d+)\u0007/g;
+
+    // Profile presets map the three preset radios to feature-toggle combinations.
+    // "custom" is not a preset — it's the label shown when the checkboxes don't match any preset.
+    const profilePresets = {
+      basic: { ansi: false, resize: false, identity: false, vtinput: false, progress: false },
+      styled: { ansi: true, resize: true, identity: true, vtinput: false, progress: false },
+      rich: { ansi: true, resize: true, identity: true, vtinput: true, progress: true }
+    };
+
+    // OSC 9;4 state codes emitted by the hosted REPL (see ConsoleReplInteractionPresenter):
+    //   0 = clear, 1 = normal, 2 = error, 3 = indeterminate, 4 = warning.
+    // `detail` can be a string or a (percent) => string builder.
+    const progressStates = {
+      0: {
+        name: 'idle',
+        label: 'Idle',
+        summary: 'Waiting for a feedback command.',
+        detail: 'Run feedback demo to watch the hosted session update this panel.',
+        percentText: '0%'
+      },
+      1: {
+        name: 'normal',
+        label: 'Running',
+        summary: 'Remote work is progressing.',
+        detail: percent => `The hosted session reported ${percent}% completion through OSC 9;4.`
+      },
+      2: {
+        name: 'error',
+        label: 'Error',
+        summary: 'The remote step reported an error.',
+        detail: percent => `The hosted session entered an error state at ${percent}% progress.`
+      },
+      3: {
+        name: 'indeterminate',
+        label: 'Working',
+        summary: 'The host is waiting on remote work.',
+        detail: 'This state is indeterminate, so the hosted session reports activity without a fixed percentage.',
+        percentText: '...'
+      },
+      4: {
+        name: 'warning',
+        label: 'Warning',
+        summary: 'The host is retrying after a warning.',
+        detail: percent => `The hosted session raised a warning state at ${percent}% progress.`
+      }
+    };
     let send = null;
     let resizeHandler = null;
     let inputHandler = null;
+    let progressChunkBuffer = '';
+    let feedbackAnimationFrame = null;
+    let displayedProgressValue = 0;
 
+    // ============================================================
+    // Connection state UI (Connect button + body class toggle)
+    // ============================================================
     function setConnectionState(state) {
-      connStatus.classList.remove('connected', 'connecting');
+      document.body.classList.toggle('connected-session', state === 'connected');
+      document.body.classList.toggle('disconnected-session', state !== 'connected');
+      btn.classList.remove('connected', 'connecting');
       if (state === 'connected') {
-        connStatus.classList.add('connected');
-        connStatus.textContent = 'Connected';
+        btn.classList.add('connected');
+        btn.textContent = 'Connected';
+        btn.disabled = true;
       } else if (state === 'connecting') {
-        connStatus.classList.add('connecting');
-        connStatus.textContent = 'Connecting';
+        btn.classList.add('connecting');
+        btn.textContent = 'Connecting';
+        btn.disabled = true;
       } else {
-        connStatus.textContent = 'Disconnected';
+        btn.textContent = 'Connect';
+        btn.disabled = false;
       }
     }
 
+    // ============================================================
+    // Profile / feature-toggle selection logic
+    // ============================================================
+    function getSelectedTransport() {
+      return document.querySelector('input[name="transport"]:checked')?.value ?? 'ws';
+    }
+
+    function formatTransportLabel(transport) {
+      return transport === 'ws' ? 'WebSocket' : transport === 'signalr' ? 'SignalR' : 'Telnet';
+    }
+
+    function formatProfileLabel(profile) {
+      return profile === 'rich'
+        ? 'Rich'
+        : profile === 'styled'
+          ? 'Styled'
+          : profile === 'basic'
+            ? 'Basic'
+            : 'Modified';
+    }
+
+    function setFeatureValues(featureMap) {
+      featureInputs.forEach(input => {
+        input.checked = !!featureMap[input.value];
+      });
+    }
+
+    function getFeatureValues() {
+      return Object.fromEntries(featureInputs.map(input => [input.value, input.checked]));
+    }
+
+    // VT input and progress reporting both require ANSI — disable and clear them when ANSI is off.
+    function updateFeatureAvailability() {
+      const features = getFeatureValues();
+      featureInputs.forEach(input => {
+        if (input.value === 'progress' || input.value === 'vtinput') {
+          input.disabled = !features.ansi;
+          if (!features.ansi) {
+            input.checked = false;
+          }
+        } else {
+          input.disabled = false;
+        }
+      });
+    }
+
+    function resolveProfileName(featureMap) {
+      return Object.entries(profilePresets).find(([, preset]) =>
+        Object.keys(preset).every(key => preset[key] === featureMap[key]))?.[0] ?? 'custom';
+    }
+
+    function syncProfileSelection() {
+      updateFeatureAvailability();
+      const profileName = resolveProfileName(getFeatureValues());
+      profileRadios.forEach(radio => {
+        radio.checked = radio.value === profileName;
+      });
+    }
+
+    function applyProfile(profileName) {
+      const preset = profilePresets[profileName];
+      if (!preset) {
+        syncProfileSelection();
+        applyTerminalAppearance(getSessionConfig());
+        return;
+      }
+
+      setFeatureValues(preset);
+      syncProfileSelection();
+      applyTerminalAppearance(getSessionConfig());
+    }
+
+    // ============================================================
+    // Session config: what the browser advertises to the host
+    // ============================================================
+    function getSessionConfig() {
+      const features = getFeatureValues();
+      const ansi = !!features.ansi;
+      const transport = getSelectedTransport();
+      const capabilities = [];
+
+      if (ansi) {
+        capabilities.push('Ansi');
+      }
+
+      if (features.resize) {
+        capabilities.push('ResizeReporting');
+      }
+
+      if (features.identity) {
+        capabilities.push('IdentityReporting');
+      }
+
+      if (ansi && features.vtinput) {
+        capabilities.push('VtInput');
+      }
+
+      if (ansi && features.progress) {
+        capabilities.push('ProgressReporting');
+      }
+
+      return {
+        transport,
+        ansi,
+        terminal: ansi ? 'xterm-256color' : 'dumb',
+        capabilities,
+        profile: resolveProfileName(features),
+        features
+      };
+    }
+
+    function applyTerminalAppearance(config) {
+      term.options.theme = config.ansi ? richTheme : plainTheme;
+      const profileLabel = config.profile === 'custom'
+        ? 'modified'
+        : config.profile;
+      const transportLabel = config.transport === 'ws'
+        ? 'websocket'
+        : config.transport;
+      modeBadge.textContent = `${transportLabel} / ${profileLabel}`;
+      document.body.dataset.progressVisible = String(config.features.progress);
+      updateConnectionSummary(config);
+    }
+
+    function updateConnectionSummary(config) {
+      const featureLabels = [];
+      if (config.features.ansi) featureLabels.push('ANSI');
+      if (config.features.resize) featureLabels.push('Resize');
+      if (config.features.identity) featureLabels.push('Identity');
+      if (config.features.vtinput) featureLabels.push('VT Input');
+      if (config.features.progress) featureLabels.push('Progress');
+
+      connectionSummaryText.textContent = `${formatTransportLabel(config.transport)} · ${formatProfileLabel(config.profile)}${featureLabels.length > 0 ? ` · ${featureLabels.join(', ')}` : ''}`;
+      connectionSummaryPills.innerHTML = [
+        `<span class="summary-pill">${formatTransportLabel(config.transport)}</span>`,
+        `<span class="summary-pill">${formatProfileLabel(config.profile)}</span>`,
+        ...featureLabels.map(label => `<span class="summary-pill">${label}</span>`)
+      ].join('');
+    }
+
+    // ============================================================
+    // Feedback mirror: consume OSC 9;4 from the terminal stream
+    // and drive the Activity bar (state badge, progress bar, copy).
+    // ============================================================
+    function resetFeedbackMirror() {
+      progressChunkBuffer = '';
+      stopFeedbackAnimation();
+      feedbackState.className = 'feedback-state idle';
+      feedbackState.textContent = progressStates[0].label;
+      feedbackProgress.className = 'feedback-progress idle';
+      feedbackProgress.value = 0;
+      feedbackProgress.setAttribute('value', '0');
+      feedbackSummary.textContent = progressStates[0].summary;
+      feedbackDetail.textContent = progressStates[0].detail;
+      feedbackPercent.textContent = progressStates[0].percentText;
+      displayedProgressValue = 0;
+    }
+
+    function updateFeedbackMirror(stateCode, percent) {
+      const config = progressStates[stateCode] ?? progressStates[0];
+      const clamped = Math.max(0, Math.min(100, Math.round(percent ?? 0)));
+      const detail = typeof config.detail === 'function' ? config.detail(clamped) : config.detail;
+
+      feedbackState.className = `feedback-state ${config.name}`;
+      feedbackState.textContent = config.label;
+      feedbackProgress.className = `feedback-progress ${config.name}`;
+      feedbackSummary.textContent = config.summary;
+      feedbackDetail.textContent = detail;
+      feedbackPercent.textContent = config.percentText ?? `${clamped}%`;
+
+      if (config.name === 'indeterminate') {
+        stopFeedbackAnimation();
+        feedbackProgress.removeAttribute('value');
+      } else {
+        feedbackProgress.setAttribute('value', String(clamped));
+        animateFeedbackProgress(clamped);
+      }
+    }
+
+    function stopFeedbackAnimation() {
+      if (feedbackAnimationFrame !== null) {
+        cancelAnimationFrame(feedbackAnimationFrame);
+        feedbackAnimationFrame = null;
+      }
+    }
+
+    function animateFeedbackProgress(targetValue) {
+      stopFeedbackAnimation();
+      const startValue = displayedProgressValue;
+      const startTime = performance.now();
+      const duration = Math.max(220, Math.abs(targetValue - startValue) * 14);
+
+      const tick = now => {
+        const progress = Math.min(1, (now - startTime) / duration);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const nextValue = startValue + ((targetValue - startValue) * eased);
+        feedbackProgress.value = nextValue;
+        displayedProgressValue = nextValue;
+
+        if (progress < 1) {
+          feedbackAnimationFrame = requestAnimationFrame(tick);
+        } else {
+          feedbackProgress.value = targetValue;
+          displayedProgressValue = targetValue;
+          feedbackAnimationFrame = null;
+        }
+      };
+
+      feedbackAnimationFrame = requestAnimationFrame(tick);
+    }
+
+    function applyProgressSequence(stateCode, percent) {
+      if (stateCode === 0) {
+        resetFeedbackMirror();
+        return;
+      }
+
+      updateFeedbackMirror(stateCode, percent);
+    }
+
+    // Strips OSC 9;4 progress sequences from the stream (routing them to the Activity bar)
+    // and returns the remaining visible text for xterm. Since the stream arrives in chunks,
+    // we may receive a partial sequence (prefix without the terminating BEL) at the end of
+    // a chunk; we hold it back in `progressChunkBuffer` until the next chunk completes it.
+    function consumeTerminalChunk(chunk) {
+      progressChunkBuffer += chunk;
+      const lastStart = progressChunkBuffer.lastIndexOf(oscProgressPrefix);
+      const hasPartialTail = lastStart >= 0 && progressChunkBuffer.indexOf('\u0007', lastStart) < 0;
+      const completeChunk = hasPartialTail
+        ? progressChunkBuffer.slice(0, lastStart)
+        : progressChunkBuffer;
+
+      progressChunkBuffer = hasPartialTail ? progressChunkBuffer.slice(lastStart) : '';
+
+      return completeChunk.replace(progressSequencePattern, (_, stateCode, percent) => {
+        applyProgressSequence(Number(stateCode), Number(percent));
+        return '';
+      });
+    }
+
+    function writeTerminalOutput(chunk) {
+      const visible = consumeTerminalChunk(chunk);
+      if (visible) {
+        term.write(visible);
+      }
+    }
+
+    // ============================================================
+    // Quick action buttons (status / feedback demo / feedback fail)
+    // ============================================================
+    function runQuickAction(command) {
+      if (!send) {
+        return;
+      }
+
+      send(`${command}\r`);
+      term.focus();
+    }
+
+    quickActionButtons.forEach(button => {
+      button.addEventListener('click', () => runQuickAction(button.dataset.command));
+    });
+
+    // ============================================================
+    // Transport connection (WebSocket / Telnet / SignalR)
+    // ============================================================
     function normalizeTransport(value) {
       const token = (value ?? '').trim().toLowerCase();
       if (token === 'ws' || token === 'websocket') return 'ws';
       if (token === 'telnet') return 'telnet';
       if (token === 'signalr' || token === 'sr') return 'signalr';
-      if (token === 'plain' || token === 'noansi') return 'plain';
       return null;
     }
 
-    function connectSelectedMode() {
-      const mode = document.querySelector('input[name="t"]:checked').value;
-      modeBadge.textContent = mode === 'ws' ? 'websocket' : mode === 'plain' ? 'plain (no ANSI)' : mode;
-      btn.disabled = true;
+    function connectSelectedSession() {
+      const config = getSessionConfig();
+      applyTerminalAppearance(config);
       setConnectionState('connecting');
       term.clear();
+      resetFeedbackMirror();
       if (resizeHandler) { resizeHandler.dispose(); resizeHandler = null; }
       if (inputHandler) { inputHandler.dispose(); inputHandler = null; }
-      if (mode === 'ws') connectWS();
-      else if (mode === 'telnet') connectTelnet();
-      else if (mode === 'plain') connectPlain();
-      else connectSR();
+      if (config.transport === 'ws') connectWS(config);
+      else if (config.transport === 'telnet') connectTelnet(config);
+      else connectSR(config);
     }
 
-    btn.onclick = connectSelectedMode;
+    // ============================================================
+    // Page bootstrap: wire events, apply defaults, handle ?autoconnect
+    // ============================================================
+    btn.onclick = connectSelectedSession;
 
     const autoConnect = normalizeTransport(query.get('autoconnect'));
     if (autoConnect) {
-      const radio = document.querySelector(`input[name="t"][value="${autoConnect}"]`);
+      const radio = document.querySelector(`input[name="transport"][value="${autoConnect}"]`);
       if (radio) {
         radio.checked = true;
       }
 
-      queueMicrotask(connectSelectedMode);
+      queueMicrotask(connectSelectedSession);
     }
 
-    function buildHello() {
+    transportRadios.forEach(radio => radio.addEventListener('change', () => applyTerminalAppearance(getSessionConfig())));
+    profileRadios.forEach(radio => radio.addEventListener('change', () => applyProfile(radio.value)));
+    featureInputs.forEach(input => input.addEventListener('change', () => {
+      syncProfileSelection();
+      applyTerminalAppearance(getSessionConfig());
+    }));
+
+    applyProfile('styled');
+    applyTerminalAppearance(getSessionConfig());
+    setConnectionState('disconnected');
+
+    function buildHello(config) {
       return TerminalControlProtocol.formatHello(
-        'xterm-256color',
+        config.terminal,
         term.cols,
         term.rows,
-        true,
-        ['Ansi', 'ResizeReporting', 'IdentityReporting', 'VtInput']);
+        config.ansi,
+        config.capabilities);
     }
 
     function buildResize(cols, rows) {
       return TerminalControlProtocol.formatResize(cols, rows);
     }
 
-    function buildConnectionQuery() {
+    function buildConnectionQuery(config) {
       const params = new URLSearchParams({
-        terminal: 'xterm-256color',
+        terminal: config.terminal,
         cols: String(term.cols),
         rows: String(term.rows),
-        ansi: 'true',
-        capabilities: 'Ansi,ResizeReporting,IdentityReporting,VtInput'
+        ansi: String(config.ansi),
+        capabilities: config.capabilities.join(',')
       });
       return `?${params.toString()}`;
     }
@@ -423,24 +1222,31 @@
         `@@repl:resize ${JSON.stringify({ cols, rows })}`
     };
 
-    function connectWS() {
-      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl${buildConnectionQuery()}`);
-      ws.onmessage = e => term.write(e.data);
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+    function connectWS(config) {
+      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl${buildConnectionQuery(config)}`);
+      ws.onmessage = e => writeTerminalOutput(e.data);
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); };
       send = d => { if (ws.readyState === 1) ws.send(d); };
       inputHandler = term.onData(send);
       // Send initial DTTERM size so the VT probe detects it.
-      ws.onopen = () => { setConnectionState('connected'); send(buildHello()); send(`\x1b[8;${term.rows};${term.cols}t`); term.focus(); };
+      ws.onopen = () => {
+        setConnectionState('connected');
+        send(buildHello(config));
+        if (config.capabilities.includes('ResizeReporting')) {
+          send(`\x1b[8;${term.rows};${term.cols}t`);
+        }
+        term.focus();
+      };
       // DTTERM in-band VT resize sequence.
       resizeHandler = term.onResize(({ cols, rows }) => {
-        if (send) {
+        if (send && config.capabilities.includes('ResizeReporting')) {
           send(buildResize(cols, rows));
           send(`\x1b[8;${rows};${cols}t`);
         }
       });
     }
 
-    function connectTelnet() {
+    function connectTelnet(config) {
       const IAC = 255, WILL = 251, WONT = 252, DO = 253, DONT = 254;
       const SB = 250, SE = 240;
       const OPT_BINARY = 0, OPT_NAWS = 31, OPT_TTYPE = 24;
@@ -448,15 +1254,15 @@
       const clientOpts = new Set([OPT_BINARY, OPT_NAWS, OPT_TTYPE]);
 
       const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${wsProto}://${location.host}/ws/telnet${buildConnectionQuery()}`);
+      const ws = new WebSocket(`${wsProto}://${location.host}/ws/telnet${buildConnectionQuery(config)}`);
       ws.binaryType = 'arraybuffer';
 
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
+      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); };
 
       ws.onmessage = e => {
         const raw = new Uint8Array(e.data);
         const vt = telnetParse(raw);
-        if (vt.length > 0) term.write(vt);
+        if (vt.length > 0) writeTerminalOutput(textDecoder.decode(vt));
       };
 
       send = d => {
@@ -467,7 +1273,7 @@
 
       // Send NAWS on resize.
       resizeHandler = term.onResize(({ cols, rows }) => {
-        if (ws.readyState === 1) ws.send(nawsSubneg(cols, rows));
+        if (ws.readyState === 1 && config.capabilities.includes('ResizeReporting')) ws.send(nawsSubneg(cols, rows));
       });
 
       ws.onopen = () => { setConnectionState('connected'); term.focus(); };
@@ -489,7 +1295,7 @@
                 const opt = data[i]; i++;
                 const resp = clientOpts.has(opt) ? WILL : WONT;
                 ws.send(new Uint8Array([IAC, resp, opt]));
-                if (opt === OPT_NAWS) ws.send(nawsSubneg(term.cols, term.rows));
+                if (opt === OPT_NAWS && config.capabilities.includes('ResizeReporting')) ws.send(nawsSubneg(term.cols, term.rows));
               }
             }
             else if (data[i] === WILL || data[i] === WONT) {
@@ -520,7 +1326,7 @@
 
       function handleSubneg(sub) {
         if (sub[0] === OPT_TTYPE && sub[1] === TTYPE_SEND) {
-          const name = new TextEncoder().encode('XTERM-256COLOR');
+          const name = new TextEncoder().encode(config.terminal.toUpperCase());
           const resp = new Uint8Array([IAC, SB, OPT_TTYPE, TTYPE_IS, ...name, IAC, SE]);
           ws.send(resp);
         }
@@ -550,44 +1356,29 @@
       }
     }
 
-    function connectPlain() {
-      // Plain text mode: no ANSI, no terminal capabilities, no hello message
-      const params = new URLSearchParams({
-        terminal: 'dumb',
-        cols: String(term.cols),
-        rows: String(term.rows),
-        ansi: 'false',
-        capabilities: ''
-      });
-      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl?${params.toString()}`);
-      ws.onmessage = e => term.write(e.data);
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; };
-      send = d => { if (ws.readyState === 1) ws.send(d); };
-      inputHandler = term.onData(send);
-      // Send hello with ansi=false so server knows this is a dumb terminal
-      ws.onopen = () => {
-        setConnectionState('connected');
-        send(`@@repl:hello ${JSON.stringify({ terminal: 'dumb', cols: term.cols, rows: term.rows, ansi: false, capabilities: '' })}`);
-        term.focus();
-      };
-    }
-
-    function connectSR() {
-      const hub = new signalR.HubConnectionBuilder().withUrl(`/hub/repl${buildConnectionQuery()}`).withAutomaticReconnect().build();
-      hub.on('Output', t => term.write(t));
-      hub.onclose(() => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[disconnected]'); btn.disabled = false; });
+    function connectSR(config) {
+      const hub = new signalR.HubConnectionBuilder().withUrl(`/hub/repl${buildConnectionQuery(config)}`).withAutomaticReconnect().build();
+      hub.on('Output', t => writeTerminalOutput(t));
+      hub.onclose(() => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); });
       send = d => { if (hub.state === signalR.HubConnectionState.Connected) hub.invoke('OnInput', d); };
       inputHandler = term.onData(send);
       // DTTERM in-band VT resize sequence.
       resizeHandler = term.onResize(({ cols, rows }) => {
-        if (send) {
+        if (send && config.capabilities.includes('ResizeReporting')) {
           send(buildResize(cols, rows));
           send(`\x1b[8;${rows};${cols}t`);
         }
       });
       hub.start()
-        .then(() => { setConnectionState('connected'); send(buildHello()); send(`\x1b[8;${term.rows};${term.cols}t`); term.focus(); })
-        .catch(e => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[error: ' + e + ']'); btn.disabled = false; });
+        .then(() => {
+          setConnectionState('connected');
+          send(buildHello(config));
+          if (config.capabilities.includes('ResizeReporting')) {
+            send(`\x1b[8;${term.rows};${term.cols}t`);
+          }
+          term.focus();
+        })
+        .catch(e => { send = null; setConnectionState('disconnected'); term.writeln('\r\n[error: ' + e + ']'); });
     }
   </script>
 </body>

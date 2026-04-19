@@ -13,6 +13,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Repl.Core\Repl.Core.csproj" />
+		<ProjectReference Include="..\Repl.Logging\Repl.Logging.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

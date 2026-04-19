@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -16,17 +17,20 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 	private readonly InteractivityMode _mode;
 	private readonly McpServer? _server;
 	private readonly ProgressToken? _progressToken;
+	private readonly IMcpFeedback? _feedback;
 
 	public McpInteractionChannel(
 		IReadOnlyDictionary<string, string> prefillAnswers,
 		InteractivityMode mode,
 		McpServer? server = null,
-		ProgressToken? progressToken = null)
+		ProgressToken? progressToken = null,
+		IMcpFeedback? feedback = null)
 	{
 		_prefillAnswers = prefillAnswers;
 		_mode = mode;
 		_server = server;
 		_progressToken = progressToken;
+		_feedback = feedback;
 	}
 
 	public async ValueTask<int> AskChoiceAsync(
@@ -191,6 +195,15 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 	public async ValueTask WriteProgressAsync(string label, double? percent, CancellationToken cancellationToken)
 	{
+		if (_feedback is not null)
+		{
+			await _feedback.ReportProgressAsync(
+					new ReplProgressEvent(label, Percent: percent),
+					cancellationToken)
+				.ConfigureAwait(false);
+			return;
+		}
+
 		if (_server is not null && _progressToken is { } token)
 		{
 			await _server.NotifyProgressAsync(
@@ -207,6 +220,62 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 
 	public async ValueTask WriteStatusAsync(string text, CancellationToken cancellationToken)
 	{
+		await SendFeedbackAsync(
+				LoggingLevel.Info,
+				JsonSerializer.SerializeToElement(text, McpJsonContext.Default.String),
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	public ValueTask ClearScreenAsync(CancellationToken cancellationToken) =>
+		ValueTask.CompletedTask;
+
+	public ValueTask<TResult> DispatchAsync<TResult>(
+		InteractionRequest<TResult> request,
+		CancellationToken cancellationToken)
+	{
+		ArgumentNullException.ThrowIfNull(request);
+
+		return request switch
+		{
+			WriteStatusRequest status => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Info,
+					JsonSerializer.SerializeToElement(status.Text, McpJsonContext.Default.String),
+					cancellationToken)),
+			WriteProgressRequest progress => CompleteBuiltInDispatchAsync<TResult>(
+				WriteStructuredProgressAsync(progress, cancellationToken)),
+			WriteNoticeRequest notice => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Info,
+					JsonSerializer.SerializeToElement(notice.Text, McpJsonContext.Default.String),
+					cancellationToken)),
+			WriteWarningRequest warning => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Warning,
+					JsonSerializer.SerializeToElement(warning.Text, McpJsonContext.Default.String),
+					cancellationToken)),
+			WriteProblemRequest problem => CompleteBuiltInDispatchAsync<TResult>(
+				SendFeedbackAsync(
+					LoggingLevel.Error,
+					SerializeProblem(problem),
+					cancellationToken)),
+			_ => throw new NotSupportedException(
+				$"No MCP interaction handler is registered for '{request.GetType().Name}'."),
+		};
+	}
+
+	private async ValueTask SendFeedbackAsync(
+		LoggingLevel level,
+		JsonElement data,
+		CancellationToken cancellationToken)
+	{
+		if (_feedback is not null)
+		{
+			await _feedback.SendMessageAsync(level, data, cancellationToken).ConfigureAwait(false);
+			return;
+		}
+
 		if (_server is null)
 		{
 			return;
@@ -216,21 +285,97 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			NotificationMethods.LoggingMessageNotification,
 			new LoggingMessageNotificationParams
 			{
-				Level = LoggingLevel.Info,
-				Data = JsonSerializer.SerializeToElement(text, McpJsonContext.Default.String),
+				Level = level,
+				Logger = "repl.interaction",
+				Data = data,
 			},
 			cancellationToken: cancellationToken).ConfigureAwait(false);
 	}
 
-	public ValueTask ClearScreenAsync(CancellationToken cancellationToken) =>
-		ValueTask.CompletedTask;
+	private async ValueTask WriteStructuredProgressAsync(
+		WriteProgressRequest progress,
+		CancellationToken cancellationToken)
+	{
+		if (_feedback is not null)
+		{
+			await _feedback.ReportProgressAsync(
+					new ReplProgressEvent(
+						progress.Label,
+						Percent: progress.Percent,
+						State: progress.State,
+						Details: progress.Details),
+					cancellationToken)
+				.ConfigureAwait(false);
 
-	public ValueTask<TResult> DispatchAsync<TResult>(
-		InteractionRequest<TResult> request,
-		CancellationToken cancellationToken) =>
-		throw new NotSupportedException(
-			"Custom interaction dispatch is not supported in MCP mode. " +
-			"Consider marking the command as AutomationHidden().");
+			if (progress.State == ReplProgressState.Warning)
+			{
+				await _feedback.SendMessageAsync(
+						LoggingLevel.Warning,
+						BuildProgressPayload(progress),
+						cancellationToken)
+					.ConfigureAwait(false);
+			}
+			else if (progress.State == ReplProgressState.Error)
+			{
+				await _feedback.SendMessageAsync(
+						LoggingLevel.Error,
+						BuildProgressPayload(progress),
+						cancellationToken)
+					.ConfigureAwait(false);
+			}
+
+			return;
+		}
+
+		await WriteProgressAsync(progress.Label, progress.Percent, cancellationToken).ConfigureAwait(false);
+	}
+
+	private static JsonElement BuildProgressPayload(WriteProgressRequest progress)
+	{
+		var payload = new JsonObject
+		{
+			["label"] = progress.Label,
+			["state"] = progress.State.ToString(),
+		};
+
+		if (progress.Percent is { } percent)
+		{
+			payload["percent"] = percent;
+		}
+
+		if (!string.IsNullOrWhiteSpace(progress.Details))
+		{
+			payload["details"] = progress.Details;
+		}
+
+		return JsonSerializer.SerializeToElement(payload, McpJsonContext.Default.JsonObject);
+	}
+
+	private static JsonElement SerializeProblem(WriteProblemRequest problem)
+	{
+		var payload = new JsonObject
+		{
+			["summary"] = problem.Summary,
+		};
+
+		if (!string.IsNullOrWhiteSpace(problem.Details))
+		{
+			payload["details"] = problem.Details;
+		}
+
+		if (!string.IsNullOrWhiteSpace(problem.Code))
+		{
+			payload["code"] = problem.Code;
+		}
+
+		return JsonSerializer.SerializeToElement(payload, McpJsonContext.Default.JsonObject);
+	}
+
+	private static async ValueTask<TResult> CompleteBuiltInDispatchAsync<TResult>(ValueTask operation)
+	{
+		await operation.ConfigureAwait(false);
+		return (TResult)(object)true;
+	}
 
 	// ── Elicitation (Tier 2) ───────────────────────────────────────────
 

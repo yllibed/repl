@@ -3,6 +3,8 @@
 The interaction channel is a bidirectional contract between command handlers and the host.
 Handlers emit **semantic requests** (prompts, status, progress); the host decides **how to render** them.
 
+Use `Interaction` for **user-facing feedback**. Keep `ILogger` for operator diagnostics and centralized logging.
+
 See also: [sample 04-interactive-ops](../samples/04-interactive-ops/) for a working demo.
 
 ## Core primitives
@@ -71,10 +73,24 @@ await channel.ClearScreenAsync(cancellationToken);
 
 ### `WriteStatusAsync`
 
-Inline feedback (validation errors, status messages).
+Neutral inline feedback (validation errors, transient status).
 
 ```csharp
 await channel.WriteStatusAsync("Import started", cancellationToken);
+```
+
+### User-facing feedback helpers
+
+These extension methods live in `Repl.Interaction` and are intended for messages the current user should actually see.
+
+```csharp
+await channel.WriteNoticeAsync("Connection established", cancellationToken);
+await channel.WriteWarningAsync("Token expires soon", cancellationToken);
+await channel.WriteProblemAsync(
+    "Sync failed",
+    details: "Check connectivity and retry.",
+    code: "sync_failed",
+    cancellationToken: cancellationToken);
 ```
 
 ---
@@ -162,6 +178,60 @@ app.Map("import", async (IProgress<ReplProgressEvent> progress, CancellationToke
     return "done";
 });
 ```
+
+### Progress states and helpers
+
+When you need richer user feedback, use the `IReplInteractionChannel` progress helpers instead of treating progress like logs.
+
+```csharp
+await channel.WriteProgressAsync("Preparing import", 10, cancellationToken);
+await channel.WriteIndeterminateProgressAsync(
+    "Waiting for agent review",
+    "Sampling is still running.",
+    cancellationToken);
+await channel.WriteWarningProgressAsync(
+    "Retrying duplicate check",
+    55,
+    "The remote worker timed out once.",
+    cancellationToken);
+await channel.WriteErrorProgressAsync(
+    "Import failed",
+    80,
+    "The final retry window was exhausted.",
+    cancellationToken);
+await channel.ClearProgressAsync(cancellationToken);
+```
+
+`ReplProgressEvent` now carries a `State` value:
+
+| State | Meaning |
+|---|---|
+| `Normal` | Regular progress update |
+| `Warning` | Work is continuing, but the user should pay attention |
+| `Error` | The current workflow has entered an error state |
+| `Indeterminate` | Work is active but there is no meaningful percentage yet |
+| `Clear` | Clear any visible progress indicator |
+
+Notes:
+
+- `WriteProgressAsync(string, double?)` remains the simple, backward-compatible API.
+- `percent: null` does **not** imply indeterminate mode. Use `WriteIndeterminateProgressAsync(...)` or `State = Indeterminate` explicitly.
+- Hosts can render these states differently. The built-in console presenter keeps the text fallback and, when enabled, also emits advanced terminal progress sequences.
+- The framework clears visible progress automatically when a command completes, fails, or is cancelled.
+
+### Advanced terminal progress
+
+`InteractionOptions.AdvancedProgressMode` controls whether hosts should emit advanced progress sequences in addition to the normal text feedback:
+
+| Value | Behavior |
+|---|---|
+| `Auto` | Emit advanced progress only for a conservative allowlist of known-compatible terminals; stay text-only for multiplexers such as `tmux`/`screen` and for unknown terminals |
+| `Always` | Always emit advanced progress when the host can write terminal control sequences |
+| `Never` | Disable advanced progress and keep the text-only fallback |
+
+The built-in console presenter maps progress states to `OSC 9;4` when advanced terminal progress is enabled. This is intended for user-facing execution feedback such as taskbar progress bars or mirrored hosted-session UI, not for application logging.
+
+In practice, `Always` is usually safe on modern terminals because unknown `OSC` sequences are typically ignored silently. The main caveat is very old or non-conformant terminals, which may render unsupported control sequences literally instead of ignoring them.
 
 ---
 
@@ -263,8 +333,11 @@ Each core primitive has a corresponding request record:
 | `AskSecretRequest`        | `string`               | `AskSecretAsync`           |
 | `AskMultiChoiceRequest`   | `IReadOnlyList<int>`   | `AskMultiChoiceAsync`      |
 | `ClearScreenRequest`      | —                      | `ClearScreenAsync`         |
-| `WriteStatusRequest`      | —                      | `WriteStatusAsync`         |
-| `WriteProgressRequest`    | —                      | `WriteProgressAsync`       |
+| `WriteStatusRequest`      | `bool`                 | `WriteStatusAsync`         |
+| `WriteProgressRequest`    | `bool`                 | `WriteProgressAsync`       |
+| `WriteNoticeRequest`      | `bool`                 | `WriteNoticeAsync`         |
+| `WriteWarningRequest`     | `bool`                 | `WriteWarningAsync`        |
+| `WriteProblemRequest`     | `bool`                 | `WriteProblemAsync`        |
 
 All request types derive from `InteractionRequest<TResult>` (or `InteractionRequest` for void operations) and carry the same parameters as the corresponding channel method.
 

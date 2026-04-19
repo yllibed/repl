@@ -28,6 +28,7 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
 	private static readonly AsyncLocal<bool> s_isHostedSession = new();
 	private static readonly AsyncLocal<bool> s_isProgrammatic = new();
+	private static readonly AsyncLocal<bool> s_isProtocolPassthrough = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
 
@@ -72,6 +73,12 @@ internal static class ReplSessionIO
 	{
 		get => s_isProgrammatic.Value;
 		set => s_isProgrammatic.Value = value;
+	}
+
+	internal static bool IsProtocolPassthrough
+	{
+		get => s_isProtocolPassthrough.Value;
+		set => s_isProtocolPassthrough.Value = value;
 	}
 
 	/// <summary>
@@ -302,6 +309,13 @@ internal static class ReplSessionIO
 			updater);
 	}
 
+	internal static IDisposable PushProtocolPassthrough(bool isProtocolPassthrough = true)
+	{
+		var previous = s_isProtocolPassthrough.Value;
+		s_isProtocolPassthrough.Value = isProtocolPassthrough;
+		return new ProtocolPassthroughScope(previous);
+	}
+
 	internal static bool TryGetSession(string sessionId, out SessionMetadata session) =>
 		s_sessions.TryGetValue(sessionId, out session);
 
@@ -365,6 +379,23 @@ internal static class ReplSessionIO
 			{
 				RemoveSession(sessionIdToRemove);
 			}
+		}
+	}
+
+	private sealed class ProtocolPassthroughScope(bool previousValue) : IDisposable
+	{
+		private readonly bool _previousValue = previousValue;
+		private bool _disposed;
+
+		public void Dispose()
+		{
+			if (_disposed)
+			{
+				return;
+			}
+
+			s_isProtocolPassthrough.Value = _previousValue;
+			_disposed = true;
 		}
 	}
 }

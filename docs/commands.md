@@ -296,7 +296,7 @@ Tuple semantics:
 
 ## Interactive prompts
 
-Handlers can use `IReplInteractionChannel` for guided prompts (text, choice, confirmation, secret, multi-choice), progress reporting, and status messages. Extension methods add enum prompts, numeric input, validated text, and more.
+Handlers can use `IReplInteractionChannel` for guided prompts, progress reporting, and user-facing feedback. Extension methods add enum prompts, numeric input, validated text, notices, warnings, problem summaries, and more.
 
 When the terminal supports ANSI and key reads, choice and multi-choice prompts automatically upgrade to rich arrow-key menus with mnemonic shortcuts. Labels using the `_X` underscore convention get keyboard shortcuts (e.g. `"_Abort"` → press `A`).
 

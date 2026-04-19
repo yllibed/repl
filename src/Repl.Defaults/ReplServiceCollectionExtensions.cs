@@ -24,6 +24,8 @@ public static class ReplServiceCollectionExtensions
 		ArgumentNullException.ThrowIfNull(configureReplServices);
 		ArgumentNullException.ThrowIfNull(configure);
 
+		services.AddReplLogging();
+
 		var app = ReplApp.Create(configureReplServices);
 		configure(app);
 		services.TryAddSingleton(app);
@@ -42,6 +44,8 @@ public static class ReplServiceCollectionExtensions
 	{
 		ArgumentNullException.ThrowIfNull(services);
 		ArgumentNullException.ThrowIfNull(configure);
+
+		services.AddReplLogging();
 
 		var app = ReplApp.Create();
 		configure(app);
@@ -63,6 +67,8 @@ public static class ReplServiceCollectionExtensions
 	{
 		ArgumentNullException.ThrowIfNull(services);
 		ArgumentNullException.ThrowIfNull(configure);
+
+		services.AddReplLogging();
 
 		services.TryAddSingleton(sp =>
 		{

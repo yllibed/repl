@@ -47,6 +47,18 @@ public sealed class Given_McpIntegration
 	}
 
 	[TestMethod]
+	[Description("MCP server options advertise logging capability because interaction feedback can be routed through MCP notifications.")]
+	public void When_BuildingMcpOptions_Then_LoggingCapabilityIsAdvertised()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+
+		var options = app.BuildMcpServerOptions();
+
+		options.Capabilities!.Logging.Should().NotBeNull();
+	}
+
+	[TestMethod]
 	[Description("Commands marked AutomationHidden are excluded from MCP tool candidates.")]
 	public void When_CommandIsAutomationHidden_Then_ExcludedFromToolCandidates()
 	{

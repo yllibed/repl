@@ -6,6 +6,7 @@ See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working MCP se
 
 Related guides:
 
+- [mcp-agent-capabilities.md](mcp-agent-capabilities.md) for direct sampling and elicitation from command handlers
 - [mcp-advanced.md](mcp-advanced.md) for roots, soft roots, dynamic tool patterns, and advanced MCP Apps patterns
 - [mcp-transports.md](mcp-transports.md) for custom transports and HTTP hosting
 - [mcp-internals.md](mcp-internals.md) for concepts and under-the-hood behavior
@@ -289,6 +290,8 @@ app.UseMcpServer(o => o.InteractivityMode = InteractivityMode.PrefillThenElicita
 | `PrefillThenDefaults` | Prefill, then use prompt defaults |
 | `PrefillThenElicitation` | Prefill → elicitation → sampling → fail |
 | `PrefillThenSampling` | Prefill → sampling → fail |
+
+> **Direct access:** Commands can also use sampling and elicitation directly via `IMcpSampling` and `IMcpElicitation` — for example, asking the LLM to classify data or asking the user for structured input as part of a longer workflow. See [mcp-agent-capabilities.md](mcp-agent-capabilities.md).
 
 ## Progress and status
 

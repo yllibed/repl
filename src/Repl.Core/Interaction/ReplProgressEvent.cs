@@ -8,7 +8,9 @@ public sealed record ReplProgressEvent(
 	double? Percent = null,
 	int? Current = null,
 	int? Total = null,
-	string? Unit = null)
+	string? Unit = null,
+	ReplProgressState State = ReplProgressState.Normal,
+	string? Details = null)
 	: ReplInteractionEvent(DateTimeOffset.UtcNow)
 {
 	/// <summary>

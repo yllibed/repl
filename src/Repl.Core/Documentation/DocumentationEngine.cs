@@ -306,7 +306,10 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		|| parameterType == typeof(IReplInteractionChannel)
 		|| parameterType == typeof(IReplIoContext)
 		|| parameterType == typeof(IReplKeyReader)
-		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpClientRoots", StringComparison.Ordinal);
+		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpClientRoots", StringComparison.Ordinal)
+		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpSampling", StringComparison.Ordinal)
+		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpElicitation", StringComparison.Ordinal)
+		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpFeedback", StringComparison.Ordinal);
 
 	private static bool IsRequiredParameter(ParameterInfo parameter)
 	{

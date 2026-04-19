@@ -47,8 +47,92 @@ internal sealed partial class ConsoleInteractionChannel(
 			return (TResult)dispatched.Value!;
 		}
 
+		if (await TryHandleBuiltInDispatchAsync(request, cancellationToken).ConfigureAwait(false) is { Handled: true } builtIn)
+		{
+			return (TResult)builtIn.Value!;
+		}
+
 		throw new NotSupportedException(
 			$"No handler registered for interaction request '{request.GetType().Name}'.");
+	}
+
+	private async ValueTask<InteractionResult> TryHandleBuiltInDispatchAsync(
+		InteractionRequest request,
+		CancellationToken cancellationToken)
+	{
+		switch (request)
+		{
+			case WriteStatusRequest status:
+				await PresentFeedbackAsync(
+						status.Text,
+						new ReplStatusEvent(status.Text),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			case WriteNoticeRequest notice:
+				await PresentFeedbackAsync(
+						notice.Text,
+						new ReplNoticeEvent(notice.Text),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			case WriteWarningRequest warning:
+				await PresentFeedbackAsync(
+						warning.Text,
+						new ReplWarningEvent(warning.Text),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			case WriteProblemRequest problem:
+				await PresentProblemAsync(problem, cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			case WriteProgressRequest progress:
+				await _presenter.PresentAsync(
+						new ReplProgressEvent(
+							progress.Label,
+							Percent: progress.Percent,
+							State: progress.State,
+							Details: progress.Details),
+						cancellationToken)
+					.ConfigureAwait(false);
+				return InteractionResult.Success(value: true);
+
+			default:
+				return InteractionResult.Unhandled;
+		}
+	}
+
+	private async ValueTask PresentFeedbackAsync(
+		string text,
+		ReplInteractionEvent interactionEvent,
+		CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(text))
+		{
+			throw new ArgumentException("Feedback text cannot be empty.", nameof(text));
+		}
+
+		await _presenter.PresentAsync(interactionEvent, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask PresentProblemAsync(
+		WriteProblemRequest request,
+		CancellationToken cancellationToken)
+	{
+		if (string.IsNullOrWhiteSpace(request.Summary))
+		{
+			throw new ArgumentException("Problem summary cannot be empty.", nameof(request));
+		}
+
+		await _presenter.PresentAsync(
+				new ReplProblemEvent(request.Summary, request.Details, request.Code),
+				cancellationToken)
+			.ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -66,7 +150,12 @@ internal sealed partial class ConsoleInteractionChannel(
 			: label;
 		cancellationToken.ThrowIfCancellationRequested();
 
-		var dispatched = await TryDispatchAsync(new WriteProgressRequest(label, percent, cancellationToken), cancellationToken)
+		var dispatched = await TryDispatchAsync(
+				new WriteProgressRequest(
+					Label: label,
+					Percent: percent,
+					CancellationToken: cancellationToken),
+				cancellationToken)
 			.ConfigureAwait(false);
 		if (dispatched.Handled)
 		{

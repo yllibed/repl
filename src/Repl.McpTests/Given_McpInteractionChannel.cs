@@ -271,16 +271,31 @@ public sealed class Given_McpInteractionChannel
 	// ── DispatchAsync ──────────────────────────────────────────────────
 
 	[TestMethod]
-	[Description("DispatchAsync throws NotSupportedException.")]
-	public void When_Dispatch_Then_ThrowsNotSupported()
+	[Description("Built-in feedback dispatch completes even when no MCP server is attached.")]
+	public async Task When_DispatchingBuiltInFeedbackWithoutServer_Then_Completes()
 	{
 		var channel = CreateChannel();
 
-		// DispatchAsync requires an InteractionRequest<T> subclass, but the throw
-		// happens synchronously before any async work so we test the throw path.
-		var act = () => channel.DispatchAsync<string>(null!, CancellationToken.None);
+		_ = await channel.DispatchAsync(
+			new WriteNoticeRequest("Connected"),
+			CancellationToken.None);
+		_ = await channel.DispatchAsync(
+			new WriteWarningRequest("Token expires soon"),
+			CancellationToken.None);
+		_ = await channel.DispatchAsync(
+			new WriteProblemRequest("Sync failed", "Retry later.", "sync_failed"),
+			CancellationToken.None);
+	}
 
-		act.Should().Throw<NotSupportedException>();
+	[TestMethod]
+	[Description("Custom interaction requests still fail explicitly in MCP mode.")]
+	public async Task When_DispatchingCustomRequest_Then_ThrowsNotSupported()
+	{
+		var channel = CreateChannel();
+
+		Func<Task> act = () => channel.DispatchAsync(new TestInteractionRequest("custom", "Prompt"), CancellationToken.None).AsTask();
+
+		await act.Should().ThrowAsync<NotSupportedException>();
 	}
 
 	// ── Helpers ─────────────────────────────────────────────────────────
@@ -291,4 +306,7 @@ public sealed class Given_McpInteractionChannel
 		new(
 			prefills ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
 			mode);
+
+	private sealed record TestInteractionRequest(string Name, string Prompt)
+		: InteractionRequest<string>(Name, Prompt);
 }
