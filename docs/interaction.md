@@ -225,11 +225,13 @@ Notes:
 
 | Value | Behavior |
 |---|---|
-| `Auto` | Emit advanced progress when the host is interactive and the terminal looks compatible |
+| `Auto` | Emit advanced progress only for a conservative allowlist of known-compatible terminals; stay text-only for multiplexers such as `tmux`/`screen` and for unknown terminals |
 | `Always` | Always emit advanced progress when the host can write terminal control sequences |
 | `Never` | Disable advanced progress and keep the text-only fallback |
 
 The built-in console presenter maps progress states to `OSC 9;4` when advanced terminal progress is enabled. This is intended for user-facing execution feedback such as taskbar progress bars or mirrored hosted-session UI, not for application logging.
+
+In practice, `Always` is usually safe on modern terminals because unknown `OSC` sequences are typically ignored silently. The main caveat is very old or non-conformant terminals, which may render unsupported control sequences literally instead of ignoring them.
 
 ---
 
