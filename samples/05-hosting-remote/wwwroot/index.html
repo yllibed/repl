@@ -9,6 +9,9 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
   <style>
+    /* ============================================================
+       Design tokens & base layout
+       ============================================================ */
     :root {
       --bg: #0b1020;
       --bg-soft: #121934;
@@ -59,6 +62,9 @@
       backdrop-filter: blur(6px);
     }
 
+    /* ============================================================
+       Hero / header
+       ============================================================ */
     .hero {
       display: flex;
       gap: 10px;
@@ -82,6 +88,9 @@
       max-width: 58ch;
     }
 
+    /* ============================================================
+       Connection controls: transport, profile, feature toggles
+       ============================================================ */
     .controls {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
@@ -273,6 +282,12 @@
       color: var(--text);
     }
 
+    /* ============================================================
+       Post-connection layout compaction
+       Once a session is open, shrink the controls panel so the
+       terminal + activity bar get the remaining viewport height.
+       Driven by `body.connected-session` toggled from JS.
+       ============================================================ */
     body.connected-session .controls {
       padding: 8px 12px;
       gap: 12px;
@@ -307,6 +322,9 @@
       font-size: 0.76rem;
     }
 
+    /* ============================================================
+       Activity bar: mirrors hosted OSC 9;4 progress signals
+       ============================================================ */
     .activity-bar {
       display: flex;
       align-items: center;
@@ -468,6 +486,9 @@
       background: rgba(14, 116, 144, 0.35);
     }
 
+    /* ============================================================
+       Terminal shell (xterm host) and tips
+       ============================================================ */
     .terminal-shell {
       overflow: hidden;
       border-radius: 16px;
@@ -558,6 +579,9 @@
       padding: 3px 6px;
     }
 
+    /* ============================================================
+       Responsive breakpoints
+       ============================================================ */
     @media (max-width: 780px) {
       .page {
         min-height: calc(100dvh - 20px);
@@ -710,6 +734,9 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
   <script>
+    // ============================================================
+    // Terminal themes and xterm bootstrap
+    // ============================================================
     const richTheme = {
       background: '#070b16',
       foreground: '#e5eefc',
@@ -752,6 +779,9 @@
       new ResizeObserver(fitOnResize).observe(terminalHost);
     }
 
+    // ============================================================
+    // DOM references
+    // ============================================================
     const btn = document.getElementById('go');
     const modeBadge = document.getElementById('modeBadge');
     const feedbackState = document.getElementById('feedbackState');
@@ -767,13 +797,25 @@
     const featureInputs = Array.from(document.querySelectorAll('input[name="feature"]'));
     const query = new URLSearchParams(location.search);
     const textDecoder = new TextDecoder();
+    // ============================================================
+    // Constants and lookup tables
+    // ============================================================
+
+    // OSC 9;4 is the ConEmu/Windows Terminal progress sequence: ESC ] 9 ; 4 ; <state> ; <percent> BEL
     const oscProgressPrefix = '\u001b]9;4;';
     const progressSequencePattern = /\u001b\]9;4;(\d+);(\d+)\u0007/g;
+
+    // Profile presets map the three preset radios to feature-toggle combinations.
+    // "custom" is not a preset — it's the label shown when the checkboxes don't match any preset.
     const profilePresets = {
       basic: { ansi: false, resize: false, identity: false, vtinput: false, progress: false },
       styled: { ansi: true, resize: true, identity: true, vtinput: false, progress: false },
       rich: { ansi: true, resize: true, identity: true, vtinput: true, progress: true }
     };
+
+    // OSC 9;4 state codes emitted by the hosted REPL (see ConsoleReplInteractionPresenter):
+    //   0 = clear, 1 = normal, 2 = error, 3 = indeterminate, 4 = warning.
+    // `detail` can be a string or a (percent) => string builder.
     const progressStates = {
       0: {
         name: 'idle',
@@ -815,6 +857,9 @@
     let feedbackAnimationFrame = null;
     let displayedProgressValue = 0;
 
+    // ============================================================
+    // Connection state UI (Connect button + body class toggle)
+    // ============================================================
     function setConnectionState(state) {
       document.body.classList.toggle('connected-session', state === 'connected');
       document.body.classList.toggle('disconnected-session', state !== 'connected');
@@ -833,6 +878,9 @@
       }
     }
 
+    // ============================================================
+    // Profile / feature-toggle selection logic
+    // ============================================================
     function getSelectedTransport() {
       return document.querySelector('input[name="transport"]:checked')?.value ?? 'ws';
     }
@@ -861,6 +909,7 @@
       return Object.fromEntries(featureInputs.map(input => [input.value, input.checked]));
     }
 
+    // VT input and progress reporting both require ANSI — disable and clear them when ANSI is off.
     function updateFeatureAvailability() {
       const features = getFeatureValues();
       featureInputs.forEach(input => {
@@ -901,6 +950,9 @@
       applyTerminalAppearance(getSessionConfig());
     }
 
+    // ============================================================
+    // Session config: what the browser advertises to the host
+    // ============================================================
     function getSessionConfig() {
       const features = getFeatureValues();
       const ansi = !!features.ansi;
@@ -966,6 +1018,10 @@
       ].join('');
     }
 
+    // ============================================================
+    // Feedback mirror: consume OSC 9;4 from the terminal stream
+    // and drive the Activity bar (state badge, progress bar, copy).
+    // ============================================================
     function resetFeedbackMirror() {
       progressChunkBuffer = '';
       stopFeedbackAnimation();
@@ -1042,6 +1098,10 @@
       updateFeedbackMirror(stateCode, percent);
     }
 
+    // Strips OSC 9;4 progress sequences from the stream (routing them to the Activity bar)
+    // and returns the remaining visible text for xterm. Since the stream arrives in chunks,
+    // we may receive a partial sequence (prefix without the terminating BEL) at the end of
+    // a chunk; we hold it back in `progressChunkBuffer` until the next chunk completes it.
     function consumeTerminalChunk(chunk) {
       progressChunkBuffer += chunk;
       const lastStart = progressChunkBuffer.lastIndexOf(oscProgressPrefix);
@@ -1065,6 +1125,9 @@
       }
     }
 
+    // ============================================================
+    // Quick action buttons (status / feedback demo / feedback fail)
+    // ============================================================
     function runQuickAction(command) {
       if (!send) {
         return;
@@ -1078,6 +1141,9 @@
       button.addEventListener('click', () => runQuickAction(button.dataset.command));
     });
 
+    // ============================================================
+    // Transport connection (WebSocket / Telnet / SignalR)
+    // ============================================================
     function normalizeTransport(value) {
       const token = (value ?? '').trim().toLowerCase();
       if (token === 'ws' || token === 'websocket') return 'ws';
@@ -1099,6 +1165,9 @@
       else connectSR(config);
     }
 
+    // ============================================================
+    // Page bootstrap: wire events, apply defaults, handle ?autoconnect
+    // ============================================================
     btn.onclick = connectSelectedSession;
 
     const autoConnect = normalizeTransport(query.get('autoconnect'));
