@@ -145,21 +145,46 @@ internal sealed class RemoteModule(
 								? "Advanced progress reporting is available for this hosted session."
 								: "This client is using the text fallback for progress updates.",
 							ct).ConfigureAwait(false);
-						await channel.WriteProgressAsync("Preparing session", 10, ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await BeginFeedbackDemoAsync(
+							channel,
+							"Press Enter to run a smooth feedback demo. You will see normal progress, a waiting phase, a warning phase, and a clean finish to 100%.",
+							"feedback-demo-start",
+							ct).ConfigureAwait(false);
+						await AnimateProgressAsync(
+							channel,
+							"Preparing session",
+							startPercent: 0,
+							endPercent: 30,
+							FeedbackStepDuration.InitialProgress,
+							ct).ConfigureAwait(false);
 						await channel.WriteIndeterminateProgressAsync(
 							"Waiting for remote worker",
 							"Negotiating with upstream services",
 							ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
-						await channel.WriteWarningProgressAsync(
+						await DelayFeedbackStepAsync(FeedbackStepDuration.Indeterminate, ct).ConfigureAwait(false);
+						await AnimateWarningProgressAsync(
+							channel,
 							"Retrying sync",
-							55,
+							startPercent: 44,
+							endPercent: 72,
 							"Transient network jitter",
+							FeedbackStepDuration.Warning,
 							ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
-						await channel.WriteProgressAsync("Finalizing", 85, ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
+						await AnimateProgressAsync(
+							channel,
+							"Finalizing",
+							startPercent: 73,
+							endPercent: 96,
+							FeedbackStepDuration.NormalProgress,
+							ct).ConfigureAwait(false);
+						await AnimateProgressAsync(
+							channel,
+							"Completed",
+							startPercent: 97,
+							endPercent: 100,
+							FeedbackStepDuration.CompletedRamp,
+							ct).ConfigureAwait(false);
+						await DelayFeedbackStepAsync(FeedbackStepDuration.Completed, ct).ConfigureAwait(false);
 						await channel.WriteNoticeAsync("Feedback demo completed.", ct).ConfigureAwait(false);
 						return Results.Success("Feedback demo completed.");
 					});
@@ -169,27 +194,46 @@ internal sealed class RemoteModule(
 					[Description("Run a failing feedback sequence with warning, error, and problem output")]
 					async (IReplInteractionChannel channel, CancellationToken ct) =>
 					{
-						await channel.WriteNoticeAsync("Starting the failing feedback demo.", ct).ConfigureAwait(false);
-						await channel.WriteProgressAsync("Preparing session", 15, ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
-						await channel.WriteWarningProgressAsync(
+						await channel.WriteNoticeAsync(
+							"Starting an error-state demo. This run is expected to end in a simulated failure state.",
+							ct).ConfigureAwait(false);
+						await BeginFeedbackDemoAsync(
+							channel,
+							"Press Enter to run a demo that intentionally ends in an error state. You will see normal progress, then a warning, then a final simulated failure.",
+							"feedback-fail-start",
+							ct).ConfigureAwait(false);
+						await AnimateProgressAsync(
+							channel,
+							"Preparing session",
+							startPercent: 0,
+							endPercent: 28,
+							FeedbackStepDuration.InitialProgress,
+							ct).ConfigureAwait(false);
+						await AnimateWarningProgressAsync(
+							channel,
 							"Retrying sync",
-							45,
+							startPercent: 36,
+							endPercent: 58,
 							"Remote worker timed out",
+							FeedbackStepDuration.Warning,
 							ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
-						await channel.WriteErrorProgressAsync(
+						await AnimateErrorProgressAsync(
+							channel,
 							"Remote job failed",
-							80,
+							startPercent: 66,
+							endPercent: 82,
 							"Final retry exhausted",
+							FeedbackStepDuration.Error,
 							ct).ConfigureAwait(false);
-						await DelayFeedbackStepAsync(ct).ConfigureAwait(false);
 						await channel.WriteProblemAsync(
 							"Remote feedback demo failed",
 							"The remote worker stayed unavailable after several retries.",
 							"remote_feedback_failed",
 							ct).ConfigureAwait(false);
-						return Results.Error("remote_feedback_failed", "Remote feedback demo failed.");
+						await channel.WriteNoticeAsync(
+							"Error-state demo complete. The failure shown above was intentional.",
+							ct).ConfigureAwait(false);
+						return Results.Success("Error-state demo completed. The failure shown above was intentional.");
 					});
 			});
 
@@ -356,6 +400,123 @@ internal sealed class RemoteModule(
 		}
 	}
 
-	private static Task DelayFeedbackStepAsync(CancellationToken cancellationToken) =>
-		Task.Delay(TimeSpan.FromMilliseconds(250), cancellationToken);
+	private static Task DelayFeedbackStepAsync(TimeSpan duration, CancellationToken cancellationToken) =>
+		Task.Delay(duration, cancellationToken);
+
+	private static async Task AnimateProgressAsync(
+		IReplInteractionChannel channel,
+		string label,
+		double startPercent,
+		double endPercent,
+		TimeSpan duration,
+		CancellationToken cancellationToken)
+	{
+		await AnimateProgressCoreAsync(
+			startPercent,
+			endPercent,
+			duration,
+			static (progressChannel, progressLabel, percent, _, ct) => progressChannel.WriteProgressAsync(progressLabel, percent, ct),
+			channel,
+			label,
+			details: null,
+			cancellationToken).ConfigureAwait(false);
+	}
+
+	private static async Task AnimateWarningProgressAsync(
+		IReplInteractionChannel channel,
+		string label,
+		double startPercent,
+		double endPercent,
+		string details,
+		TimeSpan duration,
+		CancellationToken cancellationToken)
+	{
+		await AnimateProgressCoreAsync(
+			startPercent,
+			endPercent,
+			duration,
+			static (progressChannel, progressLabel, percent, progressDetails, ct) =>
+				progressChannel.WriteWarningProgressAsync(progressLabel, percent, progressDetails!, ct),
+			channel,
+			label,
+			details,
+			cancellationToken).ConfigureAwait(false);
+	}
+
+	private static async Task AnimateErrorProgressAsync(
+		IReplInteractionChannel channel,
+		string label,
+		double startPercent,
+		double endPercent,
+		string details,
+		TimeSpan duration,
+		CancellationToken cancellationToken)
+	{
+		await AnimateProgressCoreAsync(
+			startPercent,
+			endPercent,
+			duration,
+			static (progressChannel, progressLabel, percent, progressDetails, ct) =>
+				progressChannel.WriteErrorProgressAsync(progressLabel, percent, progressDetails!, ct),
+			channel,
+			label,
+			details,
+			cancellationToken).ConfigureAwait(false);
+	}
+
+	private static async Task BeginFeedbackDemoAsync(
+		IReplInteractionChannel channel,
+		string instructions,
+		string promptName,
+		CancellationToken cancellationToken)
+	{
+		await channel.WriteStatusAsync(instructions, cancellationToken).ConfigureAwait(false);
+		await channel.AskTextAsync(promptName, "Press Enter to start").ConfigureAwait(false);
+	}
+
+	private static async Task AnimateProgressCoreAsync(
+		double startPercent,
+		double endPercent,
+		TimeSpan duration,
+		Func<IReplInteractionChannel, string, double, string?, CancellationToken, ValueTask> writer,
+		IReplInteractionChannel channel,
+		string label,
+		string? details,
+		CancellationToken cancellationToken)
+	{
+		var clampedStart = Math.Clamp(startPercent, 0d, 100d);
+		var clampedEnd = Math.Clamp(endPercent, 0d, 100d);
+		var direction = clampedEnd >= clampedStart ? 1 : -1;
+		var range = Math.Abs(clampedEnd - clampedStart);
+		var stepCount = Math.Max(1, (int)Math.Ceiling(range / 1.5d));
+		var interval = TimeSpan.FromMilliseconds(Math.Max(45d, duration.TotalMilliseconds / stepCount));
+		var stepSize = stepCount == 0 ? range : range / stepCount;
+		var percent = clampedStart;
+
+		while (true)
+		{
+			await writer(channel, label, percent, details, cancellationToken).ConfigureAwait(false);
+			if (Math.Abs(percent - clampedEnd) < double.Epsilon)
+			{
+				break;
+			}
+
+			await Task.Delay(interval, cancellationToken).ConfigureAwait(false);
+			var nextPercent = percent + (stepSize * direction);
+			percent = direction > 0
+				? Math.Min(clampedEnd, nextPercent)
+				: Math.Max(clampedEnd, nextPercent);
+		}
+	}
+
+	private static class FeedbackStepDuration
+	{
+		public static readonly TimeSpan InitialProgress = TimeSpan.FromSeconds(1.4);
+		public static readonly TimeSpan Indeterminate = TimeSpan.FromSeconds(1.4);
+		public static readonly TimeSpan Warning = TimeSpan.FromSeconds(1.4);
+		public static readonly TimeSpan NormalProgress = TimeSpan.FromSeconds(1.2);
+		public static readonly TimeSpan CompletedRamp = TimeSpan.FromSeconds(0.4);
+		public static readonly TimeSpan Completed = TimeSpan.FromSeconds(1.2);
+		public static readonly TimeSpan Error = TimeSpan.FromSeconds(1.2);
+	}
 }

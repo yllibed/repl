@@ -15,6 +15,9 @@ internal sealed class McpFeedbackService : IMcpFeedback
 	private const string LoggerName = "repl.interaction";
 
 	private readonly AsyncLocal<ProgressToken?> _progressToken = new();
+	// This service is created per McpServerHandler/session and overlaid into the
+	// per-connection service provider, so the attached server reference is not shared
+	// across concurrent MCP connections.
 	private McpServer? _server;
 
 	public bool IsProgressSupported => _server is not null && _progressToken.Value is not null;
