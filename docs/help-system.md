@@ -59,4 +59,4 @@ This model powers:
 - MCP tool/resource/prompt schema generation and MCP Apps metadata
 - Shell completion candidate generation
 
-See also: [Commands](commands.md) | [MCP Server](mcp-server.md) | [Parameter System](parameter-system.md)
+See also: [Commands](commands.md) | [MCP Overview](mcp-overview.md) | [Parameter System](parameter-system.md)

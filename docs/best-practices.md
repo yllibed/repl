@@ -292,4 +292,4 @@ Use Spectre.Console for rich UI — prompts auto-upgrade transparently:
 app.UseSpectreConsole();  // existing IReplInteractionChannel calls render as Spectre prompts
 ```
 
-See also: [Modules](module-presence.md) | [Route System](route-system.md) | [MCP Server](mcp-server.md) | [Testing](testing-toolkit.md) | [Configuration](configuration-reference.md)
+See also: [Modules](module-presence.md) | [Route System](route-system.md) | [MCP Overview](mcp-overview.md) | [Testing](testing-toolkit.md) | [Configuration](configuration-reference.md)

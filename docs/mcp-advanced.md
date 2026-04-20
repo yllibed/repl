@@ -1,44 +1,28 @@
-# MCP Advanced: Dynamic Tools, Roots, MCP Apps, and Session-Aware Patterns
+# MCP Advanced: Dynamic Tools, Roots, and Session-Aware Patterns
 
-This guide covers advanced MCP usage patterns for Repl apps:
-
-- Tool visibility that changes per session
-- Native MCP client roots
-- Soft roots for clients that don't support roots
-- Compatibility shims for clients that don't refresh dynamic tool lists well
-- Advanced MCP Apps patterns
-
-> **Prerequisite**: read [mcp-server.md](mcp-server.md) first for the basic setup.
+> **This page is for you if** your tool list changes per session, you need workspace roots, your client misses dynamic tool refreshes, or you need advanced MCP Apps patterns.
 >
-> **Need the plumbing details?** See [mcp-internals.md](mcp-internals.md).
->
-> **Need custom transports or HTTP hosting?** See [mcp-transports.md](mcp-transports.md).
+> **Purpose:** Advanced MCP patterns for dynamic, session-aware, or complex apps.
+> **Prerequisite:** [MCP overview](mcp-overview.md)
+> **Related:** [Reference](mcp-reference.md) · [Sampling & elicitation](mcp-agent-capabilities.md) · [Transports](mcp-transports.md)
 
 ## When this page matters
 
-Most Repl MCP servers don't need any of this.
-
-Use the techniques in this page when:
+Most Repl MCP servers don't need any of this. Use the techniques here when:
 
 - Available tools depend on login state, tenant, feature flags, or workspace
 - The agent needs to know which directories it is allowed to work in
 - Your MCP client does not support native roots
-- Your MCP client does not seem to refresh its tool list after `list_changed`
-- Your MCP App should render HTML without exposing that HTML as the model-facing tool result
+- Your MCP client does not refresh its tool list after `list_changed`
+- You need advanced MCP Apps patterns (WebAssembly, display modes, launcher text)
 
-If your tool list is static, stay with the default setup from [mcp-server.md](mcp-server.md).
+If your tool list is static, stay with the default setup from [mcp-overview.md](mcp-overview.md).
 
 ## Client roots
 
-A **root** is a workspace or directory that the MCP client declares as being in scope for the session.
+A **root** is a URI the client declares as being in scope for the session — typically an opened project folder, a working directory, or a boundary for what the agent should inspect or modify.
 
-Examples:
-
-- The folder the user opened in the editor
-- The project workspace attached to the agent
-- A set of directories the agent is allowed to inspect
-
-When the client supports native MCP roots, `Repl.Mcp` exposes them through `IMcpClientRoots`.
+Roots give the server session-specific workspace context without inventing a custom protocol. When the client supports native MCP roots, `Repl.Mcp` exposes them through `IMcpClientRoots`.
 
 ```csharp
 using Repl.Mcp;
@@ -52,8 +36,6 @@ app.Map("workspace roots", async (IMcpClientRoots roots, CancellationToken ct) =
     .ReadOnly();
 ```
 
-Useful members:
-
 | Member | Meaning |
 |---|---|
 | `IsSupported` | The connected client supports native MCP roots |
@@ -62,11 +44,11 @@ Useful members:
 | `HasSoftRoots` | Fallback roots were initialized manually |
 | `SetSoftRoots()` / `ClearSoftRoots()` | Manage fallback roots for the current session |
 
+> **Why `IMcpClientRoots` is MCP-only:** Roots are session-scoped MCP data. They don't make sense as a generic `Repl.Core` concept for terminal or non-MCP execution. That's why the interface lives in `Repl.Mcp` and is injected only for MCP sessions.
+
 ## Session-aware routing
 
-Because `IMcpClientRoots` is injectable, you can use it in command handlers and in module presence predicates.
-
-That lets you expose tools only when a certain MCP capability or session state is available.
+Because `IMcpClientRoots` is injectable, you can use it in command handlers and in module presence predicates. That lets you expose tools only when a certain MCP capability or session state is available.
 
 ```csharp
 using Repl.Mcp;
@@ -76,6 +58,8 @@ app.MapModule(
     (IMcpClientRoots roots) => roots.IsSupported);
 ```
 
+> **How this works internally:** The MCP integration builds its documentation model and MCP surfaces using the current MCP session service provider, not just the app root service provider. This makes session-scoped services like `IMcpClientRoots` visible to module presence predicates, tool handlers, prompt handlers, and resource handlers.
+
 Typical session-aware conditions:
 
 - Roots are available
@@ -83,49 +67,21 @@ Typical session-aware conditions:
 - The current tenant or login is known
 - A module should appear only for one agent session
 
-## Guidance: MCP-only vs workspace-aware commands
+### MCP-only vs workspace-aware commands
 
-`IMcpClientRoots` is MCP-scoped, but that does not automatically mean every command using it must be MCP-only.
-
-There are two useful patterns:
-
-### Pattern 1: MCP-only commands
-
-Use this when the command only makes sense inside an MCP session.
+**Pattern 1: MCP-only** — the command only makes sense inside an MCP session:
 
 ```csharp
-using Repl.Mcp;
-
 app.MapModule(
     new WorkspaceBootstrapModule(),
     (IMcpClientRoots? roots) => roots is not null);
 ```
 
-This is the simplest option when:
+Use when: the command helps an agent initialize MCP session state or depends directly on MCP capabilities.
 
-- the command exists only to help an agent initialize MCP session state
-- the command depends directly on MCP capabilities
-- showing it in CLI or interactive Repl would be confusing
-
-### Pattern 2: Workspace-aware commands
-
-Use this when the command should work both inside and outside MCP.
-
-In that case, treat MCP roots as just one possible source of workspace context, not the only source.
-
-Typical workspace sources:
-
-1. native MCP roots
-2. MCP soft roots
-3. session state in Repl
-4. a command-line argument or explicit option
-5. the process current directory
-
-For example:
+**Pattern 2: Workspace-aware** — the command works both inside and outside MCP:
 
 ```csharp
-using Repl.Mcp;
-
 app.Map("workspace status", async (IMcpClientRoots? roots, IReplSessionState state, CancellationToken ct) =>
     {
         var workspace =
@@ -140,34 +96,11 @@ app.Map("workspace status", async (IMcpClientRoots? roots, IReplSessionState sta
     .ReadOnly();
 ```
 
-And you can pair that with a general-purpose Repl command:
-
-```csharp
-app.Map("workspace set {path}", (IReplSessionState state, string path) =>
-    {
-        state.Set("workspace.path", path);
-        return "Workspace updated.";
-    });
-```
-
-This pattern is often better than making everything MCP-only.
-
-### Recommendation
-
-When a command needs a working directory or workspace, design it around a **workspace resolution strategy** instead of assuming one single source.
-
-That usually makes the command:
-
-- more reusable
-- easier to test
-- usable from CLI, hosted sessions, and MCP
-- easier to adapt when some clients support roots and others do not
+**Recommendation:** When a command needs a working directory, design it around a workspace resolution strategy (native roots → soft roots → session state → CLI argument → current directory) instead of assuming one single source. This makes the command more reusable, easier to test, and usable from CLI, hosted sessions, and MCP.
 
 ## Soft roots fallback
 
-Some clients do not support MCP roots at all. In that case, a practical workaround is to expose an initialization tool only when roots are unavailable.
-
-The agent can call that tool first to establish one or more **soft roots** for the session.
+Some clients do not support MCP roots at all. Soft roots are a simple application-level convention (not part of the MCP specification): expose an init tool when roots are unavailable, store the paths in the MCP session, and invalidate routing so the session-aware tool graph updates.
 
 ```csharp
 using Repl.Mcp;
@@ -190,27 +123,25 @@ sealed class SoftRootsInitModule : IReplModule
                 roots.SetSoftRoots([new McpClientRoot(new Uri(path, UriKind.Absolute), "workspace")]);
                 return "Workspace initialized.";
             })
-            // Message to agent asking it to set soft routes
+            // Message to agent asking it to set soft roots
             .WithDescription("Before using other workspace tools, call this to set the working directory.");
     }
 }
 ```
 
-Recommended instruction to give the agent:
+Recommended agent instruction:
 
 > If `workspace_init` is available, call it first with the working directory you should operate in.
 
-This is often the simplest fallback for editor integrations or agent hosts that don't implement native roots.
-
 ## Dynamic tool compatibility shim
 
-Some MCP clients receive `notifications/tools/list_changed` but do not refresh their tool list correctly.
+In MCP, the effective tool set may change during a session — a login tool disappears after authentication, tools appear after a workspace is known, session-scoped modules activate. When this happens, the app calls `InvalidateRouting()`, and the MCP layer rebuilds the active graph and emits `notifications/tools/list_changed`, `notifications/resources/list_changed`, and `notifications/prompts/list_changed`.
 
-If your app has a dynamic tool list, you can opt in to a compatibility shim:
+The problem is client support. Some agents don't implement `list_changed`, implement it partially, or receive the notification but keep using a stale tool list.
+
+`DynamicToolCompatibilityMode.DiscoverAndCallShim` solves this:
 
 ```csharp
-using Repl.Mcp;
-
 app.UseMcpServer(o =>
 {
     o.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim;
@@ -223,23 +154,15 @@ When enabled:
 2. The server emits `notifications/tools/list_changed`
 3. Later `tools/list` calls return the real tool set
 
-This lets limited clients continue operating:
+Even a weak client can then discover the real tools manually and call them via `call_tool`.
 
-- `discover_tools` returns the current real tools and schemas
-- `call_tool` invokes a real tool by name and arguments
+> **Reserved names:** When the shim is enabled, `discover_tools` and `call_tool` become part of the protocol surface. If a real command flattens to one of those names, startup fails with a collision error.
 
-Use this only when you need it.
-
-Good candidates:
-
-- Tools appear after authentication
-- Tools depend on roots or soft roots
-- Tools vary by session or runtime context
-
-Avoid it when:
-
-- Your tool list is static
-- Your client already handles `list_changed` correctly
+| Use when | Avoid when |
+|---|---|
+| Tools appear after authentication | Tool list is static |
+| Tools depend on roots or soft roots | Client handles `list_changed` correctly |
+| Tools vary by session or runtime context | |
 
 ## Choosing the right fallback
 
@@ -248,27 +171,17 @@ Avoid it when:
 | Client supports roots and refreshes tools correctly | Use the default MCP setup |
 | Client does not support roots | Add a soft-roots initialization tool |
 | Client supports tools but misses dynamic refreshes | Enable `DiscoverAndCallShim` |
-| Client has both issues | Use soft roots and, if needed, the dynamic tool shim |
+| Client has both issues | Use soft roots and the dynamic tool shim |
 
 ## MCP Apps advanced patterns
 
-For the basic MCP Apps setup, start with [mcp-server.md](mcp-server.md#mcp-apps). This section covers the patterns that matter once the UI is more than a trivial inline HTML card.
-
-MCP Apps support is experimental in this version. Resource handlers should return generated HTML as `string`, `Task<string>`, or `ValueTask<string>`; the API is expected to become more flexible as host support and Repl's asset story evolve.
+For the basic MCP Apps setup, start with [mcp-overview.md](mcp-overview.md#mcp-apps) and [mcp-reference.md](mcp-reference.md#mcp-apps). This section covers patterns for more complex UIs.
 
 ### One mapping, two MCP surfaces
 
-`AsMcpAppResource()` keeps the Repl authoring model simple: one mapping produces both the launcher tool metadata and the UI resource.
+`AsMcpAppResource()` keeps authoring simple: one mapping produces both the launcher tool metadata and the UI resource.
 
-```csharp
-app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
-    .WithDescription("Open the contacts dashboard")
-    .AsMcpAppResource();
-```
-
-The handler return value is used for `resources/read` and is returned as `text/html;profile=mcp-app`. When a client calls the MCP tool, Repl returns launcher text instead of raw HTML, using `WithMcpAppLauncherText(...)`, `WithDescription(...)`, or a generated fallback.
-
-Use `WithMcpAppLauncherText(...)` when the description is not the text you want in the chat transcript:
+The handler return value is used for `resources/read` as `text/html;profile=mcp-app`. Tool calls return launcher text instead of raw HTML. Control the launcher text with `WithMcpAppLauncherText(...)`:
 
 ```csharp
 app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
@@ -277,7 +190,7 @@ app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
     .WithMcpAppLauncherText("Opening the contacts dashboard.");
 ```
 
-`WithMcpApp("ui://...")` remains available for advanced cases where a normal tool should point at a separately registered UI resource, but it is not the default pattern.
+`WithMcpApp("ui://...")` is available for advanced cases where a normal tool points at a separately registered UI resource:
 
 ```csharp
 app.Map("status dashboard", (IStatusStore store) => store.GetSummary())
@@ -287,16 +200,7 @@ app.Map("status dashboard", (IStatusStore store) => store.GetSummary())
 
 ### Generated UI resource URIs
 
-`AsMcpAppResource()` generates a `ui://` URI from the route path, matching how `AsResource()` generates `repl://` URIs:
-
-```csharp
-app.Map("contact {id:int} panel", (int id, IContactDb contacts) => BuildHtml(contacts.Get(id)))
-    .AsMcpAppResource();
-```
-
-This produces a resource template like `ui://contact/{id}/panel`.
-
-The generated URI uses the full route path, including contexts:
+`AsMcpAppResource()` generates a `ui://` URI from the route path, including nested contexts:
 
 ```csharp
 app.Context("viewer", viewer =>
@@ -307,20 +211,16 @@ app.Context("viewer", viewer =>
             .AsMcpAppResource();
     });
 });
+// Produces: ui://viewer/session/{id}/attach
 ```
 
-This produces `ui://viewer/session/{id}/attach`. MCP URI templates keep the variable name but not the Repl route constraint, so `{id:int}` becomes `{id}` in the URI and is validated when Repl dispatches the resource read through the normal command pipeline.
+MCP URI templates keep the variable name but not the Repl route constraint (`{id:int}` → `{id}`). Validation happens at dispatch time.
 
-Pass an explicit URI only when you need a stable public URI that is decoupled from the route path:
-
-```csharp
-app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
-    .AsMcpAppResource("ui://contacts/summary");
-```
+Pass an explicit URI only when you need a stable public URI decoupled from the route path.
 
 ### Display preferences
 
-MCP Apps standard display modes are `inline`, `fullscreen`, and `pip`, but hosts decide what they support. Repl can express a preference:
+MCP Apps standard display modes are `inline`, `fullscreen`, and `pip`. Hosts decide what they support.
 
 ```csharp
 app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
@@ -328,9 +228,7 @@ app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
     .WithMcpAppDisplayMode(McpAppDisplayModes.Fullscreen);
 ```
 
-As of April 2026, VS Code renders MCP Apps inline only. Microsoft 365 Copilot declarative agents support fullscreen display requests for widgets. Other hosts vary; check [mcp-server.md](mcp-server.md#mcp-apps-host-compatibility) for the current compatibility notes.
-
-If the HTML uses the MCP Apps JavaScript bridge, it should still ask the host what is available before requesting a different display mode:
+If the HTML uses the MCP Apps JavaScript bridge, check host capabilities first:
 
 ```javascript
 const modes = app.getHostContext()?.availableDisplayModes ?? [];
@@ -339,24 +237,22 @@ if (modes.includes("fullscreen")) {
 }
 ```
 
-For host-specific hints that are not yet modeled by Repl, use simple string metadata:
+For host-specific hints not yet modeled by Repl:
 
 ```csharp
-app.Map("contacts dashboard", (IContactDb contacts) => BuildHtml(contacts))
-    .AsMcpAppResource()
-    .WithMcpAppUiMetadata("presentation", "flyout");
+.WithMcpAppUiMetadata("presentation", "flyout");
 ```
 
-### HTML now, assets later
+See [mcp-reference.md](mcp-reference.md#mcp-apps-host-compatibility) for host compatibility details.
 
-The v1 Repl API expects the UI resource handler to return generated HTML. This is enough for small cards, forms, and proof-of-concept dashboards.
+### WebAssembly UIs
 
-For WebAssembly UIs such as Uno-Wasm, the likely shape is:
+For WebAssembly UIs such as Uno-Wasm:
 
-1. Map a `ui://` app resource that returns a small HTML shell.
-2. Serve published static assets such as `embedded.js`, `_framework/*`, `.wasm`, fonts, and images from an HTTP endpoint.
-3. Inject the HTTP base URL into the generated shell.
-4. Set CSP metadata for asset and fetch domains.
+1. Map a `ui://` app resource that returns a small HTML shell
+2. Serve published static assets (`embedded.js`, `_framework/*`, `.wasm`, fonts) from an HTTP endpoint
+3. Inject the HTTP base URL into the generated shell
+4. Set CSP metadata for asset and fetch domains
 
 ```csharp
 var assetBaseUri = new Uri("http://127.0.0.1:5123/");
@@ -372,42 +268,32 @@ app.Map("contacts dashboard", () => BuildUnoShellHtml(assetBaseUri))
 
 Keep the shell and asset server host-aware: clients may preload or cache UI resources, and not every host supports every display mode or browser capability.
 
-## Troubleshooting patterns
+## Troubleshooting
 
-### My MCP App shows HTML text in the chat
+### New tools are not visible to the agent
 
-Use `.AsMcpAppResource()` on the HTML-producing command instead of linking a normal tool to raw HTML manually. Repl will return launcher text for tool calls and reserve the HTML for `resources/read`.
+- Check that your app calls `InvalidateRouting()` when the effective command graph changes
+- Check that the MCP client actually refreshes after `notifications/tools/list_changed`
+- Check whether your tool list is truly dynamic per session
+- If the client ignores dynamic tool refreshes, enable `DynamicToolCompatibilityMode.DiscoverAndCallShim`
 
-Also restart or reload the MCP server in the client. Some hosts cache tool lists and will not pick up MCP Apps metadata changes until the server is refreshed.
+### The agent does not see workspace roots
 
-### My MCP App does not open fullscreen
-
-Check whether the host supports fullscreen. VS Code currently renders MCP Apps inline only, even when Repl sets `preferredDisplayMode: McpAppDisplayModes.Fullscreen`.
-
-For hosts that support display mode changes, request fullscreen from inside the HTML app after checking host capabilities.
-
-### The agent doesn't see tools that should appear later
-
-Check:
-
-- Your app calls `InvalidateRouting()` when session-driven state changes
-- The client actually refreshes after `list_changed`
-- `DynamicToolCompatibility` is enabled if the client is weak on dynamic discovery
-
-If needed, see [mcp-server.md](mcp-server.md#troubleshooting) for the quick checklist and [mcp-internals.md](mcp-internals.md) for the behavior details.
-
-### The agent doesn't know which workspace to use
-
-Check:
-
-- Whether the client supports native roots
-- Whether a roots-aware tool can inspect `IMcpClientRoots`
-- Whether you need a soft-roots init tool
+- Check whether the client supports native roots
+- If not, add a soft-roots initialization tool (see [above](#soft-roots-fallback))
 
 ### My module predicate depends on roots but never activates
 
-Check:
+- Check whether the client actually advertises roots support
+- Consider using `await roots.GetAsync(...)` in a handler rather than only a predicate
+- Consider whether soft roots are a better fit for that client
 
-- Whether the client actually advertises roots support
-- Whether you need `await roots.GetAsync(...)` in a handler rather than only a predicate
-- Whether soft roots are a better fit for that client
+### My MCP App shows HTML text in the chat
+
+- Use `.AsMcpAppResource()` on the HTML-producing command — Repl returns launcher text for tool calls and reserves the HTML for `resources/read`
+- Restart or reload the MCP server in the client — some hosts cache tool lists
+
+### My MCP App does not open fullscreen
+
+- Check whether the host supports fullscreen (VS Code currently renders inline only)
+- For hosts that support display mode changes, request fullscreen from inside the HTML app after checking host capabilities

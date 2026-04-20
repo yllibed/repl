@@ -1,8 +1,10 @@
 # MCP Transports: Custom Transports and HTTP Integration
 
-This guide covers advanced transport and hosting scenarios beyond the default stdio transport.
-
-> **Prerequisite**: read [mcp-server.md](mcp-server.md) first for the basic setup.
+> **This page is for you if** you need WebSocket, named pipe, SSH, or HTTP transports instead of stdio.
+>
+> **Purpose:** Custom transport and HTTP hosting scenarios.
+> **Prerequisite:** [MCP overview](mcp-overview.md)
+> **Related:** [Reference](mcp-reference.md) · [Advanced patterns](mcp-advanced.md)
 
 ## Scenario A: Stdio-over-anything
 
