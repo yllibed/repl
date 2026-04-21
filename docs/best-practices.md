@@ -297,9 +297,10 @@ When Spectre owns the screen, treat that as a separate rendering surface. Use `I
 ```csharp
 app.Map("dashboard", static async (
     SpectreInteractionPresenter presenter,
+    IReplIoContext io,
     CancellationToken ct) =>
 {
-    using var capture = presenter.BeginCapture(Console.Error);
+    using var capture = presenter.BeginCapture(io.Error);
     await RunDashboardAsync(ct);
 });
 ```

@@ -86,14 +86,15 @@ If your command temporarily owns the terminal surface, do not mix that full-scre
 ```csharp
 app.Map("dashboard", static async (
     SpectreInteractionPresenter presenter,
+    IReplIoContext io,
     CancellationToken ct) =>
 {
-    using var capture = presenter.BeginCapture(Console.Error);
+    using var capture = presenter.BeginCapture(io.Error);
     await RunDashboardAsync(ct);
 });
 ```
 
-The `TextWriter` overload emits plain text only. Use it when a future TUI or live display manages the main screen and REPL feedback should go elsewhere.
+The `TextWriter` overload emits plain text only. In application handlers, prefer a session-aware sink such as `IReplIoContext.Error`. Reserve raw writers for host/tooling code that already owns the transport surface.
 
 You can also capture to a custom presenter:
 

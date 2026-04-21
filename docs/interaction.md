@@ -399,12 +399,13 @@ With `Repl.Spectre`, use `SpectreInteractionPresenter.BeginCapture(...)`:
 
 ```csharp
 var presenter = services.GetRequiredService<SpectreInteractionPresenter>();
+var io = services.GetRequiredService<IReplIoContext>();
 
-using var capture = presenter.BeginCapture(Console.Error);
+using var capture = presenter.BeginCapture(io.Error);
 await RunFullScreenDashboardAsync(cancellationToken);
 ```
 
-You can capture to any `IReplInteractionPresenter` or to a plain `TextWriter`. The `TextWriter` overload emits plain text only — no ANSI styling, no line rewriting, and no `OSC 9;4`.
+You can capture to any `IReplInteractionPresenter` or to a plain `TextWriter`. For application handlers, prefer a session-aware sink such as `IReplIoContext.Error` or a custom presenter registered by your host. The `TextWriter` overload emits plain text only — no ANSI styling, no line rewriting, and no `OSC 9;4`.
 
 ### Custom request types
 
@@ -571,9 +572,10 @@ When a command temporarily owns the terminal surface, capture interaction events
 ```csharp
 app.Map("dashboard", static async (
     SpectreInteractionPresenter presenter,
+    IReplIoContext io,
     CancellationToken ct) =>
 {
-    using var capture = presenter.BeginCapture(Console.Error);
+    using var capture = presenter.BeginCapture(io.Error);
     await RunDashboardAsync(ct);
 });
 ```
