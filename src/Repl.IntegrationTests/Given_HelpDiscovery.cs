@@ -1,4 +1,5 @@
 using ComponentDescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using Repl.Spectre;
 
 namespace Repl.IntegrationTests;
 
@@ -403,5 +404,47 @@ public sealed class Given_HelpDiscovery
 	{
 		Fast,
 		Slow,
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies Spectre help uses a dedicated renderer so command help keeps the expected sections.")]
+	public void When_RequestingCommandHelpInSpectre_Then_DedicatedHelpSectionsAreRendered()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map(
+			"render {target}",
+			([ComponentDescriptionAttribute("Target to render")] string target,
+				[ReplOption(Aliases = ["-m"])] HelpMode mode = HelpMode.Fast) => $"{target}:{mode}")
+			.WithDescription("Render a target")
+			.WithAlias("draw")
+			.WithAnswer("confirm", "Confirmation answer");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["render", "--help", "--spectre", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Usage");
+		output.Text.Should().Contain("Description");
+		output.Text.Should().Contain("Aliases");
+		output.Text.Should().Contain("Arguments");
+		output.Text.Should().Contain("Options");
+		output.Text.Should().Contain("Answers");
+		output.Text.Should().Contain("Render a target");
+		output.Text.Should().NotContain("\"scope\":");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --human overrides the Spectre default so the classic text help stays available.")]
+	public void When_RequestingHelpWithHumanAliasWhileSpectreIsDefault_Then_ClassicHelpIsRendered()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact list", () => "ok").WithDescription("List contacts");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help", "--human", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Global Commands:");
+		output.Text.Should().Contain("contact");
 	}
 }

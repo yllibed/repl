@@ -1,13 +1,14 @@
 # Repl.Spectre
 
-Spectre.Console integration for Repl Toolkit. Provides rich interactive prompts, injectable `IAnsiConsole`, and beautiful table rendering.
+Spectre.Console integration for Repl Toolkit. Provides rich interactive prompts, injectable `IAnsiConsole`, a lightweight Spectre output format, and an interaction presenter that can capture feedback during screen-owned flows.
 
 ## Features
 
 - **Rich prompts** — `SelectionPrompt`, `MultiSelectionPrompt`, `ConfirmationPrompt`, `TextPrompt`, and secret input via Spectre.Console
 - **IAnsiConsole injection** — use `IAnsiConsole` as a command parameter to render tables, trees, panels, and other Spectre renderables
-- **Table output** — the `"spectre"` output format renders collections as bordered Spectre tables with `[Display]` attribute support
+- **Lightweight output** — the `"spectre"` output format renders objects, results, help, and collections with less chrome than the default Spectre widgets
 - **Banner support** — inject `IAnsiConsole` into `WithBanner()` callbacks for rich startup banners (FigletText, Markup, etc.)
+- **Capture support** — `SpectreInteractionPresenter.BeginCapture(...)` redirects REPL feedback away from a screen-owned Spectre surface
 - **Configurable capabilities** — `SpectreConsoleOptions` to control Unicode rendering for different terminal environments
 
 ## Setup
@@ -15,7 +16,7 @@ Spectre.Console integration for Repl Toolkit. Provides rich interactive prompts,
 ```csharp
 var app = ReplApp.Create(services =>
 {
-    services.AddSpectreConsole(); // DI: IAnsiConsole + SpectreInteractionHandler
+    services.AddSpectreConsole(); // DI: IAnsiConsole + SpectreInteractionHandler + SpectreInteractionPresenter
 })
 .UseSpectreConsole(); // Output transformer + banner format + UTF-8 encoding
 ```
@@ -24,14 +25,14 @@ Two calls, two concerns:
 
 | Method | Scope | What it does |
 |--------|-------|-------------|
-| `AddSpectreConsole()` | `IServiceCollection` | Registers `IAnsiConsole` (transient) and `SpectreInteractionHandler` in DI |
-| `UseSpectreConsole()` | `ReplApp` | Registers `"spectre"` output transformer, sets it as default, enables banners, configures UTF-8 |
+| `AddSpectreConsole()` | `IServiceCollection` | Registers `IAnsiConsole`, `SpectreInteractionHandler`, and `SpectreInteractionPresenter` in DI |
+| `UseSpectreConsole()` | `ReplApp` | Registers `"spectre"` output transformer, sets it as default, adds `--spectre`, enables banners, configures UTF-8 |
 
 ## Usage
 
 ### Auto-rendered tables
 
-Return a collection from a command — the output transformer renders it as a bordered Spectre table:
+Return a collection from a command — the output transformer renders it as a lightweight Spectre table:
 
 ```csharp
 app.Map("list", (IContactStore store) => store.All());
@@ -54,6 +55,16 @@ app.Map("report", (IAnsiConsole console) =>
 
 Works with all Spectre renderables: `Table`, `Tree`, `Panel`, `BarChart`, `Calendar`, `FigletText`, `Progress`, `Status`, and more.
 
+### Format switching
+
+`UseSpectreConsole()` makes `spectre` the default output format. You can still switch per-command:
+
+- `--spectre` selects the Spectre renderer
+- `--human` switches back to the standard text renderer
+- `--output:<format>` remains the canonical selector
+
+`--help` respects the selected format as well, so `--spectre --help` uses Spectre help while `--human --help` returns the classic text help.
+
 ### Transparent prompt upgrade
 
 `IReplInteractionChannel` calls are automatically rendered as Spectre prompts:
@@ -67,6 +78,30 @@ Works with all Spectre renderables: `Table`, `Tree`, `Panel`, `BarChart`, `Calen
 | `AskSecretAsync` | `TextPrompt<string>.Secret()` |
 
 No Spectre-specific code in handlers — the same handler works with or without the Spectre package.
+
+### Capture feedback during screen-owned flows
+
+If your command temporarily owns the terminal surface, do not mix that full-screen/live Spectre rendering with regular REPL status/progress output on the same writer. Instead, capture interaction feedback explicitly:
+
+```csharp
+app.Map("dashboard", static async (
+    SpectreInteractionPresenter presenter,
+    CancellationToken ct) =>
+{
+    using var capture = presenter.BeginCapture(Console.Error);
+    await RunDashboardAsync(ct);
+});
+```
+
+The `TextWriter` overload emits plain text only. Use it when a future TUI or live display manages the main screen and REPL feedback should go elsewhere.
+
+You can also capture to a custom presenter:
+
+```csharp
+using var capture = presenter.BeginCapture(myPresenter);
+```
+
+This is the intended integration point for future TUI tooling.
 
 ### Banner with `IAnsiConsole`
 

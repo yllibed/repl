@@ -34,6 +34,7 @@ public sealed class OutputOptions
 		_aliases["yaml"] = "yaml";
 		_aliases["yml"] = "yaml";
 		_aliases["markdown"] = "markdown";
+		_aliases["human"] = "human";
 	}
 
 	/// <summary>

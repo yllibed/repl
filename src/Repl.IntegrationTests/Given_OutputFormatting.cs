@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Repl.Spectre;
 
 namespace Repl.IntegrationTests;
 
@@ -415,6 +416,43 @@ public sealed class Given_OutputFormatting
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("\"id\": 42");
 		output.Text.Should().NotContain("\u001b[");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies Spectre becomes the default output format and renders objects without boxed chrome.")]
+	public void When_UsingSpectreConsole_Then_ObjectOutputStaysLightweight()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact show", () => new Contact(42, "Alice"));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "show", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Id");
+		output.Text.Should().Contain("Name");
+		output.Text.Should().Contain("42");
+		output.Text.Should().Contain("Alice");
+		output.Text.Should().NotContain("╭");
+		output.Text.Should().NotContain("│");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --human remains available even when Spectre is the default output format.")]
+	public void When_UsingHumanAliasWithSpectreDefault_Then_ClassicHumanTransformerIsUsed()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact show", () => new Contact(42, "Alice"));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "show", "--human", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.TrimEnd().Should().Be(
+			string.Join(
+				Environment.NewLine,
+				"Id  : 42",
+				"Name: Alice"));
 	}
 
 	private sealed record Contact(int Id, string Name);

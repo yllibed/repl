@@ -15,6 +15,7 @@ The active output format is resolved in this order:
 | Format     | Description                          |
 |------------|--------------------------------------|
 | `human`    | Plain text, intended for terminals.  |
+| `spectre`  | Lightweight Spectre.Console rendering for terminals. |
 | `json`     | JSON serialization.                  |
 | `xml`      | XML serialization.                   |
 | `yaml`     | YAML serialization.                  |
@@ -22,7 +23,19 @@ The active output format is resolved in this order:
 
 ### Format aliases
 
-The alias `yml` resolves to `yaml`. Additional aliases can be registered.
+The built-in aliases are:
+
+- `--human` -> `human`
+- `--json` -> `json`
+- `--xml` -> `xml`
+- `--yaml` / `--yml` -> `yaml`
+- `--markdown` -> `markdown`
+
+When `Repl.Spectre` is enabled, it also registers:
+
+- `--spectre` -> `spectre`
+
+Additional aliases can be registered.
 
 ## Custom Transformers
 
@@ -68,6 +81,14 @@ The startup banner is controlled by:
 - **`--no-logo` flag** — suppresses the banner for the current invocation.
 
 The banner is only rendered when the active format is in the `BannerFormats` set and `BannerEnabled` is `true`.
+
+## Help output
+
+`--help` uses the active output format:
+
+1. `human` renders the classic text help.
+2. `spectre` renders dedicated Spectre help.
+3. Structured formats (`json`, `xml`, `yaml`, `markdown`) use the machine-readable help pipeline.
 
 ## Render Width
 

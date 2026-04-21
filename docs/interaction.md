@@ -289,6 +289,8 @@ var app = ReplApp.Create(services =>
 
 This enables third-party packages (e.g. Spectre.Console, Terminal.Gui, or GUI frameworks) to provide their own rendering without replacing the channel logic (validation, retry, prefill, timeout).
 
+If you use `Repl.Spectre`, the package now registers `SpectreInteractionPresenter` as the default presenter when no custom presenter already exists. That implementation wraps the built-in console behavior and also supports temporary capture for screen-owned flows.
+
 The presenter receives strongly-typed semantic events:
 
 | Event type              | When emitted                     |
@@ -382,6 +384,27 @@ public class SpectreInteractionHandler : IReplInteractionHandler
 | **Use case**          | Custom progress bars, styled text   | Spectre prompts, GUI dialogs, TUI        |
 
 Use a **presenter** when you only want to change how things look. Use a **handler** when you want to replace the entire interaction for a given request type.
+
+## Spectre and screen ownership
+
+`IAnsiConsole.Write(...)` is great for one-shot renderables, banners, and prompt-driven flows. It is not a good fit for a full-screen or continuously refreshed TUI if normal REPL feedback is still writing to the same terminal surface.
+
+In particular:
+
+- Do not mix a Spectre live display / full-screen surface with normal REPL status or progress output on the same writer.
+- `OSC 9;4` progress is terminal feedback for CLI-style execution, not a rendering primitive for TUIs.
+- If your app temporarily owns the screen, capture interaction output away from the main surface.
+
+With `Repl.Spectre`, use `SpectreInteractionPresenter.BeginCapture(...)`:
+
+```csharp
+var presenter = services.GetRequiredService<SpectreInteractionPresenter>();
+
+using var capture = presenter.BeginCapture(Console.Error);
+await RunFullScreenDashboardAsync(cancellationToken);
+```
+
+You can capture to any `IReplInteractionPresenter` or to a plain `TextWriter`. The `TextWriter` overload emits plain text only — no ANSI styling, no line rewriting, and no `OSC 9;4`.
 
 ### Custom request types
 
@@ -525,7 +548,37 @@ With this setup:
 - `AskConfirmationAsync` renders as a `ConfirmationPrompt`
 - `AskTextAsync` renders as a `TextPrompt<string>`
 - `AskSecretAsync` renders as a `TextPrompt<string>.Secret()`
-- Collections returned from handlers render as bordered Spectre tables
+- Collections returned from handlers render as lightweight Spectre tables
+
+### Output formats
+
+`UseSpectreConsole()` registers the `spectre` output format and makes it the default. You can still switch per-command:
+
+- `--spectre` selects the Spectre renderer
+- `--human` switches back to the standard text renderer
+- `--output:<format>` remains the canonical format selector
+
+`--help` respects the selected format:
+
+- `human` renders the classic text help
+- `spectre` renders dedicated Spectre help
+- `json/xml/yaml/markdown` keep the structured help pipeline
+
+### Presenter capture for future TUIs
+
+When a command temporarily owns the terminal surface, capture interaction events explicitly:
+
+```csharp
+app.Map("dashboard", static async (
+    SpectreInteractionPresenter presenter,
+    CancellationToken ct) =>
+{
+    using var capture = presenter.BeginCapture(Console.Error);
+    await RunDashboardAsync(ct);
+});
+```
+
+This is the intended integration point for future TUI tooling.
 
 Command handlers remain unchanged — the upgrade from built-in prompts to Spectre prompts is transparent.
 
