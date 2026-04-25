@@ -12,7 +12,7 @@ app.Options(o =>
 });
 ```
 
-See also: [Commands](commands.md) | [Shell Completion](shell-completion.md) | [Interaction](interaction.md)
+See also: [Commands](commands.md) | [Shell Completion](shell-completion.md) | [Interaction](interaction.md) | [Progress](progress.md)
 
 ## ReplOptions
 
@@ -136,6 +136,7 @@ These options are configured through `app.Options(...)`. Repl does not currently
 
 - `DefaultProgressLabel` (`string`, default: `"Progress"`) — Default label for progress indicators.
 - `ProgressTemplate` (`string`, default: `"{label}: {percent:0}%"`) — Progress display template. Supports placeholders: `{label}`, `{percent}`, `{percent:0}`, `{percent:0.0}`.
+- `AdvancedProgressMode` (`AdvancedProgressMode`, default: `Auto`) — Controls whether compatible hosts emit advanced terminal progress sequences. See [Progress](progress.md#advanced-terminal-progress).
 - `PromptFallback` (`PromptFallback`, default: `UseDefault`) — Behavior when interactive prompts are unavailable.
 
 ## ShellCompletionOptions

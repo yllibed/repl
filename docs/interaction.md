@@ -150,6 +150,8 @@ await channel.PressAnyKeyAsync("Press any key to continue...", cancellationToken
 
 ## Progress reporting
 
+This section summarizes the portable progress APIs. See [Progress](progress.md) for the full rendering model, `OSC 9;4` behavior, MCP mapping, and TUI guidance.
+
 Handlers inject `IProgress<T>` to report progress. The framework creates the appropriate adapter automatically.
 
 ### Simple percentage: `IProgress<double>`
