@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
@@ -447,6 +448,10 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		}
 		catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 		{
+			Trace.TraceInformation(
+				"Could not resolve console width for Spectre rendering. {0}: {1}",
+				ex.GetType().Name,
+				ex.Message);
 		}
 
 		return 120;

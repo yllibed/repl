@@ -50,6 +50,15 @@ public static class SpectreReplExtensions
 		app.Options(o =>
 		{
 			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer());
+			o.Output.AddHelpOutputFactory(
+				"spectre",
+				static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>
+					HelpTextBuilder.BuildRenderModel(
+						routes,
+						contexts,
+						scopeTokens,
+						parsingOptions,
+						ambientOptions));
 			if (!o.Output.TryResolveAlias("spectre", out _))
 			{
 				o.Output.AddAlias("spectre", "spectre");

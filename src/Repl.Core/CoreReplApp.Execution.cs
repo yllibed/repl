@@ -734,15 +734,16 @@ public sealed partial class CoreReplApp
 			return true;
 		}
 
-		if (string.Equals(requestedFormat, "spectre", StringComparison.OrdinalIgnoreCase))
-		{
-			var renderModel = HelpTextBuilder.BuildRenderModel(
+		if (_options.Output.TryBuildHelpOutput(
+				requestedFormat,
 				discoverableRoutes,
 				discoverableContexts,
 				globalOptions.RemainingTokens,
 				_options.Parsing,
-				_options.AmbientCommands);
-			return await RenderOutputAsync(renderModel, requestedFormat, cancellationToken).ConfigureAwait(false);
+				_options.AmbientCommands,
+				out var customHelpOutput))
+		{
+			return await RenderOutputAsync(customHelpOutput, requestedFormat, cancellationToken).ConfigureAwait(false);
 		}
 
 		var machineHelp = HelpTextBuilder.BuildModel(
