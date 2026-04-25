@@ -17,7 +17,7 @@ internal static partial class HelpTextBuilder
 		["--interactive", "Force interactive mode."],
 		["--no-interactive", "Prevent interactive mode."],
 		["--no-logo", "Disable banner rendering."],
-		["--output:<format>", "Set output format (for example human, json, yaml, xml, markdown, spectre)."],
+		["--output:<format>", "Set output format (for example human, json, yaml, xml, markdown)."],
 		["--human", "Select standard text output."],
 		["--answer:<name>[=value]", "Provide prompt answers in non-interactive execution."],
 	];

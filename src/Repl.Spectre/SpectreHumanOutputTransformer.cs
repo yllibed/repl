@@ -13,6 +13,19 @@ namespace Repl.Spectre;
 /// </summary>
 internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 {
+	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
+
+	public SpectreHumanOutputTransformer()
+		: this(DefaultResolveRenderSettings)
+	{
+	}
+
+	public SpectreHumanOutputTransformer(Func<HumanRenderSettings> resolveRenderSettings)
+	{
+		ArgumentNullException.ThrowIfNull(resolveRenderSettings);
+		_resolveRenderSettings = resolveRenderSettings;
+	}
+
 	/// <inheritdoc />
 	public string Name => "spectre";
 
@@ -37,7 +50,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		});
 	}
 
-	private static string RenderHelp(HelpRenderDocument help)
+	private string RenderHelp(HelpRenderDocument help)
 	{
 		if (help.IsCommandHelp)
 		{
@@ -77,7 +90,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return RenderToString(new Rows(sections));
 	}
 
-	private static string RenderSingleCommandHelp(HelpRenderCommand command)
+	private string RenderSingleCommandHelp(HelpRenderCommand command)
 	{
 		var sections = new List<IRenderable>
 		{
@@ -116,7 +129,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return RenderToString(new Rows(sections));
 	}
 
-	private static string RenderCommandList(IReadOnlyList<HelpRenderCommand> commands, string title)
+	private string RenderCommandList(IReadOnlyList<HelpRenderCommand> commands, string title)
 	{
 		var sections = new List<IRenderable>
 		{
@@ -126,7 +139,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return RenderToString(new Rows(sections));
 	}
 
-	private static string RenderReplResult(IReplResult result)
+	private string RenderReplResult(IReplResult result)
 	{
 		var statusMarkup = result.Kind.ToLowerInvariant() switch
 		{
@@ -153,7 +166,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		}));
 	}
 
-	private static string RenderEnumerable(System.Collections.IEnumerable enumerable)
+	private string RenderEnumerable(System.Collections.IEnumerable enumerable)
 	{
 		var items = enumerable.Cast<object?>().ToArray();
 		if (items.Length == 0)
@@ -185,7 +198,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return RenderToString(BuildObjectTable(items, members));
 	}
 
-	private static bool TryRenderObject(object value, out string text)
+	private bool TryRenderObject(object value, out string text)
 	{
 		var members = GetDisplayMembers(value.GetType());
 		if (members.Length == 0)
@@ -198,7 +211,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return true;
 	}
 
-	private static Grid BuildObjectGrid(object value, IReadOnlyList<DisplayMember> members)
+	private Grid BuildObjectGrid(object value, IReadOnlyList<DisplayMember> members)
 	{
 		var grid = new Grid();
 		grid.AddColumn(new GridColumn().NoWrap().PadRight(2));
@@ -304,7 +317,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		}
 	}
 
-	private static IRenderable RenderValueRenderable(
+	private IRenderable RenderValueRenderable(
 		object? value,
 		bool nested,
 		DisplayMember? member = null)
@@ -421,7 +434,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return lines;
 	}
 
-	private static string RenderToString(IRenderable renderable)
+	private string RenderToString(IRenderable renderable)
 	{
 #pragma warning disable MA0045
 		using var writer = new StringWriter();
@@ -431,7 +444,12 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return writer.ToString().TrimEnd();
 	}
 
-	private static int ResolveRenderWidth()
+	private int ResolveRenderWidth() => _resolveRenderSettings().Width;
+
+	private static HumanRenderSettings DefaultResolveRenderSettings() =>
+		new(ResolveFallbackRenderWidth(), UseAnsi: false, Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark));
+
+	private static int ResolveFallbackRenderWidth()
 	{
 		if (ReplSessionIO.WindowSize is { } size && size.Width > 0)
 		{

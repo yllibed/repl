@@ -49,7 +49,7 @@ public static class SpectreReplExtensions
 
 		app.Options(o =>
 		{
-			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer());
+			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer(o.Output.ResolveHumanRenderSettings));
 			o.Output.AddHelpOutputFactory(
 				"spectre",
 				static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>

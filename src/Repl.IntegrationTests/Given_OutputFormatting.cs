@@ -438,6 +438,33 @@ public sealed class Given_OutputFormatting
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies Spectre output uses configured render width so PreferredWidth applies consistently.")]
+	public void When_SpectreOutputAndPreferredRenderWidthIsConfigured_Then_TableRowsFitWithinWidth()
+	{
+		const int width = 36;
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Options(options =>
+		{
+			options.Output.PreferredWidth = width;
+			options.Output.FallbackWidth = width;
+		});
+		sut.Map("contact list", () => new[]
+		{
+			new ContactRow("Alice Martin", "alice.martin.super.long@example.com"),
+			new ContactRow("Bob Tremblay", "bob@example.com"),
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "list", "--no-logo"]));
+		var lines = output.Text
+			.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+		output.ExitCode.Should().Be(0);
+		lines.Should().OnlyContain(line => line.Length <= width);
+		output.Text.Should().Contain("ong@example.com");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies --human remains available even when Spectre is the default output format.")]
 	public void When_UsingHumanAliasWithSpectreDefault_Then_ClassicHumanTransformerIsUsed()
 	{

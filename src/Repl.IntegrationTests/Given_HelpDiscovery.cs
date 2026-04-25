@@ -22,6 +22,8 @@ public sealed class Given_HelpDiscovery
 		output.Text.Should().NotContain("debug");
 		output.Text.Should().Contain("Global Commands:");
 		output.Text.Should().Contain("help [path]");
+		output.Text.Should().Contain("human, json, yaml, xml, markdown");
+		output.Text.Should().NotContain("markdown, spectre");
 		output.Text.Should().NotContain("? [path]");
 		output.Text.Should().NotContain("history [--limit <n>]");
 		output.Text.Should().NotContain("complete --target <name>");
@@ -216,6 +218,23 @@ public sealed class Given_HelpDiscovery
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("contact list");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies interactive help uses the active output format so Spectre defaults are respected.")]
+	public void When_InteractiveHelpAndSpectreIsDefault_Then_SpectreHelpIsRendered()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole()
+			.UseDefaultInteractive();
+		sut.Map("contact list", () => "ok").WithDescription("List contacts");
+
+		var output = ConsoleCaptureHelper.CaptureWithInput("?\nexit\n", () => sut.Run(Array.Empty<string>()));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("contact");
+		output.Text.Should().Contain("Global Commands");
+		output.Text.Should().NotContain("Global Commands:");
 	}
 
 	[TestMethod]
