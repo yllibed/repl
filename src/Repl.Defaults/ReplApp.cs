@@ -690,6 +690,8 @@ public sealed class ReplApp : IReplApp
 		services.TryAddSingleton<IReplKeyReader, ConsoleKeyReader>();
 		services.TryAddSingleton<IReplSessionInfo, LiveSessionInfo>();
 		services.TryAddSingleton<IReplIoContext, LiveReplIoContext>();
+		services.TryAddSingleton(_ => core.OptionsSnapshot.Interaction);
+		services.TryAddSingleton(_ => core.OptionsSnapshot.Output);
 		services.TryAddSingleton<ITerminalInfo>(
 			_ => new ConsoleTerminalInfo(core.OptionsSnapshot.Output));
 		services.TryAddSingleton(_ => core.GlobalOptionsAccessor);

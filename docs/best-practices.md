@@ -292,4 +292,19 @@ Use Spectre.Console for rich UI — prompts auto-upgrade transparently:
 app.UseSpectreConsole();  // existing IReplInteractionChannel calls render as Spectre prompts
 ```
 
+When Spectre owns the screen, treat that as a separate rendering surface. Use `IAnsiConsole` for one-shot renderables and prompts, but do not mix a full-screen/live Spectre UI with regular REPL feedback on the same surface. If your app enters a TUI or live display flow, resolve `SpectreInteractionPresenter` from DI and capture interaction output for the duration of that scope:
+
+```csharp
+app.Map("dashboard", static async (
+    SpectreInteractionPresenter presenter,
+    IReplIoContext io,
+    CancellationToken ct) =>
+{
+    using var capture = presenter.BeginCapture(io.Error);
+    await RunDashboardAsync(ct);
+});
+```
+
+That keeps status/progress/problem events out of the main Spectre surface and avoids terminal control sequences fighting with your TUI.
+
 See also: [Modules](module-presence.md) | [Route System](route-system.md) | [MCP Overview](mcp-overview.md) | [Testing](testing-toolkit.md) | [Configuration](configuration-reference.md)

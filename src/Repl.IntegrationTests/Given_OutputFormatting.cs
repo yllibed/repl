@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Repl.Spectre;
 
 namespace Repl.IntegrationTests;
 
@@ -415,6 +416,70 @@ public sealed class Given_OutputFormatting
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("\"id\": 42");
 		output.Text.Should().NotContain("\u001b[");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies Spectre becomes the default output format and renders objects without boxed chrome.")]
+	public void When_UsingSpectreConsole_Then_ObjectOutputStaysLightweight()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact show", () => new Contact(42, "Alice"));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "show", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Id");
+		output.Text.Should().Contain("Name");
+		output.Text.Should().Contain("42");
+		output.Text.Should().Contain("Alice");
+		output.Text.Should().NotContain("╭");
+		output.Text.Should().NotContain("│");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies Spectre output uses configured render width so PreferredWidth applies consistently.")]
+	public void When_SpectreOutputAndPreferredRenderWidthIsConfigured_Then_TableRowsFitWithinWidth()
+	{
+		const int width = 36;
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Options(options =>
+		{
+			options.Output.PreferredWidth = width;
+			options.Output.FallbackWidth = width;
+		});
+		sut.Map("contact list", () => new[]
+		{
+			new ContactRow("Alice Martin", "alice.martin.super.long@example.com"),
+			new ContactRow("Bob Tremblay", "bob@example.com"),
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "list", "--no-logo"]));
+		var lines = output.Text
+			.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+		output.ExitCode.Should().Be(0);
+		lines.Should().OnlyContain(line => line.Length <= width);
+		output.Text.Should().Contain("ong@example.com");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies --human remains available even when Spectre is the default output format.")]
+	public void When_UsingHumanAliasWithSpectreDefault_Then_ClassicHumanTransformerIsUsed()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact show", () => new Contact(42, "Alice"));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "show", "--human", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.TrimEnd().Should().Be(
+			string.Join(
+				Environment.NewLine,
+				"Id  : 42",
+				"Name: Alice"));
 	}
 
 	private sealed record Contact(int Id, string Name);

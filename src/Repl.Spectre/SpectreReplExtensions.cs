@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Repl.Interaction;
 
 namespace Repl.Spectre;
 
@@ -18,6 +19,8 @@ public static class SpectreReplExtensions
 	public static IServiceCollection AddSpectreConsole(this IServiceCollection services)
 	{
 		ArgumentNullException.ThrowIfNull(services);
+		services.TryAddSingleton<SpectreInteractionPresenter>();
+		services.TryAddSingleton<IReplInteractionPresenter>(sp => sp.GetRequiredService<SpectreInteractionPresenter>());
 		services.AddSingleton<IReplInteractionHandler, SpectreInteractionHandler>();
 		services.TryAddTransient<IAnsiConsole>(_ => SessionAnsiConsole.Create());
 		return services;
@@ -46,7 +49,20 @@ public static class SpectreReplExtensions
 
 		app.Options(o =>
 		{
-			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer());
+			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer(o.Output.ResolveHumanRenderSettings));
+			o.Output.AddHelpOutputFactory(
+				"spectre",
+				static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>
+					HelpTextBuilder.BuildRenderModel(
+						routes,
+						contexts,
+						scopeTokens,
+						parsingOptions,
+						ambientOptions));
+			if (!o.Output.TryResolveAlias("spectre", out _))
+			{
+				o.Output.AddAlias("spectre", "spectre");
+			}
 			o.Output.DefaultFormat = "spectre";
 			o.Output.BannerFormats.Add("spectre");
 		});

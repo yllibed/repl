@@ -734,6 +734,18 @@ public sealed partial class CoreReplApp
 			return true;
 		}
 
+		if (_options.Output.TryBuildHelpOutput(
+				requestedFormat,
+				discoverableRoutes,
+				discoverableContexts,
+				globalOptions.RemainingTokens,
+				_options.Parsing,
+				_options.AmbientCommands,
+				out var customHelpOutput))
+		{
+			return await RenderOutputAsync(customHelpOutput, requestedFormat, cancellationToken).ConfigureAwait(false);
+		}
+
 		var machineHelp = HelpTextBuilder.BuildModel(
 			discoverableRoutes,
 			discoverableContexts,

@@ -11,6 +11,8 @@ public sealed class OutputOptions
 		new(StringComparer.OrdinalIgnoreCase);
 	private readonly Dictionary<string, string> _aliases =
 		new(StringComparer.OrdinalIgnoreCase);
+	private readonly Dictionary<string, HelpOutputFactory> _helpOutputFactories =
+		new(StringComparer.OrdinalIgnoreCase);
 	private Func<bool> _resolveHostAnsiSupport = static () => true;
 
 	/// <summary>
@@ -34,6 +36,7 @@ public sealed class OutputOptions
 		_aliases["yaml"] = "yaml";
 		_aliases["yml"] = "yaml";
 		_aliases["markdown"] = "markdown";
+		_aliases["human"] = "human";
 	}
 
 	/// <summary>
@@ -146,6 +149,35 @@ public sealed class OutputOptions
 
 	internal bool TryResolveAlias(string alias, out string format) =>
 		_aliases.TryGetValue(alias, out format!);
+
+	internal void AddHelpOutputFactory(string format, HelpOutputFactory factory)
+	{
+		format = string.IsNullOrWhiteSpace(format)
+			? throw new ArgumentException("Format cannot be empty.", nameof(format))
+			: format;
+		ArgumentNullException.ThrowIfNull(factory);
+
+		_helpOutputFactories[format] = factory;
+	}
+
+	internal bool TryBuildHelpOutput(
+		string format,
+		IReadOnlyList<RouteDefinition> routes,
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		ParsingOptions parsingOptions,
+		AmbientCommandOptions ambientOptions,
+		out object? output)
+	{
+		if (_helpOutputFactories.TryGetValue(format, out var factory))
+		{
+			output = factory(routes, contexts, scopeTokens, parsingOptions, ambientOptions);
+			return true;
+		}
+
+		output = null;
+		return false;
+	}
 
 	internal void SetHostAnsiSupportResolver(Func<bool> resolver)
 	{

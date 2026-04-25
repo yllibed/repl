@@ -282,9 +282,12 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		var token = inputTokens[0];
 		if (CoreReplApp.IsHelpToken(token))
 		{
-			var helpPath = scopeTokens.Concat(inputTokens.Skip(1)).ToArray();
-			var helpText = app.BuildHumanHelp(helpPath);
-			await ReplSessionIO.Output.WriteLineAsync(helpText).ConfigureAwait(false);
+			var helpTokens = scopeTokens.Concat(inputTokens.Skip(1)).ToArray();
+			var globalOptions = GlobalOptionParser.Parse(
+				helpTokens,
+				app.OptionsSnapshot.Output,
+				app.OptionsSnapshot.Parsing);
+			_ = await app.RenderHelpAsync(globalOptions, cancellationToken).ConfigureAwait(false);
 			return AmbientCommandOutcome.Handled;
 		}
 

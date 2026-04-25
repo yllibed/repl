@@ -63,27 +63,8 @@ internal static partial class HelpTextBuilder
 
 	private static string BuildArgumentSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
 	{
-		var dynamicSegments = route.Template.Segments.OfType<DynamicRouteSegment>().ToList();
-		if (dynamicSegments.Count == 0)
-		{
-			return string.Empty;
-		}
-
-		var handlerParams = route.Command.Handler.Method.GetParameters();
-		var rows = new List<string[]>();
-		foreach (var segment in dynamicSegments)
-		{
-			var param = handlerParams.FirstOrDefault(p =>
-				!string.IsNullOrWhiteSpace(p.Name)
-				&& string.Equals(p.Name, segment.Name, StringComparison.OrdinalIgnoreCase));
-			var desc = param?.GetCustomAttribute<DescriptionAttribute>()?.Description;
-			if (desc is not null)
-			{
-				rows.Add([FormatDynamicSegment(segment), desc]);
-			}
-		}
-
-		if (rows.Count == 0)
+		var rows = BuildArgumentRows(route);
+		if (rows.Length == 0)
 		{
 			return string.Empty;
 		}
@@ -97,8 +78,8 @@ internal static partial class HelpTextBuilder
 		{
 			builder.AppendLine();
 			builder.Append(useAnsi
-				? $"  {AnsiText.Apply(row[0], palette.CommandStyle)}  {AnsiText.Apply(row[1], palette.DescriptionStyle)}"
-				: $"  {row[0]}  {row[1]}");
+				? $"  {AnsiText.Apply(row.Name, palette.CommandStyle)}  {AnsiText.Apply(row.Description, palette.DescriptionStyle)}"
+				: $"  {row.Name}  {row.Description}");
 		}
 
 		return builder.ToString();
@@ -106,7 +87,8 @@ internal static partial class HelpTextBuilder
 
 	private static string BuildAnswerSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
 	{
-		if (route.Command.Answers.Count == 0)
+		var rows = BuildAnswerRows(route);
+		if (rows.Length == 0)
 		{
 			return string.Empty;
 		}
@@ -116,14 +98,12 @@ internal static partial class HelpTextBuilder
 		builder.Append(useAnsi
 			? AnsiText.Apply("Answers:", palette.SectionStyle)
 			: "Answers:");
-		foreach (var answer in route.Command.Answers)
+		foreach (var row in rows)
 		{
-			var token = $"--answer:{answer.Name}";
-			var desc = answer.Description ?? $"({answer.Type})";
 			builder.AppendLine();
 			builder.Append(useAnsi
-				? $"  {AnsiText.Apply(token, palette.CommandStyle)}  {AnsiText.Apply(desc, palette.DescriptionStyle)}"
-				: $"  {token}  {desc}");
+				? $"  {AnsiText.Apply(row.Name, palette.CommandStyle)}  {AnsiText.Apply(row.Description, palette.DescriptionStyle)}"
+				: $"  {row.Name}  {row.Description}");
 		}
 
 		return builder.ToString();
@@ -131,31 +111,7 @@ internal static partial class HelpTextBuilder
 
 	private static string BuildOptionSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
 	{
-		var parameters = route.Command.Handler.Method.GetParameters()
-			.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name))
-			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
-		var groupProperties = new Dictionary<string, (PropertyInfo Property, object DefaultInstance)>(StringComparer.OrdinalIgnoreCase);
-		foreach (var methodParam in route.Command.Handler.Method.GetParameters())
-		{
-			if (!Attribute.IsDefined(methodParam.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
-			{
-				continue;
-			}
-
-			var defaultInstance = CreateOptionsGroupDefault(methodParam.ParameterType);
-			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType)
-				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
-			{
-				groupProperties[prop.Name] = (prop, defaultInstance);
-			}
-		}
-
-		var optionRows = route.OptionSchema.Parameters.Values
-			.Where(parameter => parameter.Mode != ReplParameterMode.ArgumentOnly)
-			.Select(parameter => BuildOptionRow(route.OptionSchema, parameter, parameters, groupProperties))
-			.Where(row => row is not null)
-			.Select(row => row!)
-			.ToArray();
+		var optionRows = BuildOptionRows(route);
 		if (optionRows.Length == 0)
 		{
 			return string.Empty;
@@ -170,8 +126,8 @@ internal static partial class HelpTextBuilder
 		{
 			builder.AppendLine();
 			builder.Append(useAnsi
-				? $"  {AnsiText.Apply(row[0], palette.CommandStyle)}  {AnsiText.Apply(row[1], palette.DescriptionStyle)}"
-				: $"  {row[0]}  {row[1]}");
+				? $"  {AnsiText.Apply(row.Name, palette.CommandStyle)}  {AnsiText.Apply(row.Description, palette.DescriptionStyle)}"
+				: $"  {row.Name}  {row.Description}");
 		}
 
 		return builder.ToString();
@@ -235,6 +191,70 @@ internal static partial class HelpTextBuilder
 			: $"{tokenDisplay} {placeholder}";
 		var right = $"{description}{defaultValue}".Trim();
 		return [left, right];
+	}
+
+	private static HelpRenderEntry[] BuildArgumentRows(RouteDefinition route)
+	{
+		var dynamicSegments = route.Template.Segments.OfType<DynamicRouteSegment>().ToList();
+		if (dynamicSegments.Count == 0)
+		{
+			return [];
+		}
+
+		var handlerParams = route.Command.Handler.Method.GetParameters();
+		var rows = new List<HelpRenderEntry>();
+		foreach (var segment in dynamicSegments)
+		{
+			var param = handlerParams.FirstOrDefault(p =>
+				!string.IsNullOrWhiteSpace(p.Name)
+				&& string.Equals(p.Name, segment.Name, StringComparison.OrdinalIgnoreCase));
+			var desc = param?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+			if (desc is not null)
+			{
+				rows.Add(new HelpRenderEntry(FormatDynamicSegment(segment), desc));
+			}
+		}
+
+		return [.. rows];
+	}
+
+	private static HelpRenderEntry[] BuildAnswerRows(RouteDefinition route)
+	{
+		return [..
+			route.Command.Answers.Select(answer =>
+				new HelpRenderEntry(
+					$"--answer:{answer.Name}",
+					answer.Description ?? $"({answer.Type})")),
+		];
+	}
+
+	private static HelpRenderEntry[] BuildOptionRows(RouteDefinition route)
+	{
+		var parameters = route.Command.Handler.Method.GetParameters()
+			.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name))
+			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
+		var groupProperties = new Dictionary<string, (PropertyInfo Property, object DefaultInstance)>(StringComparer.OrdinalIgnoreCase);
+		foreach (var methodParam in route.Command.Handler.Method.GetParameters())
+		{
+			if (!Attribute.IsDefined(methodParam.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
+			{
+				continue;
+			}
+
+			var defaultInstance = CreateOptionsGroupDefault(methodParam.ParameterType);
+			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType)
+				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
+			{
+				groupProperties[prop.Name] = (prop, defaultInstance);
+			}
+		}
+
+		return route.OptionSchema.Parameters.Values
+			.Where(parameter => parameter.Mode != ReplParameterMode.ArgumentOnly)
+			.Select(parameter => BuildOptionRow(route.OptionSchema, parameter, parameters, groupProperties))
+			.Where(row => row is not null)
+			.Select(row => new HelpRenderEntry(row![0], row[1]))
+			.ToArray();
 	}
 
 	private static bool IsDefaultForType(object value, Type type)

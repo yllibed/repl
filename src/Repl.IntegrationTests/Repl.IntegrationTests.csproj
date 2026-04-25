@@ -13,6 +13,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Repl.Core\Repl.Core.csproj" />
 		<ProjectReference Include="..\Repl.Defaults\Repl.Defaults.csproj" />
+		<ProjectReference Include="..\Repl.Spectre\Repl.Spectre.csproj" />
 		<ProjectReference Include="..\Repl.Testing\Repl.Testing.csproj" />
 		<ProjectReference Include="..\Repl.ShellCompletionTestHost\Repl.ShellCompletionTestHost.csproj" ReferenceOutputAssembly="false" />
 	</ItemGroup>

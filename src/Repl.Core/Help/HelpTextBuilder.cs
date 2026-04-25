@@ -17,7 +17,8 @@ internal static partial class HelpTextBuilder
 		["--interactive", "Force interactive mode."],
 		["--no-interactive", "Prevent interactive mode."],
 		["--no-logo", "Disable banner rendering."],
-		["--output:<format>", "Set output format (for example json, yaml, xml, markdown)."],
+		["--output:<format>", "Set output format (for example human, json, yaml, xml, markdown)."],
+		["--human", "Select standard text output."],
 		["--answer:<name>[=value]", "Provide prompt answers in non-interactive execution."],
 	];
 
@@ -49,6 +50,46 @@ internal static partial class HelpTextBuilder
 			.ToArray();
 		var commands = BuildGroupedCommandModels(matchingRoutes, contexts, scopeTokens, parsingOptions);
 		return new HelpDocumentModel(scope, commands, DateTimeOffset.UtcNow);
+	}
+
+	public static HelpRenderDocument BuildRenderModel(
+		IReadOnlyList<RouteDefinition> routes,
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		ParsingOptions parsingOptions,
+		AmbientCommandOptions? ambientOptions = null)
+	{
+		ArgumentNullException.ThrowIfNull(routes);
+		ArgumentNullException.ThrowIfNull(contexts);
+		ArgumentNullException.ThrowIfNull(scopeTokens);
+		ArgumentNullException.ThrowIfNull(parsingOptions);
+
+		var visibleRoutes = routes
+			.Where(route => !route.Command.IsHidden)
+			.ToArray();
+		var scope = scopeTokens.Count == 0 ? "root" : string.Join(' ', scopeTokens);
+		if (TryGetCommandHelpRoutes(visibleRoutes, scopeTokens, parsingOptions, out var commandHelpRoutes))
+		{
+			return new HelpRenderDocument(
+				scope,
+				IsCommandHelp: true,
+				Commands: commandHelpRoutes.Select(CreateRenderCommand).ToArray(),
+				Scopes: [],
+				GlobalOptions: [],
+				GlobalCommands: []);
+		}
+
+		var effectiveAmbientOptions = ambientOptions ?? new AmbientCommandOptions();
+		var matchingRoutes = visibleRoutes
+			.Where(route => MatchesPrefix(route.Template, scopeTokens, parsingOptions))
+			.ToArray();
+		return new HelpRenderDocument(
+			scope,
+			IsCommandHelp: false,
+			Commands: BuildScopeCommandEntries(matchingRoutes, contexts, scopeTokens, parsingOptions),
+			Scopes: BuildScopeContextEntries(contexts, scopeTokens, parsingOptions),
+			GlobalOptions: BuildGlobalOptionEntries(parsingOptions),
+			GlobalCommands: BuildGlobalCommandEntries(effectiveAmbientOptions));
 	}
 
 	private static HelpCommandModel[] BuildGroupedCommandModels(
@@ -216,6 +257,83 @@ internal static partial class HelpTextBuilder
 			Usage: displayTemplate,
 			Aliases: route.Command.Aliases.ToArray());
 	}
+
+	private static HelpRenderCommand CreateRenderCommand(RouteDefinition route)
+	{
+		var displayTemplate = FormatRouteTemplate(route.Template);
+		return new HelpRenderCommand(
+			Name: displayTemplate,
+			Description: route.Command.Description ?? "No description.",
+			Usage: displayTemplate,
+			Aliases: route.Command.Aliases.ToArray(),
+			Arguments: BuildArgumentRows(route),
+			Options: BuildOptionRows(route),
+			Answers: BuildAnswerRows(route));
+	}
+
+	private static HelpRenderCommand[] BuildScopeCommandEntries(
+		RouteDefinition[] matchingRoutes,
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		ParsingOptions parsingOptions)
+	{
+		var nextIndex = scopeTokens.Count;
+		return matchingRoutes
+			.Where(route => route.Template.Segments.Count > nextIndex)
+			.GroupBy(route => route.Template.Segments[nextIndex].RawText, StringComparer.OrdinalIgnoreCase)
+			.OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+			.Select(group =>
+			{
+				var hasScopedContext = contexts.Any(context =>
+					MatchesPrefix(context.Template, scopeTokens, parsingOptions)
+					&& context.Template.Segments.Count > nextIndex
+					&& string.Equals(context.Template.Segments[nextIndex].RawText, group.Key, StringComparison.OrdinalIgnoreCase));
+				var hasTerminalCommand = group.Any(route => route.Template.Segments.Count == nextIndex + 1);
+				if (hasScopedContext && !hasTerminalCommand)
+				{
+					return null;
+				}
+
+				var display = hasTerminalCommand
+					? group.Key
+					: BuildScopedCommandDisplay(group, nextIndex, hasScopedContext);
+				var description = ResolveScopeDescription(group, contexts, scopeTokens, parsingOptions, nextIndex);
+				var usage = string.Join(' ', scopeTokens.Append(group.Key));
+				var aliases = group
+					.SelectMany(route => route.Command.Aliases)
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.ToArray();
+				return new HelpRenderCommand(
+					Name: display,
+					Description: description,
+					Usage: usage,
+					Aliases: aliases,
+					Arguments: [],
+					Options: [],
+					Answers: []);
+			})
+			.Where(command => command is not null)
+			.Select(command => command!)
+			.ToArray();
+	}
+
+	private static HelpRenderEntry[] BuildScopeContextEntries(
+		IReadOnlyList<ContextDefinition> contexts,
+		IReadOnlyList<string> scopeTokens,
+		ParsingOptions parsingOptions) =>
+		BuildScopeContextRows(contexts, scopeTokens, parsingOptions)
+			.Select(row => new HelpRenderEntry(row[0], row[1]))
+			.ToArray();
+
+	private static HelpRenderEntry[] BuildGlobalOptionEntries(ParsingOptions parsingOptions) =>
+		BuildGlobalOptionRows(parsingOptions)
+			.Select(row => new HelpRenderEntry(row[0], row[1]))
+			.ToArray();
+
+	private static HelpRenderEntry[] BuildGlobalCommandEntries(AmbientCommandOptions ambientOptions) =>
+		BuildGlobalCommandRows(ambientOptions)
+			.Select(row => new HelpRenderEntry(row[0], row[1]))
+			.ToArray();
 
 	private static RouteDefinition[] OrderCommandHelpRoutes(RouteDefinition[] routes) =>
 		routes
