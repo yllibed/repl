@@ -12,6 +12,7 @@ internal sealed class InvocationBindingContext(
 	IFormatProvider numericFormatProvider,
 	IServiceProvider serviceProvider,
 	InteractionOptions interactionOptions,
+	ImplicitServiceParameterRegistry implicitServiceParameters,
 	CancellationToken cancellationToken)
 {
 	public IReadOnlyDictionary<string, string> RouteValues { get; } = routeValues;
@@ -33,4 +34,7 @@ internal sealed class InvocationBindingContext(
 	public InteractionOptions InteractionOptions { get; } = interactionOptions;
 
 	public CancellationToken CancellationToken { get; } = cancellationToken;
+
+	public ImplicitServiceParameterRegistry ImplicitServiceParameters { get; } =
+		implicitServiceParameters ?? throw new ArgumentNullException(nameof(implicitServiceParameters));
 }

@@ -19,6 +19,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	private readonly List<RouteDefinition> _routes = [];
 	private readonly List<Func<ReplExecutionContext, ReplNext, ValueTask>> _middleware = [];
 	private readonly ReplOptions _options = new();
+	private readonly ImplicitServiceParameterRegistry _implicitServiceParameters = new();
 	private readonly List<ModuleRegistration> _moduleRegistrations = [];
 	private readonly Stack<int> _moduleMappingScope = new();
 	private int _nextModuleId = 1;
@@ -37,6 +38,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	internal string? Description => _description;
 	internal IGlobalOptionsAccessor GlobalOptionsAccessor => _globalOptionsSnapshot;
 	internal GlobalOptionsSnapshot GlobalOptionsSnapshotInstance => _globalOptionsSnapshot;
+	internal ImplicitServiceParameterRegistry ImplicitServiceParameters => _implicitServiceParameters;
 	internal ShellCompletionRuntime ShellCompletionRuntimeInstance => _shellCompletionRuntime;
 	internal IReplExecutionObserver? ExecutionObserver { get; set; }
 	internal List<ContextDefinition> Contexts => _contexts;
@@ -59,6 +61,12 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		MapModule(
 			new ShellCompletionModule(_shellCompletionRuntime),
 			static context => context.Channel is ReplRuntimeChannel.Cli or ReplRuntimeChannel.Interactive);
+	}
+
+	internal void RegisterGlobalOptionsType(Type optionsType)
+	{
+		ArgumentNullException.ThrowIfNull(optionsType);
+		_implicitServiceParameters.AddGlobalOptionsType(optionsType);
 	}
 
 	/// <summary>
@@ -172,7 +180,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				.Select(existingRoute => existingRoute.Template));
 
 		_commands.Add(command);
-		var optionSchema = OptionSchemaBuilder.Build(template, command, _options.Parsing);
+		var optionSchema = OptionSchemaBuilder.Build(template, command, _options.Parsing, _implicitServiceParameters);
 		var routeDefinition = new RouteDefinition(template, command, moduleId, optionSchema);
 		_routes.Add(routeDefinition);
 		InvalidateRouting();

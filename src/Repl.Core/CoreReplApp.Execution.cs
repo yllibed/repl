@@ -844,6 +844,7 @@ public sealed partial class CoreReplApp
 			_options.Parsing.NumericFormatProvider,
 			serviceProvider,
 			_options.Interaction,
+			_implicitServiceParameters,
 			cancellationToken);
 	}
 

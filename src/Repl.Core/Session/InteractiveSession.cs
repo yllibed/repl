@@ -545,6 +545,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			numericFormatProvider: app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture,
 			serviceProvider: serviceProvider,
 			interactionOptions: app.OptionsSnapshot.Interaction,
+			implicitServiceParameters: app.ImplicitServiceParameters,
 			cancellationToken: cancellationToken);
 		var arguments = HandlerArgumentBinder.Bind(command.Handler, bindingContext);
 		await CommandInvoker.InvokeAsync(command.Handler, arguments).ConfigureAwait(false);

@@ -117,16 +117,16 @@ public sealed class ParsingOptions
 	public void AddGlobalOption(string name, string constraintOrTypeName, string[]? aliases = null, string? defaultValue = null) =>
 		AddGlobalOptionCore(name, ResolveConstraintOrTypeName(constraintOrTypeName, _customRouteConstraints), aliases, defaultValue);
 
-	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue)
+	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue, Type? ownerType = null)
 	{
 		name = string.IsNullOrWhiteSpace(name)
 			? throw new ArgumentException("Global option name cannot be empty.", nameof(name))
 			: name.Trim();
 
 		var normalizedCanonical = NormalizeLongToken(name);
-		if (_globalOptions.ContainsKey(name))
+		if (_globalOptions.TryGetValue(name, out var existing))
 		{
-			throw new InvalidOperationException($"A global option named '{name}' is already registered.");
+			throw new InvalidOperationException(BuildDuplicateGlobalOptionMessage(name, existing.OwnerType, ownerType));
 		}
 
 		var normalizedAliases = (aliases ?? [])
@@ -141,7 +141,24 @@ public sealed class ParsingOptions
 			CanonicalToken: normalizedCanonical,
 			Aliases: normalizedAliases,
 			DefaultValue: defaultValue,
-			ValueType: valueType);
+			ValueType: valueType,
+			OwnerType: ownerType);
+	}
+
+	private static string BuildDuplicateGlobalOptionMessage(string name, Type? existingOwner, Type? newOwner)
+	{
+		if (existingOwner is null && newOwner is null)
+		{
+			return $"A global option named '{name}' is already registered.";
+		}
+
+		var existingSource = existingOwner is null
+			? "another registration"
+			: $"typed global options '{existingOwner.Name}'";
+		var newSource = newOwner is null
+			? "this registration"
+			: $"typed global options '{newOwner.Name}'";
+		return $"A global option named '{name}' is already registered by {existingSource} and cannot also be registered by {newSource}.";
 	}
 
 	private static Type ResolveConstraintOrTypeName(

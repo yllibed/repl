@@ -223,6 +223,20 @@ public sealed class Given_CommandBuilderEnrichment
 		arg.Description.Should().Be("Contact numeric id");
 	}
 
+	[TestMethod]
+	[Description("Verifies injected IGlobalOptionsAccessor parameters are omitted from documentation options.")]
+	public void When_HandlerUsesGlobalOptionsAccessor_Then_DocumentationOmitsAccessorOption()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("tenant"));
+		sut.Map("show", (IGlobalOptionsAccessor globals) => globals.GetValue<string>("tenant") ?? "none");
+
+		var model = sut.CreateDocumentationModel("show");
+
+		model.Commands.Should().ContainSingle(c => c.Path == "show").Which
+			.Options.Should().NotContain(option => option.Name == "globals");
+	}
+
 	// ── ReplRuntimeChannel.Programmatic ────────────────────────────────
 
 	[TestMethod]

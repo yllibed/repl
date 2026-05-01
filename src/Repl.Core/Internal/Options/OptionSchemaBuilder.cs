@@ -9,11 +9,13 @@ internal static class OptionSchemaBuilder
 	public static OptionSchema Build(
 		RouteTemplate template,
 		CommandBuilder command,
-		ParsingOptions parsingOptions)
+		ParsingOptions parsingOptions,
+		ImplicitServiceParameterRegistry implicitServiceParameters)
 	{
 		ArgumentNullException.ThrowIfNull(template);
 		ArgumentNullException.ThrowIfNull(command);
 		ArgumentNullException.ThrowIfNull(parsingOptions);
+		ArgumentNullException.ThrowIfNull(implicitServiceParameters);
 
 		var routeParameterNames = template.Segments
 			.OfType<DynamicRouteSegment>()
@@ -25,7 +27,7 @@ internal static class OptionSchemaBuilder
 		var groupPositionalPropertyNames = new List<string>();
 		foreach (var parameter in command.Handler.Method.GetParameters())
 		{
-			if (ShouldSkipSchemaParameter(parameter, routeParameterNames))
+			if (ShouldSkipSchemaParameter(parameter, routeParameterNames, implicitServiceParameters))
 			{
 				continue;
 			}
@@ -57,11 +59,29 @@ internal static class OptionSchemaBuilder
 
 	private static bool ShouldSkipSchemaParameter(
 		ParameterInfo parameter,
-		HashSet<string> routeParameterNames)
+		HashSet<string> routeParameterNames,
+		ImplicitServiceParameterRegistry implicitServiceParameters)
 	{
+		var optionAttribute = parameter.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
+		var argumentAttribute = parameter.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
+		if (implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out var globalOptionsType))
+		{
+			if (optionAttribute is not null || argumentAttribute is not null)
+			{
+				var attributeName = optionAttribute is not null
+					? nameof(ReplOptionAttribute).Replace("Attribute", string.Empty, StringComparison.Ordinal)
+					: nameof(ReplArgumentAttribute).Replace("Attribute", string.Empty, StringComparison.Ordinal);
+				throw new InvalidOperationException(
+					$"Parameter '{parameter.Name}' uses typed global options '{globalOptionsType.Name}' registered through "
+					+ $"UseGlobalOptions<T>() and cannot declare [{attributeName}]. Remove the attribute or use a separate command options type.");
+			}
+
+			return true;
+		}
+
 		if (string.IsNullOrWhiteSpace(parameter.Name)
 			|| parameter.ParameterType == typeof(CancellationToken)
-			|| IsFrameworkInjectedParameter(parameter)
+			|| implicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
 			|| parameter.GetCustomAttribute<FromContextAttribute>() is not null
 			|| parameter.GetCustomAttribute<FromServicesAttribute>() is not null)
 		{
@@ -73,8 +93,6 @@ internal static class OptionSchemaBuilder
 			return false;
 		}
 
-		var optionAttribute = parameter.GetCustomAttribute<ReplOptionAttribute>(inherit: true);
-		var argumentAttribute = parameter.GetCustomAttribute<ReplArgumentAttribute>(inherit: true);
 		if (optionAttribute is null && argumentAttribute is null)
 		{
 			return true;
@@ -189,19 +207,6 @@ internal static class OptionSchemaBuilder
 				InjectedValue: valueAlias.Value));
 		}
 	}
-
-	private static bool IsFrameworkInjectedParameter(ParameterInfo parameter) =>
-		parameter.ParameterType == typeof(IServiceProvider)
-		|| parameter.ParameterType == typeof(ICoreReplApp)
-		|| parameter.ParameterType == typeof(CoreReplApp)
-		|| parameter.ParameterType == typeof(IReplSessionState)
-		|| parameter.ParameterType == typeof(IReplInteractionChannel)
-		|| parameter.ParameterType == typeof(IReplIoContext)
-		|| parameter.ParameterType == typeof(IReplKeyReader)
-		|| string.Equals(parameter.ParameterType.FullName, "Repl.Mcp.IMcpClientRoots", StringComparison.Ordinal)
-		|| string.Equals(parameter.ParameterType.FullName, "Repl.Mcp.IMcpSampling", StringComparison.Ordinal)
-		|| string.Equals(parameter.ParameterType.FullName, "Repl.Mcp.IMcpElicitation", StringComparison.Ordinal)
-		|| string.Equals(parameter.ParameterType.FullName, "Repl.Mcp.IMcpFeedback", StringComparison.Ordinal);
 
 	private static ReplArity ResolveArity(ParameterInfo parameter, ReplOptionAttribute? optionAttribute)
 	{
