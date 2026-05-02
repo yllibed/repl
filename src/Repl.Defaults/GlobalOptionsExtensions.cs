@@ -24,26 +24,27 @@ public static class GlobalOptionsExtensions
 	{
 		ArgumentNullException.ThrowIfNull(app);
 
-		ParsingOptions? capturedParsing = null;
+		var parsing = app.Core.OptionsSnapshot.Parsing;
+		var properties = GetOptionProperties<T>();
 		app.Options(options =>
 		{
-			capturedParsing = options.Parsing;
 			var prototype = new T();
-			foreach (var property in GetOptionProperties<T>())
+			foreach (var property in properties)
 			{
 				var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
 				var name = optionAttr?.Name ?? ToKebabCase(property.Name);
 				var aliases = optionAttr?.Aliases;
 				var defaultValue = property.GetValue(prototype)?.ToString();
 
-				options.Parsing.AddGlobalOptionCore(name, property.PropertyType, aliases, defaultValue);
+				options.Parsing.AddGlobalOptionCore(name, property.PropertyType, aliases, defaultValue, typeof(T));
 			}
 		});
 
+		app.Core.RegisterGlobalOptionsType(typeof(T));
 		app.ServiceDescriptors.TryAddTransient(sp =>
 		{
 			var accessor = sp.GetRequiredService<IGlobalOptionsAccessor>();
-			return PopulateInstance<T>(accessor, capturedParsing!.NumericFormatProvider);
+			return PopulateInstance<T>(accessor, parsing.NumericFormatProvider);
 		});
 
 		return app;
@@ -74,10 +75,16 @@ public static class GlobalOptionsExtensions
 		return instance;
 	}
 
-	private static PropertyInfo[] GetOptionProperties<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>() =>
-		typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-			.Where(p => p.CanWrite)
-			.ToArray();
+	private static IReadOnlyList<PropertyInfo> GetOptionProperties<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>() =>
+		GlobalOptionsMetadata<T>.Properties;
+
+	private static class GlobalOptionsMetadata<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] T>
+	{
+		internal static readonly IReadOnlyList<PropertyInfo> Properties =
+			typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance)
+				.Where(p => p.CanWrite)
+				.ToArray();
+	}
 
 	private static string ToKebabCase(string pascalCase)
 	{

@@ -53,6 +53,19 @@ internal static class HandlerArgumentBinder
 				$"Unable to bind parameter '{parameter.Name}' ({parameter.ParameterType.Name}).");
 		}
 
+		if (context.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out var globalOptionsServiceType))
+		{
+			var globalOptions = context.ServiceProvider.GetService(globalOptionsServiceType);
+			if (globalOptions is not null)
+			{
+				return globalOptions;
+			}
+
+			throw new InvalidOperationException(
+				$"Unable to resolve typed global options parameter '{parameter.Name}' ({globalOptionsServiceType.Name}) from services. "
+				+ $"Ensure the type is registered through UseGlobalOptions<{globalOptionsServiceType.Name}>() before mapping commands.");
+		}
+
 #pragma warning disable IL2072
 		if (IsOptionsGroupParameter(parameter))
 		{

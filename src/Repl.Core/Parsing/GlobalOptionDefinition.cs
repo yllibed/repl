@@ -5,4 +5,5 @@ internal sealed record GlobalOptionDefinition(
 	string CanonicalToken,
 	IReadOnlyList<string> Aliases,
 	string? DefaultValue,
-	Type ValueType);
+	Type ValueType,
+	Type? OwnerType);

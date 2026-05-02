@@ -189,6 +189,7 @@ internal sealed class RoutingEngine(CoreReplApp app)
 			app.OptionsSnapshot.Parsing.NumericFormatProvider,
 			serviceProvider,
 			app.OptionsSnapshot.Interaction,
+			app.ImplicitServiceParameters,
 			cancellationToken);
 		var arguments = HandlerArgumentBinder.Bind(contextMatch.Context.Validation, bindingContext);
 		var validationResult = await CommandInvoker
@@ -340,6 +341,7 @@ internal sealed class RoutingEngine(CoreReplApp app)
 			numericFormatProvider: app.OptionsSnapshot.Parsing.NumericFormatProvider,
 			serviceProvider: serviceProvider,
 			interactionOptions: app.OptionsSnapshot.Interaction,
+			implicitServiceParameters: app.ImplicitServiceParameters,
 			cancellationToken: cancellationToken);
 		var arguments = HandlerArgumentBinder.Bind(banner, bindingContext);
 		var result = await CommandInvoker.InvokeAsync(banner, arguments).ConfigureAwait(false);

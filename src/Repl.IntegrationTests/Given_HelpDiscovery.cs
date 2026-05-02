@@ -417,6 +417,20 @@ public sealed class Given_HelpDiscovery
 		output.Text.Should().Contain("--verbose, --no-verbose");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies injected global-options accessor parameters are omitted from command help.")]
+	public void When_RequestingCommandHelpWithGlobalOptionsAccessor_Then_AccessorIsNotListedAsCommandOption()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("tenant"));
+		sut.Map("show", (IGlobalOptionsAccessor globals) => globals.GetValue<string>("tenant") ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["show", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().NotContain("--globals");
+	}
+
 	private static string SendHandler([ComponentDescriptionAttribute("Message to send to all watching sessions")] string message) => message;
 
 	private enum HelpMode

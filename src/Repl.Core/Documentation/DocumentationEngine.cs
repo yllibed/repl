@@ -238,7 +238,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 				!string.IsNullOrWhiteSpace(parameter.Name)
 				&& parameter.ParameterType != typeof(CancellationToken)
 				&& !routeParameterNames.Contains(parameter.Name!)
-				&& !IsFrameworkInjectedParameter(parameter.ParameterType)
+				&& !app.ImplicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
 				&& parameter.GetCustomAttribute<FromServicesAttribute>() is null
 				&& parameter.GetCustomAttribute<FromContextAttribute>() is null
 				&& !Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
@@ -297,19 +297,6 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			?? assembly.GetCustomAttribute<AssemblyDescriptionAttribute>()?.Description;
 		return new ReplDocApp(name, version, description);
 	}
-
-	private static bool IsFrameworkInjectedParameter(Type parameterType) =>
-		parameterType == typeof(IServiceProvider)
-		|| parameterType == typeof(ICoreReplApp)
-		|| parameterType == typeof(CoreReplApp)
-		|| parameterType == typeof(IReplSessionState)
-		|| parameterType == typeof(IReplInteractionChannel)
-		|| parameterType == typeof(IReplIoContext)
-		|| parameterType == typeof(IReplKeyReader)
-		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpClientRoots", StringComparison.Ordinal)
-		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpSampling", StringComparison.Ordinal)
-		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpElicitation", StringComparison.Ordinal)
-		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpFeedback", StringComparison.Ordinal);
 
 	private static bool IsRequiredParameter(ParameterInfo parameter)
 	{

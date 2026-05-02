@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using Repl.Parameters;
 
 namespace Repl.IntegrationTests;
 
@@ -96,6 +97,101 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
+	[Description("UseGlobalOptions<T> handler parameters are injected from DI even when the parameter name matches a global option.")]
+	public void When_TypedGlobalOptionsParameterNameMatchesGlobalOption_Then_HandlerReceivesDiInstance()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+		sut.Map("show", (TestGlobalOptions tenant) => tenant.Tenant ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "acme", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("acme");
+		output.Text.Should().NotContain("Ambiguous option");
+	}
+
+	[TestMethod]
+	[Description("UseGlobalOptions<T> supports handler parameters typed as an implemented options interface.")]
+	public void When_TypedGlobalOptionsParameterUsesImplementedInterface_Then_HandlerReceivesDiInstance()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<InterfaceGlobalOptions>();
+		sut.Map("show", (IInterfaceGlobalOptions tenant) => tenant.Tenant ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "acme", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("acme");
+		output.Text.Should().NotContain("Ambiguous option");
+	}
+
+	[TestMethod]
+	[Description("UseGlobalOptions<T> rejects command binding attributes on typed global-options parameters.")]
+	public void When_TypedGlobalOptionsParameterDeclaresReplOption_Then_MappingFailsClearly()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+
+		var act = () => sut.Map(
+			"show",
+			([ReplOption(Name = "tenant")] TestGlobalOptions options) => options.Tenant ?? "none");
+
+		var exception = act.Should().Throw<InvalidOperationException>().Which;
+		exception.Message.Should().Contain("UseGlobalOptions");
+		exception.Message.Should().Contain(nameof(TestGlobalOptions));
+		exception.Message.Should().Contain("ReplOption");
+	}
+
+	[TestMethod]
+	[Description("UseGlobalOptions<T> rejects positional binding attributes on typed global-options parameters.")]
+	public void When_TypedGlobalOptionsParameterDeclaresReplArgument_Then_MappingFailsClearly()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+
+		var act = () => sut.Map(
+			"show",
+			([ReplArgument] TestGlobalOptions options) => options.Tenant ?? "none");
+
+		var exception = act.Should().Throw<InvalidOperationException>().Which;
+		exception.Message.Should().Contain("UseGlobalOptions");
+		exception.Message.Should().Contain(nameof(TestGlobalOptions));
+		exception.Message.Should().Contain("ReplArgument");
+	}
+
+	[TestMethod]
+	[Description("UseGlobalOptions<T> reports typed-options DI registration issues with actionable diagnostics.")]
+	public void When_TypedGlobalOptionsServiceIsMissing_Then_RuntimeErrorMentionsUseGlobalOptions()
+	{
+		var sut = CoreReplApp.Create();
+		sut.RegisterGlobalOptionsType(typeof(MissingServiceGlobalOptions));
+		sut.Map("show", (MissingServiceGlobalOptions options) => options.Tenant ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("UseGlobalOptions");
+		output.Text.Should().Contain(nameof(MissingServiceGlobalOptions));
+	}
+
+	[TestMethod]
+	[Description("UseGlobalOptions<T> duplicate property names report the typed options classes involved.")]
+	public void When_TypedGlobalOptionsPropertyNamesCollide_Then_ErrorMentionsBothTypes()
+	{
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+
+		var act = () => sut.UseGlobalOptions<DuplicateTenantGlobalOptions>();
+
+		act.Should().Throw<InvalidOperationException>()
+			.WithMessage("*tenant*TestGlobalOptions*DuplicateTenantGlobalOptions*");
+	}
+
+	[TestMethod]
 	[Description("UseGlobalOptions<T> properties without values keep defaults.")]
 	public void When_UsingTypedGlobalOptionsWithoutValues_Then_DefaultsAreKept()
 	{
@@ -157,7 +253,7 @@ public sealed class Given_GlobalOptionsAccessor
 
 	[TestMethod]
 	[Description("UseGlobalOptions<T> returns fresh values on each resolution (not stale singleton).")]
-	public async Task When_TypedOptionsResolvedMultipleTimes_Then_ReflectsLatestValues()
+	public void When_TypedOptionsResolvedMultipleTimes_Then_ReflectsLatestValues()
 	{
 		var sut = ReplApp.Create();
 		sut.UseGlobalOptions<TestGlobalOptions>();
@@ -208,15 +304,6 @@ public sealed class Given_GlobalOptionsAccessor
 		{
 			System.Globalization.CultureInfo.CurrentCulture = previousCulture;
 		}
-	}
-
-	private sealed record TenantConfig(string Name);
-
-	private sealed class TestGlobalOptions
-	{
-		public string? Tenant { get; set; }
-
-		public int Port { get; set; } = 8080;
 	}
 
 	[TestMethod]
@@ -294,5 +381,34 @@ public sealed class Given_GlobalOptionsAccessor
 	private sealed class AcronymGlobalOptions
 	{
 		public int XMLPort { get; set; }
+	}
+
+	private sealed record TenantConfig(string Name);
+
+	private sealed class TestGlobalOptions
+	{
+		public string? Tenant { get; set; }
+
+		public int Port { get; set; } = 8080;
+	}
+
+	private interface IInterfaceGlobalOptions
+	{
+		string? Tenant { get; }
+	}
+
+	private sealed class InterfaceGlobalOptions : IInterfaceGlobalOptions
+	{
+		public string? Tenant { get; set; }
+	}
+
+	private sealed class MissingServiceGlobalOptions
+	{
+		public string? Tenant { get; set; }
+	}
+
+	private sealed class DuplicateTenantGlobalOptions
+	{
+		public string? Tenant { get; set; }
 	}
 }
