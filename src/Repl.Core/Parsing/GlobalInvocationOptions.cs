@@ -13,6 +13,8 @@ internal sealed record GlobalInvocationOptions(
 
 	public string? OutputFormat { get; init; }
 
+	public ResultFlowInvocationOptions ResultFlow { get; init; } = new();
+
 	public IReadOnlyDictionary<string, string> PromptAnswers { get; init; } =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 

@@ -68,6 +68,12 @@ internal static class GlobalOptionParser
 				continue;
 			}
 
+			if (TryParseResultFlowOption(args, ref index, argument, optionComparison, options.ResultFlow, out var resultFlow))
+			{
+				options = options with { ResultFlow = resultFlow };
+				continue;
+			}
+
 			if (TryParsePromptAnswer(argument, promptAnswers))
 			{
 				continue;
@@ -142,6 +148,96 @@ internal static class GlobalOptionParser
 
 		return true;
 	}
+
+	private static bool TryParseResultFlowOption(
+		IReadOnlyList<string> args,
+		ref int index,
+		string argument,
+		StringComparison comparison,
+		ResultFlowInvocationOptions current,
+		out ResultFlowInvocationOptions resultFlow)
+	{
+		const string prefix = "--result:";
+		resultFlow = current;
+		if (!argument.StartsWith(prefix, comparison))
+		{
+			return false;
+		}
+
+		var token = argument[prefix.Length..];
+		if (TrySplitToken(token, '=', out var name, out var inlineValue)
+			|| TrySplitToken(token, ':', out name, out inlineValue))
+		{
+			return ApplyResultFlowOption(name, inlineValue, current, out resultFlow);
+		}
+
+		if (string.Equals(token, "all", comparison))
+		{
+			resultFlow = current with { AllRequested = true };
+			return true;
+		}
+
+		if (RequiresResultFlowValue(token, comparison)
+			&& index + 1 < args.Count
+			&& !args[index + 1].StartsWith('-'))
+		{
+			index++;
+			return ApplyResultFlowOption(token, args[index], current, out resultFlow);
+		}
+
+		return ApplyResultFlowOption(token, "true", current, out resultFlow);
+	}
+
+	private static bool ApplyResultFlowOption(
+		string name,
+		string value,
+		ResultFlowInvocationOptions current,
+		out ResultFlowInvocationOptions resultFlow)
+	{
+		resultFlow = current;
+		if (string.Equals(name, "page-size", StringComparison.OrdinalIgnoreCase))
+		{
+			if (int.TryParse(
+				value,
+				System.Globalization.NumberStyles.Integer,
+				System.Globalization.CultureInfo.InvariantCulture,
+				out var pageSize))
+			{
+				resultFlow = current with { PageSize = pageSize };
+			}
+
+			return true;
+		}
+
+		if (string.Equals(name, "cursor", StringComparison.OrdinalIgnoreCase))
+		{
+			resultFlow = current with { Cursor = value };
+			return true;
+		}
+
+		if (string.Equals(name, "pager", StringComparison.OrdinalIgnoreCase))
+		{
+			if (Enum.TryParse<ReplPagerMode>(value, ignoreCase: true, out var mode))
+			{
+				resultFlow = current with { PagerMode = mode };
+			}
+
+			return true;
+		}
+
+		if (string.Equals(name, "all", StringComparison.OrdinalIgnoreCase))
+		{
+			resultFlow = current with { AllRequested = !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) };
+			return true;
+		}
+
+		return false;
+	}
+
+	private static bool RequiresResultFlowValue(string token, StringComparison comparison) =>
+		string.Equals(token, "page-size", comparison)
+		|| string.Equals(token, "cursor", comparison)
+		|| string.Equals(token, "pager", comparison);
 
 	private static Dictionary<string, string> BuildCustomTokenMap(
 		IReadOnlyDictionary<string, GlobalOptionDefinition> definitions,

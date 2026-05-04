@@ -831,6 +831,7 @@ public sealed partial class CoreReplApp
 		CancellationToken cancellationToken)
 	{
 		var contextValues = BuildContextHierarchyValues(match.Route.Template, matchedPathTokens, contexts);
+		contextValues.Add(CreatePagingContext(globalOptions));
 		var mergedNamedOptions = MergeNamedOptions(
 			parsedOptions.NamedOptions,
 			globalOptions.CustomGlobalNamedOptions);
@@ -846,6 +847,69 @@ public sealed partial class CoreReplApp
 			_options.Interaction,
 			_implicitServiceParameters,
 			cancellationToken);
+	}
+
+	private ReplPagingContext CreatePagingContext(GlobalInvocationOptions globalOptions)
+	{
+		var surface = ResolveResultSurface();
+		var visibleRows = ResolveVisibleRowCapacityHint(surface);
+		return new ReplPagingContext(
+			_options.Output.ResultFlow,
+			globalOptions.ResultFlow,
+			surface,
+			visibleRows);
+	}
+
+	private ReplResultSurface ResolveResultSurface()
+	{
+		if (ReplSessionIO.IsProgrammatic)
+		{
+			return ReplResultSurface.Programmatic;
+		}
+
+		if (_runtimeState.Value?.IsInteractiveSession == true)
+		{
+			return ReplResultSurface.Interactive;
+		}
+
+		if (ReplSessionIO.IsHostedSession)
+		{
+			return ReplResultSurface.Hosted;
+		}
+
+		return Console.IsOutputRedirected
+			? ReplResultSurface.Redirected
+			: ReplResultSurface.Console;
+	}
+
+	private int? ResolveVisibleRowCapacityHint(ReplResultSurface surface)
+	{
+		if (surface is ReplResultSurface.Redirected or ReplResultSurface.Programmatic)
+		{
+			return null;
+		}
+
+		var height = ReplSessionIO.WindowSize?.Height ?? TryGetConsoleWindowHeight();
+		if (height is not > 0)
+		{
+			return null;
+		}
+
+		var reservedRows = Math.Max(0, _options.Output.ResultFlow.ReservedVisibleRows);
+		return Math.Max(1, height.Value - reservedRows);
+	}
+
+	private static int? TryGetConsoleWindowHeight()
+	{
+		try
+		{
+			var height = Console.WindowHeight;
+			return height > 0 ? height : null;
+		}
+		catch
+		{
+			return null;
+		}
 	}
 
 	private static bool TryFindGlobalCommandOptionCollision(

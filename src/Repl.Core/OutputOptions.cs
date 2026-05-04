@@ -91,6 +91,11 @@ public sealed class OutputOptions
 	public int FallbackWidth { get; set; } = 120;
 
 	/// <summary>
+	/// Gets result-flow options for paging and large result sets.
+	/// </summary>
+	public ResultFlowOptions ResultFlow { get; } = new();
+
+	/// <summary>
 	/// Gets JSON serializer options used by the JSON transformer.
 	/// </summary>
 	public JsonSerializerOptions JsonSerializerOptions { get; }

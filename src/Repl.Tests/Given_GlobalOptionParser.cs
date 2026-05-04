@@ -105,4 +105,21 @@ public sealed class Given_GlobalOptionParser
 		parsed.RemainingTokens.Should().Equal("deploy");
 		parsed.CustomGlobalNamedOptions["verbose"].Should().ContainSingle().Which.Should().Be("false");
 	}
+
+	[TestMethod]
+	[Description("Result-flow global options are consumed before command parsing and stored separately from custom global options.")]
+	public void When_ResultFlowOptionsArePresent_Then_ParserConsumesThemIntoResultFlow()
+	{
+		var parsed = GlobalOptionParser.Parse(
+			["users", "list", "--result:page-size=25", "--result:cursor", "abc", "--result:all", "--result:pager=off"],
+			new OutputOptions(),
+			new ParsingOptions());
+
+		parsed.RemainingTokens.Should().Equal("users", "list");
+		parsed.CustomGlobalNamedOptions.Should().BeEmpty();
+		parsed.ResultFlow.PageSize.Should().Be(25);
+		parsed.ResultFlow.Cursor.Should().Be("abc");
+		parsed.ResultFlow.AllRequested.Should().BeTrue();
+		parsed.ResultFlow.PagerMode.Should().Be(ReplPagerMode.Off);
+	}
 }

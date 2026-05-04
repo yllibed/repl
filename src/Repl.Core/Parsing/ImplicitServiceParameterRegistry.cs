@@ -60,6 +60,7 @@ internal sealed class ImplicitServiceParameterRegistry
 		|| parameterType == typeof(IReplInteractionChannel)
 		|| parameterType == typeof(IReplIoContext)
 		|| parameterType == typeof(IReplKeyReader)
+		|| parameterType == typeof(IReplPagingContext)
 		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpClientRoots", StringComparison.Ordinal)
 		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpSampling", StringComparison.Ordinal)
 		|| string.Equals(parameterType.FullName, "Repl.Mcp.IMcpElicitation", StringComparison.Ordinal)
