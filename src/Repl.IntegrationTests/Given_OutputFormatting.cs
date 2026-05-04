@@ -539,6 +539,30 @@ public sealed class Given_OutputFormatting
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies Spectre renders paged result pages with continuation metadata.")]
+	public void When_SpectreOutputAndPagedResult_Then_ItemsAndContinuationAreRendered()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.Page(
+				new[]
+				{
+					new ContactRow("Alice Martin", "alice@example.com"),
+				},
+				nextCursor: "page-2",
+				totalCount: 2));
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["contact", "list", "--result:page-size=1", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Alice Martin");
+		output.Text.Should().Contain("Showing 1 of 2.");
+		output.Text.Should().Contain("--result:cursor page-2");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies --human remains available even when Spectre is the default output format.")]
 	public void When_UsingHumanAliasWithSpectreDefault_Then_ClassicHumanTransformerIsUsed()
 	{

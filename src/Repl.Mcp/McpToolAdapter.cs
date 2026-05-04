@@ -145,12 +145,77 @@ internal sealed partial class McpToolAdapter
 				output = exitCode == 0 ? "OK" : $"Command failed with exit code {exitCode}.";
 			}
 
+			return BuildToolResult(output, exitCode);
+		}
+	}
+
+	private static CallToolResult BuildToolResult(string output, int exitCode)
+	{
+		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
+		{
 			return new CallToolResult
 			{
-				Content = [new TextContentBlock { Text = output }],
-				IsError = exitCode != 0,
+				Content = [new TextContentBlock { Text = summary }],
+				StructuredContent = structuredContent,
+				IsError = false,
 			};
 		}
+
+		return new CallToolResult
+		{
+			Content = [new TextContentBlock { Text = output }],
+			IsError = exitCode != 0,
+		};
+	}
+
+	private static bool TryCreatePagedStructuredResult(
+		string output,
+		out JsonElement structuredContent,
+		out string summary)
+	{
+		structuredContent = default;
+		summary = string.Empty;
+		try
+		{
+			using var document = JsonDocument.Parse(output);
+			var root = document.RootElement;
+			if (root.ValueKind != JsonValueKind.Object
+				|| !root.TryGetProperty("items", out var items)
+				|| items.ValueKind != JsonValueKind.Array
+				|| !root.TryGetProperty("pageInfo", out var pageInfo)
+				|| pageInfo.ValueKind != JsonValueKind.Object)
+			{
+				return false;
+			}
+
+			structuredContent = root.Clone();
+			summary = BuildPagedSummary(items.GetArrayLength(), pageInfo);
+			return true;
+		}
+		catch (JsonException)
+		{
+			return false;
+		}
+	}
+
+	private static string BuildPagedSummary(int count, JsonElement pageInfo)
+	{
+		var summary = $"Returned {count.ToString(System.Globalization.CultureInfo.InvariantCulture)} item(s).";
+		if (pageInfo.TryGetProperty("totalCount", out var totalCount)
+			&& totalCount.ValueKind == JsonValueKind.Number
+			&& totalCount.TryGetInt64(out var total))
+		{
+			summary += $" Total: {total.ToString(System.Globalization.CultureInfo.InvariantCulture)}.";
+		}
+
+		if (pageInfo.TryGetProperty("nextCursor", out var nextCursor)
+			&& nextCursor.ValueKind == JsonValueKind.String
+			&& !string.IsNullOrWhiteSpace(nextCursor.GetString()))
+		{
+			summary += $" Continue with {McpResultFlowArgumentNames.Cursor}={nextCursor.GetString()}.";
+		}
+
+		return summary;
 	}
 
 	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
@@ -159,6 +224,7 @@ internal sealed partial class McpToolAdapter
 	{
 		var stringArgs = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 		var prefills = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		var resultFlowTokens = new List<string>();
 
 		foreach (var (key, value) in arguments)
 		{
@@ -170,13 +236,25 @@ internal sealed partial class McpToolAdapter
 			{
 				prefills[key["answer.".Length..]] = strValue;
 			}
+			else if (string.Equals(key, McpResultFlowArgumentNames.Cursor, StringComparison.Ordinal))
+			{
+				resultFlowTokens.Add("--result:cursor");
+				resultFlowTokens.Add(strValue);
+			}
+			else if (string.Equals(key, McpResultFlowArgumentNames.PageSize, StringComparison.Ordinal))
+			{
+				resultFlowTokens.Add("--result:page-size");
+				resultFlowTokens.Add(strValue);
+			}
 			else
 			{
 				stringArgs[key] = strValue;
 			}
 		}
 
-		return (ReconstructTokens(routePath, stringArgs), prefills);
+		var tokens = ReconstructTokens(routePath, stringArgs);
+		tokens.InsertRange(0, resultFlowTokens);
+		return (tokens, prefills);
 	}
 
 	/// <summary>

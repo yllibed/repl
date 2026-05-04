@@ -51,6 +51,10 @@ public sealed class Given_McpServerEndToEnd
 			.Should().Be("string");
 		schema.GetProperty("properties").GetProperty("id").GetProperty("format").GetString()
 			.Should().Be("uuid");
+		schema.GetProperty("properties").TryGetProperty("_replCursor", out _)
+			.Should().BeTrue("MCP tools should expose Repl continuation cursors for paged data");
+		schema.GetProperty("properties").TryGetProperty("_replPageSize", out _)
+			.Should().BeTrue("MCP tools should expose Repl page sizing for large data");
 		schema.GetProperty("required")[0].GetString()
 			.Should().Be("id");
 	}
@@ -72,6 +76,44 @@ public sealed class Given_McpServerEndToEnd
 		var textBlock = result.Content.OfType<TextContentBlock>().FirstOrDefault();
 		textBlock.Should().NotBeNull("the tool call should produce text content");
 		textBlock!.Text.Should().Contain("Hello, Alice!");
+	}
+
+	[TestMethod]
+	[Description("tools/call returns paged results as structured content with a continuation summary.")]
+	public async Task When_ToolsCallReturnsPagedResult_Then_StructuredContentContainsPageInfo()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.Map("contacts", (IReplPagingContext paging) =>
+				paging.Page(
+					new[]
+					{
+						new ContactDto(1, "Alice"),
+					},
+					nextCursor: "page-2",
+					totalCount: 2))
+				.ReadOnly();
+		});
+
+		var result = await fixture.Client.CallToolAsync(
+			"contacts",
+			new Dictionary<string, object?>(StringComparer.Ordinal)
+			{
+				["_replPageSize"] = 1,
+				["_replCursor"] = "start",
+			});
+
+		result.IsError.Should().NotBeTrue();
+		result.StructuredContent.Should().NotBeNull();
+		var root = result.StructuredContent!.Value;
+		root.GetProperty("items").GetArrayLength().Should().Be(1);
+		root.GetProperty("pageInfo").GetProperty("cursor").GetString().Should().Be("start");
+		root.GetProperty("pageInfo").GetProperty("nextCursor").GetString().Should().Be("page-2");
+		root.GetProperty("pageInfo").GetProperty("totalCount").GetInt64().Should().Be(2);
+		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
+		text.Should().NotBeNull();
+		text!.Should().Contain("Returned 1 item(s).");
+		text.Should().Contain("_replCursor=page-2");
 	}
 
 	[TestMethod]
@@ -303,6 +345,8 @@ public sealed class Given_McpServerEndToEnd
 	}
 
 	private sealed class AnotherService;
+
+	private sealed record ContactDto(int Id, string Name);
 
 	// ── Prompts ────────────────────────────────────────────────────────
 

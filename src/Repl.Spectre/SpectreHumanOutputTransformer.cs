@@ -42,6 +42,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return ValueTask.FromResult(value switch
 		{
 			HelpRenderDocument help => RenderHelp(help),
+			IReplPage page => RenderPage(page),
 			IReplResult replResult => RenderReplResult(replResult),
 			string text => text,
 			System.Collections.IEnumerable enumerable => RenderEnumerable(enumerable),
@@ -157,7 +158,9 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			return RenderToString(new Markup(statusMarkup));
 		}
 
-		var details = RenderValueRenderable(result.Details, nested: false);
+		var details = result.Details is IReplPage page
+			? new Text(RenderPage(page))
+			: RenderValueRenderable(result.Details, nested: false);
 		return RenderToString(new Rows(new IRenderable[]
 		{
 			new Markup(statusMarkup),
@@ -196,6 +199,37 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		}
 
 		return RenderToString(BuildObjectTable(items, members));
+	}
+
+	private string RenderPage(IReplPage page)
+	{
+		var body = page.UntypedItems.Count == 0
+			? "No results."
+			: RenderEnumerable(page.UntypedItems);
+		var footer = RenderPageFooter(page);
+		return string.IsNullOrWhiteSpace(footer)
+			? body
+			: string.Concat(body, Environment.NewLine, footer);
+	}
+
+	private static string RenderPageFooter(IReplPage page)
+	{
+		var info = page.PageInfo;
+		var count = page.UntypedItems.Count;
+		if (info.TotalCount is { } total)
+		{
+			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
+			return info.HasMore
+				? $"{prefix} Continue with --result:cursor {info.NextCursor}."
+				: prefix;
+		}
+
+		if (!info.HasMore)
+		{
+			return string.Empty;
+		}
+
+		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Continue with --result:cursor {info.NextCursor}.";
 	}
 
 	private bool TryRenderObject(object value, out string text)

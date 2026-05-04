@@ -57,6 +57,7 @@ internal static class McpSchemaGenerator
 		}
 
 		AddAnswerProperties(command, properties);
+		AddResultFlowProperties(properties);
 
 		var schema = new JsonObject
 		{
@@ -70,6 +71,21 @@ internal static class McpSchemaGenerator
 		}
 
 		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
+	}
+
+	private static void AddResultFlowProperties(JsonObject properties)
+	{
+		properties[McpResultFlowArgumentNames.Cursor] = new JsonObject
+		{
+			["type"] = "string",
+			["description"] = "Opaque Repl continuation cursor returned by a previous paged tool result.",
+		};
+		properties[McpResultFlowArgumentNames.PageSize] = new JsonObject
+		{
+			["type"] = "integer",
+			["description"] = "Requested Repl page size for large tool results.",
+			["minimum"] = 1,
+		};
 	}
 
 	private static void AddAnswerProperties(ReplDocCommand command, JsonObject properties)
