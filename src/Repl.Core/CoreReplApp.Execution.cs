@@ -516,7 +516,12 @@ public sealed partial class CoreReplApp
 				{
 					if (enterInteractive.Payload is not null)
 					{
-						_ = await RenderOutputAsync(enterInteractive.Payload, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
+						_ = await RenderOutputAsync(
+								enterInteractive.Payload,
+								globalOptions.OutputFormat,
+								cancellationToken,
+								scopeTokens is not null,
+								globalOptions.ResultFlow)
 							.ConfigureAwait(false);
 					}
 
@@ -525,7 +530,12 @@ public sealed partial class CoreReplApp
 
 				var normalizedResult = ApplyNavigationResult(result, scopeTokens);
 				ExecutionObserver?.OnResult(normalizedResult);
-				var rendered = await RenderOutputAsync(normalizedResult, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
+				var rendered = await RenderOutputAsync(
+						normalizedResult,
+						globalOptions.OutputFormat,
+						cancellationToken,
+						scopeTokens is not null,
+						globalOptions.ResultFlow)
 					.ConfigureAwait(false);
 				return (rendered ? ComputeExitCode(normalizedResult) : 1, false);
 		}
@@ -617,7 +627,12 @@ public sealed partial class CoreReplApp
 
 			ExecutionObserver?.OnResult(normalized);
 
-			var rendered = await RenderOutputAsync(normalized, globalOptions.OutputFormat, cancellationToken, isInteractive)
+			var rendered = await RenderOutputAsync(
+					normalized,
+					globalOptions.OutputFormat,
+					cancellationToken,
+					isInteractive,
+					globalOptions.ResultFlow)
 				.ConfigureAwait(false);
 
 			if (!rendered)
@@ -664,7 +679,8 @@ public sealed partial class CoreReplApp
 		object? result,
 		string? requestedFormat,
 		CancellationToken cancellationToken,
-		bool isInteractive = false)
+		bool isInteractive = false,
+		ResultFlowInvocationOptions? resultFlow = null)
 	{
 		if (result is IExitResult exitResult)
 		{
@@ -690,11 +706,93 @@ public sealed partial class CoreReplApp
 		payload = TryColorizeStructuredPayload(payload, format, isInteractive);
 		if (!string.IsNullOrEmpty(payload))
 		{
-			await ReplSessionIO.Output.WriteLineAsync(payload).ConfigureAwait(false);
+			await WritePayloadAsync(payload, format, resultFlow, cancellationToken).ConfigureAwait(false);
 		}
 
 		return true;
 	}
+
+	private async ValueTask WritePayloadAsync(
+		string payload,
+		string format,
+		ResultFlowInvocationOptions? resultFlow,
+		CancellationToken cancellationToken)
+	{
+		if (TryCreatePager(payload, format, resultFlow, out var keyReader, out var visibleRows))
+		{
+			await ResultFlowPager.WriteAsync(
+					payload,
+					ReplSessionIO.Output,
+					keyReader,
+					visibleRows,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return;
+		}
+
+		await ReplSessionIO.Output.WriteLineAsync(payload).ConfigureAwait(false);
+	}
+
+	private bool TryCreatePager(
+		string payload,
+		string format,
+		ResultFlowInvocationOptions? resultFlow,
+		[NotNullWhen(true)] out IReplKeyReader? keyReader,
+		out int visibleRows)
+	{
+		keyReader = null;
+		visibleRows = 0;
+
+		var pagerMode = resultFlow?.PagerMode ?? _options.Output.ResultFlow.DefaultPagerMode;
+		if (pagerMode == ReplPagerMode.Off
+			|| ReplSessionIO.IsProgrammatic
+			|| ReplSessionIO.IsProtocolPassthrough
+			|| !IsPagedHumanFormat(format))
+		{
+			return false;
+		}
+
+		if (!TryResolvePagerVisibleRows(out visibleRows)
+			|| ResultFlowPager.CountLines(payload) <= visibleRows
+			|| !TryResolvePagerKeyReader(out keyReader))
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	private bool TryResolvePagerVisibleRows(out int visibleRows)
+	{
+		var height = ReplSessionIO.WindowSize?.Height ?? TryGetConsoleWindowHeight();
+		var reservedRows = Math.Max(0, _options.Output.ResultFlow.ReservedVisibleRows);
+		visibleRows = height is > 0
+			? Math.Max(1, height.Value - reservedRows)
+			: Math.Max(1, _options.Output.ResultFlow.DefaultPageSize);
+		return visibleRows > 0;
+	}
+
+	private static bool TryResolvePagerKeyReader([NotNullWhen(true)] out IReplKeyReader? keyReader)
+	{
+		if (ReplSessionIO.KeyReader is { } sessionKeyReader)
+		{
+			keyReader = sessionKeyReader;
+			return true;
+		}
+
+		if (!Console.IsInputRedirected && !Console.IsOutputRedirected && !ReplSessionIO.IsSessionActive)
+		{
+			keyReader = new ConsoleKeyReader();
+			return true;
+		}
+
+		keyReader = null;
+		return false;
+	}
+
+	private static bool IsPagedHumanFormat(string format) =>
+		string.Equals(format, "human", StringComparison.OrdinalIgnoreCase)
+		|| string.Equals(format, "spectre", StringComparison.OrdinalIgnoreCase);
 
 	private string TryColorizeStructuredPayload(string payload, string format, bool isInteractive)
 	{
