@@ -18,6 +18,10 @@ These flags are parsed before route execution:
 - `--no-interactive`
 - `--no-logo`
 - `--output:<format>`
+- `--result:page-size <n>` / `--result:page-size=<n>`
+- `--result:cursor <value>` / `--result:cursor=<value>`
+- `--result:all`
+- `--result:pager=auto|off|more|scroll|external`
 - output aliases mapped by `OutputOptions.Aliases` (defaults include `--json`, `--xml`, `--yaml`, `--yml`, `--markdown`)
 - `--answer:<name>[=value]` for non-interactive prompt answers
 - custom global options registered via `options.Parsing.AddGlobalOption<T>(...)`
@@ -29,6 +33,7 @@ Global parsing notes:
 - option value syntaxes accepted by command parsing: `--name value`, `--name=value`, `--name:value`
 - use `--` to stop option parsing and force remaining tokens to positional arguments
 - response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported
+- result-flow options are reserved by the framework and do not bind to handler business parameters
 
 ## Declaring command options
 
@@ -249,6 +254,7 @@ Handlers can return any type. The framework renders the return value through the
 | `string` | Rendered as plain text |
 | Object / anonymous type | Rendered as key-value pairs (human) or serialized (JSON/XML/YAML) |
 | `IEnumerable<T>` | Rendered as a table (human) or collection (structured formats) |
+| `ReplPage<T>` | Rendered as the current page plus `PageInfo`; JSON uses `{ items, pageInfo }` |
 | `IReplResult` | Structured result with kind prefix (`Results.Ok`, `Error`, `NotFound`...) |
 | `ReplNavigationResult` | Renders payload and navigates scope (`Results.NavigateUp`, `NavigateTo`) |
 | `IExitResult` | Renders optional payload and sets process exit code (`Results.Exit`) |
@@ -293,6 +299,20 @@ Tuple semantics:
 - exit code is determined by the last element
 - null elements are silently skipped
 - nested tuples are not flattened — use a flat tuple instead
+
+## Paging large results
+
+Handlers that may return large result sets can request `IReplPagingContext`:
+
+```csharp
+app.Map("contacts", async (IReplPagingContext paging, ContactStore store, CancellationToken ct) =>
+{
+    var rows = await store.QueryAsync(paging.Cursor, paging.SuggestedPageSize, ct);
+    return paging.Page(rows.Items, rows.NextCursor, rows.TotalCount);
+});
+```
+
+Use this when the data source can page efficiently. See [Result Flow And Paging](result-flow.md) for CLI flags, pager behavior, MCP paging arguments, and output format details.
 
 ## Interactive prompts
 

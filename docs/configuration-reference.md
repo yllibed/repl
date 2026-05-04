@@ -95,9 +95,20 @@ Accessed via `ReplOptions.Output`.
 - `ColorizeStructuredInteractive` (`bool`, default: `true`) — Colorize JSON/XML in interactive mode.
 - `PreferredWidth` (`int?`, default: `null`) — Preferred render width. `null` uses automatic detection.
 - `FallbackWidth` (`int`, default: `120`) — Fallback width when the terminal is unavailable.
+- `ResultFlow` (`ResultFlowOptions`) - Paging and large-result behavior.
 - `JsonSerializerOptions` (`JsonSerializerOptions`, default: Web defaults + indented) — JSON serializer options.
 
 Built-in transformers: `human`, `json`, `xml`, `yaml`, `markdown`.
+
+### ResultFlowOptions
+
+Accessed via `ReplOptions.Output.ResultFlow`.
+
+- `DefaultPageSize` (`int`, default: `100`) - Page size used when no caller or terminal hint provides one.
+- `MaxPageSize` (`int`, default: `1000`) - Maximum accepted page size.
+- `ReservedVisibleRows` (`int`, default: `2`) - Rows reserved when computing terminal-visible data rows.
+- `DefaultPagerMode` (`ReplPagerMode`, default: `Auto`) - Pager behavior for human formats.
+- `ProgrammaticMaxInlineBytes` (`int`, default: `65536`) - Reserved for programmatic inline payload policy.
 
 ### OutputOptions Methods
 

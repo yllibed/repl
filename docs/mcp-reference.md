@@ -178,7 +178,7 @@ app.UseMcpServer(o => o.InteractivityMode = InteractivityMode.PrefillThenElicita
 
 | Method | Where it goes | Use? |
 |---|---|---|
-| **Return value** | `CallToolResult.Content` (JSON) | **Yes.** Preferred for all data. |
+| **Return value** | `CallToolResult.Content` and, for paged results, `StructuredContent` | **Yes.** Preferred for all data. |
 | **`IReplInteractionChannel`** | MCP primitives (progress, prompts, user-facing notices/problems) | **Yes.** Portable feedback that also works outside MCP. |
 | **`IMcpFeedback`** | MCP progress and logging/message notifications | **Yes.** MCP-specific feedback when you need direct control. |
 | **`ReplSessionIO.Output`** | Session output | Advanced cases only. |
@@ -186,6 +186,30 @@ app.UseMcpServer(o => o.InteractivityMode = InteractivityMode.PrefillThenElicita
 | **`Console.OpenStandardOutput()`** | MCP stdio transport directly | **Never.** Corrupts JSON-RPC. |
 
 > **Why this matters:** Console-style writes blur the boundary between result data, progress, logs, and protocol traffic. In MCP, this ranges from confusing agent behavior to protocol corruption.
+
+### Paged tool results
+
+Every MCP tool schema includes two reserved Repl result-flow inputs:
+
+- `_replCursor`: opaque continuation cursor returned by a previous paged result.
+- `_replPageSize`: requested page size.
+
+Handlers receive these values through `IReplPagingContext`, not as business parameters. A handler can return `ReplPage<T>`:
+
+```csharp
+app.Map("contacts", (IReplPagingContext paging, ContactStore store) =>
+{
+    var page = store.Query(paging.Cursor, paging.SuggestedPageSize);
+    return paging.Page(page.Items, page.NextCursor, page.TotalCount);
+}).ReadOnly();
+```
+
+MCP responses for `ReplPage<T>` include:
+
+- `StructuredContent`: `{ items, pageInfo }`
+- `Content`: short text summary with the next `_replCursor` when more data exists
+
+This avoids dumping large JSON arrays into a single `TextContentBlock`.
 
 `WriteProgressAsync` maps to MCP progress notifications. `WriteStatusAsync` maps to log messages (`level: info`). See [Progress](progress.md#mcp) for the centralized progress model across console, hosted sessions, Spectre, and MCP:
 
