@@ -30,6 +30,10 @@ public sealed class Given_ResultFlowPager
 		output.Should().Contain("four");
 		output.Should().NotContain("five");
 		output.Should().Contain("--More--");
+		output.Should().Contain("Space/PageDown: continue");
+		output.Should().Contain("Enter/Down: line");
+		output.Should().Contain("Up/PageUp: back");
+		output.Should().Contain("q/Esc: stop");
 	}
 
 	[TestMethod]
@@ -55,6 +59,154 @@ public sealed class Given_ResultFlowPager
 		output.Should().Contain("two");
 		output.Should().Contain("three");
 		output.Should().NotContain("four");
+	}
+
+	[TestMethod]
+	[Description("Result-flow pager UpArrow moves back one line instead of jumping to the header.")]
+	public async Task When_PagingBackWithUpArrow_Then_DoesNotRepeatHeader()
+	{
+		var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+			MakeKey(ConsoleKey.UpArrow, '\0'),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"# At Area Event Summary\nr1\nr2\nr3\nr4\nr5",
+			writer,
+			keys,
+			visibleRows: 2,
+			CancellationToken.None);
+
+		var output = writer.ToString();
+		output.Split("# At Area Event Summary", StringSplitOptions.None)
+			.Should().HaveCount(2);
+		output.Should().Contain("r1");
+		output.Should().Contain("r2");
+		output.Should().Contain("r3");
+	}
+
+	[TestMethod]
+	[Description("Result-flow pager fetches the next data page in the same interactive run.")]
+	public async Task When_CurrentPayloadEndsAndMoreDataExists_Then_SpaceFetchesNextPayload()
+	{
+		var writer = new StringWriter();
+		var fetches = 0;
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo",
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ =>
+			{
+				fetches++;
+				return ValueTask.FromResult<ResultFlowPagerPage?>(
+					new ResultFlowPagerPage("three\nfour", HasMore: false));
+			},
+			CancellationToken.None);
+
+		fetches.Should().Be(1);
+		var output = writer.ToString();
+		output.Should().Contain("one");
+		output.Should().Contain("two");
+		output.Should().Contain("three");
+		output.Should().Contain("four");
+	}
+
+	[TestMethod]
+	[Description("Result-flow pager stops at a data-page boundary without fetching more data when the user quits.")]
+	public async Task When_CurrentPayloadEndsAndUserQuits_Then_DoesNotFetchNextPayload()
+	{
+		var writer = new StringWriter();
+		var fetches = 0;
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo",
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ =>
+			{
+				fetches++;
+				return ValueTask.FromResult<ResultFlowPagerPage?>(
+					new ResultFlowPagerPage("three\nfour", HasMore: false));
+			},
+			CancellationToken.None);
+
+		fetches.Should().Be(0);
+		var output = writer.ToString();
+		output.Should().Contain("one");
+		output.Should().Contain("two");
+		output.Should().NotContain("three");
+		output.Should().NotContain("four");
+	}
+
+	[TestMethod]
+	[Description("Result-flow pager fetches the next data page instead of showing an empty --More-- prompt when a payload has no content.")]
+	public async Task When_CurrentPayloadIsEmptyAndMoreDataExists_Then_FetchesNextPayload()
+	{
+		var writer = new StringWriter();
+		var fetches = 0;
+		var keys = new FakeKeyReader([]);
+
+		await ResultFlowPager.WriteAsync(
+			string.Empty,
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ =>
+			{
+				fetches++;
+				return ValueTask.FromResult<ResultFlowPagerPage?>(
+					new ResultFlowPagerPage("one\ntwo", HasMore: false));
+			},
+			CancellationToken.None);
+
+		fetches.Should().Be(1);
+		var output = writer.ToString();
+		output.Should().Contain("one");
+		output.Should().Contain("two");
+		output.Should().NotContain("--More--");
+	}
+
+	[TestMethod]
+	[Description("Result-flow pager replays the previous full window when the user presses UpArrow at a data-page boundary.")]
+	public async Task When_AtPayloadBoundaryAndUserPressesUpArrow_Then_ReplaysPreviousWindow()
+	{
+		var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+			MakeKey(ConsoleKey.UpArrow, '\0'),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo\nthree\nfour",
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ => throw new InvalidOperationException("Should not fetch while replaying the previous window."),
+			CancellationToken.None);
+
+		var output = writer.ToString();
+		output.Split("three", StringSplitOptions.None).Should().HaveCount(3);
+		output.Split("four", StringSplitOptions.None).Should().HaveCount(3);
 	}
 
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
