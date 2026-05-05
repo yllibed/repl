@@ -130,6 +130,13 @@ public static class ReplPageSource
 	/// <param name="filter">Optional client-side filter applied before final paging.</param>
 	/// <param name="maxSourceItemsToScan">Maximum source rows to scan while filling one filtered page.</param>
 	/// <returns>A page source consumable by Repl renderers.</returns>
+	/// <remarks>
+	/// The factory must be replayable and idempotent for the same underlying result set:
+	/// each page request reopens the stream and advances to the requested offset. Do not
+	/// use this helper for single-use streams such as channels, network cursors, or shared
+	/// enumerator instances. For those sources, use <see cref="Create{T}(Func{ReplPageRequest, CancellationToken, ValueTask{ReplPage{T}}})"/>
+	/// with an opaque cursor owned by the source.
+	/// </remarks>
 	public static IReplPageSource<T> FromAsyncEnumerable<T>(
 		Func<CancellationToken, IAsyncEnumerable<T>> createItems,
 		Func<T, bool>? filter = null,
@@ -150,6 +157,13 @@ public static class ReplPageSource
 	/// <param name="filter">Optional client-side filter applied before final paging.</param>
 	/// <param name="maxSourceItemsToScan">Maximum source rows to scan while filling one filtered page.</param>
 	/// <returns>A page source consumable by Repl renderers.</returns>
+	/// <remarks>
+	/// The factory must be replayable and idempotent for the same underlying result set:
+	/// each page request reopens the stream and advances to the requested offset. Do not
+	/// use this helper for single-use streams such as channels, network cursors, or shared
+	/// enumerator instances. For those sources, use <see cref="Create{T,TState}(TState, Func{TState, ReplPageRequest, CancellationToken, ValueTask{ReplPage{T}}})"/>
+	/// with an opaque cursor owned by the source.
+	/// </remarks>
 	public static IReplPageSource<T> FromAsyncEnumerable<T, TState>(
 		TState state,
 		Func<TState, CancellationToken, IAsyncEnumerable<T>> createItems,
@@ -289,7 +303,6 @@ public static class ReplPageSource
 
 		while (true)
 		{
-			ThrowIfScanLimitExceeded(scanned, maxSourceItemsToScan);
 			var items = await fetch(currentOffset, take, cancellationToken).ConfigureAwait(false)
 				?? throw new InvalidOperationException("The offset page source returned null.");
 			if (items.Count == 0)

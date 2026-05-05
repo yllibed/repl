@@ -210,6 +210,10 @@ factory because later pages reopen the stream and skip to the requested offset.
 For live streams that cannot restart, emit a keyset/range cursor instead or use
 a future live/tail-oriented API.
 
+Do not pass a channel, database cursor, network cursor, or shared enumerator
+instance to `FromAsyncEnumerable`. Those are single-use streams. Use
+`ReplPageSource.Create(...)` and emit an opaque source-owned cursor instead.
+
 When you author the async iterator, accept cancellation with
 `[EnumeratorCancellation]`:
 

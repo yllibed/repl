@@ -189,6 +189,62 @@ public sealed class Given_ReplPageSource
 	}
 
 	[TestMethod]
+	[Description("ReplPageSource.FromAsyncEnumerable requires a replayable factory and fails clearly when the factory returns a single-use stream.")]
+	public async Task When_FromAsyncEnumerableFactoryIsNotReplayable_Then_SecondPageFailsClearly()
+	{
+		var state = new SingleUseAsyncEnumerable<string>(["one", "two", "three"]);
+		var source = ReplPageSource.FromAsyncEnumerable(_ => state);
+
+		var first = await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: null,
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console));
+
+		var action = async () => await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: first.PageInfo.NextCursor,
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console)).ConfigureAwait(false);
+
+		await action.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("*replayable*")
+			.ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("ReplPageSource.FromOffset enforces the client-side filter scan limit per source item.")]
+	public async Task When_FilteredOffsetSourceExceedsScanLimit_Then_FailsBeforeFetchingAnotherBatch()
+	{
+		var fetches = 0;
+		var source = ReplPageSource.FromOffset<int>(
+			(_, take, _) =>
+			{
+				fetches++;
+				return ValueTask.FromResult<IReadOnlyList<int>>(Enumerable.Range(0, take).ToArray());
+			},
+			filter: static _ => false,
+			maxSourceItemsToScan: 2);
+
+		var action = async () => await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: null,
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console)).ConfigureAwait(false);
+
+		await action.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("*scan limit*")
+			.ConfigureAwait(false);
+		fetches.Should().Be(1);
+	}
+
+	[TestMethod]
 	[Description("ReplPageSource.FromAsyncEnumerable passes cancellation to the async stream.")]
 	public async Task When_FromAsyncEnumerableIsCancelled_Then_SourceObservesCancellation()
 	{
@@ -314,4 +370,25 @@ public sealed class Given_ReplPageSource
 	}
 
 	private sealed record PageStore(IReadOnlyList<string> Items);
+
+	private sealed class SingleUseAsyncEnumerable<T>(IReadOnlyList<T> items) : IAsyncEnumerable<T>
+	{
+		private bool _used;
+
+		public async IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default)
+		{
+			if (_used)
+			{
+				throw new InvalidOperationException("The stream is not replayable.");
+			}
+
+			_used = true;
+			foreach (var item in items)
+			{
+				await Task.Yield();
+				cancellationToken.ThrowIfCancellationRequested();
+				yield return item;
+			}
+		}
+	}
 }
