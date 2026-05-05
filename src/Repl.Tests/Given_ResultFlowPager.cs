@@ -274,6 +274,34 @@ public sealed class Given_ResultFlowPager
 		output.Should().Contain("\u001b[?1049h");
 	}
 
+	[TestMethod]
+	[Description("Result-flow scroll pager advances to the new buffered end when a fetch returns fewer lines than one viewport.")]
+	public async Task When_ScrollPagerFetchesShortPayload_Then_ViewportAdvances()
+	{
+		var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo\nthree",
+			writer,
+			keys,
+			visibleRows: 4,
+			pagerMode: ReplPagerMode.Scroll,
+			ansiEnabled: true,
+			hasMorePayload: true,
+			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
+				new ResultFlowPagerPage("four", HasMore: false)),
+			CancellationToken.None);
+
+		var output = writer.ToString();
+		output.Should().Contain("2-4/4");
+		output.Should().Contain("four");
+	}
+
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
 		new(keyChar, key, shift: false, alt: false, control: false);
 }

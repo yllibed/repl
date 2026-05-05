@@ -95,6 +95,7 @@ internal static class ResultFlowPager
 					output,
 					keyReader,
 					visibleRows,
+					ansiEnabled,
 					hasMorePayload,
 					fetchNextPayload,
 					cancellationToken)
@@ -178,10 +179,16 @@ internal static class ResultFlowPager
 		TextWriter output,
 		IReplKeyReader keyReader,
 		int visibleRows,
+		bool ansiEnabled,
 		bool hasMorePayload,
 		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
 		CancellationToken cancellationToken)
 	{
+		if (!ansiEnabled)
+		{
+			throw new InvalidOperationException("The scroll result pager requires ANSI support.");
+		}
+
 		var state = new ScrollPagerState(SplitLines(payload), Math.Max(2, visibleRows), hasMorePayload);
 		if (state.Buffer.Count == 0 && !state.HasMorePayload)
 		{
@@ -404,10 +411,32 @@ internal static class ResultFlowPager
 	private static string[] SplitLines(string payload) =>
 		string.IsNullOrEmpty(payload)
 			? []
-			: payload
-				.Replace("\r\n", "\n", StringComparison.Ordinal)
-				.Replace('\r', '\n')
-				.Split('\n');
+			: SplitNonEmptyPayloadLines(payload);
+
+	private static string[] SplitNonEmptyPayloadLines(string payload)
+	{
+		var lines = new List<string>();
+		var start = 0;
+		for (var index = 0; index < payload.Length; index++)
+		{
+			var current = payload[index];
+			if (current is not '\r' and not '\n')
+			{
+				continue;
+			}
+
+			lines.Add(payload[start..index]);
+			if (current == '\r' && index + 1 < payload.Length && payload[index + 1] == '\n')
+			{
+				index++;
+			}
+
+			start = index + 1;
+		}
+
+		lines.Add(payload[start..]);
+		return [.. lines];
+	}
 
 	private sealed class PagerState(string[] lines, int pageSize, bool hasMorePayload)
 	{
