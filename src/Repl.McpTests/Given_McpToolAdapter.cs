@@ -147,4 +147,48 @@ public sealed class Given_McpToolAdapter
 		action.Should().Throw<InvalidOperationException>()
 			.WithMessage("*cursor*512*");
 	}
+
+	[TestMethod]
+	[Description("PrepareExecution accepts compact numeric result page sizes and emits them as result-flow tokens.")]
+	public void When_ResultPageSizeIsValid_Then_ResultFlowTokenIsEmitted()
+	{
+		var (tokens, _) = McpToolAdapter.PrepareExecution(
+			"contacts",
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(25),
+			});
+
+		tokens.Should().ContainInOrder("--result:page-size", "25", "contacts");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result page sizes that are not numeric.")]
+	public void When_ResultPageSizeIsNotNumeric_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			"contacts",
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement("abc"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*page size*numeric*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects overly large result page size tokens.")]
+	public void When_ResultPageSizeTokenIsTooLong_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			"contacts",
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(new string('1', 21)),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*page size*20*");
+	}
 }

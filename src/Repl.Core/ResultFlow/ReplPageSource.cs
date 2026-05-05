@@ -131,10 +131,11 @@ public static class ReplPageSource
 	/// <param name="maxSourceItemsToScan">Maximum source rows to scan while filling one filtered page.</param>
 	/// <returns>A page source consumable by Repl renderers.</returns>
 	/// <remarks>
-	/// The factory must be replayable and idempotent for the same underlying result set:
-	/// each page request reopens the stream and advances to the requested offset. Do not
-	/// use this helper for single-use streams such as channels, network cursors, or shared
-	/// enumerator instances. For those sources, use <see cref="Create{T}(Func{ReplPageRequest, CancellationToken, ValueTask{ReplPage{T}}})"/>
+	/// The factory must be replayable, idempotent, and deterministic for the same
+	/// underlying result set: each page request reopens the stream and advances to the
+	/// requested offset. Do not use this helper for single-use streams, live re-queries,
+	/// mutable files, channels, network cursors, or shared enumerator instances. For
+	/// those sources, use <see cref="Create{T}(Func{ReplPageRequest, CancellationToken, ValueTask{ReplPage{T}}})"/>
 	/// with an opaque cursor owned by the source.
 	/// </remarks>
 	public static IReplPageSource<T> FromAsyncEnumerable<T>(
@@ -158,10 +159,11 @@ public static class ReplPageSource
 	/// <param name="maxSourceItemsToScan">Maximum source rows to scan while filling one filtered page.</param>
 	/// <returns>A page source consumable by Repl renderers.</returns>
 	/// <remarks>
-	/// The factory must be replayable and idempotent for the same underlying result set:
-	/// each page request reopens the stream and advances to the requested offset. Do not
-	/// use this helper for single-use streams such as channels, network cursors, or shared
-	/// enumerator instances. For those sources, use <see cref="Create{T,TState}(TState, Func{TState, ReplPageRequest, CancellationToken, ValueTask{ReplPage{T}}})"/>
+	/// The factory must be replayable, idempotent, and deterministic for the same
+	/// underlying result set: each page request reopens the stream and advances to the
+	/// requested offset. Do not use this helper for single-use streams, live re-queries,
+	/// mutable files, channels, network cursors, or shared enumerator instances. For
+	/// those sources, use <see cref="Create{T,TState}(TState, Func{TState, ReplPageRequest, CancellationToken, ValueTask{ReplPage{T}}})"/>
 	/// with an opaque cursor owned by the source.
 	/// </remarks>
 	public static IReplPageSource<T> FromAsyncEnumerable<T, TState>(

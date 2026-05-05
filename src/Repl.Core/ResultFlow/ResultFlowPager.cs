@@ -209,7 +209,10 @@ internal static class ResultFlowPager
 					return;
 				}
 
-				if (state.TopLine >= state.MaxTopLine && state.HasMorePayload && fetchNextPayload is not null)
+				if (state.HasReachedBottom
+					&& state.Buffer.Count > state.ViewportHeight
+					&& state.HasMorePayload
+					&& fetchNextPayload is not null)
 				{
 					var before = state.Buffer.Count;
 					await FetchIntoScrollBufferAsync(state, fetchNextPayload, cancellationToken).ConfigureAwait(false);
@@ -434,7 +437,11 @@ internal static class ResultFlowPager
 			start = index + 1;
 		}
 
-		lines.Add(payload[start..]);
+		if (start < payload.Length)
+		{
+			lines.Add(payload[start..]);
+		}
+
 		return [.. lines];
 	}
 
@@ -469,6 +476,8 @@ internal static class ResultFlowPager
 		public bool HasMorePayload { get; set; } = hasMorePayload;
 
 		public int MaxTopLine => Math.Max(0, Buffer.Count - ViewportHeight);
+
+		public bool HasReachedBottom => TopLine >= MaxTopLine;
 
 		public void Append(string[] lines, bool hasMorePayload)
 		{

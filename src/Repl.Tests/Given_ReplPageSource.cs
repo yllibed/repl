@@ -189,6 +189,31 @@ public sealed class Given_ReplPageSource
 	}
 
 	[TestMethod]
+	[Description("ReplPageSource.FromAsyncEnumerable requires deterministic replay so page two returns the raw offset continuation.")]
+	public async Task When_FromAsyncEnumerableFactoryIsDeterministic_Then_SecondPageUsesRawOffset()
+	{
+		var source = ReplPageSource.FromAsyncEnumerable(_ => ReadItemsAsync(["one", "two", "three", "four"]));
+
+		var first = await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: null,
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console));
+		var second = await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: first.PageInfo.NextCursor,
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console));
+
+		second.Items.Should().Equal("three", "four");
+		second.PageInfo.Cursor.Should().Be("2");
+	}
+
+	[TestMethod]
 	[Description("ReplPageSource.FromAsyncEnumerable requires a replayable factory and fails clearly when the factory returns a single-use stream.")]
 	public async Task When_FromAsyncEnumerableFactoryIsNotReplayable_Then_SecondPageFailsClearly()
 	{
@@ -286,6 +311,17 @@ public sealed class Given_ReplPageSource
 
 		page.Items.Should().Equal("one", "two");
 		page.PageInfo.NextCursor.Should().Be("2");
+
+		var second = await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: page.PageInfo.NextCursor,
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console));
+
+		second.Items.Should().Equal("four");
+		second.PageInfo.HasMore.Should().BeFalse();
 	}
 
 	[TestMethod]

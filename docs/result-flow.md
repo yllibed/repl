@@ -205,10 +205,11 @@ app.Map("events", (EventStore store) =>
 ```
 
 `FromAsyncEnumerable` passes the request cancellation token to the stream factory
-and uses `WithCancellation(...)` while enumerating. It requires a replayable
-factory because later pages reopen the stream and skip to the requested offset.
-For live streams that cannot restart, emit a keyset/range cursor instead or use
-a future live/tail-oriented API.
+and uses `WithCancellation(...)` while enumerating. It requires a replayable,
+idempotent, and deterministic factory because later pages reopen the stream and
+skip to the requested offset. For live streams or changing result sets that
+cannot restart with the same ordering and contents, emit a keyset/range cursor
+instead or use a future live/tail-oriented API.
 
 Do not pass a channel, database cursor, network cursor, or shared enumerator
 instance to `FromAsyncEnumerable`. Those are single-use streams. Use
@@ -592,7 +593,8 @@ These properties are consumed by the Repl MCP adapter and mapped to `IReplPaging
 MCP cursors are expected to be compact opaque values, for example base64url or
 another whitespace-free token. Repl rejects cursors that contain whitespace,
 start with `-`, or exceed 512 characters before they can be converted to CLI
-tokens.
+tokens. MCP page-size values must be numeric and at most 20 characters before
+normal result-flow clamping is applied.
 
 When a handler returns `ReplPage<T>`, MCP returns:
 

@@ -247,6 +247,7 @@ internal sealed partial class McpToolAdapter
 			}
 			else if (string.Equals(key, McpResultFlowArgumentNames.PageSize, StringComparison.Ordinal))
 			{
+				ValidateResultPageSize(strValue);
 				resultFlowTokens.Add("--result:page-size");
 				resultFlowTokens.Add(strValue);
 			}
@@ -276,6 +277,19 @@ internal sealed partial class McpToolAdapter
 		if (cursor.Any(char.IsWhiteSpace))
 		{
 			throw new InvalidOperationException("The MCP result cursor cannot contain whitespace.");
+		}
+	}
+
+	private static void ValidateResultPageSize(string pageSize)
+	{
+		if (pageSize.Length > 20)
+		{
+			throw new InvalidOperationException("The MCP result page size cannot exceed 20 characters.");
+		}
+
+		if (pageSize.Length == 0 || pageSize.Any(static c => c < '0' || c > '9'))
+		{
+			throw new InvalidOperationException("The MCP result page size must be numeric.");
 		}
 	}
 

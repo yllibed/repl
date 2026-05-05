@@ -252,7 +252,7 @@ public sealed class Given_ResultFlowPager
 		]);
 
 		await ResultFlowPager.WriteAsync(
-			"one\ntwo",
+			"one\ntwo\nthree",
 			writer,
 			keys,
 			visibleRows: 3,
@@ -286,7 +286,7 @@ public sealed class Given_ResultFlowPager
 		]);
 
 		await ResultFlowPager.WriteAsync(
-			"one\ntwo\nthree",
+			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
 			visibleRows: 4,
@@ -294,12 +294,66 @@ public sealed class Given_ResultFlowPager
 			ansiEnabled: true,
 			hasMorePayload: true,
 			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
-				new ResultFlowPagerPage("four", HasMore: false)),
+				new ResultFlowPagerPage("five", HasMore: false)),
 			CancellationToken.None);
 
 		var output = writer.ToString();
-		output.Should().Contain("2-4/4");
-		output.Should().Contain("four");
+		output.Should().Contain("3-5/5");
+		output.Should().Contain("five");
+	}
+
+	[TestMethod]
+	[Description("Result-flow scroll pager does not fetch another payload when the current payload is exactly visible and the user presses Space once.")]
+	public async Task When_ScrollPagerContentExactlyFitsViewport_Then_SpaceDoesNotFetchImmediately()
+	{
+		var writer = new StringWriter();
+		var fetches = 0;
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo\nthree",
+			writer,
+			keys,
+			visibleRows: 4,
+			pagerMode: ReplPagerMode.Scroll,
+			ansiEnabled: true,
+			hasMorePayload: true,
+			fetchNextPayload: _ =>
+			{
+				fetches++;
+				return ValueTask.FromResult<ResultFlowPagerPage?>(
+					new ResultFlowPagerPage("four", HasMore: false));
+			},
+			CancellationToken.None);
+
+		fetches.Should().Be(0);
+		writer.ToString().Should().NotContain("four");
+	}
+
+	[TestMethod]
+	[Description("Result-flow pager does not add a phantom empty line when a payload ends with a newline.")]
+	public async Task When_PayloadEndsWithNewline_Then_LineCountExcludesTrailingEmptyLine()
+	{
+		var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo\n",
+			writer,
+			keys,
+			visibleRows: 3,
+			pagerMode: ReplPagerMode.Scroll,
+			ansiEnabled: true,
+			CancellationToken.None);
+
+		writer.ToString().Should().Contain("1-2/2");
 	}
 
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
