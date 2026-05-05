@@ -120,6 +120,13 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			sections.Add(BuildEntryTable(command.Options));
 		}
 
+		if (command.ResultFlow.Count > 0)
+		{
+			AppendSpacer(sections);
+			sections.Add(new Markup("[bold]Result Flow[/]"));
+			sections.Add(BuildEntryTable(command.ResultFlow));
+		}
+
 		if (command.Answers.Count > 0)
 		{
 			AppendSpacer(sections);
@@ -220,7 +227,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		{
 			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
 			return info.HasMore
-				? $"{prefix} Continue with --result:cursor {info.NextCursor}."
+				? $"{prefix} Next data page: rerun with --result:cursor {info.NextCursor}."
 				: prefix;
 		}
 
@@ -229,7 +236,7 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			return string.Empty;
 		}
 
-		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Continue with --result:cursor {info.NextCursor}.";
+		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with --result:cursor {info.NextCursor}.";
 	}
 
 	private bool TryRenderObject(object value, out string text)
@@ -285,13 +292,25 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			for (var i = 0; i < members.Count; i++)
 			{
 				var memberValue = members[i].Property.GetValue(item);
-				cells[i] = new Text(RenderInlineValue(memberValue, members[i]));
+				cells[i] = CreateTableCell(RenderInlineValue(memberValue, members[i]), table.Rows.Count, i);
 			}
 
 			table.AddRow(cells);
 		}
 
 		return table;
+	}
+
+	private static Text CreateTableCell(string text, int rowIndex, int columnIndex)
+	{
+		if (columnIndex == 0)
+		{
+			return new Text(text, new Style(Color.Cyan1, decoration: Decoration.Bold));
+		}
+
+		return rowIndex % 2 == 1
+			? new Text(text, new Style(Color.Grey))
+			: new Text(text);
 	}
 
 	private static Table BuildCommandsTable(IReadOnlyList<HelpRenderCommand> commands)

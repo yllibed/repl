@@ -702,6 +702,18 @@ public sealed partial class CoreReplApp
 			return false;
 		}
 
+		if (result is IReplPageSource pageSource)
+		{
+			return await RenderPageSourceAsync(
+					pageSource,
+					transformer,
+					format,
+					isInteractive,
+					resultFlow,
+					cancellationToken)
+				.ConfigureAwait(false);
+		}
+
 		var payload = await transformer.TransformAsync(result, cancellationToken).ConfigureAwait(false);
 		payload = TryColorizeStructuredPayload(payload, format, isInteractive);
 		if (!string.IsNullOrEmpty(payload))
@@ -710,6 +722,67 @@ public sealed partial class CoreReplApp
 		}
 
 		return true;
+	}
+
+	private async ValueTask<bool> RenderPageSourceAsync(
+		IReplPageSource source,
+		IOutputTransformer transformer,
+		string format,
+		bool isInteractive,
+		ResultFlowInvocationOptions? resultFlow,
+		CancellationToken cancellationToken)
+	{
+		var request = CreatePageSourceRequest(resultFlow);
+		var page = await FetchPageSourceAsync(source, request, cancellationToken).ConfigureAwait(false);
+		var payload = await transformer.TransformAsync(page, cancellationToken).ConfigureAwait(false);
+		payload = TryColorizeStructuredPayload(payload, format, isInteractive);
+
+		if (!TryCreatePager(
+				payload,
+				format,
+				resultFlow,
+				page.PageInfo.HasMore,
+				out var keyReader,
+				out var visibleRows))
+		{
+			if (!string.IsNullOrEmpty(payload))
+			{
+				await WritePayloadAsync(payload, format, resultFlow, cancellationToken).ConfigureAwait(false);
+			}
+
+			return true;
+		}
+
+		var nextCursor = page.PageInfo.NextCursor;
+		var pagerPayload = await transformer.TransformAsync(CreatePagerDisplayPage(page), cancellationToken)
+			.ConfigureAwait(false);
+		pagerPayload = TryColorizeStructuredPayload(pagerPayload, format, isInteractive);
+		await ResultFlowPager.WriteAsync(
+				pagerPayload,
+				ReplSessionIO.Output,
+				keyReader,
+				visibleRows,
+				page.PageInfo.HasMore,
+				FetchNextPayloadAsync,
+				cancellationToken)
+			.ConfigureAwait(false);
+		return true;
+
+		async ValueTask<ResultFlowPagerPage?> FetchNextPayloadAsync(CancellationToken token)
+		{
+			if (string.IsNullOrWhiteSpace(nextCursor))
+			{
+				return null;
+			}
+
+			var nextRequest = request with { Cursor = nextCursor };
+			var nextPage = await FetchPageSourceAsync(source, nextRequest, token).ConfigureAwait(false);
+			nextCursor = nextPage.PageInfo.NextCursor;
+			var nextPayload = await transformer.TransformAsync(CreatePagerDisplayPage(nextPage), token)
+				.ConfigureAwait(false);
+			nextPayload = TryColorizeStructuredPayload(nextPayload, format, isInteractive);
+			return new ResultFlowPagerPage(nextPayload, nextPage.PageInfo.HasMore);
+		}
 	}
 
 	private async ValueTask WritePayloadAsync(
@@ -739,6 +812,21 @@ public sealed partial class CoreReplApp
 		ResultFlowInvocationOptions? resultFlow,
 		[NotNullWhen(true)] out IReplKeyReader? keyReader,
 		out int visibleRows)
+		=> TryCreatePager(
+			payload,
+			format,
+			resultFlow,
+			hasMorePayload: false,
+			out keyReader,
+			out visibleRows);
+
+	private bool TryCreatePager(
+		string payload,
+		string format,
+		ResultFlowInvocationOptions? resultFlow,
+		bool hasMorePayload,
+		[NotNullWhen(true)] out IReplKeyReader? keyReader,
+		out int visibleRows)
 	{
 		keyReader = null;
 		visibleRows = 0;
@@ -753,7 +841,7 @@ public sealed partial class CoreReplApp
 		}
 
 		if (!TryResolvePagerVisibleRows(out visibleRows)
-			|| ResultFlowPager.CountLines(payload) <= visibleRows
+			|| (!hasMorePayload && ResultFlowPager.CountLines(payload) <= visibleRows)
 			|| !TryResolvePagerKeyReader(out keyReader))
 		{
 			return false;
@@ -793,6 +881,38 @@ public sealed partial class CoreReplApp
 	private static bool IsPagedHumanFormat(string format) =>
 		string.Equals(format, "human", StringComparison.OrdinalIgnoreCase)
 		|| string.Equals(format, "spectre", StringComparison.OrdinalIgnoreCase);
+
+	private ReplPageRequest CreatePageSourceRequest(ResultFlowInvocationOptions? resultFlow)
+	{
+		var surface = ResolveResultSurface();
+		return new ReplPagingContext(
+				_options.Output.ResultFlow,
+				resultFlow ?? new ResultFlowInvocationOptions(),
+				surface,
+				ResolveVisibleRowCapacityHint(surface))
+			.CreateRequest();
+	}
+
+	private static IReplPage CreatePagerDisplayPage(IReplPage page)
+	{
+		if (!page.PageInfo.HasMore)
+		{
+			return page;
+		}
+
+		var pageInfo = page.PageInfo with
+		{
+			NextCursor = null,
+			HasMore = false,
+		};
+		return new ReplPageDisplaySnapshot(page, pageInfo);
+	}
+
+	private static ValueTask<IReplPage> FetchPageSourceAsync(
+		IReplPageSource source,
+		ReplPageRequest request,
+		CancellationToken cancellationToken) =>
+		source.FetchPageAsync(request, cancellationToken);
 
 	private string TryColorizeStructuredPayload(string payload, string format, bool isInteractive)
 	{

@@ -26,6 +26,11 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 			return ValueTask.FromResult(RenderDocumentation(documentation));
 		}
 
+		if (value is HelpRenderDocument help)
+		{
+			return ValueTask.FromResult(RenderHelp(help));
+		}
+
 		if (value is string text)
 		{
 			return ValueTask.FromResult(text);
@@ -248,6 +253,90 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 		|| type == typeof(TimeSpan);
 
 	private static string EscapeCell(string value) =>
+		value.Replace("|", "\\|", StringComparison.Ordinal);
+
+	private static string RenderHelp(HelpRenderDocument help)
+	{
+		var builder = new StringBuilder();
+		if (help.IsCommandHelp)
+		{
+			if (help.Commands.Count == 1)
+			{
+				RenderCommandHelp(builder, help.Commands[0]);
+			}
+			else
+			{
+				AppendEntrySection(builder, "Commands", help.Commands.Select(CommandEntry).ToArray());
+			}
+
+			return builder.ToString().TrimEnd();
+		}
+
+		builder.AppendLine($"# Help: {EscapeMarkdown(help.Scope)}");
+		AppendCommandSection(builder, help.Commands);
+		AppendEntrySection(builder, "Scopes", help.Scopes);
+		AppendEntrySection(builder, "Global Options", help.GlobalOptions);
+		AppendEntrySection(builder, "Global Commands", help.GlobalCommands);
+		return builder.ToString().TrimEnd();
+	}
+
+	private static void RenderCommandHelp(StringBuilder builder, HelpRenderCommand command)
+	{
+		builder.AppendLine($"# `{EscapeMarkdown(command.Usage)}`");
+		builder.AppendLine();
+		builder.AppendLine($"- **Usage**: `{EscapeMarkdown(command.Usage)}`");
+		builder.AppendLine($"- **Description**: {EscapeMarkdown(command.Description)}");
+		if (command.Aliases.Count > 0)
+		{
+			builder.AppendLine($"- **Aliases**: {EscapeMarkdown(string.Join(", ", command.Aliases))}");
+		}
+
+		AppendEntrySection(builder, "Arguments", command.Arguments);
+		AppendEntrySection(builder, "Options", command.Options);
+		AppendEntrySection(builder, "Result Flow", command.ResultFlow);
+		AppendEntrySection(builder, "Answers", command.Answers);
+	}
+
+	private static void AppendCommandSection(StringBuilder builder, IReadOnlyList<HelpRenderCommand> commands)
+	{
+		if (commands.Count == 0)
+		{
+			return;
+		}
+
+		AppendEntrySection(builder, "Commands", commands.Select(CommandEntry).ToArray());
+	}
+
+	private static HelpRenderEntry CommandEntry(HelpRenderCommand command) =>
+		new(command.Name, command.Description);
+
+	private static void AppendEntrySection(
+		StringBuilder builder,
+		string title,
+		IReadOnlyList<HelpRenderEntry> entries)
+	{
+		if (entries.Count == 0)
+		{
+			return;
+		}
+
+		builder.AppendLine();
+		builder.AppendLine($"## {title}");
+		builder.AppendLine();
+		builder.AppendLine("| Name | Description |");
+		builder.AppendLine("| --- | --- |");
+		foreach (var entry in entries)
+		{
+			builder
+				.Append("| `")
+				.Append(EscapeCell(entry.Name))
+				.Append("` | ")
+				.Append(EscapeCell(entry.Description))
+				.AppendLine(" |");
+		}
+	}
+
+	private static string EscapeMarkdown(string value) =>
 		value.Replace("|", "\\|", StringComparison.Ordinal);
 
 	[UnconditionalSuppressMessage(

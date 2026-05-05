@@ -30,6 +30,8 @@ public sealed class OutputOptions
 		_transformers["xml"] = new XmlOutputTransformer(JsonSerializerOptions);
 		_transformers["yaml"] = new YamlOutputTransformer(JsonSerializerOptions);
 		_transformers["markdown"] = new MarkdownOutputTransformer();
+		_helpOutputFactories["markdown"] = static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>
+			HelpTextBuilder.BuildRenderModel(routes, contexts, scopeTokens, parsingOptions, ambientOptions);
 
 		_aliases["json"] = "json";
 		_aliases["xml"] = "xml";

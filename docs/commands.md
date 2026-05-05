@@ -312,6 +312,16 @@ app.Map("contacts", async (IReplPagingContext paging, ContactStore store, Cancel
 });
 ```
 
+When human users should continue through later pages without rerunning the
+command, return a page source:
+
+```csharp
+app.Map("contacts", (ContactStore store) =>
+    ReplPageSource.FromOffset<ContactRow>(
+        (offset, take, ct) => store.QueryAsync(offset, take, ct),
+        totalCount: store.Count));
+```
+
 Use this when the data source can page efficiently. See [Result Flow And Paging](result-flow.md) for CLI flags, pager behavior, MCP paging arguments, and output format details.
 
 ## Interactive prompts

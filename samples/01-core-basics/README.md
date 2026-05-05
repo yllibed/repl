@@ -142,7 +142,7 @@ return app.Run(args);
   - `[Browsable(false)]` hides a command from discovery.
 - **Return values are semantic**:
   - `IEnumerable<Contact>` → table
-  - `ReplPage<ActivityEvent>` → paged table with continuation metadata
+  - `IReplPageSource<ActivityEvent>` → paged table with interactive continuation
   - `Contact` → structured output (or JSON with `--json`)
   - `string` → plain text.
 
@@ -206,8 +206,10 @@ Expected behavior:
 ## Result-flow paging
 
 The `activity` command returns a synthetic long data source through
-`IReplPagingContext` and `ReplPage<T>`. The handler only returns the requested
-page, plus a continuation cursor when more rows exist.
+`IReplPagingContext` and `IReplPageSource<T>`. The handler fetches only the
+requested page, and human output can continue to the next page in the same run.
+The sample uses `ReplPageSource.FromOffset(...)` so it does not have to parse or
+emit offset cursors manually.
 
 ```text
 myapp activity --result:page-size=5
@@ -215,8 +217,8 @@ myapp activity --result:page-size=5 --result:cursor=5
 myapp activity --json --result:page-size=2
 ```
 
-Human output renders a compact table and a continuation hint. JSON output returns
-an `{ items, pageInfo }` envelope for automation.
+Human output renders a compact table with an integrated pager. JSON output
+returns an `{ items, pageInfo }` envelope for automation.
 
 Validation example:
 

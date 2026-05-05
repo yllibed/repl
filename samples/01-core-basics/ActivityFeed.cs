@@ -13,27 +13,16 @@ internal sealed class ActivityFeed
 {
 	private readonly List<ActivityEvent> _items = CreateItems();
 
-	public ReplPage<ActivityEvent> Query(IReplPagingContext paging)
+	public IReplPageSource<ActivityEvent> Query(IReplPagingContext paging)
 	{
 		ArgumentNullException.ThrowIfNull(paging);
 
-		var offset = paging.AllRequested ? 0 : ParseOffset(paging.Cursor);
-		var items = paging.AllRequested
-			? _items
-			: _items.Skip(offset).Take(paging.SuggestedPageSize).ToList();
-
-		var nextOffset = offset + items.Count;
-		var nextCursor = !paging.AllRequested && nextOffset < _items.Count
-			? nextOffset.ToString(CultureInfo.InvariantCulture)
-			: null;
-
-		return paging.Page(items, nextCursor, _items.Count);
+		return ReplPageSource.FromOffset<ActivityEvent>(
+			(offset, take, _) =>
+				ValueTask.FromResult<IReadOnlyList<ActivityEvent>>(
+					_items.Skip(offset).Take(take).ToList()),
+			_items.Count);
 	}
-
-	private static int ParseOffset(string? cursor) =>
-		int.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out var offset) && offset > 0
-			? offset
-			: 0;
 
 	private static List<ActivityEvent> CreateItems()
 	{

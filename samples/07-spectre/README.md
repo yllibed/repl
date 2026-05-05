@@ -41,9 +41,9 @@ table automatically. Zero rendering code in the handler.
 
 ### `activity` — Paged long data source
 
-Returns a synthetic activity feed through `IReplPagingContext` and `ReplPage<T>`.
-The Spectre output transformer renders only the requested page and appends the
-continuation cursor.
+Returns a synthetic activity feed through `IReplPagingContext` and
+`IReplPageSource<T>`. The Spectre output transformer renders the requested page,
+and the integrated pager can fetch more data in the same run.
 
 ```bash
 dotnet run --project samples/07-spectre/SpectreOpsSample.csproj -- activity --result:page-size=8

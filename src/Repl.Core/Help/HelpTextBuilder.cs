@@ -268,6 +268,7 @@ internal static partial class HelpTextBuilder
 			Aliases: route.Command.Aliases.ToArray(),
 			Arguments: BuildArgumentRows(route),
 			Options: BuildOptionRows(route),
+			ResultFlow: UsesResultFlow(route) ? ResultFlowRows : [],
 			Answers: BuildAnswerRows(route));
 	}
 
@@ -310,6 +311,7 @@ internal static partial class HelpTextBuilder
 					Aliases: aliases,
 					Arguments: [],
 					Options: [],
+					ResultFlow: [],
 					Answers: []);
 			})
 			.Where(command => command is not null)

@@ -7,6 +7,8 @@ namespace Repl.IntegrationTests;
 [DoNotParallelize]
 public sealed class Given_HelpDiscovery
 {
+	private static readonly string[] SingleResult = ["one"];
+
 	[TestMethod]
 	[Description("Regression guard: verifies requesting root help so that hidden commands are excluded.")]
 	public void When_RequestingRootHelp_Then_HiddenCommandsAreExcluded()
@@ -418,6 +420,85 @@ public sealed class Given_HelpDiscovery
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies command help explains result-flow paging controls for paged handlers.")]
+	public void When_RequestingCommandHelpForPagedHandler_Then_ResultFlowOptionsAreShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("activity", (IReplPagingContext paging) =>
+			paging.Page(["one"], nextCursor: "next", totalCount: 2));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["activity", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Result Flow:");
+		output.Text.Should().Contain("--result:page-size <n>");
+		output.Text.Should().Contain("--result:cursor <value>");
+		output.Text.Should().Contain("--result:all");
+		output.Text.Should().Contain("--result:pager=auto|off|more|scroll|external");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies Spectre command help explains result-flow paging controls for paged handlers.")]
+	public void When_RequestingCommandHelpForPagedHandlerInSpectre_Then_ResultFlowOptionsAreShown()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("activity", (IReplPagingContext paging) =>
+			paging.Page(["one"], nextCursor: "next", totalCount: 2));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["activity", "--help", "--spectre", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Result Flow");
+		output.Text.Should().Contain("--result:page-size <n>");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies markdown command help explains result-flow paging controls for paged handlers.")]
+	public void When_RequestingCommandHelpForPagedHandlerInMarkdown_Then_ResultFlowOptionsAreShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("activity", (IReplPagingContext paging) =>
+			paging.Page(["one"], nextCursor: "next", totalCount: 2));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["activity", "--help", "--markdown", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("# `activity`");
+		output.Text.Should().Contain("## Result Flow");
+		output.Text.Should().Contain("`--result:page-size <n>`");
+		output.Text.Should().NotContain("| Field | Value |");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies command help explains result-flow paging controls for page-source handlers.")]
+	public void When_RequestingCommandHelpForPageSourceHandler_Then_ResultFlowOptionsAreShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("activity", () => new StaticPageSource<string>());
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["activity", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Result Flow:");
+		output.Text.Should().Contain("--result:page-size <n>");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies result-flow controls stay hidden for handlers that do not support paging.")]
+	public void When_RequestingCommandHelpForNonPagedHandler_Then_ResultFlowOptionsAreHidden()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("list", () => SingleResult);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["list", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().NotContain("Result Flow:");
+		output.Text.Should().NotContain("--result:page-size <n>");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies injected global-options accessor parameters are omitted from command help.")]
 	public void When_RequestingCommandHelpWithGlobalOptionsAccessor_Then_AccessorIsNotListedAsCommandOption()
 	{
@@ -437,6 +518,21 @@ public sealed class Given_HelpDiscovery
 	{
 		Fast,
 		Slow,
+	}
+
+	private sealed class StaticPageSource<T> : IReplPageSource<T>
+	{
+		public ValueTask<ReplPage<T>> FetchAsync(
+			ReplPageRequest request,
+			CancellationToken cancellationToken = default) =>
+			ValueTask.FromResult(new ReplPage<T>(
+				[],
+				new ReplPageInfo(
+					Cursor: request.Cursor,
+					NextCursor: null,
+					TotalCount: 0,
+					PageSize: request.PageSize,
+					HasMore: false)));
 	}
 
 	[TestMethod]

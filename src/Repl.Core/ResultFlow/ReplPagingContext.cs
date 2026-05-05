@@ -54,7 +54,7 @@ internal sealed class ReplPagingContext : IReplPagingContext
 		Func<ReplPageRequest, CancellationToken, ValueTask<ReplPage<T>>> fetch)
 	{
 		ArgumentNullException.ThrowIfNull(fetch);
-		return new DelegateReplPageSource<T>(fetch);
+		return ReplPageSource.Create(fetch);
 	}
 
 	internal ReplPageRequest CreateRequest() =>
@@ -62,13 +62,4 @@ internal sealed class ReplPagingContext : IReplPagingContext
 
 	private static int ClampPageSize(int value, int maxPageSize) =>
 		Math.Clamp(value, 1, maxPageSize);
-
-	private sealed class DelegateReplPageSource<T>(
-		Func<ReplPageRequest, CancellationToken, ValueTask<ReplPage<T>>> fetch) : IReplPageSource<T>
-	{
-		public ValueTask<ReplPage<T>> FetchAsync(
-			ReplPageRequest request,
-			CancellationToken cancellationToken = default) =>
-			fetch(request, cancellationToken);
-	}
 }

@@ -1,11 +1,12 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.RegularExpressions;
 using Repl.Spectre;
 
 namespace Repl.IntegrationTests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class Given_OutputFormatting
+public sealed partial class Given_OutputFormatting
 {
 	[TestMethod]
 	[Description("Regression guard: verifies rendering human string result so that output contains raw text.")]
@@ -218,7 +219,53 @@ public sealed class Given_OutputFormatting
 		output.Text.Should().Contain("Alice Martin");
 		output.Text.Should().Contain("Bob Tremblay");
 		output.Text.Should().Contain("Showing 2 of 3.");
+		output.Text.Should().Contain("Next data page:");
 		output.Text.Should().Contain("--result:cursor page-2");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies human page sources continue interactively instead of asking users to rerun with a cursor.")]
+	public void When_RenderingPageSourceInHumanPager_Then_SpaceFetchesNextPageWithoutCursorRerun()
+	{
+		var sut = ReplApp.Create();
+		var fetchedCursors = new List<string?>();
+		var contacts = new[]
+		{
+			new ContactRow("Alice Martin", "alice@example.com"),
+			new ContactRow("Bob Tremblay", "bob@example.com"),
+		};
+
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.CreateSource<ContactRow>((request, _) =>
+			{
+				fetchedCursors.Add(request.Cursor);
+				var offset = string.Equals(request.Cursor, "1", StringComparison.Ordinal) ? 1 : 0;
+				var items = contacts.Skip(offset).Take(request.PageSize).ToArray();
+				var nextOffset = offset + items.Length;
+				var nextCursor = nextOffset < contacts.Length ? "1" : null;
+				return ValueTask.FromResult(new ReplPage<ContactRow>(
+					items,
+					new ReplPageInfo(
+						request.Cursor,
+						nextCursor,
+						contacts.Length,
+						request.PageSize,
+						nextCursor is not null)));
+			}));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		ReplSessionIO.KeyReader = new QueueKeyReader([Key(ConsoleKey.Spacebar, ' ')]);
+		ReplSessionIO.WindowSize = (100, 20);
+
+		var exitCode = sut.Run(["contact", "list", "--result:page-size=1", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		fetchedCursors.Should().Equal(null, "1");
+		var text = output.ToString();
+		text.Should().Contain("Alice Martin");
+		text.Should().Contain("Bob Tremblay");
+		text.Should().NotContain("rerun with --result:cursor");
 	}
 
 	[TestMethod]
@@ -531,7 +578,8 @@ public sealed class Given_OutputFormatting
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "list", "--no-logo"]));
 		var lines = output.Text
-			.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+			.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Select(StripAnsi);
 
 		output.ExitCode.Should().Be(0);
 		lines.Should().OnlyContain(line => line.Length <= width);
@@ -617,6 +665,29 @@ public sealed class Given_OutputFormatting
 				DescriptionStyle: "\u001b[33m");
 	}
 
+	private sealed class QueueKeyReader(IEnumerable<ConsoleKeyInfo> keys) : IReplKeyReader
+	{
+		private readonly Queue<ConsoleKeyInfo> _keys = new(keys);
+
+		public bool KeyAvailable => _keys.Count > 0;
+
+		public ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct)
+		{
+			ct.ThrowIfCancellationRequested();
+			return _keys.TryDequeue(out var key)
+				? ValueTask.FromResult(key)
+				: throw new InvalidOperationException("No key available in QueueKeyReader.");
+		}
+	}
+
+	private static ConsoleKeyInfo Key(ConsoleKey key, char keyChar) =>
+		new(keyChar, key, shift: false, alt: false, control: false);
+
+	private static string StripAnsi(string value) =>
+		BuildAnsiEscapeRegex().Replace(value, string.Empty);
+
+	[GeneratedRegex(@"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", RegexOptions.None, matchTimeoutMilliseconds: 50)]
+	private static partial Regex BuildAnsiEscapeRegex();
 }
 
 

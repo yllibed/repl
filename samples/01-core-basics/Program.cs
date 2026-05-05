@@ -60,7 +60,7 @@ file sealed class ContactCommands(ContactStore store, ActivityFeed activityFeed)
 	public object Count() => Results.Success("Contact count.", store.Count());
 
 	[Description("Return a paged activity log generated from a long data source.")]
-	public ReplPage<ActivityEvent> Activity(IReplPagingContext paging) =>
+	public IReplPageSource<ActivityEvent> Activity(IReplPagingContext paging) =>
 		activityFeed.Query(paging);
 
 	[Description("Render a date-only reporting period from a temporal range literal.")]

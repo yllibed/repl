@@ -106,7 +106,7 @@ In interactive mode, when ANSI is supported, JSON output is syntax-highlighted a
 
 ## Paging
 
-Human terminal formats (`human` and `spectre`) can use the integrated result pager when rendered output exceeds the visible row capacity. The pager is never used for redirected stdout, protocol passthrough, MCP/programmatic execution, or machine formats.
+Human terminal formats (`human` and `spectre`) can use the integrated result pager when rendered output exceeds the visible row capacity or a result-flow page source has more data. The pager is never used for redirected stdout, protocol passthrough, MCP/programmatic execution, or machine formats.
 
 Paged handler results should return `ReplPage<T>` through `IReplPagingContext`. JSON serializes these as `{ items, pageInfo }`; human and Spectre formats render the current page plus continuation metadata.
 
