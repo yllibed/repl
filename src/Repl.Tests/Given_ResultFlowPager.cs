@@ -69,6 +69,8 @@ public sealed class Given_ResultFlowPager
 		var keys = new FakeKeyReader(
 		[
 			MakeKey(ConsoleKey.UpArrow, '\0'),
+			MakeKey(ConsoleKey.UpArrow, '\0'),
+			MakeKey(ConsoleKey.PageUp, '\0'),
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
@@ -81,6 +83,7 @@ public sealed class Given_ResultFlowPager
 
 		var output = writer.ToString();
 		output.Split("# At Area Event Summary", StringSplitOptions.None).Should().HaveCount(2);
+		output.Split("--More--", StringSplitOptions.None).Should().HaveCount(2);
 		output.Should().Contain("r1");
 		output.Should().Contain("r2");
 		output.Should().NotContain("r3");
@@ -229,10 +232,41 @@ public sealed class Given_ResultFlowPager
 			CancellationToken.None);
 
 		var output = writer.ToString();
-		output.Split(header, StringSplitOptions.None).Should().HaveCount(3);
+		output.Split(header, StringSplitOptions.None).Should().HaveCount(2);
 		output.Should().Contain("three");
 		output.Should().NotContain("Showing 2 of 5");
 		output.Should().NotContain("Showing 1 of 5");
+	}
+
+	[TestMethod]
+	[Description("Result-flow more pager treats plain human-output column headings as headers and strips duplicates from fetched pages.")]
+	public async Task When_MorePagerFetchesHumanOutput_Then_DuplicateHashHeadersAreSkipped()
+	{
+		using var writer = new StringWriter();
+		var header = "#    At              Area       Event      Summary";
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			$"{header}\n1    2026-01-12      identity   validated  identity batch 1 validated successfully\nShowing 1 of 3.",
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
+				new ResultFlowPagerPage(
+					$"{header}\n2    2026-01-12      billing    queued     billing batch 1 queued successfully\nShowing 2 of 3.",
+					HasMore: false)),
+			CancellationToken.None);
+
+		var output = writer.ToString();
+		output.Split(header, StringSplitOptions.None).Should().HaveCount(2);
+		output.Should().Contain("identity batch 1 validated successfully");
+		output.Should().Contain("billing batch 1 queued successfully");
+		output.Should().NotContain("Showing 1 of 3");
+		output.Should().NotContain("Showing 2 of 3");
 	}
 
 	[TestMethod]

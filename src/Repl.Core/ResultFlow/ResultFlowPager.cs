@@ -360,20 +360,21 @@ internal static class ResultFlowPager
 		IReplKeyReader keyReader,
 		CancellationToken cancellationToken)
 	{
+		await output.WriteAsync(MorePrompt).ConfigureAwait(false);
+		await output.FlushAsync(cancellationToken).ConfigureAwait(false);
 		while (true)
 		{
-			await output.WriteAsync(MorePrompt).ConfigureAwait(false);
-			await output.FlushAsync(cancellationToken).ConfigureAwait(false);
 			var key = await keyReader.ReadKeyAsync(cancellationToken).ConfigureAwait(false);
-			await output.WriteLineAsync().ConfigureAwait(false);
 
 			switch (key.Key)
 			{
 				case ConsoleKey.Q:
 				case ConsoleKey.Escape:
+					await output.WriteLineAsync().ConfigureAwait(false);
 					return PagerAction.Quit;
 				case ConsoleKey.Enter:
 				case ConsoleKey.DownArrow:
+					await output.WriteLineAsync().ConfigureAwait(false);
 					session.NextWindow = 1;
 					return PagerAction.LineDown;
 				case ConsoleKey.UpArrow:
@@ -382,6 +383,7 @@ internal static class ResultFlowPager
 				case ConsoleKey.End:
 					continue;
 				default:
+					await output.WriteLineAsync().ConfigureAwait(false);
 					session.NextWindow = session.PageSize;
 					return PagerAction.PageDown;
 			}
@@ -801,6 +803,11 @@ internal static class ResultFlowPager
 				return CreateHeader(lines.Take(2).ToArray());
 			}
 
+			if (IsPlainHumanTableHeader(lines[0]))
+			{
+				return CreateHeader([lines[0]]);
+			}
+
 			return lines[0].Contains("\u001b[1m", StringComparison.Ordinal)
 				? CreateHeader([lines[0]])
 				: PagerHeader.Empty;
@@ -817,6 +824,13 @@ internal static class ResultFlowPager
 			return text.Length > 0
 				&& text.All(ch => ch is '-' or ' ' or '\t')
 				&& text.Contains('-', StringComparison.Ordinal);
+		}
+
+		private static bool IsPlainHumanTableHeader(string line)
+		{
+			var text = line.TrimStart();
+			return text.StartsWith("# ", StringComparison.Ordinal)
+				&& text.Contains("  ", StringComparison.Ordinal);
 		}
 
 		private static bool IsPageFooterLine(string line) =>
