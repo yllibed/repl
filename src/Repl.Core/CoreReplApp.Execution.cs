@@ -1138,7 +1138,19 @@ public sealed partial class CoreReplApp
 			var height = Console.WindowHeight;
 			return height > 0 ? height : null;
 		}
-		catch
+		catch (IOException)
+		{
+			return null;
+		}
+		catch (PlatformNotSupportedException)
+		{
+			return null;
+		}
+		catch (InvalidOperationException)
+		{
+			return null;
+		}
+		catch (System.Security.SecurityException)
 		{
 			return null;
 		}

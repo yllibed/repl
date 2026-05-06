@@ -386,7 +386,7 @@ Result-flow flags are global and use the `--result:` prefix so they do not colli
 | `--result:page-size <n>` or `--result:page-size=<n>` | Requested page size. Clamped to `ResultFlowOptions.MaxPageSize`. |
 | `--result:cursor <value>` or `--result:cursor=<value>` | Opaque continuation cursor. |
 | `--result:all` | Signals that the caller wants all rows. Bounded helpers such as `FromItems` can honor it; unbounded helpers such as `FromOffset` and `FromAsyncEnumerable` reject it by default. |
-| `--result:pager=auto|off|more|scroll|external` | Pager preference for human formats. |
+| `--result:pager=auto\|off\|more\|scroll\|external` | Pager preference for human formats. |
 
 `auto` uses a `less`-style alternate-screen viewport when ANSI rendering and key
 input are available, then falls back to the simple `more` behavior in limited

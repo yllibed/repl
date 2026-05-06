@@ -110,9 +110,9 @@ public sealed class Given_McpServerEndToEnd
 		root.GetProperty("pageInfo").GetProperty("cursor").GetString().Should().Be("start");
 		root.GetProperty("pageInfo").GetProperty("nextCursor").GetString().Should().Be("page-2");
 		root.GetProperty("pageInfo").GetProperty("totalCount").GetInt64().Should().Be(2);
-		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text;
-		text.Should().NotBeNull();
-		text!.Should().Contain("Returned 1 item(s).");
+		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text
+			?? throw new AssertFailedException("Expected a text content block.");
+		text.Should().Contain("Returned 1 item(s).");
 		text.Should().Contain("cursor available");
 		text.Should().NotContain("page-2");
 	}
