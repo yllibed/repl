@@ -774,9 +774,10 @@ internal static class ResultFlowPager
 		public static ParsedPagerPayload Parse(string payload, PagerHeader? header)
 		{
 			var lines = SplitLines(payload);
-			var resolvedHeader = header ?? DetectHeader(lines);
+			var payloadHeader = DetectHeader(lines);
+			var resolvedHeader = header ?? payloadHeader;
+			var headerLineCount = payloadHeader.Lines.Count;
 			var content = new List<string>();
-			var headerLineCount = header is null ? resolvedHeader.Lines.Count : 0;
 			for (var i = headerLineCount; i < lines.Length; i++)
 			{
 				var normalized = NormalizeLine(lines[i]);

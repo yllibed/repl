@@ -244,25 +244,27 @@ public sealed class Given_ResultFlowPager
 	{
 		using var writer = new StringWriter();
 		var header = "#    At              Area       Event      Summary";
+		var fetchedHeader = "#   At                 Area       Event       Summary";
 		var keys = new FakeKeyReader(
 		[
 			MakeKey(ConsoleKey.Spacebar, ' '),
 		]);
 
 		await ResultFlowPager.WriteAsync(
-			$"{header}\n1    2026-01-12      identity   validated  identity batch 1 validated successfully\nShowing 1 of 3.",
+			$"{header}\n---  -----------------  ---------  ----------  ----------------------------------------\n1    2026-01-12      identity   validated  identity batch 1 validated successfully\nShowing 1 of 3.",
 			writer,
 			keys,
 			visibleRows: 2,
 			hasMorePayload: true,
 			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
 				new ResultFlowPagerPage(
-					$"{header}\n2    2026-01-12      billing    queued     billing batch 1 queued successfully\nShowing 2 of 3.",
+					$"{fetchedHeader}\n---  -----------------  ---------  ----------  ----------------------------------------\n2    2026-01-12      billing    queued     billing batch 1 queued successfully\nShowing 2 of 3.",
 					HasMore: false)),
 			CancellationToken.None);
 
 		var output = writer.ToString();
 		output.Split(header, StringSplitOptions.None).Should().HaveCount(2);
+		output.Should().NotContain(fetchedHeader);
 		output.Should().Contain("identity batch 1 validated successfully");
 		output.Should().Contain("billing batch 1 queued successfully");
 		output.Should().NotContain("Showing 1 of 3");
