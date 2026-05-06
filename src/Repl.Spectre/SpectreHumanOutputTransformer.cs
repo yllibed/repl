@@ -11,7 +11,7 @@ namespace Repl.Spectre;
 /// <summary>
 /// Output transformer that renders values using light Spectre.Console layouts.
 /// </summary>
-internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
+internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
 
@@ -52,6 +52,16 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			_ when TryRenderObject(value, out var objectText) => objectText,
 			_ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
 		});
+	}
+
+	public ValueTask<string> TransformPageAsync(
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(page);
+		cancellationToken.ThrowIfCancellationRequested();
+		return ValueTask.FromResult(RenderPage(page, mode, includeFooter: false));
 	}
 
 	private string RenderHelp(HelpRenderDocument help)
@@ -179,7 +189,9 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		}));
 	}
 
-	private string RenderEnumerable(System.Collections.IEnumerable enumerable)
+	private string RenderEnumerable(
+		System.Collections.IEnumerable enumerable,
+		bool includeTableHeader = true)
 	{
 		var items = enumerable.Cast<object?>().ToArray();
 		if (items.Length == 0)
@@ -208,15 +220,23 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 				items.Select(item => Convert.ToString(item, CultureInfo.InvariantCulture) ?? string.Empty));
 		}
 
-		return RenderToString(BuildObjectTable(items, members));
+		return RenderToString(BuildObjectTable(items, members, includeTableHeader));
 	}
 
-	private string RenderPage(IReplPage page)
+	private string RenderPage(IReplPage page) =>
+		RenderPage(page, ResultFlowPageRenderMode.Initial, includeFooter: true);
+
+	private string RenderPage(
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		bool includeFooter)
 	{
 		var body = page.UntypedItems.Count == 0
 			? "No results."
-			: RenderEnumerable(page.UntypedItems);
-		var footer = RenderPageFooter(page);
+			: RenderEnumerable(
+				page.UntypedItems,
+				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
+		var footer = includeFooter ? RenderPageFooter(page) : string.Empty;
 		return string.IsNullOrWhiteSpace(footer)
 			? body
 			: string.Concat(body, Environment.NewLine, footer);
@@ -272,11 +292,18 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return grid;
 	}
 
-	private static Table BuildObjectTable(object?[] items, IReadOnlyList<DisplayMember> members)
+	private static Table BuildObjectTable(
+		object?[] items,
+		IReadOnlyList<DisplayMember> members,
+		bool includeHeaders = true)
 	{
 		var table = new Table()
 			.Border(TableBorder.None)
 			.Collapse();
+		if (!includeHeaders)
+		{
+			table.HideHeaders();
+		}
 
 		foreach (var member in members)
 		{

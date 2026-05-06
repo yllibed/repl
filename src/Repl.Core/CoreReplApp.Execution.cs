@@ -754,7 +754,7 @@ public sealed partial class CoreReplApp
 		}
 
 		var nextCursor = page.PageInfo.NextCursor;
-		var pagerPayload = await transformer.TransformAsync(CreatePagerDisplayPage(page), cancellationToken)
+		var pagerPayload = await TransformPagerPageAsync(transformer, page, ResultFlowPageRenderMode.Initial, cancellationToken)
 			.ConfigureAwait(false);
 		pagerPayload = TryColorizeStructuredPayload(pagerPayload, transformer.Name, isInteractive);
 		await ResultFlowPager.WriteAsync(
@@ -782,11 +782,23 @@ public sealed partial class CoreReplApp
 			var nextRequest = request with { Cursor = nextCursor };
 			var nextPage = await FetchPageSourceAsync(source, nextRequest, token).ConfigureAwait(false);
 			nextCursor = nextPage.PageInfo.NextCursor;
-			var nextPayload = await transformer.TransformAsync(CreatePagerDisplayPage(nextPage), token)
+			var nextPayload = await TransformPagerPageAsync(transformer, nextPage, ResultFlowPageRenderMode.Continuation, token)
 				.ConfigureAwait(false);
 			nextPayload = TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive);
 			return new ResultFlowPagerPage(nextPayload, nextPage.PageInfo.HasMore);
 		}
+	}
+
+	private static ValueTask<string> TransformPagerPageAsync(
+		IOutputTransformer transformer,
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		CancellationToken cancellationToken)
+	{
+		var displayPage = CreatePagerDisplayPage(page);
+		return transformer is IResultFlowOutputTransformer resultFlowTransformer
+			? resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken)
+			: transformer.TransformAsync(displayPage, cancellationToken);
 	}
 
 	private async ValueTask WritePayloadAsync(

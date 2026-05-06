@@ -265,6 +265,8 @@ public sealed partial class Given_OutputFormatting
 		text.Should().Contain("Alice Martin");
 		text.Should().Contain("Bob Tremblay");
 		text.Should().NotContain("rerun with --result:cursor");
+		text.Split("Name", StringSplitOptions.None).Should().HaveCount(2);
+		text.Should().NotContain("Showing ");
 	}
 
 	[TestMethod]
