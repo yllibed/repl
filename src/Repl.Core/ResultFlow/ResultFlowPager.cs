@@ -311,7 +311,7 @@ internal static class ResultFlowPager
 
 			while (session.Index < session.Lines.Count)
 			{
-				await WriteMoreWindowAsync(session, output).ConfigureAwait(false);
+				await WriteMoreWindowAsync(session, output, fetchNextPayload, cancellationToken).ConfigureAwait(false);
 				if (session.Index >= session.Lines.Count)
 				{
 					break;
@@ -340,15 +340,27 @@ internal static class ResultFlowPager
 		}
 	}
 
-	private static async ValueTask WriteMoreWindowAsync(PagerSession session, TextWriter output)
+	private static async ValueTask WriteMoreWindowAsync(
+		PagerSession session,
+		TextWriter output,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		CancellationToken cancellationToken)
 	{
-		var take = Math.Min(session.NextWindow, session.Lines.Count - session.Index);
-		for (var i = 0; i < take; i++)
+		var written = 0;
+		while (written < session.NextWindow)
 		{
-			await output.WriteLineAsync(session.Lines[session.Index + i]).ConfigureAwait(false);
-		}
+			if (session.Index >= session.Lines.Count)
+			{
+				if (!await TryFetchIntoSessionAsync(session, fetchNextPayload, cancellationToken).ConfigureAwait(false))
+				{
+					break;
+				}
+			}
 
-		session.Index += take;
+			await output.WriteLineAsync(session.Lines[session.Index]).ConfigureAwait(false);
+			session.Index++;
+			written++;
+		}
 	}
 
 	private static async ValueTask<bool> TryFetchIntoSessionAsync(

@@ -153,6 +153,36 @@ public sealed class Given_ResultFlowPager
 	}
 
 	[TestMethod]
+	[Description("Result-flow more pager fills the requested PageDown window across payload boundaries.")]
+	public async Task When_MorePagerPageDownCrossesPayloadBoundary_Then_FetchesAndContinuesWindow()
+	{
+		using var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.PageDown, '\0'),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo\nthree",
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
+				new ResultFlowPagerPage("four\nfive\nsix", HasMore: false)),
+			CancellationToken.None);
+
+		var output = writer.ToString();
+		output.Should().Contain("one");
+		output.Should().Contain("two");
+		output.Should().Contain("three");
+		output.Should().Contain("four");
+		output.Should().NotContain("five");
+		output.Should().NotContain("six");
+	}
+
+	[TestMethod]
 	[Description("Result-flow pager stops at a data-page boundary without fetching more data when the user quits.")]
 	public async Task When_CurrentPayloadEndsAndUserQuits_Then_DoesNotFetchNextPayload()
 	{
