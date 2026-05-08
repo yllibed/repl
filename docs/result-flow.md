@@ -380,6 +380,8 @@ The technical properties used by the renderer, such as `ItemType` and `UntypedIt
 ## CLI Flags
 
 Result-flow flags are global and use the `--result:` prefix so they do not collide with command options such as `--limit` or `--cursor`.
+The reserved names are also exposed in `ReplResultFlowOptionNames` so hosts can
+avoid collisions when composing custom command surfaces.
 
 | Flag | Meaning |
 |---|---|
@@ -684,6 +686,9 @@ When a handler returns `ReplPage<T>`, MCP returns:
 - `Content`: a short text summary such as `Returned 1 item(s). Total: 2. Continue with _replCursor; cursor available in structured content.`
 
 This keeps agents from receiving a giant JSON string in `TextContentBlock` while still preserving structured data for clients that support it.
+Agents that preserve `StructuredContent` can continue by sending `_replCursor`
+with the value from `pageInfo.nextCursor`. Agents that only read text receive a
+safe fallback summary, but Repl does not place the raw cursor in text content.
 
 ## Spectre Behavior
 

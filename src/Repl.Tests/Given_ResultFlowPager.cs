@@ -913,6 +913,31 @@ public sealed class Given_ResultFlowPager
 		output.Should().NotContain("five");
 	}
 
+	[TestMethod]
+	[Description("PagerSession keeps its buffer capped and clears continuation when the cap is reached.")]
+	public void When_PagerSessionReachesBufferLimit_Then_LinesStayReadOnlyAndHasMoreIsCleared()
+	{
+		var session = new PagerSession("one", hasMorePayload: true, maxBufferedLines: 2);
+
+		session.Append("two\nthree", hasMorePayload: true);
+
+		session.Lines.Should().Equal("one", "two");
+		session.Lines.Should().NotBeAssignableTo<List<string>>();
+		session.BufferLimitReached.Should().BeTrue();
+		session.HasMorePayload.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Pager payload parser ignores malformed ANSI escape markers when normalizing headers.")]
+	public void When_HeaderContainsLoneEscape_Then_NormalizationStillDeduplicatesContinuationHeader()
+	{
+		var header = "#   At  Area\u001b";
+		var first = PagerPayloadParser.Parse($"{header}\none", header: null);
+		var second = PagerPayloadParser.Parse($"{header}\ntwo", first.Header);
+
+		second.ContentLines.Should().Equal("two");
+	}
+
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
 		new(keyChar, key, shift: false, alt: false, control: false);
 

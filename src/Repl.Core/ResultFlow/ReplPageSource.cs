@@ -375,8 +375,11 @@ public static class ReplPageSource
 		}
 
 		throw new InvalidOperationException(
-			$"The result cursor '{cursor}' is not a valid non-negative offset cursor for this page source.");
+			$"The result cursor '{AbbreviateCursor(cursor)}' is not a valid non-negative offset cursor for this page source.");
 	}
+
+	private static string AbbreviateCursor(string cursor) =>
+		cursor.Length <= 40 ? cursor : string.Concat(cursor.AsSpan(0, 40), "...");
 
 	private static int ResolveMaxSourceItemsToScan(int? value) =>
 		value is > 0 ? value.Value : DefaultMaxSourceItemsToScan;

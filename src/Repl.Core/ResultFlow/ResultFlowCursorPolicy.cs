@@ -53,6 +53,6 @@ internal static class ResultFlowCursorPolicy
 
 	public static string FormatCliContinuation(string? cursor) =>
 		TryValidate(cursor, out _)
-			? $"--result:cursor {cursor}"
-			: "--result:cursor <cursor omitted>";
+			? $"{ReplResultFlowOptionNames.Cursor} {cursor}"
+			: $"{ReplResultFlowOptionNames.Cursor} <cursor omitted>";
 }

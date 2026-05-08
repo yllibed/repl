@@ -215,6 +215,22 @@ cursor tokens only: non-empty, at most 512 characters, no whitespace, no control
 characters, and not starting with `-`. Page-size tokens must be numeric and at
 most 20 characters before normal result-flow clamping is applied.
 
+MCP paging continuation depends on the client preserving structured tool
+content. Repl always returns a short text fallback, but the raw cursor is only
+available in `StructuredContent.pageInfo.nextCursor`.
+
+| Agent/client behavior | Paging support | Repl fallback |
+|---|---|---|
+| Reads `StructuredContent` and can call the same tool again | Full continuation with `_replCursor` and `_replPageSize` | Not needed |
+| Reads only `Content` text | Sees that another cursor exists, but cannot continue automatically | Text says the cursor is available in structured content |
+| Ignores custom/reserved input properties | First page still works | Tool returns bounded first page |
+| Does not support structured content | No automatic continuation | Use CLI/programmatic output or expose a command-specific cursor option |
+
+Applications should not rely on all agents supporting continuation equally.
+For important workflows, include enough data in the first page summary for the
+agent to decide whether it needs a follow-up call, and keep handlers safe when
+only the first page is consumed.
+
 `WriteProgressAsync` maps to MCP progress notifications. `WriteStatusAsync` maps to log messages (`level: info`). See [Progress](progress.md#mcp) for the centralized progress model across console, hosted sessions, Spectre, and MCP:
 
 ```csharp

@@ -9,10 +9,10 @@ internal static partial class HelpTextBuilder
 {
 	private static readonly HelpRenderEntry[] ResultFlowRows =
 	[
-		new("--result:page-size <n>", "Request a page size for paged handlers."),
-		new("--result:cursor <value>", "Continue from a cursor returned by a previous page."),
-		new("--result:all", "Request all rows when the handler supports it."),
-		new("--result:pager=auto|off|more|inline|full", "Control the integrated pager for human output."),
+		new($"{ReplResultFlowOptionNames.PageSize} <n>", "Request a page size for paged handlers."),
+		new($"{ReplResultFlowOptionNames.Cursor} <value>", "Continue from a cursor returned by a previous page."),
+		new(ReplResultFlowOptionNames.All, "Request all rows when the handler supports it."),
+		new($"{ReplResultFlowOptionNames.Pager}=auto|off|more|inline|full", "Control the integrated pager for human output."),
 	];
 
 	private static string BuildCommandHelp(RouteDefinition[] routes, bool useAnsi, AnsiPalette palette)

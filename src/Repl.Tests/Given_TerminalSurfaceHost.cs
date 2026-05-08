@@ -125,15 +125,39 @@ public sealed class Given_TerminalSurfaceHost
 	{
 		private bool _thrown;
 
+		public override Task WriteAsync(char value)
+		{
+			ThrowIfMatches(value.ToString());
+			return base.WriteAsync(value);
+		}
+
+		public override Task WriteAsync(char[] buffer, int index, int count)
+		{
+			ThrowIfMatches(new string(buffer, index, count));
+			return base.WriteAsync(buffer, index, count);
+		}
+
+		public override Task WriteAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
+		{
+			ThrowIfMatches(buffer.ToString());
+			return base.WriteAsync(buffer, cancellationToken);
+		}
+
 		public override Task WriteAsync(string? value)
 		{
-			if (!_thrown && string.Equals(value, throwOn, StringComparison.Ordinal))
+			ThrowIfMatches(value);
+			return base.WriteAsync(value);
+		}
+
+		private void ThrowIfMatches(string? value)
+		{
+			if (_thrown || !string.Equals(value, throwOn, StringComparison.Ordinal))
 			{
-				_thrown = true;
-				throw new IOException("simulated terminal failure");
+				return;
 			}
 
-			return base.WriteAsync(value);
+			_thrown = true;
+			throw new IOException("simulated terminal failure");
 		}
 	}
 }

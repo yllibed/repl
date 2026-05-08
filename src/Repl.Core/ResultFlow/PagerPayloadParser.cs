@@ -1,7 +1,11 @@
 namespace Repl;
 
+using System.Buffers;
+
 internal static class PagerPayloadParser
 {
+	private static readonly SearchValues<char> PlainTableSeparatorChars = SearchValues.Create("- \t");
+
 	public static ParsedPagerPayload Parse(string payload, PagerHeader? header, bool stripPresentationChrome = true)
 	{
 		var lines = SplitLines(payload);
@@ -9,7 +13,7 @@ internal static class PagerPayloadParser
 		var resolvedHeader = header ?? payloadHeader;
 		var headerLineCount = payloadHeader.Lines.Count;
 		var content = new List<string>();
-		for (var i = headerLineCount; i < lines.Length; i++)
+		for (var i = headerLineCount; i < lines.Count; i++)
 		{
 			var normalized = NormalizeLine(lines[i]);
 			if (resolvedHeader.NormalizedLines.Contains(normalized)
@@ -24,16 +28,16 @@ internal static class PagerPayloadParser
 		return new ParsedPagerPayload(resolvedHeader, content);
 	}
 
-	private static PagerHeader DetectHeader(string[] lines)
+	private static PagerHeader DetectHeader(List<string> lines)
 	{
-		if (lines.Length == 0)
+		if (lines.Count == 0)
 		{
 			return PagerHeader.Empty;
 		}
 
-		if (lines.Length > 1 && IsPlainTableSeparator(lines[1]))
+		if (lines.Count > 1 && IsPlainTableSeparator(lines[1]))
 		{
-			return CreateHeader(lines.Take(2).ToArray());
+			return CreateHeader([lines[0], lines[1]]);
 		}
 
 		if (IsPlainHumanTableHeader(lines[0]))
@@ -55,7 +59,7 @@ internal static class PagerPayloadParser
 	{
 		var text = line.Trim();
 		return text.Length > 0
-			&& text.All(ch => ch is '-' or ' ' or '\t')
+			&& text.AsSpan().IndexOfAnyExcept(PlainTableSeparatorChars) < 0
 			&& text.Contains('-', StringComparison.Ordinal);
 	}
 
@@ -71,9 +75,9 @@ internal static class PagerPayloadParser
 		&& (line.Contains(" of ", StringComparison.Ordinal)
 			|| line.Contains(" result(s).", StringComparison.Ordinal))
 		&& (line.EndsWith('.')
-			|| line.Contains("Next data page: rerun with --result:cursor ", StringComparison.Ordinal));
+			|| line.Contains($"Next data page: rerun with {ReplResultFlowOptionNames.Cursor} ", StringComparison.Ordinal));
 
-	private static string[] SplitLines(string payload)
+	private static List<string> SplitLines(string payload)
 	{
 		if (string.IsNullOrEmpty(payload))
 		{
@@ -91,7 +95,7 @@ internal static class PagerPayloadParser
 			lines.RemoveAt(lines.Count - 1);
 		}
 
-		return [.. lines];
+		return lines;
 	}
 
 	private static string NormalizeLine(string line)
@@ -104,8 +108,18 @@ internal static class PagerPayloadParser
 		var builder = new System.Text.StringBuilder(line.Length);
 		for (var i = 0; i < line.Length; i++)
 		{
-			if (line[i] == '\u001b' && i + 1 < line.Length && line[i + 1] == '[')
+			if (line[i] == '\u001b')
 			{
+				if (i + 1 >= line.Length)
+				{
+					continue;
+				}
+
+				if (line[i + 1] != '[')
+				{
+					continue;
+				}
+
 				i += 2;
 				while (i < line.Length && (line[i] < '@' || line[i] > '~'))
 				{

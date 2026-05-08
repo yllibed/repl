@@ -270,6 +270,32 @@ public sealed partial class Given_OutputFormatting
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies paging.CreateSource receives the caller cursor and suggested page size through the first source request.")]
+	public void When_PageSourceIsCreatedFromPagingContext_Then_FirstRequestUsesCurrentPagingIntent()
+	{
+		var sut = ReplApp.Create();
+		ReplPageRequest? capturedRequest = null;
+
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.CreateSource<ContactRow>((request, _) =>
+			{
+				capturedRequest = request;
+				return ValueTask.FromResult(request.Page(
+					[new ContactRow("Alice Martin", "alice@example.com")]));
+			}));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+
+		var exitCode = sut.Run(["contact", "list", "--result:page-size=7", "--result:cursor=page-2", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		capturedRequest.Should().NotBeNull();
+		capturedRequest!.Cursor.Should().Be("page-2");
+		capturedRequest.PageSize.Should().Be(7);
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies paged results serialize to a clean JSON envelope for automation.")]
 	public void When_RenderingPagedResultInJson_Then_ItemsAndPageInfoAreSerialized()
 	{

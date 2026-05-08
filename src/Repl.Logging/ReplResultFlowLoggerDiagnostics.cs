@@ -3,27 +3,33 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Repl;
 
-internal sealed partial class ReplResultFlowLoggerDiagnostics(IServiceProvider services) : IReplResultFlowDiagnostics
+internal sealed partial class ReplResultFlowLoggerDiagnostics : IReplResultFlowDiagnostics
 {
 	private const string LoggerCategory = "Repl.ResultFlow";
+	private readonly ILogger _logger;
+
+	public ReplResultFlowLoggerDiagnostics(IServiceProvider services)
+	{
+		ArgumentNullException.ThrowIfNull(services);
+		var loggerFactory = services.GetService(typeof(ILoggerFactory)) as ILoggerFactory
+			?? NullLoggerFactory.Instance;
+		_logger = loggerFactory.CreateLogger(LoggerCategory);
+	}
 
 	public void OnDiagnostic(ReplResultFlowDiagnostic diagnostic)
 	{
 		ArgumentNullException.ThrowIfNull(diagnostic);
-		var loggerFactory = services.GetService(typeof(ILoggerFactory)) as ILoggerFactory
-			?? NullLoggerFactory.Instance;
-		var logger = loggerFactory.CreateLogger(LoggerCategory);
 
 		switch (diagnostic.Kind)
 		{
 			case ReplResultFlowDiagnosticKind.PageFetchStarting:
-				PageFetchStarting(logger, diagnostic.Cursor, diagnostic.PageSize);
+				PageFetchStarting(_logger, diagnostic.Cursor, diagnostic.PageSize);
 				break;
 			case ReplResultFlowDiagnosticKind.PageFetchSucceeded:
-				PageFetchSucceeded(logger, diagnostic.Cursor, diagnostic.PageSize, diagnostic.ItemCount ?? 0);
+				PageFetchSucceeded(_logger, diagnostic.Cursor, diagnostic.PageSize, diagnostic.ItemCount ?? 0);
 				break;
 			case ReplResultFlowDiagnosticKind.PageFetchFailed:
-				PageFetchFailed(logger, diagnostic.Exception, diagnostic.Cursor, diagnostic.PageSize);
+				PageFetchFailed(_logger, diagnostic.Exception, diagnostic.Cursor, diagnostic.PageSize);
 				break;
 		}
 	}

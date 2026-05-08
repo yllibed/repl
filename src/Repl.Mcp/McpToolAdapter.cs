@@ -242,13 +242,13 @@ internal sealed partial class McpToolAdapter
 			else if (string.Equals(key, McpResultFlowArgumentNames.Cursor, StringComparison.Ordinal))
 			{
 				ValidateResultCursor(strValue);
-				resultFlowTokens.Add("--result:cursor");
+				resultFlowTokens.Add(ReplResultFlowOptionNames.Cursor);
 				resultFlowTokens.Add(strValue);
 			}
 			else if (string.Equals(key, McpResultFlowArgumentNames.PageSize, StringComparison.Ordinal))
 			{
 				ValidateResultPageSize(strValue);
-				resultFlowTokens.Add("--result:page-size");
+				resultFlowTokens.Add(ReplResultFlowOptionNames.PageSize);
 				resultFlowTokens.Add(strValue);
 			}
 			else

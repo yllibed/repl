@@ -6,6 +6,8 @@ internal static class ResultFlowPager
 	private const string FullStatus = "-- result-flow {0}-{1}/{2}{3}  Space: next  Up/Down: scroll  Home/End: known bounds  q: quit --";
 	private const string FullStatusBufferLimit = "-- result-flow {0}-{1}/{2} buffer limit reached  Up/Down: scroll  q: quit --";
 	private const int DefaultMaxBufferedLines = 10_000;
+	private static readonly string MorePromptClear = new(' ', MorePrompt.Length);
+	private static readonly string SpacePadding = new(' ', 256);
 	private static readonly System.Text.CompositeFormat FullStatusFormat =
 		System.Text.CompositeFormat.Parse(FullStatus);
 	private static readonly System.Text.CompositeFormat FullStatusBufferLimitFormat =
@@ -459,7 +461,7 @@ internal static class ResultFlowPager
 		}
 
 		await output.WriteAsync('\r').ConfigureAwait(false);
-		await output.WriteAsync(new string(' ', MorePrompt.Length)).ConfigureAwait(false);
+		await output.WriteAsync(MorePromptClear).ConfigureAwait(false);
 		await output.WriteAsync('\r').ConfigureAwait(false);
 	}
 
@@ -640,7 +642,7 @@ internal static class ResultFlowPager
 		var previousLength = state.GetRenderedLineLength(row);
 		if (previousLength > line.Length)
 		{
-			await output.WriteAsync(new string(' ', previousLength - line.Length)).ConfigureAwait(false);
+			await WriteSpacesAsync(output, previousLength - line.Length).ConfigureAwait(false);
 		}
 
 		state.SetRenderedLineLength(row, line.Length);
@@ -698,6 +700,21 @@ internal static class ResultFlowPager
 	private static int GetViewportDelta(PagerAction action, int viewportHeight) =>
 		action == PagerAction.PageDown ? viewportHeight : 1;
 
+	private static async ValueTask WriteSpacesAsync(TextWriter output, int count)
+	{
+		if (count <= 0)
+		{
+			return;
+		}
+
+		while (count > 0)
+		{
+			var take = Math.Min(count, SpacePadding.Length);
+			await output.WriteAsync(SpacePadding.AsMemory(0, take)).ConfigureAwait(false);
+			count -= take;
+		}
+	}
+
 	private static int GetCurrentVisibleRows(int fallbackVisibleRows, Func<int>? visibleRowsProvider)
 	{
 		if (visibleRowsProvider is null)
@@ -709,19 +726,10 @@ internal static class ResultFlowPager
 		{
 			return Math.Max(2, visibleRowsProvider());
 		}
-		catch (IOException)
-		{
-			return Math.Max(2, fallbackVisibleRows);
-		}
-		catch (PlatformNotSupportedException)
-		{
-			return Math.Max(2, fallbackVisibleRows);
-		}
-		catch (InvalidOperationException)
-		{
-			return Math.Max(2, fallbackVisibleRows);
-		}
-		catch (System.Security.SecurityException)
+		catch (Exception ex) when (ex is IOException
+			or PlatformNotSupportedException
+			or InvalidOperationException
+			or System.Security.SecurityException)
 		{
 			return Math.Max(2, fallbackVisibleRows);
 		}
