@@ -40,25 +40,4 @@ public interface IReplPagingContext
 	/// </summary>
 	ReplResultSurface Surface { get; }
 
-	/// <summary>
-	/// Creates a paged result from an already fetched page.
-	/// </summary>
-	/// <typeparam name="T">Item type.</typeparam>
-	/// <param name="items">Items in the current page.</param>
-	/// <param name="nextCursor">Cursor for the next page, when one exists.</param>
-	/// <param name="totalCount">Total item count, when known without expensive enumeration.</param>
-	/// <returns>A result page consumable by Repl renderers.</returns>
-	ReplPage<T> Page<T>(
-		IReadOnlyList<T> items,
-		string? nextCursor = null,
-		long? totalCount = null);
-
-	/// <summary>
-	/// Creates a lazy page source that can fetch additional pages on demand.
-	/// </summary>
-	/// <typeparam name="T">Item type.</typeparam>
-	/// <param name="fetch">Page fetch delegate.</param>
-	/// <returns>A page source consumable by interactive renderers.</returns>
-	IReplPageSource<T> CreateSource<T>(
-		Func<ReplPageRequest, CancellationToken, ValueTask<ReplPage<T>>> fetch);
 }

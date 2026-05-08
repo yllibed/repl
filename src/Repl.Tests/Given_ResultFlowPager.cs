@@ -819,6 +819,43 @@ public sealed class Given_ResultFlowPager
 		writer.ToString().Should().Be("custom");
 	}
 
+	[TestMethod]
+	[Description("Result-flow options expose pager renderers as a controlled read-only list keyed by mode.")]
+	public void When_PagerRendererIsRegisteredTwiceForMode_Then_LatestRendererReplacesPrevious()
+	{
+		var options = new ResultFlowOptions();
+		var first = new RecordingPagerRenderer(ReplPagerMode.Inline);
+		var second = new RecordingPagerRenderer(ReplPagerMode.Inline);
+
+		options.UsePagerRenderer(first);
+		options.UsePagerRenderer(second);
+
+		options.PagerRenderers.Should().ContainSingle().Which.Should().BeSameAs(second);
+		options.RemovePagerRenderer(ReplPagerMode.Inline).Should().BeTrue();
+		options.PagerRenderers.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	[Description("ReplPagerRenderContext can be constructed and fetch payloads in custom renderer tests.")]
+	public async Task When_RenderContextIsCreatedDirectly_Then_FetchNextPayloadReturnsConfiguredPayload()
+	{
+		var context = new ReplPagerRenderContext(
+			initialPayload: "one",
+			output: new StringWriter(),
+			keyReader: new FakeKeyReader([]),
+			visibleRows: 3,
+			visibleRowsProvider: null,
+			ansiEnabled: true,
+			hasMorePayload: true,
+			fetchNextPayload: _ => ValueTask.FromResult<ReplPagerPayload?>(new ReplPagerPayload("two", HasMore: false)));
+
+		var payload = await context.FetchNextPayloadAsync(CancellationToken.None);
+
+		payload.Should().NotBeNull();
+		payload!.Payload.Should().Be("two");
+		context.CanFetchNextPayload.Should().BeTrue();
+	}
+
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
 		new(keyChar, key, shift: false, alt: false, control: false);
 

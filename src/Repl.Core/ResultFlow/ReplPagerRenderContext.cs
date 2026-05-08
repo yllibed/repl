@@ -5,7 +5,12 @@ namespace Repl;
 /// </summary>
 public sealed class ReplPagerRenderContext
 {
-	internal ReplPagerRenderContext(
+	private readonly Func<CancellationToken, ValueTask<ReplPagerPayload?>>? _fetchNextPayload;
+
+	/// <summary>
+	/// Initializes a new instance of the <see cref="ReplPagerRenderContext"/> class.
+	/// </summary>
+	public ReplPagerRenderContext(
 		string initialPayload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -15,6 +20,10 @@ public sealed class ReplPagerRenderContext
 		bool hasMorePayload,
 		Func<CancellationToken, ValueTask<ReplPagerPayload?>>? fetchNextPayload)
 	{
+		ArgumentNullException.ThrowIfNull(initialPayload);
+		ArgumentNullException.ThrowIfNull(output);
+		ArgumentNullException.ThrowIfNull(keyReader);
+
 		InitialPayload = initialPayload;
 		Output = output;
 		KeyReader = keyReader;
@@ -22,7 +31,7 @@ public sealed class ReplPagerRenderContext
 		VisibleRowsProvider = visibleRowsProvider;
 		AnsiEnabled = ansiEnabled;
 		HasMorePayload = hasMorePayload;
-		FetchNextPayload = fetchNextPayload;
+		_fetchNextPayload = fetchNextPayload;
 	}
 
 	/// <summary>
@@ -61,7 +70,17 @@ public sealed class ReplPagerRenderContext
 	public bool HasMorePayload { get; }
 
 	/// <summary>
-	/// Gets the next payload fetcher when the result source can continue.
+	/// Gets a value indicating whether a next payload fetcher is available.
 	/// </summary>
-	public Func<CancellationToken, ValueTask<ReplPagerPayload?>>? FetchNextPayload { get; }
+	public bool CanFetchNextPayload => _fetchNextPayload is not null;
+
+	/// <summary>
+	/// Fetches the next rendered payload when the result source can continue.
+	/// </summary>
+	/// <param name="cancellationToken">Cancellation token.</param>
+	/// <returns>The next payload, or null when no fetcher is available or the source ended.</returns>
+	public ValueTask<ReplPagerPayload?> FetchNextPayloadAsync(CancellationToken cancellationToken = default) =>
+		_fetchNextPayload is null
+			? ValueTask.FromResult<ReplPagerPayload?>(null)
+			: _fetchNextPayload(cancellationToken);
 }

@@ -35,27 +35,6 @@ internal sealed class ReplPagingContext : IReplPagingContext
 
 	public ReplResultSurface Surface { get; }
 
-	public ReplPage<T> Page<T>(
-		IReadOnlyList<T> items,
-		string? nextCursor = null,
-		long? totalCount = null)
-	{
-		ArgumentNullException.ThrowIfNull(items);
-		var pageInfo = new ReplPageInfo(
-			Cursor,
-			nextCursor,
-			totalCount,
-			SuggestedPageSize);
-		return new ReplPage<T>(items, pageInfo);
-	}
-
-	public IReplPageSource<T> CreateSource<T>(
-		Func<ReplPageRequest, CancellationToken, ValueTask<ReplPage<T>>> fetch)
-	{
-		ArgumentNullException.ThrowIfNull(fetch);
-		return ReplPageSource.Create(fetch);
-	}
-
 	internal ReplPageRequest CreateRequest() =>
 		new(SuggestedPageSize, Cursor, VisibleRowCapacityHint, AllRequested, Surface);
 

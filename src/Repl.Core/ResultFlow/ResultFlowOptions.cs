@@ -5,6 +5,8 @@ namespace Repl;
 /// </summary>
 public sealed class ResultFlowOptions
 {
+	private readonly List<IReplPagerRenderer> _pagerRenderers = [];
+
 	/// <summary>
 	/// Gets or sets the default page size when no terminal-specific hint is available.
 	/// </summary>
@@ -28,10 +30,37 @@ public sealed class ResultFlowOptions
 	/// <summary>
 	/// Gets custom pager renderers keyed by <see cref="IReplPagerRenderer.Mode"/>.
 	/// </summary>
-	public IList<IReplPagerRenderer> PagerRenderers { get; } = [];
+	public IReadOnlyList<IReplPagerRenderer> PagerRenderers => _pagerRenderers;
 
 	/// <summary>
 	/// Gets or sets the maximum inline payload size for programmatic clients.
 	/// </summary>
 	public int ProgrammaticMaxInlineBytes { get; set; } = 64 * 1024;
+
+	/// <summary>
+	/// Registers or replaces the pager renderer for its configured mode.
+	/// </summary>
+	/// <param name="renderer">Renderer to register.</param>
+	/// <returns>This options instance.</returns>
+	public ResultFlowOptions UsePagerRenderer(IReplPagerRenderer renderer)
+	{
+		ArgumentNullException.ThrowIfNull(renderer);
+		_ = RemovePagerRenderer(renderer.Mode);
+		_pagerRenderers.Add(renderer);
+		return this;
+	}
+
+	/// <summary>
+	/// Removes the custom pager renderer registered for a mode.
+	/// </summary>
+	/// <param name="mode">Pager mode to remove.</param>
+	/// <returns>True when a renderer was removed.</returns>
+	public bool RemovePagerRenderer(ReplPagerMode mode) =>
+		_pagerRenderers.RemoveAll(renderer => renderer.Mode == mode) > 0;
+
+	/// <summary>
+	/// Removes all custom pager renderers.
+	/// </summary>
+	public void ClearPagerRenderers() =>
+		_pagerRenderers.Clear();
 }
