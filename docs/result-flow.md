@@ -522,10 +522,16 @@ scrollback. It renders from an internal buffer and fetches additional
 `IReplPageSource<T>` payloads as the user pages past the buffered end.
 
 Applications that need a different terminal experience can register a custom
-`IReplPagerRenderer` in `options.Output.ResultFlow.PagerRenderers`. A custom
-renderer is selected by its `ReplPagerMode` and receives a
-`ReplPagerRenderContext` containing the rendered payload, terminal writer, key
-reader, visible row hint, and continuation fetcher.
+`IReplPagerRenderer` with
+`options.Output.ResultFlow.UsePagerRenderer(renderer)`. A custom renderer is
+selected by its `ReplPagerMode` and receives a `ReplPagerRenderContext`
+containing the rendered payload, terminal writer, key reader, visible row hint,
+and continuation fetcher.
+
+The built-in `inline` and `full` pagers keep a bounded in-memory line buffer.
+`MaxBufferedLines` defaults to `10_000`. When the limit is reached, Repl stops
+fetching additional pages, keeps navigation inside the known content, and shows
+a `buffer limit reached` status instead of growing memory indefinitely.
 
 ## Testing Result Flow
 
@@ -665,11 +671,12 @@ MCP tools expose two reserved input properties on every tool schema:
 | `_replPageSize` | Requested page size for the tool call. |
 
 These properties are consumed by the Repl MCP adapter and mapped to `IReplPagingContext`. They are not forwarded as command business options.
-MCP cursors are expected to be compact opaque values, for example base64url or
-another whitespace-free token. Repl rejects cursors that contain whitespace,
-start with `-`, or exceed 512 characters before they can be converted to CLI
-tokens. MCP page-size values must be numeric and at most 20 characters before
-normal result-flow clamping is applied.
+MCP and CLI cursors are expected to be compact opaque values, for example
+base64url or another whitespace-free token. Repl rejects cursors that are empty,
+contain whitespace or control characters, start with `-`, or exceed 512
+characters before they can be converted to CLI tokens. MCP page-size values must
+be numeric and at most 20 characters before normal result-flow clamping is
+applied.
 
 When a handler returns `ReplPage<T>`, MCP returns:
 
@@ -695,6 +702,7 @@ app.Options(options =>
     options.Output.ResultFlow.MaxPageSize = 1000;
     options.Output.ResultFlow.ReservedVisibleRows = 2;
     options.Output.ResultFlow.DefaultPagerMode = ReplPagerMode.Auto;
+    options.Output.ResultFlow.MaxBufferedLines = 10_000;
     options.Output.ResultFlow.ProgrammaticMaxInlineBytes = 64 * 1024;
 });
 ```
@@ -705,7 +713,24 @@ app.Options(options =>
 | `MaxPageSize` | `1000` | Maximum accepted page size. |
 | `ReservedVisibleRows` | `2` | Rows reserved for prompts/status when computing visible data rows. |
 | `DefaultPagerMode` | `Auto` | Default pager behavior for human formats. |
+| `MaxBufferedLines` | `10000` | Maximum content lines buffered by interactive viewport pagers. |
 | `ProgrammaticMaxInlineBytes` | `65536` | Reserved for programmatic inline-size policy. |
+
+Use `UsePagerRenderer(renderer)` to register one custom renderer per
+`ReplPagerMode`. Registering another renderer for the same mode replaces the
+previous one. `RemovePagerRenderer(mode)` and `ClearPagerRenderers()` are
+available for test setup or host-specific composition.
+
+## Diagnostics
+
+`Repl.Core` exposes `IReplResultFlowDiagnostics` for dependency-free paging
+diagnostics. Implementations receive page-fetch start, success, and failure
+events with cursor and page-size metadata.
+
+`Repl.Logging` registers a bridge automatically when `AddReplLogging()` is used:
+
+- `Debug`: page fetch starting/succeeded.
+- `Warning`: page fetch failed, including the exception.
 
 ## Implementation Notes
 

@@ -206,10 +206,14 @@ app.Map("contacts", (IReplPagingContext paging, ContactStore store) =>
 
 MCP responses for `ReplPage<T>` include:
 
-- `StructuredContent`: `{ items, pageInfo }`
-- `Content`: short text summary with the next `_replCursor` when more data exists
+- `StructuredContent`: `{ "$type": "page", items, pageInfo }`
+- `Content`: short text summary that says a cursor is available in structured content
 
 This avoids dumping large JSON arrays into a single `TextContentBlock`.
+The raw cursor is not interpolated into MCP text content. Repl accepts compact
+cursor tokens only: non-empty, at most 512 characters, no whitespace, no control
+characters, and not starting with `-`. Page-size tokens must be numeric and at
+most 20 characters before normal result-flow clamping is applied.
 
 `WriteProgressAsync` maps to MCP progress notifications. `WriteStatusAsync` maps to log messages (`level: info`). See [Progress](progress.md#mcp) for the centralized progress model across console, hosted sessions, Spectre, and MCP:
 
