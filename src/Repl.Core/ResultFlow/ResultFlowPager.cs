@@ -409,7 +409,7 @@ internal static class ResultFlowPager
 			return false;
 		}
 
-		session.Append(nextPayload.Payload, nextPayload.HasMore);
+		session.Append(nextPayload.Payload, nextPayload.HasMore, nextPayload.ContainsPresentationChrome);
 		return true;
 	}
 
@@ -542,7 +542,7 @@ internal static class ResultFlowPager
 			return;
 		}
 
-		session.Append(nextPayload.Payload, nextPayload.HasMore);
+		session.Append(nextPayload.Payload, nextPayload.HasMore, nextPayload.ContainsPresentationChrome);
 	}
 
 	private static async ValueTask ClearViewportAsync(TerminalSurfaceScope surface, ViewportState state)
@@ -739,63 +739,6 @@ internal static class ResultFlowPager
 		Quit,
 	}
 
-	private sealed class PagerSession
-	{
-		private readonly PagerHeader _header;
-		private readonly int _maxBufferedLines;
-
-		public PagerSession(string initialPayload, bool hasMorePayload, int maxBufferedLines)
-		{
-			_maxBufferedLines = Math.Max(1, maxBufferedLines);
-			var parsed = PagerPayloadParser.Parse(initialPayload, header: null);
-			_header = parsed.Header;
-			Lines = [];
-			AppendContent(parsed.ContentLines, hasMorePayload);
-			PageSize = 1;
-			NextWindow = 1;
-		}
-
-		public IReadOnlyList<string> HeaderLines => _header.Lines;
-
-		public List<string> Lines { get; }
-
-		public int PageSize { get; set; }
-
-		public int NextWindow { get; set; }
-
-		public int Index { get; set; }
-
-		public bool HasMorePayload { get; set; }
-
-		public bool BufferLimitReached { get; private set; }
-
-		public void Append(string payload, bool hasMorePayload)
-		{
-			var parsed = PagerPayloadParser.Parse(payload, _header);
-			AppendContent(parsed.ContentLines, hasMorePayload);
-		}
-
-		private void AppendContent(IReadOnlyList<string> contentLines, bool hasMorePayload)
-		{
-			var available = _maxBufferedLines - Lines.Count;
-			if (available <= 0)
-			{
-				BufferLimitReached = true;
-				HasMorePayload = false;
-				return;
-			}
-
-			var take = Math.Min(available, contentLines.Count);
-			for (var i = 0; i < take; i++)
-			{
-				Lines.Add(contentLines[i]);
-			}
-
-			BufferLimitReached = take < contentLines.Count;
-			HasMorePayload = !BufferLimitReached && hasMorePayload;
-		}
-	}
-
 	private sealed class ViewportState
 	{
 		private readonly List<int> _renderedLineLengths = [];
@@ -857,134 +800,4 @@ internal static class ResultFlowPager
 			Math.Max(1, visibleRows - Session.HeaderLines.Count - 1);
 	}
 
-	private sealed record PagerHeader(IReadOnlyList<string> Lines, IReadOnlySet<string> NormalizedLines)
-	{
-		public static PagerHeader Empty { get; } = new([], new HashSet<string>(StringComparer.Ordinal));
-	}
-
-	private sealed record ParsedPagerPayload(PagerHeader Header, IReadOnlyList<string> ContentLines)
-	{
-		public int TotalLineCount => Header.Lines.Count + ContentLines.Count;
-	}
-
-	private static class PagerPayloadParser
-	{
-		public static ParsedPagerPayload Parse(string payload, PagerHeader? header)
-		{
-			var lines = SplitLines(payload);
-			var payloadHeader = DetectHeader(lines);
-			var resolvedHeader = header ?? payloadHeader;
-			var headerLineCount = payloadHeader.Lines.Count;
-			var content = new List<string>();
-			for (var i = headerLineCount; i < lines.Length; i++)
-			{
-				var normalized = NormalizeLine(lines[i]);
-				if (resolvedHeader.NormalizedLines.Contains(normalized) || IsPageFooterLine(lines[i]))
-				{
-					continue;
-				}
-
-				content.Add(lines[i]);
-			}
-
-			return new ParsedPagerPayload(resolvedHeader, content);
-		}
-
-		private static PagerHeader DetectHeader(string[] lines)
-		{
-			if (lines.Length == 0)
-			{
-				return PagerHeader.Empty;
-			}
-
-			if (lines.Length > 1 && IsPlainTableSeparator(lines[1]))
-			{
-				return CreateHeader(lines.Take(2).ToArray());
-			}
-
-			if (IsPlainHumanTableHeader(lines[0]))
-			{
-				return CreateHeader([lines[0]]);
-			}
-
-			return lines[0].Contains("\u001b[1m", StringComparison.Ordinal)
-				? CreateHeader([lines[0]])
-				: PagerHeader.Empty;
-		}
-
-		private static PagerHeader CreateHeader(string[] lines) =>
-			new(
-				lines,
-				lines.Select(NormalizeLine).ToHashSet(StringComparer.Ordinal));
-
-		private static bool IsPlainTableSeparator(string line)
-		{
-			var text = line.Trim();
-			return text.Length > 0
-				&& text.All(ch => ch is '-' or ' ' or '\t')
-				&& text.Contains('-', StringComparison.Ordinal);
-		}
-
-		private static bool IsPlainHumanTableHeader(string line)
-		{
-			var text = line.TrimStart();
-			return text.StartsWith("# ", StringComparison.Ordinal)
-				&& text.Contains("  ", StringComparison.Ordinal);
-		}
-
-		private static bool IsPageFooterLine(string line) =>
-			line.StartsWith("Showing ", StringComparison.Ordinal)
-			&& (line.Contains(" of ", StringComparison.Ordinal)
-				|| line.Contains(" result(s).", StringComparison.Ordinal))
-			&& (line.EndsWith('.')
-				|| line.Contains("Next data page: rerun with --result:cursor ", StringComparison.Ordinal));
-
-		private static string[] SplitLines(string payload)
-		{
-			if (string.IsNullOrEmpty(payload))
-			{
-				return [];
-			}
-
-			var lines = new List<string>();
-			foreach (var line in payload.AsSpan().EnumerateLines())
-			{
-				lines.Add(line.ToString());
-			}
-
-			if (lines.Count > 0 && lines[^1].Length == 0)
-			{
-				lines.RemoveAt(lines.Count - 1);
-			}
-
-			return [.. lines];
-		}
-
-		private static string NormalizeLine(string line)
-		{
-			if (!line.Contains('\u001b', StringComparison.Ordinal))
-			{
-				return line.Trim();
-			}
-
-			var builder = new System.Text.StringBuilder(line.Length);
-			for (var i = 0; i < line.Length; i++)
-			{
-				if (line[i] == '\u001b' && i + 1 < line.Length && line[i + 1] == '[')
-				{
-					i += 2;
-					while (i < line.Length && (line[i] < '@' || line[i] > '~'))
-					{
-						i++;
-					}
-
-					continue;
-				}
-
-				builder.Append(line[i]);
-			}
-
-			return builder.ToString().Trim();
-		}
-	}
 }

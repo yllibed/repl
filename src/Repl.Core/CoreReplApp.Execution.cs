@@ -757,14 +757,45 @@ public sealed partial class CoreReplApp
 				out var pagerMode,
 				out var ansiEnabled))
 		{
-			if (!string.IsNullOrEmpty(payload))
-			{
-				await ReplSessionIO.Output.WriteLineAsync(payload).ConfigureAwait(false);
-			}
-
-			return true;
+			return await WritePageSourcePayloadAsync(payload).ConfigureAwait(false);
 		}
 
+		return await RenderPageSourcePagerAsync(
+				source,
+				transformer,
+				isInteractive,
+				request,
+				page,
+				keyReader,
+				visibleRows,
+				pagerMode,
+				ansiEnabled,
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	private static async ValueTask<bool> WritePageSourcePayloadAsync(string payload)
+	{
+		if (!string.IsNullOrEmpty(payload))
+		{
+			await ReplSessionIO.Output.WriteLineAsync(payload).ConfigureAwait(false);
+		}
+
+		return true;
+	}
+
+	private async ValueTask<bool> RenderPageSourcePagerAsync(
+		IReplPageSource source,
+		IOutputTransformer transformer,
+		bool isInteractive,
+		ReplPageRequest request,
+		IReplPage page,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		CancellationToken cancellationToken)
+	{
 		var nextCursor = page.PageInfo.NextCursor;
 		var pagerPayload = await TransformPagerPageAsync(transformer, page, ResultFlowPageRenderMode.Initial, cancellationToken)
 			.ConfigureAwait(false);
@@ -798,7 +829,10 @@ public sealed partial class CoreReplApp
 			var nextPayload = await TransformPagerPageAsync(transformer, nextPage, ResultFlowPageRenderMode.Continuation, token)
 				.ConfigureAwait(false);
 			nextPayload = TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive);
-			return new ResultFlowPagerPage(nextPayload, nextPage.PageInfo.HasMore);
+			return new ResultFlowPagerPage(
+				nextPayload,
+				nextPage.PageInfo.HasMore,
+				ContainsPresentationChrome: false);
 		}
 	}
 

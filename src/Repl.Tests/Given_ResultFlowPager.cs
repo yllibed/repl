@@ -332,6 +332,30 @@ public sealed class Given_ResultFlowPager
 	}
 
 	[TestMethod]
+	[Description("Structured continuation payloads do not use presentation-text sniffing, so data lines that look like footers are preserved.")]
+	public async Task When_ContinuationPayloadIsMarkedClean_Then_FooterLikeDataLineIsPreserved()
+	{
+		using var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.Spacebar, ' '),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one",
+			writer,
+			keys,
+			visibleRows: 2,
+			hasMorePayload: true,
+			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
+				new ResultFlowPagerPage("Showing 1 of 5.", HasMore: false, ContainsPresentationChrome: false)),
+			CancellationToken.None);
+
+		writer.ToString().Should().Contain("Showing 1 of 5.");
+	}
+
+	[TestMethod]
 	[Description("Result-flow full pager owns an alternate-screen viewport instead of relying on terminal scrollback.")]
 	public async Task When_ScrollPagerRunsWithAnsi_Then_UsesAlternateScreenViewport()
 	{
