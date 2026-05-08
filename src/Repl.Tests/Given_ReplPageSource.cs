@@ -160,6 +160,46 @@ public sealed class Given_ReplPageSource
 	}
 
 	[TestMethod]
+	[Description("ReplPageSource.FromItems rejects malformed offset cursors instead of silently replaying the first page.")]
+	public async Task When_FromItemsReceivesMalformedCursor_Then_FailsClearly()
+	{
+		var source = ReplPageSource.FromItems(["one", "two", "three"]);
+
+		var action = async () => await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: "abc",
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console)).ConfigureAwait(false);
+
+		await action.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("*cursor*offset*")
+			.ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("ReplPageSource.FromOffset rejects negative offset cursors instead of silently replaying the first page.")]
+	public async Task When_FromOffsetReceivesNegativeCursor_Then_FailsClearly()
+	{
+		var source = ReplPageSource.FromOffset<int>(
+			static (offset, take, _) => ValueTask.FromResult<IReadOnlyList<int>>(
+				Enumerable.Range(offset, take).ToArray()));
+
+		var action = async () => await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: "-1",
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console)).ConfigureAwait(false);
+
+		await action.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("*cursor*offset*")
+			.ConfigureAwait(false);
+	}
+
+	[TestMethod]
 	[Description("ReplPageSource.FromAsyncEnumerable pages async streams with offset cursors.")]
 	public async Task When_FromAsyncEnumerableFetchesPages_Then_EmitsOffsetCursor()
 	{

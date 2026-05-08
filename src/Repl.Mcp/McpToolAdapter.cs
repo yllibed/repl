@@ -263,22 +263,7 @@ internal sealed partial class McpToolAdapter
 	}
 
 	private static void ValidateResultCursor(string cursor)
-	{
-		if (cursor.Length > 512)
-		{
-			throw new InvalidOperationException("The MCP result cursor cannot exceed 512 characters.");
-		}
-
-		if (cursor.Length > 0 && cursor[0] == '-')
-		{
-			throw new InvalidOperationException("The MCP result cursor cannot start like a CLI option.");
-		}
-
-		if (cursor.Any(char.IsWhiteSpace))
-		{
-			throw new InvalidOperationException("The MCP result cursor cannot contain whitespace.");
-		}
-	}
+		=> ResultFlowCursorPolicy.ValidateOrThrow(cursor);
 
 	private static void ValidateResultPageSize(string pageSize)
 	{

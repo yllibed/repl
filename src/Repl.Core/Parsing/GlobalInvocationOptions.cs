@@ -20,4 +20,8 @@ internal sealed record GlobalInvocationOptions(
 
 	public IReadOnlyDictionary<string, IReadOnlyList<string>> CustomGlobalNamedOptions { get; init; } =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+	public IReadOnlyList<ParseDiagnostic> Diagnostics { get; init; } = [];
+
+	public bool HasErrors => Diagnostics.Any(static diagnostic => diagnostic.Severity == ParseDiagnosticSeverity.Error);
 }

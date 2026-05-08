@@ -149,6 +149,21 @@ public sealed class Given_McpToolAdapter
 	}
 
 	[TestMethod]
+	[Description("PrepareExecution rejects result cursors that contain control characters.")]
+	public void When_ResultCursorContainsControlCharacter_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			"contacts",
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc\u001b[2J"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cursor*control*");
+	}
+
+	[TestMethod]
 	[Description("PrepareExecution accepts compact numeric result page sizes and emits them as result-flow tokens.")]
 	public void When_ResultPageSizeIsValid_Then_ResultFlowTokenIsEmitted()
 	{

@@ -63,6 +63,23 @@ public sealed partial class CoreReplApp
 		try
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
+			if (await TryHandleGlobalDiagnosticsAsync(globalOptions, cancellationToken).ConfigureAwait(false) is { } globalDiagnosticsExitCode) return globalDiagnosticsExitCode;
+
+			return await ExecuteParsedCoreAsync(globalOptions, serviceProvider, isSubInvocation, cancellationToken)
+				.ConfigureAwait(false);
+		}
+		finally
+		{
+			_options.Interaction.SetObserver(observer: null);
+		}
+	}
+
+	private async ValueTask<int> ExecuteParsedCoreAsync(
+		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
+		bool isSubInvocation,
+		CancellationToken cancellationToken)
+	{
 			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions); // volatile ref swap — safe under concurrent sub-invocations
 			if (!isSubInvocation)
 			{
@@ -71,14 +88,14 @@ public sealed partial class CoreReplApp
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
-				var ambiguousExitCode = await TryHandleAmbiguousPrefixAsync(
+			var ambiguousExitCode = await TryHandleAmbiguousPrefixAsync(
 						prefixResolution,
 						globalOptions,
 						resolvedGlobalOptions,
 						serviceProvider,
 						cancellationToken)
 					.ConfigureAwait(false);
-				if (ambiguousExitCode is not null) return ambiguousExitCode.Value;
+			if (ambiguousExitCode is not null) return ambiguousExitCode.Value;
 
 			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions);
 			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedRouteResolution?.Match))
@@ -86,26 +103,26 @@ public sealed partial class CoreReplApp
 				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
 			}
 
-				var preExecutionExitCode = await TryHandlePreExecutionAsync(
+			var preExecutionExitCode = await TryHandlePreExecutionAsync(
 						resolvedGlobalOptions,
 						serviceProvider,
 						cancellationToken)
 					.ConfigureAwait(false);
-				if (preExecutionExitCode is not null) return preExecutionExitCode.Value;
+			if (preExecutionExitCode is not null) return preExecutionExitCode.Value;
 
 			var resolution = preResolvedRouteResolution
 				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
 			var match = resolution.Match;
-				if (match is null)
-				{
-					return await TryHandleContextDeeplinkAsync(
+			if (match is null)
+			{
+				return await TryHandleContextDeeplinkAsync(
 							resolvedGlobalOptions,
 							serviceProvider,
 							cancellationToken,
 							constraintFailure: resolution.ConstraintFailure,
 							missingArgumentsFailure: resolution.MissingArgumentsFailure)
 						.ConfigureAwait(false);
-				}
+			}
 
 			return await ExecuteMatchedCommandAndMaybeEnterInteractiveAsync(
 					match,
@@ -113,11 +130,6 @@ public sealed partial class CoreReplApp
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
-		}
-		finally
-		{
-			_options.Interaction.SetObserver(observer: null);
-		}
 	}
 
 	private async ValueTask<int?> TryHandleAmbiguousPrefixAsync(
@@ -787,6 +799,25 @@ public sealed partial class CoreReplApp
 			nextPayload = TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive);
 			return new ResultFlowPagerPage(nextPayload, nextPage.PageInfo.HasMore);
 		}
+	}
+
+	private async ValueTask<int?> TryHandleGlobalDiagnosticsAsync(
+		GlobalInvocationOptions globalOptions,
+		CancellationToken cancellationToken)
+	{
+		if (!globalOptions.HasErrors)
+		{
+			return null;
+		}
+
+		var firstError = globalOptions.Diagnostics
+			.First(diagnostic => diagnostic.Severity == ParseDiagnosticSeverity.Error);
+		_ = await RenderOutputAsync(
+				Results.Validation(firstError.Message),
+				globalOptions.OutputFormat,
+				cancellationToken)
+			.ConfigureAwait(false);
+		return 1;
 	}
 
 	private static ValueTask<string> TransformPagerPageAsync(

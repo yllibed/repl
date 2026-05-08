@@ -130,7 +130,7 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		{
 			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
 			return info.HasMore
-				? $"{prefix} Next data page: rerun with --result:cursor {info.NextCursor}."
+				? $"{prefix} Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}."
 				: prefix;
 		}
 
@@ -139,7 +139,7 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			return string.Empty;
 		}
 
-		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with --result:cursor {info.NextCursor}.";
+		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}.";
 	}
 
 	private static bool TryRenderObject(object value, HumanRenderSettings settings, out string text)

@@ -111,7 +111,7 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 		{
 			var prefix = $"Showing {count} of {total}.";
 			return info.HasMore
-				? $"{prefix} Continue with `--result:cursor {info.NextCursor}`."
+				? $"{prefix} Continue with `{ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}`."
 				: prefix;
 		}
 
@@ -120,7 +120,7 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 			return string.Empty;
 		}
 
-		return $"Showing {count} result(s). Continue with `--result:cursor {info.NextCursor}`.";
+		return $"Showing {count} result(s). Continue with `{ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}`.";
 	}
 
 	private static string RenderEnumerable(System.Collections.IEnumerable enumerable)

@@ -250,7 +250,7 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		{
 			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
 			return info.HasMore
-				? $"{prefix} Next data page: rerun with --result:cursor {info.NextCursor}."
+				? $"{prefix} Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}."
 				: prefix;
 		}
 
@@ -259,7 +259,7 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 			return string.Empty;
 		}
 
-		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with --result:cursor {info.NextCursor}.";
+		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}.";
 	}
 
 	private bool TryRenderObject(object value, out string text)

@@ -83,6 +83,48 @@ public sealed class Given_ResultFlowOutputTransformer
 		output.Should().NotContain("Showing ");
 	}
 
+	[TestMethod]
+	[Description("Human page footers never render unsafe cursor text directly.")]
+	public async Task When_HumanPageFooterHasUnsafeCursor_Then_CursorIsNotRenderedVerbatim()
+	{
+		var transformer = new HumanOutputTransformer(
+			() => new HumanRenderSettings(
+				Width: 120,
+				UseAnsi: false,
+				Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
+		var page = new ReplPage<ActivityRow>(
+			[new ActivityRow(1, "2026-01-12 12:00Z", "ops", "queued", "queued")],
+			new ReplPageInfo(
+				Cursor: null,
+				NextCursor: "abc\u001b[2J",
+				TotalCount: 2,
+				PageSize: 1));
+
+		var output = await transformer.TransformAsync(page, CancellationToken.None);
+
+		output.Should().NotContain("\u001b[2J");
+		output.Should().Contain("cursor");
+	}
+
+	[TestMethod]
+	[Description("Markdown page footers never render unsafe cursor text directly.")]
+	public async Task When_MarkdownPageFooterHasUnsafeCursor_Then_CursorIsNotRenderedVerbatim()
+	{
+		var transformer = new MarkdownOutputTransformer();
+		var page = new ReplPage<ActivityRow>(
+			[new ActivityRow(1, "2026-01-12 12:00Z", "ops", "queued", "queued")],
+			new ReplPageInfo(
+				Cursor: null,
+				NextCursor: "abc\u001b[2J",
+				TotalCount: 2,
+				PageSize: 1));
+
+		var output = await transformer.TransformAsync(page, CancellationToken.None);
+
+		output.Should().NotContain("\u001b[2J");
+		output.Should().Contain("cursor");
+	}
+
 	private sealed record ActivityRow(
 		[property: Display(Name = "#", Order = 0)] int Id,
 		[property: Display(Name = "At", Order = 1)] string At,

@@ -362,10 +362,21 @@ public static class ReplPageSource
 		createItems(cancellationToken)
 		?? throw new InvalidOperationException("The async enumerable page source returned null.");
 
-	private static int ParseOffset(string? cursor) =>
-		int.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out var offset) && offset >= 0
-			? offset
-			: 0;
+	private static int ParseOffset(string? cursor)
+	{
+		if (string.IsNullOrEmpty(cursor))
+		{
+			return 0;
+		}
+
+		if (int.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out var offset) && offset >= 0)
+		{
+			return offset;
+		}
+
+		throw new InvalidOperationException(
+			$"The result cursor '{cursor}' is not a valid non-negative offset cursor for this page source.");
+	}
 
 	private static int ResolveMaxSourceItemsToScan(int? value) =>
 		value is > 0 ? value.Value : DefaultMaxSourceItemsToScan;
@@ -384,7 +395,7 @@ public static class ReplPageSource
 		if (scanned >= maxSourceItemsToScan)
 		{
 			throw new InvalidOperationException(
-				"The client-side filter scan limit was reached before a complete page could be produced.");
+				$"The client-side filter scan limit was reached before a complete page could be produced. Scanned {scanned.ToString(CultureInfo.InvariantCulture)} item(s); limit is {maxSourceItemsToScan.ToString(CultureInfo.InvariantCulture)}.");
 		}
 	}
 

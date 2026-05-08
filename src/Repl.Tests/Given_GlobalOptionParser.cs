@@ -154,4 +154,47 @@ public sealed class Given_GlobalOptionParser
 
 		parsed.ResultFlow.PageSize.Should().Be(50);
 	}
+
+	[TestMethod]
+	[Description("Result-flow cursor must be explicit so a missing value is reported before command binding.")]
+	public void When_ResultFlowCursorValueIsMissing_Then_DiagnosticErrorIsProduced()
+	{
+		var parsed = GlobalOptionParser.Parse(
+			["users", "list", "--result:cursor"],
+			new OutputOptions(),
+			new ParsingOptions());
+
+		parsed.Diagnostics.Should().ContainSingle(diagnostic =>
+			diagnostic.Severity == ParseDiagnosticSeverity.Error
+			&& diagnostic.Message.Contains("cursor", StringComparison.OrdinalIgnoreCase));
+	}
+
+	[TestMethod]
+	[Description("Result-flow cursor rejects token-like values that could corrupt downstream CLI reconstruction.")]
+	public void When_ResultFlowCursorStartsWithDash_Then_DiagnosticErrorIsProduced()
+	{
+		var parsed = GlobalOptionParser.Parse(
+			["users", "list", "--result:cursor=--result:all"],
+			new OutputOptions(),
+			new ParsingOptions());
+
+		parsed.Diagnostics.Should().ContainSingle(diagnostic =>
+			diagnostic.Severity == ParseDiagnosticSeverity.Error
+			&& diagnostic.Message.Contains("cursor", StringComparison.OrdinalIgnoreCase)
+			&& diagnostic.Message.Contains("option", StringComparison.OrdinalIgnoreCase));
+	}
+
+	[TestMethod]
+	[Description("Result-flow cursor rejects control characters so rendered continuation text cannot inject terminal escapes.")]
+	public void When_ResultFlowCursorContainsControlCharacter_Then_DiagnosticErrorIsProduced()
+	{
+		var parsed = GlobalOptionParser.Parse(
+			["users", "list", "--result:cursor=abc\u001b[2J"],
+			new OutputOptions(),
+			new ParsingOptions());
+
+		parsed.Diagnostics.Should().ContainSingle(diagnostic =>
+			diagnostic.Severity == ParseDiagnosticSeverity.Error
+			&& diagnostic.Message.Contains("control", StringComparison.OrdinalIgnoreCase));
+	}
 }
