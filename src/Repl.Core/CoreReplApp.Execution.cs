@@ -780,6 +780,7 @@ public sealed partial class CoreReplApp
 				page.PageInfo.HasMore,
 				FetchNextPayloadAsync,
 				_options.Output.ResultFlow.PagerRenderers,
+				_options.Output.ResultFlow.MaxBufferedLines,
 				cancellationToken)
 			.ConfigureAwait(false);
 		return true;
@@ -858,6 +859,7 @@ public sealed partial class CoreReplApp
 					hasMorePayload: false,
 					fetchNextPayload: null,
 					_options.Output.ResultFlow.PagerRenderers,
+					_options.Output.ResultFlow.MaxBufferedLines,
 					cancellationToken)
 				.ConfigureAwait(false);
 			return;
@@ -976,11 +978,47 @@ public sealed partial class CoreReplApp
 		return new ReplPageDisplaySnapshot(page, pageInfo);
 	}
 
-	private static ValueTask<IReplPage> FetchPageSourceAsync(
+	private async ValueTask<IReplPage> FetchPageSourceAsync(
 		IReplPageSource source,
 		ReplPageRequest request,
-		CancellationToken cancellationToken) =>
-		source.FetchPageAsync(request, cancellationToken);
+		CancellationToken cancellationToken)
+	{
+		var diagnostics = ResolveResultFlowDiagnostics();
+		diagnostics?.OnDiagnostic(new ReplResultFlowDiagnostic(
+			ReplResultFlowDiagnosticKind.PageFetchStarting,
+			request.Cursor,
+			request.PageSize));
+
+		try
+		{
+			var page = await source.FetchPageAsync(request, cancellationToken).ConfigureAwait(false);
+			diagnostics?.OnDiagnostic(new ReplResultFlowDiagnostic(
+				ReplResultFlowDiagnosticKind.PageFetchSucceeded,
+				request.Cursor,
+				request.PageSize,
+				page.UntypedItems.Count));
+			return page;
+		}
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			diagnostics?.OnDiagnostic(new ReplResultFlowDiagnostic(
+				ReplResultFlowDiagnosticKind.PageFetchFailed,
+				request.Cursor,
+				request.PageSize,
+				Exception: ex));
+			throw;
+		}
+	}
+
+	private IReplResultFlowDiagnostics? ResolveResultFlowDiagnostics()
+	{
+		var serviceProvider = _runtimeState.Value?.ServiceProvider ?? _services;
+		return serviceProvider.GetService(typeof(IReplResultFlowDiagnostics)) as IReplResultFlowDiagnostics;
+	}
 
 	private string TryColorizeStructuredPayload(string payload, string format, bool isInteractive)
 	{

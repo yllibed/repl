@@ -4,28 +4,29 @@ internal static class ResultFlowPager
 {
 	private const string MorePrompt = "--More-- Space/PageDown: continue, Enter/Down: line, Up/PageUp: ignored, q/Esc: stop";
 	private const string FullStatus = "-- result-flow {0}-{1}/{2}{3}  Space: next  Up/Down: scroll  Home/End: known bounds  q: quit --";
+	private const string FullStatusBufferLimit = "-- result-flow {0}-{1}/{2} buffer limit reached  Up/Down: scroll  q: quit --";
+	private const int DefaultMaxBufferedLines = 10_000;
 	private static readonly System.Text.CompositeFormat FullStatusFormat =
 		System.Text.CompositeFormat.Parse(FullStatus);
+	private static readonly System.Text.CompositeFormat FullStatusBufferLimitFormat =
+		System.Text.CompositeFormat.Parse(FullStatusBufferLimit);
 
 	public static int CountLines(string payload) => PagerPayloadParser.Parse(payload, header: null).TotalLineCount;
 
-	public static async ValueTask WriteAsync(
+	public static ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
 		int visibleRows,
 		CancellationToken cancellationToken = default)
-	{
-		await WriteAsync(
-				payload,
-				output,
-				keyReader,
-				visibleRows,
-				hasMorePayload: false,
-				fetchNextPayload: null,
-				cancellationToken)
-			.ConfigureAwait(false);
-	}
+		=> WriteAsync(
+			payload,
+			output,
+			keyReader,
+			visibleRows,
+			hasMorePayload: false,
+			fetchNextPayload: null,
+			cancellationToken);
 
 	public static async ValueTask WriteAsync(
 		string payload,
@@ -126,7 +127,7 @@ internal static class ResultFlowPager
 			.ConfigureAwait(false);
 	}
 
-	public static async ValueTask WriteAsync(
+	public static ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -138,9 +139,37 @@ internal static class ResultFlowPager
 		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
 		IEnumerable<IReplPagerRenderer>? pagerRenderers,
 		CancellationToken cancellationToken = default)
+		=> WriteAsync(
+			payload,
+			output,
+			keyReader,
+			visibleRows,
+			visibleRowsProvider,
+			pagerMode,
+			ansiEnabled,
+			hasMorePayload,
+			fetchNextPayload,
+			pagerRenderers,
+			DefaultMaxBufferedLines,
+			cancellationToken);
+
+	public static async ValueTask WriteAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		Func<int>? visibleRowsProvider,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		bool hasMorePayload,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		IEnumerable<IReplPagerRenderer>? pagerRenderers,
+		int maxBufferedLines,
+		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(keyReader);
+		maxBufferedLines = Math.Max(1, maxBufferedLines);
 
 		var mode = ResolveMode(pagerMode, ansiEnabled);
 		if (await TryRenderCustomAsync(
@@ -160,7 +189,7 @@ internal static class ResultFlowPager
 			return;
 		}
 
-		var session = new PagerSession(payload, hasMorePayload);
+		var session = new PagerSession(payload, hasMorePayload, maxBufferedLines);
 		await RenderBuiltInAsync(
 				mode,
 				session,
@@ -558,8 +587,26 @@ internal static class ResultFlowPager
 		var lastLine = state.Session.Lines.Count == 0
 			? 0
 			: Math.Min(state.Session.Lines.Count, state.TopLine + state.ViewportHeight);
-		var status = state.Session.Lines.Count == 0
-			? "-- result-flow: loading --"
+		var status = CreateViewportStatus(state, lastLine);
+		await WriteViewportLineAsync(state, surface.Output, row++, status, appendNewLine: false).ConfigureAwait(false);
+		state.RenderedHeight = row;
+		await surface.FlushAsync(cancellationToken).ConfigureAwait(false);
+	}
+
+	private static string CreateViewportStatus(ViewportState state, int lastLine)
+	{
+		if (state.Session.Lines.Count == 0)
+		{
+			return "-- result-flow: loading --";
+		}
+
+		return state.Session.BufferLimitReached
+			? string.Format(
+				System.Globalization.CultureInfo.InvariantCulture,
+				FullStatusBufferLimitFormat,
+				state.TopLine + 1,
+				lastLine,
+				state.Session.Lines.Count)
 			: string.Format(
 				System.Globalization.CultureInfo.InvariantCulture,
 				FullStatusFormat,
@@ -567,9 +614,6 @@ internal static class ResultFlowPager
 				lastLine,
 				state.Session.Lines.Count,
 				state.Session.HasMorePayload ? "+" : string.Empty);
-		await WriteViewportLineAsync(state, surface.Output, row++, status, appendNewLine: false).ConfigureAwait(false);
-		state.RenderedHeight = row;
-		await surface.FlushAsync(cancellationToken).ConfigureAwait(false);
 	}
 
 	private static async ValueTask PositionViewportAsync(TerminalSurfaceScope surface, ViewportState state)
@@ -698,13 +742,15 @@ internal static class ResultFlowPager
 	private sealed class PagerSession
 	{
 		private readonly PagerHeader _header;
+		private readonly int _maxBufferedLines;
 
-		public PagerSession(string initialPayload, bool hasMorePayload)
+		public PagerSession(string initialPayload, bool hasMorePayload, int maxBufferedLines)
 		{
+			_maxBufferedLines = Math.Max(1, maxBufferedLines);
 			var parsed = PagerPayloadParser.Parse(initialPayload, header: null);
 			_header = parsed.Header;
-			Lines = [.. parsed.ContentLines];
-			HasMorePayload = hasMorePayload;
+			Lines = [];
+			AppendContent(parsed.ContentLines, hasMorePayload);
 			PageSize = 1;
 			NextWindow = 1;
 		}
@@ -721,11 +767,32 @@ internal static class ResultFlowPager
 
 		public bool HasMorePayload { get; set; }
 
+		public bool BufferLimitReached { get; private set; }
+
 		public void Append(string payload, bool hasMorePayload)
 		{
 			var parsed = PagerPayloadParser.Parse(payload, _header);
-			Lines.AddRange(parsed.ContentLines);
-			HasMorePayload = hasMorePayload;
+			AppendContent(parsed.ContentLines, hasMorePayload);
+		}
+
+		private void AppendContent(IReadOnlyList<string> contentLines, bool hasMorePayload)
+		{
+			var available = _maxBufferedLines - Lines.Count;
+			if (available <= 0)
+			{
+				BufferLimitReached = true;
+				HasMorePayload = false;
+				return;
+			}
+
+			var take = Math.Min(available, contentLines.Count);
+			for (var i = 0; i < take; i++)
+			{
+				Lines.Add(contentLines[i]);
+			}
+
+			BufferLimitReached = take < contentLines.Count;
+			HasMorePayload = !BufferLimitReached && hasMorePayload;
 		}
 	}
 

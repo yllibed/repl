@@ -17,6 +17,7 @@ public static class ReplLoggingServiceCollectionExtensions
 
 		services.AddLogging();
 		services.TryAddSingleton<IReplLogContextAccessor, LiveReplLogContextAccessor>();
+		services.TryAddSingleton<IReplResultFlowDiagnostics, ReplResultFlowLoggerDiagnostics>();
 		return services;
 	}
 }

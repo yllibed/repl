@@ -856,6 +856,39 @@ public sealed class Given_ResultFlowPager
 		context.CanFetchNextPayload.Should().BeTrue();
 	}
 
+	[TestMethod]
+	[Description("Viewport pager stops fetching and reports status when the buffered line limit is reached.")]
+	public async Task When_ViewportPagerReachesBufferLimit_Then_StatusReportsLimit()
+	{
+		using var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.DownArrow, '\0'),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await ResultFlowPager.WriteAsync(
+			"one\ntwo",
+			writer,
+			keys,
+			visibleRows: 3,
+			visibleRowsProvider: null,
+			pagerMode: ReplPagerMode.Full,
+			ansiEnabled: true,
+			hasMorePayload: true,
+			fetchNextPayload: _ => ValueTask.FromResult<ResultFlowPagerPage?>(
+				new ResultFlowPagerPage("three\nfour\nfive", HasMore: true)),
+			pagerRenderers: null,
+			maxBufferedLines: 3,
+			CancellationToken.None);
+
+		var output = writer.ToString();
+		output.Should().Contain("buffer limit");
+		output.Should().Contain("three");
+		output.Should().NotContain("four");
+		output.Should().NotContain("five");
+	}
+
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
 		new(keyChar, key, shift: false, alt: false, control: false);
 

@@ -33,6 +33,11 @@ public sealed class ResultFlowOptions
 	public IReadOnlyList<IReplPagerRenderer> PagerRenderers => _pagerRenderers;
 
 	/// <summary>
+	/// Gets or sets the maximum number of content lines an interactive pager buffers in memory.
+	/// </summary>
+	public int MaxBufferedLines { get; set; } = 10_000;
+
+	/// <summary>
 	/// Gets or sets the maximum inline payload size for programmatic clients.
 	/// </summary>
 	public int ProgrammaticMaxInlineBytes { get; set; } = 64 * 1024;
