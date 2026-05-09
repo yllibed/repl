@@ -213,7 +213,10 @@ This avoids dumping large JSON arrays into a single `TextContentBlock`.
 The raw cursor is not interpolated into MCP text content. Repl accepts compact
 cursor tokens only: non-empty, at most 512 characters, no whitespace, no control
 characters, and not starting with `-`. Page-size tokens must be numeric and at
-most 20 characters before normal result-flow clamping is applied.
+most 10 characters before normal result-flow clamping is applied.
+Tool-call arguments are validated against the generated MCP input schema before
+Repl reconstructs CLI tokens. Undeclared keys are rejected instead of being
+converted to `--{key}` options.
 
 MCP paging continuation depends on the client preserving structured tool
 content. Repl always returns a short text fallback, but the raw cursor is only

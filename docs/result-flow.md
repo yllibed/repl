@@ -677,8 +677,11 @@ MCP and CLI cursors are expected to be compact opaque values, for example
 base64url or another whitespace-free token. Repl rejects cursors that are empty,
 contain whitespace or control characters, start with `-`, or exceed 512
 characters before they can be converted to CLI tokens. MCP page-size values must
-be numeric and at most 20 characters before normal result-flow clamping is
+be numeric and at most 10 characters before normal result-flow clamping is
 applied.
+MCP arguments are also validated against the generated tool schema before they
+are reconstructed as CLI tokens, so arbitrary JSON keys cannot inject global or
+result-flow options.
 
 When a handler returns `ReplPage<T>`, MCP returns:
 
@@ -735,7 +738,7 @@ events with cursor and page-size metadata.
 `Repl.Logging` registers a bridge automatically when `AddReplLogging()` is used:
 
 - `Debug`: page fetch starting/succeeded.
-- `Warning`: page fetch failed, including the exception.
+- `Error`: page fetch failed, including the exception.
 
 ## Implementation Notes
 
