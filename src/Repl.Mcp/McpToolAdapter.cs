@@ -107,8 +107,8 @@ internal sealed partial class McpToolAdapter
 		ProgressToken? progressToken,
 		CancellationToken ct)
 	{
-		var coreApp = _app as CoreReplApp
-			?? throw new InvalidOperationException("MCP tool adapter requires CoreReplApp.");
+		var invocableApp = _app as ISubInvocableReplApp
+			?? throw new InvalidOperationException("MCP tool adapter requires an app that supports sub-invocation.");
 
 		var outputWriter = new StringWriter();
 		var inputReader = new StringReader(string.Empty);
@@ -136,7 +136,7 @@ internal sealed partial class McpToolAdapter
 			isHostedSession: true))
 		{
 			ReplSessionIO.IsProgrammatic = true;
-			var exitCode = await coreApp.RunSubInvocationAsync(
+			var exitCode = await invocableApp.RunSubInvocationAsync(
 				effectiveTokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
 
 			var output = outputWriter.ToString().Trim();
@@ -191,12 +191,12 @@ internal sealed partial class McpToolAdapter
 			using var document = JsonDocument.Parse(output);
 			var root = document.RootElement;
 			if (root.ValueKind != JsonValueKind.Object
-				|| !root.TryGetProperty("$type", out var type)
+				|| !root.TryGetProperty(ReplPageWireNames.Type, out var type)
 				|| type.ValueKind != JsonValueKind.String
-				|| !string.Equals(type.GetString(), "page", StringComparison.Ordinal)
-				|| !root.TryGetProperty("items", out var items)
+				|| !string.Equals(type.GetString(), ReplPageWireNames.PageType, StringComparison.Ordinal)
+				|| !root.TryGetProperty(ReplPageWireNames.Items, out var items)
 				|| items.ValueKind != JsonValueKind.Array
-				|| !root.TryGetProperty("pageInfo", out var pageInfo)
+				|| !root.TryGetProperty(ReplPageWireNames.PageInfo, out var pageInfo)
 				|| pageInfo.ValueKind != JsonValueKind.Object)
 			{
 				return false;
@@ -215,14 +215,14 @@ internal sealed partial class McpToolAdapter
 	private static string BuildPagedSummary(int count, JsonElement pageInfo)
 	{
 		var summary = $"Returned {count.ToString(System.Globalization.CultureInfo.InvariantCulture)} item(s).";
-		if (pageInfo.TryGetProperty("totalCount", out var totalCount)
+		if (pageInfo.TryGetProperty(ReplPageWireNames.TotalCount, out var totalCount)
 			&& totalCount.ValueKind == JsonValueKind.Number
 			&& totalCount.TryGetInt64(out var total))
 		{
 			summary += $" Total: {total.ToString(System.Globalization.CultureInfo.InvariantCulture)}.";
 		}
 
-		if (pageInfo.TryGetProperty("nextCursor", out var nextCursor)
+		if (pageInfo.TryGetProperty(ReplPageWireNames.NextCursor, out var nextCursor)
 			&& nextCursor.ValueKind == JsonValueKind.String
 			&& !string.IsNullOrWhiteSpace(nextCursor.GetString()))
 		{
@@ -239,11 +239,6 @@ internal sealed partial class McpToolAdapter
 		var allowedArgumentNames = BuildAllowedArgumentNames(command);
 		return PrepareExecution(command.Path, arguments, allowedArgumentNames);
 	}
-
-	internal static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
-		string routePath,
-		IDictionary<string, JsonElement> arguments)
-		=> PrepareExecution(routePath, arguments, allowedArgumentNames: null);
 
 	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
 		string routePath,
@@ -270,13 +265,13 @@ internal sealed partial class McpToolAdapter
 			{
 				prefills[key["answer.".Length..]] = strValue;
 			}
-			else if (string.Equals(key, McpResultFlowArgumentNames.Cursor, StringComparison.Ordinal))
+			else if (string.Equals(key, McpResultFlowArgumentNames.Cursor, StringComparison.OrdinalIgnoreCase))
 			{
 				ValidateResultCursor(strValue);
 				resultFlowTokens.Add(ReplResultFlowOptionNames.Cursor);
 				resultFlowTokens.Add(strValue);
 			}
-			else if (string.Equals(key, McpResultFlowArgumentNames.PageSize, StringComparison.Ordinal))
+			else if (string.Equals(key, McpResultFlowArgumentNames.PageSize, StringComparison.OrdinalIgnoreCase))
 			{
 				ValidateResultPageSize(strValue);
 				resultFlowTokens.Add(ReplResultFlowOptionNames.PageSize);
@@ -304,7 +299,7 @@ internal sealed partial class McpToolAdapter
 			throw new InvalidOperationException("The MCP result page size cannot exceed 10 characters.");
 		}
 
-		if (pageSize.Length == 0 || ContainsNonDigit(pageSize))
+		if (pageSize.Length == 0 || pageSize.AsSpan().IndexOfAnyExceptInRange('0', '9') >= 0)
 		{
 			throw new InvalidOperationException("The MCP result page size must be numeric.");
 		}
@@ -314,19 +309,6 @@ internal sealed partial class McpToolAdapter
 		{
 			throw new InvalidOperationException("The MCP result page size must fit in a positive 32-bit integer.");
 		}
-	}
-
-	private static bool ContainsNonDigit(string value)
-	{
-		foreach (var c in value)
-		{
-			if (c < '0' || c > '9')
-			{
-				return true;
-			}
-		}
-
-		return false;
 	}
 
 	private static void ValidateCommandArgumentValue(string value)

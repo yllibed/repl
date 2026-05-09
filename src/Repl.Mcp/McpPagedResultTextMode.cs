@@ -8,15 +8,15 @@ public enum McpPagedResultTextMode
 	/// <summary>
 	/// Emit compact serialized JSON in <c>Content</c> for MCP clients that ignore structured content.
 	/// </summary>
-	SerializedJson,
+	SerializedJson = 0,
 
 	/// <summary>
 	/// Emit only a short summary, minimizing token cost and keeping raw cursors out of text content.
 	/// </summary>
-	SummaryOnly,
+	SummaryOnly = 1,
 
 	/// <summary>
 	/// Emit a short summary followed by compact serialized JSON.
 	/// </summary>
-	SummaryAndSerializedJson,
+	SummaryAndSerializedJson = 2,
 }

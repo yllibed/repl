@@ -116,30 +116,10 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 				depth: 0,
 				settings,
 				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
-		var footer = includeFooter ? RenderPageFooter(page) : string.Empty;
+		var footer = includeFooter ? ResultFlowPageFooterBuilder.RenderHuman(page) : string.Empty;
 		return string.IsNullOrWhiteSpace(footer)
 			? body
 			: string.Concat(body, Environment.NewLine, footer);
-	}
-
-	private static string RenderPageFooter(IReplPage page)
-	{
-		var info = page.PageInfo;
-		var count = page.UntypedItems.Count;
-		if (info.TotalCount is { } total)
-		{
-			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
-			return info.HasMore
-				? $"{prefix} Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}."
-				: prefix;
-		}
-
-		if (!info.HasMore)
-		{
-			return string.Empty;
-		}
-
-		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}.";
 	}
 
 	private static bool TryRenderObject(object value, HumanRenderSettings settings, out string text)

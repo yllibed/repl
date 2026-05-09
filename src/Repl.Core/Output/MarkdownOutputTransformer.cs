@@ -97,30 +97,10 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 		var body = page.UntypedItems.Count == 0
 			? "No results."
 			: RenderEnumerable(page.UntypedItems);
-		var footer = RenderPageFooter(page);
+		var footer = ResultFlowPageFooterBuilder.RenderMarkdown(page);
 		return string.IsNullOrWhiteSpace(footer)
 			? body
 			: string.Concat(body, Environment.NewLine, Environment.NewLine, footer);
-	}
-
-	private static string RenderPageFooter(IReplPage page)
-	{
-		var info = page.PageInfo;
-		var count = page.UntypedItems.Count;
-		if (info.TotalCount is { } total)
-		{
-			var prefix = $"Showing {count} of {total}.";
-			return info.HasMore
-				? $"{prefix} Continue with `{ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}`."
-				: prefix;
-		}
-
-		if (!info.HasMore)
-		{
-			return string.Empty;
-		}
-
-		return $"Showing {count} result(s). Continue with `{ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}`.";
 	}
 
 	private static string RenderEnumerable(System.Collections.IEnumerable enumerable)

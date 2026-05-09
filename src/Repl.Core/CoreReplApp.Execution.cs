@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 
 namespace Repl;
 
-public sealed partial class CoreReplApp
+public sealed partial class CoreReplApp : ISubInvocableReplApp
 {
 	/// <summary>
 	/// Runs the app in synchronous mode.
@@ -52,6 +52,12 @@ public sealed partial class CoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
 		ExecuteCoreAsync(args, serviceProvider, isSubInvocation: true, cancellationToken);
+
+	ValueTask<int> ISubInvocableReplApp.RunSubInvocationAsync(
+		string[] args,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken) =>
+		RunSubInvocationAsync(args, serviceProvider, cancellationToken);
 
 	private async ValueTask<int> ExecuteCoreAsync(
 		IReadOnlyList<string> args,
@@ -1054,7 +1060,8 @@ public sealed partial class CoreReplApp
 	private IReplResultFlowDiagnostics? ResolveResultFlowDiagnostics()
 	{
 		var serviceProvider = _runtimeState.Value?.ServiceProvider ?? _services;
-		return serviceProvider.GetService(typeof(IReplResultFlowDiagnostics)) as IReplResultFlowDiagnostics;
+		return serviceProvider.GetService(typeof(IReplResultFlowDiagnostics)) as IReplResultFlowDiagnostics
+			?? _services.GetService(typeof(IReplResultFlowDiagnostics)) as IReplResultFlowDiagnostics;
 	}
 
 	private string TryColorizeStructuredPayload(string payload, string format, bool isInteractive)

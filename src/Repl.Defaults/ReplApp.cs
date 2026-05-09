@@ -640,6 +640,10 @@ public sealed class ReplApp : IReplApp
 			external.GetService(typeof(TimeProvider)) as TimeProvider);
 		defaults[typeof(IReplInteractionChannel)] = channel;
 		defaults[typeof(IReplSessionInfo)] = new LiveSessionInfo();
+		if (EnsureSharedProvider().GetService<IReplResultFlowDiagnostics>() is { } diagnostics)
+		{
+			defaults[typeof(IReplResultFlowDiagnostics)] = diagnostics;
+		}
 
 		return new SessionOverlayServiceProvider(external, defaults);
 	}

@@ -95,7 +95,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultCursorIsValid_Then_ResultFlowTokenIsEmitted()
 	{
 		var (tokens, _) = McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc_DEF-123"),
@@ -109,7 +109,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultCursorContainsWhitespace_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc def"),
@@ -124,7 +124,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultCursorStartsWithDash_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("--result:all"),
@@ -139,7 +139,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultCursorIsTooLong_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement(new string('a', 513)),
@@ -154,7 +154,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultCursorContainsControlCharacter_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc\u001b[2J"),
@@ -169,7 +169,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultPageSizeIsValid_Then_ResultFlowTokenIsEmitted()
 	{
 		var (tokens, _) = McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(25),
@@ -183,7 +183,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultPageSizeIsNotNumeric_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement("abc"),
@@ -198,7 +198,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultPageSizeTokenIsTooLong_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(new string('1', 11)),
@@ -213,7 +213,7 @@ public sealed class Given_McpToolAdapter
 	public void When_ResultPageSizeOverflowsInt32_Then_Rejected()
 	{
 		var action = () => McpToolAdapter.PrepareExecution(
-			"contacts",
+			CreatePagedCommand("contacts"),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement("9999999999"),
@@ -221,6 +221,23 @@ public sealed class Given_McpToolAdapter
 
 		action.Should().Throw<InvalidOperationException>()
 			.WithMessage("*page size*32-bit*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution treats reserved result-flow argument names case-insensitively.")]
+	public void When_ResultFlowInputsUseDifferentCase_Then_ReservedDispatchStillValidatesAndEmitsTokens()
+	{
+		var (tokens, _) = McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["_replcursor"] = JsonSerializer.SerializeToElement("abc_DEF-123"),
+				["_replpagesize"] = JsonSerializer.SerializeToElement(25),
+			});
+
+		tokens.Should().ContainInOrder("--result:cursor", "abc_DEF-123", "--result:page-size", "25", "contacts");
+		tokens.Should().NotContain("--_replcursor");
+		tokens.Should().NotContain("--_replpagesize");
 	}
 
 	[TestMethod]
@@ -315,4 +332,14 @@ public sealed class Given_McpToolAdapter
 		action.Should().Throw<InvalidOperationException>()
 			.WithMessage("*not defined*schema*");
 	}
+
+	private static ReplDocCommand CreatePagedCommand(string path) =>
+		new(
+			Path: path,
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: [],
+			AcceptsPagingInput: true);
 }

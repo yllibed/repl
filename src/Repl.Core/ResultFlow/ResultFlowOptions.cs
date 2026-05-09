@@ -10,6 +10,8 @@ public sealed class ResultFlowOptions
 	private readonly List<IReplPagerRenderer> _pagerRenderers = [];
 	private int _defaultPageSize = 100;
 	private int _maxPageSize = 1000;
+	private int _maxBufferedLines = DefaultMaxBufferedLines;
+	private int _programmaticMaxInlineBytes = 64 * 1024;
 
 	/// <summary>
 	/// Gets or sets the default page size when no terminal-specific hint is available.
@@ -24,11 +26,12 @@ public sealed class ResultFlowOptions
 				throw new ArgumentOutOfRangeException(nameof(value), "Default page size must be greater than zero.");
 			}
 
-			_defaultPageSize = value;
-			if (_maxPageSize < _defaultPageSize)
+			if (value > _maxPageSize)
 			{
-				_maxPageSize = _defaultPageSize;
+				throw new ArgumentOutOfRangeException(nameof(value), "Default page size must be less than or equal to the maximum page size.");
 			}
+
+			_defaultPageSize = value;
 		}
 	}
 
@@ -72,12 +75,36 @@ public sealed class ResultFlowOptions
 	/// <summary>
 	/// Gets or sets the maximum number of content lines an interactive pager buffers in memory.
 	/// </summary>
-	public int MaxBufferedLines { get; set; } = DefaultMaxBufferedLines;
+	public int MaxBufferedLines
+	{
+		get => _maxBufferedLines;
+		set
+		{
+			if (value < 1)
+			{
+				throw new ArgumentOutOfRangeException(nameof(value), "Maximum buffered lines must be greater than zero.");
+			}
+
+			_maxBufferedLines = value;
+		}
+	}
 
 	/// <summary>
 	/// Gets or sets the maximum inline payload size for programmatic clients.
 	/// </summary>
-	public int ProgrammaticMaxInlineBytes { get; set; } = 64 * 1024;
+	public int ProgrammaticMaxInlineBytes
+	{
+		get => _programmaticMaxInlineBytes;
+		set
+		{
+			if (value < 1)
+			{
+				throw new ArgumentOutOfRangeException(nameof(value), "Programmatic maximum inline bytes must be greater than zero.");
+			}
+
+			_programmaticMaxInlineBytes = value;
+		}
+	}
 
 	/// <summary>
 	/// Registers or replaces the pager renderer for its configured mode.

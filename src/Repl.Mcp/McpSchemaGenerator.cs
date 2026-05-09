@@ -103,30 +103,30 @@ internal static class McpSchemaGenerator
 			["type"] = "object",
 			["properties"] = new JsonObject
 			{
-				["$type"] = new JsonObject
+				[ReplPageWireNames.Type] = new JsonObject
 				{
 					["type"] = "string",
-					["const"] = "page",
+					["const"] = ReplPageWireNames.PageType,
 				},
-				["items"] = new JsonObject
+				[ReplPageWireNames.Items] = new JsonObject
 				{
 					["type"] = "array",
-					["items"] = new JsonObject(),
+					[ReplPageWireNames.Items] = new JsonObject(),
 				},
-				["pageInfo"] = new JsonObject
+				[ReplPageWireNames.PageInfo] = new JsonObject
 				{
 					["type"] = "object",
 					["properties"] = new JsonObject
 					{
-						["cursor"] = new JsonObject { ["type"] = "string" },
-						["nextCursor"] = new JsonObject { ["type"] = "string" },
-						["totalCount"] = new JsonObject { ["type"] = "integer" },
-						["pageSize"] = new JsonObject { ["type"] = "integer" },
-						["hasMore"] = new JsonObject { ["type"] = "boolean" },
+						[ReplPageWireNames.Cursor] = new JsonObject { ["type"] = "string" },
+						[ReplPageWireNames.NextCursor] = new JsonObject { ["type"] = "string" },
+						[ReplPageWireNames.TotalCount] = new JsonObject { ["type"] = "integer" },
+						[ReplPageWireNames.PageSize] = new JsonObject { ["type"] = "integer" },
+						[ReplPageWireNames.HasMore] = new JsonObject { ["type"] = "boolean" },
 					},
 				},
 			},
-			["required"] = new JsonArray(["$type", "items", "pageInfo"]),
+			["required"] = new JsonArray([ReplPageWireNames.Type, ReplPageWireNames.Items, ReplPageWireNames.PageInfo]),
 		};
 
 		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);

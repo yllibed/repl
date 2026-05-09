@@ -481,6 +481,62 @@ public sealed class Given_ResultFlowPager
 	}
 
 	[TestMethod]
+	[Description("Result-flow full pager fetches when all known content is visible but more payloads exist.")]
+	public async Task When_ScrollPagerContentIsShorterThanViewport_Then_PageDownFetchesNextPayload()
+	{
+		using var writer = new StringWriter();
+		var fetches = 0;
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.PageDown, '\0'),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+
+		await WritePagerAsync(
+			"one\ntwo",
+			writer,
+			keys,
+			visibleRows: 5,
+			pagerMode: ReplPagerMode.Full,
+			ansiEnabled: true,
+			hasMorePayload: true,
+			fetchNextPayload: _ =>
+			{
+				fetches++;
+				return ValueTask.FromResult<ResultFlowPagerPage?>(
+					new ResultFlowPagerPage("three", HasMore: false));
+			},
+			CancellationToken.None);
+
+		fetches.Should().Be(1);
+		writer.ToString().Should().Contain("three");
+	}
+
+	[TestMethod]
+	[Description("Result-flow options reject invalid pager buffer and inline payload limits.")]
+	public void When_ResultFlowLimitsAreInvalid_Then_SettersThrow()
+	{
+		var options = new ResultFlowOptions();
+
+		var setMaxBufferedLines = () => options.MaxBufferedLines = 0;
+		var setProgrammaticBytes = () => options.ProgrammaticMaxInlineBytes = 0;
+
+		setMaxBufferedLines.Should().Throw<ArgumentOutOfRangeException>();
+		setProgrammaticBytes.Should().Throw<ArgumentOutOfRangeException>();
+	}
+
+	[TestMethod]
+	[Description("Result-flow options reject a default page size greater than the configured maximum.")]
+	public void When_DefaultPageSizeExceedsMaxPageSize_Then_SetterThrows()
+	{
+		var options = new ResultFlowOptions { MaxPageSize = 150 };
+
+		var action = () => options.DefaultPageSize = 151;
+
+		action.Should().Throw<ArgumentOutOfRangeException>();
+	}
+
+	[TestMethod]
 	[Description("Result-flow pager does not add a phantom empty line when a payload ends with a newline.")]
 	public async Task When_PayloadEndsWithNewline_Then_LineCountExcludesTrailingEmptyLine()
 	{
@@ -1085,7 +1141,7 @@ public sealed class Given_ResultFlowPager
 		bool ansiEnabled,
 		bool hasMorePayload,
 		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		IEnumerable<IReplPagerRenderer>? pagerRenderers,
+		IReadOnlyList<IReplPagerRenderer>? pagerRenderers,
 		CancellationToken cancellationToken = default)
 		=> ResultFlowPager.WriteAsync(
 			payload,
@@ -1121,7 +1177,7 @@ public sealed class Given_ResultFlowPager
 		bool ansiEnabled,
 		bool hasMorePayload,
 		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		IEnumerable<IReplPagerRenderer>? pagerRenderers,
+		IReadOnlyList<IReplPagerRenderer>? pagerRenderers,
 		int maxBufferedLines,
 		CancellationToken cancellationToken = default)
 		=> ResultFlowPager.WriteAsync(

@@ -20,4 +20,13 @@ public sealed class Given_AnsiTextMetrics
 
 		AnsiTextMetrics.GetVisualLength(link).Should().Be(4);
 	}
+
+	[TestMethod]
+	[Description("Visible length ignores OSC sequences terminated by ST.")]
+	public void When_TextContainsOscSequenceTerminatedByStringTerminator_Then_VisibleLengthIgnoresControlBytes()
+	{
+		var link = "\u001b]8;;https://example.invalid\u001b\\link\u001b]8;;\u001b\\";
+
+		AnsiTextMetrics.GetVisualLength(link).Should().Be(4);
+	}
 }

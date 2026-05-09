@@ -14,7 +14,7 @@ internal sealed record ResultFlowPagerOptions
 
 	public Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? FetchNextPayload { get; init; }
 
-	public IEnumerable<IReplPagerRenderer>? PagerRenderers { get; init; }
+	public IReadOnlyList<IReplPagerRenderer>? PagerRenderers { get; init; }
 
 	public int MaxBufferedLines { get; init; } = ResultFlowOptions.DefaultMaxBufferedLines;
 }

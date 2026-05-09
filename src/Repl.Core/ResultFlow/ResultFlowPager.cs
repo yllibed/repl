@@ -572,7 +572,7 @@ internal static class ResultFlowPager
 	private static bool ShouldFetchForViewportKey(ViewportState state, PagerAction action, int beforeTopLine) =>
 		action switch
 		{
-			PagerAction.PageDown => state.HasReachedBottom && state.Session.Lines.Count >= state.ViewportHeight,
+			PagerAction.PageDown => state.HasReachedBottom,
 			PagerAction.LineDown => beforeTopLine == state.TopLine && state.HasReachedBottom,
 			_ => false,
 		};

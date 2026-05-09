@@ -747,6 +747,11 @@ events with cursor and page-size metadata.
 - `Debug`: page fetch starting/succeeded.
 - `Error`: page fetch failed, including the exception.
 
+Apps created through `ReplApp.Create()` or `AddRepl(...)` get this bridge by
+default through the defaults package. Apps built directly on `Repl.Core` remain
+dependency-free and can opt in by registering their own
+`IReplResultFlowDiagnostics` implementation.
+
 ## Implementation Notes
 
 - Existing handlers that return `IEnumerable<T>` keep their current behavior.

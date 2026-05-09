@@ -15,51 +15,8 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 	/// </summary>
 	public ReplDocumentationModel CreateDocumentationModel(string? targetPath = null)
 	{
-		var activeGraph = app.ResolveActiveRoutingGraph();
-		var normalizedTargetPath = NormalizePath(targetPath);
-		var targetTokens = string.IsNullOrWhiteSpace(normalizedTargetPath)
-			? []
-			: normalizedTargetPath
-				.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		var discoverableRoutes = app.ResolveDiscoverableRoutes(
-			activeGraph.Routes,
-			activeGraph.Contexts,
-			targetTokens,
-			StringComparison.OrdinalIgnoreCase);
-		var discoverableContexts = app.ResolveDiscoverableContexts(
-			activeGraph.Contexts,
-			targetTokens,
-			StringComparison.OrdinalIgnoreCase);
-		var commands = SelectDocumentationCommands(
-			normalizedTargetPath,
-			discoverableRoutes,
-			discoverableContexts,
-			out _);
-
-		var contexts = SelectDocumentationContexts(normalizedTargetPath, commands, discoverableContexts);
-		var commandDocs = commands.Select(BuildDocumentationCommand).ToArray();
-		var contextDocs = contexts
-			.Select(context => new ReplDocContext(
-				Path: context.Template.Template,
-				Description: context.Description,
-				IsDynamic: context.Template.Segments.Any(segment => segment is DynamicRouteSegment),
-				IsHidden: context.IsHidden,
-				Details: context.Details))
-			.ToArray();
-		var resourceDocs = commandDocs
-			.Where(cmd => cmd.IsResource || cmd.Annotations?.ReadOnly == true)
-			.Select(cmd => new ReplDocResource(
-				Path: cmd.Path,
-				Description: cmd.Description,
-				Details: cmd.Details,
-				Arguments: cmd.Arguments,
-				Options: cmd.Options))
-			.ToArray();
-		return new ReplDocumentationModel(
-			App: BuildDocumentationApp(),
-			Contexts: contextDocs,
-			Commands: commandDocs,
-			Resources: resourceDocs);
+		var (model, _) = CreateDocumentationModelCore(targetPath);
+		return model;
 	}
 
 	/// <summary>
@@ -79,6 +36,12 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 	/// Internal documentation model creation that supports not-found result for help rendering.
 	/// </summary>
 	public object CreateDocumentationModelInternal(string? targetPath)
+	{
+		var (model, notFoundResult) = CreateDocumentationModelCore(targetPath);
+		return notFoundResult is null ? model : notFoundResult;
+	}
+
+	private (ReplDocumentationModel Model, IReplResult? NotFoundResult) CreateDocumentationModelCore(string? targetPath)
 	{
 		var activeGraph = app.ResolveActiveRoutingGraph();
 		var normalizedTargetPath = NormalizePath(targetPath);
@@ -100,10 +63,6 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			discoverableRoutes,
 			discoverableContexts,
 			out var notFoundResult);
-		if (notFoundResult is not null)
-		{
-			return notFoundResult;
-		}
 
 		var contexts = SelectDocumentationContexts(normalizedTargetPath, commands, discoverableContexts);
 		var commandDocs = commands.Select(BuildDocumentationCommand).ToArray();
@@ -124,11 +83,12 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 				Arguments: cmd.Arguments,
 				Options: cmd.Options))
 			.ToArray();
-		return new ReplDocumentationModel(
+		var model = new ReplDocumentationModel(
 			App: BuildDocumentationApp(),
 			Contexts: contextDocs,
 			Commands: commandDocs,
 			Resources: resourceDocs);
+		return (model, notFoundResult);
 	}
 
 	private static RouteDefinition[] SelectDocumentationCommands(
