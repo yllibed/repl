@@ -7,7 +7,7 @@ namespace Repl;
 /// </summary>
 public static class ReplPageSource
 {
-	private const int DefaultMaxSourceItemsToScan = 10000;
+	private const int DefaultMaxSourceItemsToScan = 10_000;
 
 	/// <summary>
 	/// Creates a page source from a fetch delegate.

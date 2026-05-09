@@ -169,10 +169,11 @@ public sealed class Given_McpSchemaGenerator
 		var schema = McpSchemaGenerator.BuildOutputSchema(cmd);
 
 		schema.Should().NotBeNull();
-		schema!.Value.GetProperty("properties").GetProperty("$type").GetProperty("const").GetString()
+		var schemaValue = schema!.Value;
+		schemaValue.GetProperty("properties").GetProperty("$type").GetProperty("const").GetString()
 			.Should().Be("page");
-		schema.Value.GetProperty("properties").TryGetProperty("items", out _).Should().BeTrue();
-		schema.Value.GetProperty("properties").TryGetProperty("pageInfo", out _).Should().BeTrue();
+		schemaValue.GetProperty("properties").TryGetProperty("items", out _).Should().BeTrue();
+		schemaValue.GetProperty("properties").TryGetProperty("pageInfo", out _).Should().BeTrue();
 	}
 
 	[TestMethod]
