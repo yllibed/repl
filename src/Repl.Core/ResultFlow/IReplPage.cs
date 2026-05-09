@@ -3,6 +3,10 @@ namespace Repl;
 /// <summary>
 /// Represents a typed page using an untyped view for the output pipeline.
 /// </summary>
+/// <remarks>
+/// Prefer returning <see cref="ReplPage{T}"/> or one of the page-source helpers instead of implementing
+/// this interface directly; it is primarily a framework contract between result-flow components.
+/// </remarks>
 public interface IReplPage
 {
 	/// <summary>

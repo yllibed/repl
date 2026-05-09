@@ -3,6 +3,7 @@ namespace Repl;
 internal static class ResultFlowPager
 {
 	private const string MorePrompt = "--More-- Space/PageDown: continue, Enter/Down: line, Up/PageUp: ignored, q/Esc: stop";
+	private const string SourceReturnedNoDataStatus = "-- paging stopped: source returned no data --";
 	private const string FullStatus = "-- result-flow {0}-{1}/{2}{3}  Space: next  Up/Down: scroll  Home/End: known bounds  q: quit --";
 	private const string FullStatusBufferLimit = "-- result-flow {0}-{1}/{2} buffer limit reached  Up/Down: scroll  q: quit --";
 	private const int DefaultMaxBufferedLines = 10_000;
@@ -13,9 +14,9 @@ internal static class ResultFlowPager
 	private static readonly System.Text.CompositeFormat FullStatusBufferLimitFormat =
 		System.Text.CompositeFormat.Parse(FullStatusBufferLimit);
 
-	public static int CountLines(string payload) => PagerPayloadParser.Parse(payload, header: null).TotalLineCount;
+	internal static int CountLines(string payload) => PagerPayloadParser.Parse(payload, header: null).TotalLineCount;
 
-	public static ValueTask WriteAsync(
+	internal static ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -30,7 +31,7 @@ internal static class ResultFlowPager
 			fetchNextPayload: null,
 			cancellationToken);
 
-	public static async ValueTask WriteAsync(
+	internal static async ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -52,7 +53,7 @@ internal static class ResultFlowPager
 			.ConfigureAwait(false);
 	}
 
-	public static async ValueTask WriteAsync(
+	internal static async ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -76,7 +77,7 @@ internal static class ResultFlowPager
 			.ConfigureAwait(false);
 	}
 
-	public static async ValueTask WriteAsync(
+	internal static async ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -102,7 +103,7 @@ internal static class ResultFlowPager
 			.ConfigureAwait(false);
 	}
 
-	public static async ValueTask WriteAsync(
+	internal static async ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -129,7 +130,7 @@ internal static class ResultFlowPager
 			.ConfigureAwait(false);
 	}
 
-	public static ValueTask WriteAsync(
+	internal static ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -155,7 +156,7 @@ internal static class ResultFlowPager
 			DefaultMaxBufferedLines,
 			cancellationToken);
 
-	public static async ValueTask WriteAsync(
+	internal static async ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
@@ -366,6 +367,7 @@ internal static class ResultFlowPager
 
 			if (!await TryFetchIntoSessionAsync(session, fetchNextPayload, cancellationToken).ConfigureAwait(false))
 			{
+				await WriteSourceReturnedNoDataAsync(session, output).ConfigureAwait(false);
 				return;
 			}
 		}
@@ -380,12 +382,11 @@ internal static class ResultFlowPager
 		var written = 0;
 		while (written < session.NextWindow)
 		{
-			if (session.Index >= session.Lines.Count)
+			if (session.Index >= session.Lines.Count
+				&& !await TryFetchIntoSessionAsync(session, fetchNextPayload, cancellationToken).ConfigureAwait(false))
 			{
-				if (!await TryFetchIntoSessionAsync(session, fetchNextPayload, cancellationToken).ConfigureAwait(false))
-				{
-					break;
-				}
+				await WriteSourceReturnedNoDataAsync(session, output).ConfigureAwait(false);
+				break;
 			}
 
 			await output.WriteLineAsync(session.Lines[session.Index]).ConfigureAwait(false);
@@ -404,9 +405,11 @@ internal static class ResultFlowPager
 			return false;
 		}
 
+		session.SourceReturnedNoData = false;
 		var nextPayload = await fetchNextPayload(cancellationToken).ConfigureAwait(false);
 		if (nextPayload is null)
 		{
+			session.SourceReturnedNoData = true;
 			session.HasMorePayload = false;
 			return false;
 		}
@@ -449,6 +452,14 @@ internal static class ResultFlowPager
 					session.NextWindow = session.PageSize;
 					return PagerAction.PageDown;
 			}
+		}
+	}
+
+	private static async ValueTask WriteSourceReturnedNoDataAsync(PagerSession session, TextWriter output)
+	{
+		if (session.SourceReturnedNoData)
+		{
+			await output.WriteLineAsync(SourceReturnedNoDataStatus).ConfigureAwait(false);
 		}
 	}
 
@@ -537,14 +548,7 @@ internal static class ResultFlowPager
 		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>> fetchNextPayload,
 		CancellationToken cancellationToken)
 	{
-		var nextPayload = await fetchNextPayload(cancellationToken).ConfigureAwait(false);
-		if (nextPayload is null)
-		{
-			session.HasMorePayload = false;
-			return;
-		}
-
-		session.Append(nextPayload.Payload, nextPayload.HasMore, nextPayload.ContainsPresentationChrome);
+		_ = await TryFetchIntoSessionAsync(session, fetchNextPayload, cancellationToken).ConfigureAwait(false);
 	}
 
 	private static async ValueTask ClearViewportAsync(TerminalSurfaceScope surface, ViewportState state)
@@ -599,7 +603,14 @@ internal static class ResultFlowPager
 	{
 		if (state.Session.Lines.Count == 0)
 		{
-			return "-- result-flow: loading --";
+			return state.Session.SourceReturnedNoData
+				? SourceReturnedNoDataStatus
+				: "-- result-flow: loading --";
+		}
+
+		if (state.Session.SourceReturnedNoData)
+		{
+			return SourceReturnedNoDataStatus;
 		}
 
 		return state.Session.BufferLimitReached
@@ -639,13 +650,14 @@ internal static class ResultFlowPager
 		bool appendNewLine = true)
 	{
 		await output.WriteAsync(line).ConfigureAwait(false);
+		var visualLength = GetVisualLength(line);
 		var previousLength = state.GetRenderedLineLength(row);
-		if (previousLength > line.Length)
+		if (previousLength > visualLength)
 		{
-			await WriteSpacesAsync(output, previousLength - line.Length).ConfigureAwait(false);
+			await WriteSpacesAsync(output, previousLength - visualLength).ConfigureAwait(false);
 		}
 
-		state.SetRenderedLineLength(row, line.Length);
+		state.SetRenderedLineLength(row, visualLength);
 		if (appendNewLine)
 		{
 			await output.WriteLineAsync().ConfigureAwait(false);
@@ -692,7 +704,7 @@ internal static class ResultFlowPager
 	private static bool ShouldFetchForViewportKey(ViewportState state, PagerAction action, int beforeTopLine) =>
 		action switch
 		{
-			PagerAction.PageDown => state.HasReachedBottom && state.Session.Lines.Count > state.ViewportHeight,
+			PagerAction.PageDown => state.HasReachedBottom && state.Session.Lines.Count >= state.ViewportHeight,
 			PagerAction.LineDown => beforeTopLine == state.TopLine && state.HasReachedBottom,
 			_ => false,
 		};
@@ -713,6 +725,34 @@ internal static class ResultFlowPager
 			await output.WriteAsync(SpacePadding.AsMemory(0, take)).ConfigureAwait(false);
 			count -= take;
 		}
+	}
+
+	private static int GetVisualLength(string line)
+	{
+		var length = 0;
+		for (var i = 0; i < line.Length; i++)
+		{
+			if (line[i] == '\u001b')
+			{
+				if (i + 1 < line.Length && line[i + 1] == '[')
+				{
+					i += 2;
+					while (i < line.Length && (line[i] < '@' || line[i] > '~'))
+					{
+						i++;
+					}
+				}
+
+				continue;
+			}
+
+			if (!char.IsControl(line[i]))
+			{
+				length++;
+			}
+		}
+
+		return length;
 	}
 
 	private static int GetCurrentVisibleRows(int fallbackVisibleRows, Func<int>? visibleRowsProvider)

@@ -1,4 +1,5 @@
 using Repl.Mcp;
+using Repl.Documentation;
 using System.Text.Json;
 
 namespace Repl.McpTests;
@@ -200,10 +201,49 @@ public sealed class Given_McpToolAdapter
 			"contacts",
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
-				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(new string('1', 21)),
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(new string('1', 11)),
 			});
 
 		action.Should().Throw<InvalidOperationException>()
-			.WithMessage("*page size*20*");
+			.WithMessage("*page size*10*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result page sizes that do not fit in a positive Int32.")]
+	public void When_ResultPageSizeOverflowsInt32_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			"contacts",
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement("9999999999"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*page size*32-bit*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects MCP arguments that are not declared by the command schema.")]
+	public void When_ArgumentIsNotInToolSchema_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "contacts {id}",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [new ReplDocArgument("id", "string", Required: true, Description: null)],
+			Options: [new ReplDocOption("format", "string", Required: false, Description: null, Aliases: [], ReverseAliases: [], ValueAliases: [], EnumValues: [], DefaultValue: null)]);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["id"] = JsonSerializer.SerializeToElement("abc"),
+				["output:xml"] = JsonSerializer.SerializeToElement("true"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*not defined*schema*");
 	}
 }

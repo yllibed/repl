@@ -32,7 +32,7 @@ internal static class ResultFlowCursorPolicy
 				return false;
 			}
 
-			if (ch < 0x20 || ch == 0x7f)
+			if (ch < 0x20 || ch == 0x7f || ch is >= '\u0080' and <= '\u009f')
 			{
 				error = "The result cursor cannot contain control characters.";
 				return false;

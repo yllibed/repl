@@ -6,16 +6,51 @@ namespace Repl;
 public sealed class ResultFlowOptions
 {
 	private readonly List<IReplPagerRenderer> _pagerRenderers = [];
+	private int _defaultPageSize = 100;
+	private int _maxPageSize = 1000;
 
 	/// <summary>
 	/// Gets or sets the default page size when no terminal-specific hint is available.
 	/// </summary>
-	public int DefaultPageSize { get; set; } = 100;
+	public int DefaultPageSize
+	{
+		get => _defaultPageSize;
+		set
+		{
+			if (value < 1)
+			{
+				throw new ArgumentOutOfRangeException(nameof(value), "Default page size must be greater than zero.");
+			}
+
+			_defaultPageSize = value;
+			if (_maxPageSize < _defaultPageSize)
+			{
+				_maxPageSize = _defaultPageSize;
+			}
+		}
+	}
 
 	/// <summary>
 	/// Gets or sets the maximum page size a caller can request.
 	/// </summary>
-	public int MaxPageSize { get; set; } = 1000;
+	public int MaxPageSize
+	{
+		get => _maxPageSize;
+		set
+		{
+			if (value < 1)
+			{
+				throw new ArgumentOutOfRangeException(nameof(value), "Maximum page size must be greater than zero.");
+			}
+
+			if (value < _defaultPageSize)
+			{
+				throw new ArgumentOutOfRangeException(nameof(value), "Maximum page size must be greater than or equal to the default page size.");
+			}
+
+			_maxPageSize = value;
+		}
+	}
 
 	/// <summary>
 	/// Gets or sets the number of non-data rows reserved in interactive pagers.

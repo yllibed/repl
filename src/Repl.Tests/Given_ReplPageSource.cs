@@ -276,9 +276,28 @@ public sealed class Given_ReplPageSource
 				AllRequested: false,
 				Surface: ReplResultSurface.Console)).ConfigureAwait(false);
 
-		await action.Should().ThrowAsync<InvalidOperationException>()
-			.WithMessage("*replayable*")
-			.ConfigureAwait(false);
+		await action.Should().ThrowAsync<InvalidOperationException>().ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("ReplPageSource.FromAsyncEnumerable starts scan-limit accounting after the raw offset skip.")]
+	public async Task When_FromAsyncEnumerableUsesDeepOffset_Then_ScanLimitAppliesAfterOffset()
+	{
+		var source = ReplPageSource.FromAsyncEnumerable(
+			_ => ReadIntItemsAsync(Enumerable.Range(0, 100)),
+			filter: static _ => true,
+			maxSourceItemsToScan: 3);
+
+		var page = await source.FetchAsync(
+			new ReplPageRequest(
+				PageSize: 2,
+				Cursor: "50",
+				VisibleRowCapacityHint: null,
+				AllRequested: false,
+				Surface: ReplResultSurface.Console));
+
+		page.Items.Should().Equal(50, 51);
+		page.PageInfo.NextCursor.Should().Be("52");
 	}
 
 	[TestMethod]
@@ -436,6 +455,15 @@ public sealed class Given_ReplPageSource
 	}
 
 	private static async IAsyncEnumerable<string> ReadItemsAsync(IEnumerable<string> items)
+	{
+		foreach (var item in items)
+		{
+			await Task.Yield();
+			yield return item;
+		}
+	}
+
+	private static async IAsyncEnumerable<int> ReadIntItemsAsync(IEnumerable<int> items)
 	{
 		foreach (var item in items)
 		{

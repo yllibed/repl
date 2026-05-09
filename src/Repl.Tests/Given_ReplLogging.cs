@@ -126,7 +126,7 @@ public sealed partial class Given_ReplLogging
 		exitCode.Should().Be(1);
 		provider.Entries.Should().Contain(entry =>
 			entry.Category == "Repl.ResultFlow"
-			&& entry.Level == LogLevel.Warning
+			&& entry.Level == LogLevel.Error
 			&& entry.Message.Contains("page fetch failed", StringComparison.OrdinalIgnoreCase));
 	}
 

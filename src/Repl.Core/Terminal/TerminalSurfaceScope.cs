@@ -56,9 +56,11 @@ internal sealed class TerminalSurfaceScope(TextWriter output, TerminalSurfaceMod
 		}
 		catch (IOException)
 		{
+			// Best-effort terminal restore; output may be closed during process shutdown or pipe teardown.
 		}
 		catch (ObjectDisposedException)
 		{
+			// Best-effort terminal restore; output may already be disposed by the host.
 		}
 	}
 
@@ -76,9 +78,11 @@ internal sealed class TerminalSurfaceScope(TextWriter output, TerminalSurfaceMod
 		}
 		catch (IOException)
 		{
+			// Best-effort terminal write; output may be closed during process shutdown or pipe teardown.
 		}
 		catch (ObjectDisposedException)
 		{
+			// Best-effort terminal write; output may already be disposed by the host.
 		}
 	}
 }

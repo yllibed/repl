@@ -145,6 +145,7 @@ public sealed class Given_GlobalOptionParser
 	public void When_ResultFlowPageSizeExceedsMaximum_Then_ParserClampsIt()
 	{
 		var outputOptions = new OutputOptions();
+		outputOptions.ResultFlow.DefaultPageSize = 50;
 		outputOptions.ResultFlow.MaxPageSize = 50;
 
 		var parsed = GlobalOptionParser.Parse(
@@ -190,6 +191,20 @@ public sealed class Given_GlobalOptionParser
 	{
 		var parsed = GlobalOptionParser.Parse(
 			["users", "list", "--result:cursor=abc\u001b[2J"],
+			new OutputOptions(),
+			new ParsingOptions());
+
+		parsed.Diagnostics.Should().ContainSingle(diagnostic =>
+			diagnostic.Severity == ParseDiagnosticSeverity.Error
+			&& diagnostic.Message.Contains("control", StringComparison.OrdinalIgnoreCase));
+	}
+
+	[TestMethod]
+	[Description("Result-flow cursor rejects C1 control characters that can be interpreted by legacy terminals.")]
+	public void When_ResultFlowCursorContainsC1Control_Then_DiagnosticErrorIsProduced()
+	{
+		var parsed = GlobalOptionParser.Parse(
+			["users", "list", "--result:cursor=abc\u009b2J"],
 			new OutputOptions(),
 			new ParsingOptions());
 

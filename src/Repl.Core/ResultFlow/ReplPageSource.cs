@@ -259,12 +259,12 @@ public static class ReplPageSource
 			.WithCancellation(cancellationToken)
 			.ConfigureAwait(false))
 		{
-			ThrowIfScanLimitExceeded(scanned++, maxScan);
 			if (index++ < offset)
 			{
 				continue;
 			}
 
+			ThrowIfScanLimitExceeded(scanned++, maxScan);
 			if (filter is not null && !filter(item))
 			{
 				continue;

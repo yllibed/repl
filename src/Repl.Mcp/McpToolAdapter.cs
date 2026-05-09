@@ -95,7 +95,7 @@ internal sealed partial class McpToolAdapter
 			return ErrorResult($"Unknown tool: {toolName}");
 		}
 
-		var (tokens, prefills) = PrepareExecution(command.Path, arguments);
+		var (tokens, prefills) = PrepareExecution(command, arguments);
 		return await ExecuteThroughPipelineAsync(tokens, prefills, server, progressToken, ct)
 			.ConfigureAwait(false);
 	}
@@ -222,8 +222,22 @@ internal sealed partial class McpToolAdapter
 	}
 
 	internal static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
+		ReplDocCommand command,
+		IDictionary<string, JsonElement> arguments)
+	{
+		var allowedArgumentNames = BuildAllowedArgumentNames(command);
+		return PrepareExecution(command.Path, arguments, allowedArgumentNames);
+	}
+
+	internal static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
 		string routePath,
 		IDictionary<string, JsonElement> arguments)
+		=> PrepareExecution(routePath, arguments, allowedArgumentNames: null);
+
+	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
+		string routePath,
+		IDictionary<string, JsonElement> arguments,
+		HashSet<string>? allowedArgumentNames)
 	{
 		var stringArgs = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 		var prefills = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -253,6 +267,12 @@ internal sealed partial class McpToolAdapter
 			}
 			else
 			{
+				if (allowedArgumentNames is not null && !allowedArgumentNames.Contains(key))
+				{
+					throw new InvalidOperationException(
+						$"The MCP argument '{key}' is not defined by the tool schema.");
+				}
+
 				stringArgs[key] = strValue;
 			}
 		}
@@ -267,15 +287,47 @@ internal sealed partial class McpToolAdapter
 
 	private static void ValidateResultPageSize(string pageSize)
 	{
-		if (pageSize.Length > 20)
+		if (pageSize.Length > 10)
 		{
-			throw new InvalidOperationException("The MCP result page size cannot exceed 20 characters.");
+			throw new InvalidOperationException("The MCP result page size cannot exceed 10 characters.");
 		}
 
 		if (pageSize.Length == 0 || pageSize.Any(static c => c < '0' || c > '9'))
 		{
 			throw new InvalidOperationException("The MCP result page size must be numeric.");
 		}
+
+		if (!int.TryParse(pageSize, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value)
+			|| value <= 0)
+		{
+			throw new InvalidOperationException("The MCP result page size must fit in a positive 32-bit integer.");
+		}
+	}
+
+	private static HashSet<string> BuildAllowedArgumentNames(ReplDocCommand command)
+	{
+		var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var argument in command.Arguments)
+		{
+			names.Add(argument.Name);
+		}
+
+		foreach (var option in command.Options)
+		{
+			names.Add(option.Name);
+		}
+
+		if (command.Answers is { Count: > 0 })
+		{
+			foreach (var answer in command.Answers)
+			{
+				names.Add($"answer.{answer.Name}");
+			}
+		}
+
+		names.Add(McpResultFlowArgumentNames.Cursor);
+		names.Add(McpResultFlowArgumentNames.PageSize);
+		return names;
 	}
 
 	/// <summary>

@@ -32,6 +32,8 @@ internal sealed class PagerSession
 
 	public bool BufferLimitReached { get; private set; }
 
+	public bool SourceReturnedNoData { get; set; }
+
 	public void Append(string payload, bool hasMorePayload, bool containsPresentationChrome = true)
 	{
 		var parsed = PagerPayloadParser.Parse(payload, _header, containsPresentationChrome);
@@ -55,6 +57,6 @@ internal sealed class PagerSession
 		}
 
 		BufferLimitReached = take < contentLines.Count;
-		HasMorePayload = !BufferLimitReached && hasMorePayload;
+		HasMorePayload = hasMorePayload && !BufferLimitReached;
 	}
 }

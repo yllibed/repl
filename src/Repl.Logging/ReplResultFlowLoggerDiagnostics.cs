@@ -40,6 +40,6 @@ internal sealed partial class ReplResultFlowLoggerDiagnostics : IReplResultFlowD
 	[LoggerMessage(EventId = 1002, Level = LogLevel.Debug, Message = "Result-flow page fetch succeeded. Cursor: {Cursor}; PageSize: {PageSize}; ItemCount: {ItemCount}.")]
 	private static partial void PageFetchSucceeded(ILogger logger, string? cursor, int pageSize, int itemCount);
 
-	[LoggerMessage(EventId = 1003, Level = LogLevel.Warning, Message = "Result-flow page fetch failed. Cursor: {Cursor}; PageSize: {PageSize}.")]
+	[LoggerMessage(EventId = 1003, Level = LogLevel.Error, Message = "Result-flow page fetch failed. Cursor: {Cursor}; PageSize: {PageSize}.")]
 	private static partial void PageFetchFailed(ILogger logger, Exception? exception, string? cursor, int pageSize);
 }

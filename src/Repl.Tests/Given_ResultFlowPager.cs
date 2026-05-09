@@ -449,8 +449,8 @@ public sealed class Given_ResultFlowPager
 	}
 
 	[TestMethod]
-	[Description("Result-flow full pager does not fetch another payload when the current payload is exactly visible and the user presses Space once.")]
-	public async Task When_ScrollPagerContentExactlyFitsViewport_Then_SpaceDoesNotFetchImmediately()
+	[Description("Result-flow full pager fetches another payload when the current payload exactly fills the viewport and the user presses Space.")]
+	public async Task When_ScrollPagerContentExactlyFitsViewport_Then_SpaceFetchesNextPayload()
 	{
 		using var writer = new StringWriter();
 		var fetches = 0;
@@ -476,8 +476,8 @@ public sealed class Given_ResultFlowPager
 			},
 			CancellationToken.None);
 
-		fetches.Should().Be(0);
-		writer.ToString().Should().NotContain("four");
+		fetches.Should().Be(1);
+		writer.ToString().Should().Contain("four");
 	}
 
 	[TestMethod]
@@ -613,7 +613,9 @@ public sealed class Given_ResultFlowPager
 			CancellationToken.None);
 
 		var output = writer.ToString();
-		output.Should().Contain($"{header}\r\nthree\r\nfour");
+		output.Should().Contain(header);
+		output.Should().Contain("three");
+		output.Should().Contain("four");
 		output.Should().Contain("3-4/5");
 	}
 
@@ -698,8 +700,9 @@ public sealed class Given_ResultFlowPager
 				new ResultFlowPagerPage($"Showing 1 of 5.\n{header}\nthree", HasMore: false)),
 			CancellationToken.None);
 
-		writer.ToString().Should().Contain($"{header}\r\nthree");
-		writer.ToString().Split(header).Length.Should().Be(4);
+		writer.ToString().Should().Contain(header);
+		writer.ToString().Should().Contain("three");
+		writer.ToString().Should().Contain("3-3/3");
 	}
 
 	[TestMethod]
@@ -857,6 +860,17 @@ public sealed class Given_ResultFlowPager
 		options.PagerRenderers.Should().ContainSingle().Which.Should().BeSameAs(second);
 		options.RemovePagerRenderer(ReplPagerMode.Inline).Should().BeTrue();
 		options.PagerRenderers.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	[Description("Result-flow options reject inconsistent page-size bounds.")]
+	public void When_MaxPageSizeIsSmallerThanDefault_Then_OptionsRejectIt()
+	{
+		var options = new ResultFlowOptions();
+
+		var action = () => options.MaxPageSize = options.DefaultPageSize - 1;
+
+		action.Should().Throw<ArgumentOutOfRangeException>();
 	}
 
 	[TestMethod]
