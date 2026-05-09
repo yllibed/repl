@@ -665,14 +665,16 @@ owns its render area.
 
 ## MCP Behavior
 
-MCP tools expose two reserved input properties on every tool schema:
+Paged MCP tools expose two reserved input properties in their input schema:
 
 | Property | Meaning |
 |---|---|
 | `_replCursor` | Continuation cursor from a previous paged result. |
 | `_replPageSize` | Requested page size for the tool call. |
 
-These properties are consumed by the Repl MCP adapter and mapped to `IReplPagingContext`. They are not forwarded as command business options.
+These properties are emitted only for commands that accept `IReplPagingContext`
+or return a paged result. They are consumed by the Repl MCP adapter and mapped
+to `IReplPagingContext`; they are not forwarded as command business options.
 MCP and CLI cursors are expected to be compact opaque values, for example
 base64url or another whitespace-free token. Repl rejects cursors that are empty,
 contain whitespace or control characters, start with `-`, or exceed 512
@@ -681,17 +683,22 @@ be numeric and at most 10 characters before normal result-flow clamping is
 applied.
 MCP arguments are also validated against the generated tool schema before they
 are reconstructed as CLI tokens, so arbitrary JSON keys cannot inject global or
-result-flow options.
+result-flow options. Business argument values starting with `--` are rejected
+because those values would be ambiguous once Repl reconstructs CLI tokens.
 
 When a handler returns `ReplPage<T>`, MCP returns:
 
 - `StructuredContent`: the full `{ "$type": "page", items, pageInfo }` envelope.
-- `Content`: a short text summary such as `Returned 1 item(s). Total: 2. Continue with _replCursor; cursor available in structured content.`
+- `Content`: a configurable text fallback.
 
-This keeps agents from receiving a giant JSON string in `TextContentBlock` while still preserving structured data for clients that support it.
+By default, `Content` contains compact serialized JSON for compatibility with
+clients that ignore structured content. `ReplMcpServerOptions.PagedResultTextMode`
+can switch to `SummaryOnly` to reduce token cost, or `SummaryAndSerializedJson`
+for a diagnostic-friendly fallback.
 Agents that preserve `StructuredContent` can continue by sending `_replCursor`
-with the value from `pageInfo.nextCursor`. Agents that only read text receive a
-safe fallback summary, but Repl does not place the raw cursor in text content.
+with the value from `pageInfo.nextCursor`. Agents that only read text can still
+consume the first page when serialized JSON fallback is enabled, but automatic
+continuation depends on the client being able to reuse the cursor safely.
 
 ## Spectre Behavior
 

@@ -804,14 +804,17 @@ public sealed partial class CoreReplApp
 				pagerPayload,
 				ReplSessionIO.Output,
 				keyReader,
-				visibleRows,
-				ResolvePagerVisibleRows,
-				pagerMode,
-				ansiEnabled,
-				page.PageInfo.HasMore,
-				FetchNextPayloadAsync,
-				_options.Output.ResultFlow.PagerRenderers,
-				_options.Output.ResultFlow.MaxBufferedLines,
+				new ResultFlowPagerOptions
+				{
+					VisibleRows = visibleRows,
+					VisibleRowsProvider = ResolvePagerVisibleRows,
+					PagerMode = pagerMode,
+					AnsiEnabled = ansiEnabled,
+					HasMorePayload = page.PageInfo.HasMore,
+					FetchNextPayload = FetchNextPayloadAsync,
+					PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
+					MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
+				},
 				cancellationToken)
 			.ConfigureAwait(false);
 		return true;
@@ -886,14 +889,14 @@ public sealed partial class CoreReplApp
 					payload,
 					ReplSessionIO.Output,
 					keyReader,
-					visibleRows,
-					visibleRowsProvider: null,
-					pagerMode,
-					ansiEnabled,
-					hasMorePayload: false,
-					fetchNextPayload: null,
-					_options.Output.ResultFlow.PagerRenderers,
-					_options.Output.ResultFlow.MaxBufferedLines,
+					new ResultFlowPagerOptions
+					{
+						VisibleRows = visibleRows,
+						PagerMode = pagerMode,
+						AnsiEnabled = ansiEnabled,
+						PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
+						MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
+					},
 					cancellationToken)
 				.ConfigureAwait(false);
 			return;

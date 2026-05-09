@@ -145,17 +145,17 @@ internal sealed partial class McpToolAdapter
 				output = exitCode == 0 ? "OK" : $"Command failed with exit code {exitCode}.";
 			}
 
-			return BuildToolResult(output, exitCode);
+			return BuildToolResult(output, exitCode, _options.PagedResultTextMode);
 		}
 	}
 
-	private static CallToolResult BuildToolResult(string output, int exitCode)
+	private static CallToolResult BuildToolResult(string output, int exitCode, McpPagedResultTextMode pagedTextMode)
 	{
 		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
 		{
 			return new CallToolResult
 			{
-				Content = [new TextContentBlock { Text = summary }],
+				Content = [new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) }],
 				StructuredContent = structuredContent,
 				IsError = false,
 			};
@@ -167,6 +167,17 @@ internal sealed partial class McpToolAdapter
 			IsError = exitCode != 0,
 		};
 	}
+
+	private static string BuildPagedTextContent(
+		string serializedPage,
+		string summary,
+		McpPagedResultTextMode mode) =>
+		mode switch
+		{
+			McpPagedResultTextMode.SummaryOnly => summary,
+			McpPagedResultTextMode.SummaryAndSerializedJson => string.Concat(summary, Environment.NewLine, serializedPage),
+			_ => serializedPage,
+		};
 
 	private static bool TryCreatePagedStructuredResult(
 		string output,
@@ -249,6 +260,12 @@ internal sealed partial class McpToolAdapter
 				? value.GetString() ?? ""
 				: value.GetRawText();
 
+			if (allowedArgumentNames is not null && !allowedArgumentNames.Contains(key))
+			{
+				throw new InvalidOperationException(
+					$"The MCP argument '{key}' is not defined by the tool schema.");
+			}
+
 			if (key.StartsWith("answer.", StringComparison.OrdinalIgnoreCase))
 			{
 				prefills[key["answer.".Length..]] = strValue;
@@ -267,12 +284,7 @@ internal sealed partial class McpToolAdapter
 			}
 			else
 			{
-				if (allowedArgumentNames is not null && !allowedArgumentNames.Contains(key))
-				{
-					throw new InvalidOperationException(
-						$"The MCP argument '{key}' is not defined by the tool schema.");
-				}
-
+				ValidateCommandArgumentValue(strValue);
 				stringArgs[key] = strValue;
 			}
 		}
@@ -292,7 +304,7 @@ internal sealed partial class McpToolAdapter
 			throw new InvalidOperationException("The MCP result page size cannot exceed 10 characters.");
 		}
 
-		if (pageSize.Length == 0 || pageSize.Any(static c => c < '0' || c > '9'))
+		if (pageSize.Length == 0 || ContainsNonDigit(pageSize))
 		{
 			throw new InvalidOperationException("The MCP result page size must be numeric.");
 		}
@@ -301,6 +313,27 @@ internal sealed partial class McpToolAdapter
 			|| value <= 0)
 		{
 			throw new InvalidOperationException("The MCP result page size must fit in a positive 32-bit integer.");
+		}
+	}
+
+	private static bool ContainsNonDigit(string value)
+	{
+		foreach (var c in value)
+		{
+			if (c < '0' || c > '9')
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static void ValidateCommandArgumentValue(string value)
+	{
+		if (value.StartsWith("--", StringComparison.Ordinal))
+		{
+			throw new InvalidOperationException("The MCP argument value cannot start like a CLI option.");
 		}
 	}
 
@@ -325,8 +358,12 @@ internal sealed partial class McpToolAdapter
 			}
 		}
 
-		names.Add(McpResultFlowArgumentNames.Cursor);
-		names.Add(McpResultFlowArgumentNames.PageSize);
+		if (command.AcceptsPagingInput || command.EmitsPagedResult)
+		{
+			names.Add(McpResultFlowArgumentNames.Cursor);
+			names.Add(McpResultFlowArgumentNames.PageSize);
+		}
+
 		return names;
 	}
 

@@ -16,7 +16,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour\nfive",
 			writer,
 			keys,
@@ -47,7 +47,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -74,7 +74,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -104,7 +104,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"# At Area Event Summary\n---\nr1\nr2\nr3\nr4\nr5",
 			writer,
 			keys,
@@ -130,7 +130,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Spacebar, ' '),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo",
 			writer,
 			keys,
@@ -163,7 +163,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree",
 			writer,
 			keys,
@@ -193,7 +193,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo",
 			writer,
 			keys,
@@ -223,7 +223,7 @@ public sealed class Given_ResultFlowPager
 		var fetches = 0;
 		var keys = new FakeKeyReader([]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			string.Empty,
 			writer,
 			keys,
@@ -256,7 +256,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -281,7 +281,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Spacebar, ' '),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			$"{header}\none\ntwo\nShowing 2 of 5.",
 			writer,
 			keys,
@@ -310,7 +310,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Spacebar, ' '),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			$"{header}\n---  -----------------  ---------  ----------  ----------------------------------------\n1    2026-01-12      identity   validated  identity batch 1 validated successfully\nShowing 1 of 3.",
 			writer,
 			keys,
@@ -342,7 +342,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one",
 			writer,
 			keys,
@@ -366,7 +366,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree",
 			writer,
 			keys,
@@ -397,7 +397,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree",
 			writer,
 			keys,
@@ -431,7 +431,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -460,7 +460,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree",
 			writer,
 			keys,
@@ -490,7 +490,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\n",
 			writer,
 			keys,
@@ -514,7 +514,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -545,7 +545,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -570,7 +570,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree",
 			writer,
 			keys,
@@ -600,7 +600,7 @@ public sealed class Given_ResultFlowPager
 		]);
 		var header = "\u001b[1m#\u001b[0m  \u001b[1mAt\u001b[0m";
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			$"{header}\none\ntwo\nthree",
 			writer,
 			keys,
@@ -631,7 +631,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -642,6 +642,34 @@ public sealed class Given_ResultFlowPager
 
 		writer.ToString().Split("\u001b[J").Length.Should().Be(2);
 		writer.ToString().Should().NotContain("\u001b[2K");
+	}
+
+	[TestMethod]
+	[Description("Result-flow full pager measures OSC hyperlink escapes as zero-width terminal control data.")]
+	public async Task When_ScrollPagerRedrawsOverOscHyperlink_Then_PadsUsingVisibleWidth()
+	{
+		using var writer = new StringWriter();
+		var keys = new FakeKeyReader(
+		[
+			MakeKey(ConsoleKey.DownArrow, '\0'),
+			MakeKey(ConsoleKey.Q, 'q'),
+		]);
+		var link = "\u001b]8;;https://example.invalid\u0007link\u001b]8;;\u0007";
+
+		await WritePagerAsync(
+			$"{link}\nx",
+			writer,
+			keys,
+			new ResultFlowPagerOptions
+			{
+				VisibleRows = 2,
+				PagerMode = ReplPagerMode.Full,
+				AnsiEnabled = true,
+			},
+			CancellationToken.None);
+
+		writer.ToString().Should().Contain($"x   {Environment.NewLine}");
+		writer.ToString().Should().NotContain("x          ");
 	}
 
 	[TestMethod]
@@ -656,7 +684,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nShowing 2 of 5. Next data page: rerun with --result:cursor page-2.",
 			writer,
 			keys,
@@ -688,7 +716,7 @@ public sealed class Given_ResultFlowPager
 		]);
 		var header = "\u001b[1m#\u001b[0m   \u001b[1mAt\u001b[0m";
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			$"{header}\none\ntwo\nShowing 2 of 5.",
 			writer,
 			keys,
@@ -717,7 +745,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour\nfive",
 			writer,
 			keys,
@@ -750,7 +778,7 @@ public sealed class Given_ResultFlowPager
 		]);
 		var reads = 0;
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour\nfive",
 			writer,
 			keys,
@@ -778,7 +806,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree",
 			writer,
 			keys,
@@ -806,7 +834,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo\nthree\nfour",
 			writer,
 			keys,
@@ -829,7 +857,7 @@ public sealed class Given_ResultFlowPager
 		using var writer = new StringWriter();
 		var renderer = new RecordingPagerRenderer(ReplPagerMode.Inline);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo",
 			writer,
 			new FakeKeyReader([]),
@@ -905,7 +933,7 @@ public sealed class Given_ResultFlowPager
 			MakeKey(ConsoleKey.Q, 'q'),
 		]);
 
-		await ResultFlowPager.WriteAsync(
+		await WritePagerAsync(
 			"one\ntwo",
 			writer,
 			keys,
@@ -951,6 +979,167 @@ public sealed class Given_ResultFlowPager
 
 		second.ContentLines.Should().Equal("two");
 	}
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		CancellationToken cancellationToken = default)
+		=> ResultFlowPager.WriteAsync(payload, output, keyReader, visibleRows, cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		CancellationToken cancellationToken = default)
+		=> ResultFlowPager.WriteAsync(
+			payload,
+			output,
+			keyReader,
+			new ResultFlowPagerOptions
+			{
+				VisibleRows = visibleRows,
+				PagerMode = pagerMode,
+				AnsiEnabled = ansiEnabled,
+			},
+			cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		bool hasMorePayload,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		CancellationToken cancellationToken = default)
+		=> WritePagerAsync(
+			payload,
+			output,
+			keyReader,
+			visibleRows,
+			ReplPagerMode.More,
+			ansiEnabled: false,
+			hasMorePayload,
+			fetchNextPayload,
+			cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		bool hasMorePayload,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		CancellationToken cancellationToken = default)
+		=> ResultFlowPager.WriteAsync(
+			payload,
+			output,
+			keyReader,
+			new ResultFlowPagerOptions
+			{
+				VisibleRows = visibleRows,
+				PagerMode = pagerMode,
+				AnsiEnabled = ansiEnabled,
+				HasMorePayload = hasMorePayload,
+				FetchNextPayload = fetchNextPayload,
+			},
+			cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		Func<int> visibleRowsProvider,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		bool hasMorePayload,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		CancellationToken cancellationToken = default)
+		=> WritePagerAsync(
+			payload,
+			output,
+			keyReader,
+			visibleRows,
+			visibleRowsProvider,
+			pagerMode,
+			ansiEnabled,
+			hasMorePayload,
+			fetchNextPayload,
+			pagerRenderers: null,
+			cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		Func<int>? visibleRowsProvider,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		bool hasMorePayload,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		IEnumerable<IReplPagerRenderer>? pagerRenderers,
+		CancellationToken cancellationToken = default)
+		=> ResultFlowPager.WriteAsync(
+			payload,
+			output,
+			keyReader,
+			new ResultFlowPagerOptions
+			{
+				VisibleRows = visibleRows,
+				VisibleRowsProvider = visibleRowsProvider,
+				PagerMode = pagerMode,
+				AnsiEnabled = ansiEnabled,
+				HasMorePayload = hasMorePayload,
+				FetchNextPayload = fetchNextPayload,
+				PagerRenderers = pagerRenderers,
+			},
+			cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		ResultFlowPagerOptions options,
+		CancellationToken cancellationToken = default)
+		=> ResultFlowPager.WriteAsync(payload, output, keyReader, options, cancellationToken);
+
+	private static ValueTask WritePagerAsync(
+		string payload,
+		TextWriter output,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		Func<int>? visibleRowsProvider,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		bool hasMorePayload,
+		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
+		IEnumerable<IReplPagerRenderer>? pagerRenderers,
+		int maxBufferedLines,
+		CancellationToken cancellationToken = default)
+		=> ResultFlowPager.WriteAsync(
+			payload,
+			output,
+			keyReader,
+			new ResultFlowPagerOptions
+			{
+				VisibleRows = visibleRows,
+				VisibleRowsProvider = visibleRowsProvider,
+				PagerMode = pagerMode,
+				AnsiEnabled = ansiEnabled,
+				HasMorePayload = hasMorePayload,
+				FetchNextPayload = fetchNextPayload,
+				PagerRenderers = pagerRenderers,
+				MaxBufferedLines = maxBufferedLines,
+			},
+			cancellationToken);
 
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
 		new(keyChar, key, shift: false, alt: false, control: false);

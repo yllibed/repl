@@ -5,6 +5,8 @@ namespace Repl;
 /// </summary>
 public sealed class ResultFlowOptions
 {
+	internal const int DefaultMaxBufferedLines = 10_000;
+
 	private readonly List<IReplPagerRenderer> _pagerRenderers = [];
 	private int _defaultPageSize = 100;
 	private int _maxPageSize = 1000;
@@ -70,7 +72,7 @@ public sealed class ResultFlowOptions
 	/// <summary>
 	/// Gets or sets the maximum number of content lines an interactive pager buffers in memory.
 	/// </summary>
-	public int MaxBufferedLines { get; set; } = 10_000;
+	public int MaxBufferedLines { get; set; } = DefaultMaxBufferedLines;
 
 	/// <summary>
 	/// Gets or sets the maximum inline payload size for programmatic clients.

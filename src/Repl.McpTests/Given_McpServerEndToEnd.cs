@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Protocol;
+using Repl.Mcp;
 using Repl.Parameters;
 
 namespace Repl.McpTests;
@@ -52,9 +53,9 @@ public sealed class Given_McpServerEndToEnd
 		schema.GetProperty("properties").GetProperty("id").GetProperty("format").GetString()
 			.Should().Be("uuid");
 		schema.GetProperty("properties").TryGetProperty("_replCursor", out _)
-			.Should().BeTrue("MCP tools should expose Repl continuation cursors for paged data");
+			.Should().BeFalse("non-paged MCP tools should not expose Repl continuation cursors");
 		schema.GetProperty("properties").TryGetProperty("_replPageSize", out _)
-			.Should().BeTrue("MCP tools should expose Repl page sizing for large data");
+			.Should().BeFalse("non-paged MCP tools should not expose Repl page sizing");
 		schema.GetProperty("required")[0].GetString()
 			.Should().Be("id");
 	}
@@ -112,9 +113,40 @@ public sealed class Given_McpServerEndToEnd
 		root.GetProperty("pageInfo").GetProperty("totalCount").GetInt64().Should().Be(2);
 		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text
 			?? throw new AssertFailedException("Expected a text content block.");
+		text.Should().Contain("page-2");
+		text.Should().Contain("\"items\"");
+	}
+
+	[TestMethod]
+	[Description("tools/call can use summary-only paged text content for low-token clients.")]
+	public async Task When_PagedResultTextModeIsSummaryOnly_Then_RawCursorStaysOutOfText()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app =>
+			{
+				app.Map("contacts", (IReplPagingContext paging) =>
+					paging.Page(
+						new[] { new ContactDto(1, "Alice") },
+						nextCursor: "page-2",
+						totalCount: 2))
+					.ReadOnly();
+			},
+			options => options.PagedResultTextMode = McpPagedResultTextMode.SummaryOnly);
+
+		var result = await fixture.Client.CallToolAsync(
+			"contacts",
+			new Dictionary<string, object?>(StringComparer.Ordinal)
+			{
+				["_replPageSize"] = 1,
+			});
+
+		result.StructuredContent.Should().NotBeNull();
+		var text = result.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text
+			?? throw new AssertFailedException("Expected a text content block.");
 		text.Should().Contain("Returned 1 item(s).");
 		text.Should().Contain("cursor available");
 		text.Should().NotContain("page-2");
+		text.Should().NotContain("\"items\"");
 	}
 
 	[TestMethod]

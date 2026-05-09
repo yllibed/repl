@@ -220,19 +220,34 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			.Select(segment => segment.Name)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var handlerParams = route.Command.Handler.Method.GetParameters();
-		var arguments = dynamicSegments
-			.Select(segment =>
-			{
-				var paramInfo = handlerParams.FirstOrDefault(p =>
-					string.Equals(p.Name, segment.Name, StringComparison.OrdinalIgnoreCase));
-				var description = paramInfo?.GetCustomAttribute<DescriptionAttribute>()?.Description;
-				return new ReplDocArgument(
-					Name: segment.Name,
-					Type: GetConstraintTypeName(segment.ConstraintKind),
-					Required: !segment.IsOptional,
-					Description: description);
-			})
-			.ToArray();
+		var arguments = BuildDocumentationArguments(dynamicSegments, handlerParams);
+		var options = BuildDocumentationOptions(route, routeParameterNames, handlerParams);
+		var answers = BuildDocumentationAnswers(route.Command);
+		var acceptsPagingInput = handlerParams.Any(static parameter => parameter.ParameterType == typeof(IReplPagingContext));
+		var emitsPagedResult = IsPagedReturnType(route.Command.Handler.Method.ReturnType);
+
+		return new ReplDocCommand(
+			Path: route.Template.Template,
+			Description: route.Command.Description,
+			Aliases: route.Command.Aliases,
+			IsHidden: route.Command.IsHidden,
+			Arguments: arguments,
+			Options: options,
+			Details: route.Command.Details,
+			Annotations: route.Command.Annotations,
+			Metadata: route.Command.Metadata.Count > 0 ? route.Command.Metadata : null,
+			Answers: answers.Length > 0 ? answers : null,
+			IsResource: route.Command.IsResource,
+			IsPrompt: route.Command.IsPrompt,
+			AcceptsPagingInput: acceptsPagingInput,
+			EmitsPagedResult: emitsPagedResult);
+	}
+
+	private ReplDocOption[] BuildDocumentationOptions(
+		RouteDefinition route,
+		HashSet<string> routeParameterNames,
+		ParameterInfo[] handlerParams)
+	{
 		var regularOptions = handlerParams
 			.Where(parameter =>
 				!string.IsNullOrWhiteSpace(parameter.Name)
@@ -252,24 +267,25 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 					.Where(prop => prop.CanWrite)
 					.Select(prop => BuildDocumentationOptionFromProperty(route.OptionSchema, prop, defaultInstance));
 			});
-		var options = regularOptions.Concat(groupOptions).ToArray();
-
-		var answers = BuildDocumentationAnswers(route.Command);
-
-		return new ReplDocCommand(
-			Path: route.Template.Template,
-			Description: route.Command.Description,
-			Aliases: route.Command.Aliases,
-			IsHidden: route.Command.IsHidden,
-			Arguments: arguments,
-			Options: options,
-			Details: route.Command.Details,
-			Annotations: route.Command.Annotations,
-			Metadata: route.Command.Metadata.Count > 0 ? route.Command.Metadata : null,
-			Answers: answers.Length > 0 ? answers : null,
-			IsResource: route.Command.IsResource,
-			IsPrompt: route.Command.IsPrompt);
+		return regularOptions.Concat(groupOptions).ToArray();
 	}
+
+	private static ReplDocArgument[] BuildDocumentationArguments(
+		DynamicRouteSegment[] dynamicSegments,
+		ParameterInfo[] handlerParams) =>
+		dynamicSegments
+			.Select(segment =>
+			{
+				var paramInfo = handlerParams.FirstOrDefault(p =>
+					string.Equals(p.Name, segment.Name, StringComparison.OrdinalIgnoreCase));
+				var description = paramInfo?.GetCustomAttribute<DescriptionAttribute>()?.Description;
+				return new ReplDocArgument(
+					Name: segment.Name,
+					Type: GetConstraintTypeName(segment.ConstraintKind),
+					Required: !segment.IsOptional,
+					Description: description);
+			})
+			.ToArray();
 
 	private static ReplDocAnswer[] BuildDocumentationAnswers(CommandBuilder command)
 	{
@@ -283,6 +299,26 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			.GroupBy(a => a.Name, StringComparer.OrdinalIgnoreCase)
 			.Select(g => g.First())
 			.ToArray();
+	}
+
+	private static bool IsPagedReturnType(Type returnType)
+	{
+		var effectiveType = UnwrapAsyncReturnType(returnType);
+		return typeof(IReplPage).IsAssignableFrom(effectiveType)
+			|| typeof(IReplPageSource).IsAssignableFrom(effectiveType);
+	}
+
+	private static Type UnwrapAsyncReturnType(Type returnType)
+	{
+		if (!returnType.IsGenericType)
+		{
+			return returnType;
+		}
+
+		var definition = returnType.GetGenericTypeDefinition();
+		return definition == typeof(Task<>) || definition == typeof(ValueTask<>)
+			? returnType.GetGenericArguments()[0]
+			: returnType;
 	}
 
 	internal ReplDocApp BuildDocumentationApp()

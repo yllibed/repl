@@ -57,7 +57,10 @@ internal static class McpSchemaGenerator
 		}
 
 		AddAnswerProperties(command, properties);
-		AddResultFlowProperties(properties);
+		if (command.AcceptsPagingInput || command.EmitsPagedResult)
+		{
+			AddResultFlowProperties(properties);
+		}
 
 		var schema = new JsonObject
 		{
@@ -86,6 +89,47 @@ internal static class McpSchemaGenerator
 			["description"] = "Requested Repl page size for large tool results.",
 			["minimum"] = 1,
 		};
+	}
+
+	public static JsonElement? BuildOutputSchema(ReplDocCommand command)
+	{
+		if (!command.EmitsPagedResult)
+		{
+			return null;
+		}
+
+		var schema = new JsonObject
+		{
+			["type"] = "object",
+			["properties"] = new JsonObject
+			{
+				["$type"] = new JsonObject
+				{
+					["type"] = "string",
+					["const"] = "page",
+				},
+				["items"] = new JsonObject
+				{
+					["type"] = "array",
+					["items"] = new JsonObject(),
+				},
+				["pageInfo"] = new JsonObject
+				{
+					["type"] = "object",
+					["properties"] = new JsonObject
+					{
+						["cursor"] = new JsonObject { ["type"] = "string" },
+						["nextCursor"] = new JsonObject { ["type"] = "string" },
+						["totalCount"] = new JsonObject { ["type"] = "integer" },
+						["pageSize"] = new JsonObject { ["type"] = "integer" },
+						["hasMore"] = new JsonObject { ["type"] = "boolean" },
+					},
+				},
+			},
+			["required"] = new JsonArray(["$type", "items", "pageInfo"]),
+		};
+
+		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
 	}
 
 	private static void AddAnswerProperties(ReplDocCommand command, JsonObject properties)

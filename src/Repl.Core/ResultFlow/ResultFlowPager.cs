@@ -6,9 +6,9 @@ internal static class ResultFlowPager
 	private const string SourceReturnedNoDataStatus = "-- paging stopped: source returned no data --";
 	private const string FullStatus = "-- result-flow {0}-{1}/{2}{3}  Space: next  Up/Down: scroll  Home/End: known bounds  q: quit --";
 	private const string FullStatusBufferLimit = "-- result-flow {0}-{1}/{2} buffer limit reached  Up/Down: scroll  q: quit --";
-	private const int DefaultMaxBufferedLines = 10_000;
+	private const int SpacePaddingLength = 256;
 	private static readonly string MorePromptClear = new(' ', MorePrompt.Length);
-	private static readonly string SpacePadding = new(' ', 256);
+	private static readonly string SpacePadding = new(' ', SpacePaddingLength);
 	private static readonly System.Text.CompositeFormat FullStatusFormat =
 		System.Text.CompositeFormat.Parse(FullStatus);
 	private static readonly System.Text.CompositeFormat FullStatusBufferLimitFormat =
@@ -26,182 +26,50 @@ internal static class ResultFlowPager
 			payload,
 			output,
 			keyReader,
-			visibleRows,
-			hasMorePayload: false,
-			fetchNextPayload: null,
+			new ResultFlowPagerOptions { VisibleRows = visibleRows },
 			cancellationToken);
 
 	internal static async ValueTask WriteAsync(
 		string payload,
 		TextWriter output,
 		IReplKeyReader keyReader,
-		int visibleRows,
-		ReplPagerMode pagerMode,
-		bool ansiEnabled,
-		CancellationToken cancellationToken = default)
-	{
-		await WriteAsync(
-				payload,
-				output,
-				keyReader,
-				visibleRows,
-				pagerMode,
-				ansiEnabled,
-				hasMorePayload: false,
-				fetchNextPayload: null,
-				cancellationToken)
-			.ConfigureAwait(false);
-	}
-
-	internal static async ValueTask WriteAsync(
-		string payload,
-		TextWriter output,
-		IReplKeyReader keyReader,
-		int visibleRows,
-		bool hasMorePayload,
-		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		CancellationToken cancellationToken = default)
-	{
-		await WriteAsync(
-				payload,
-				output,
-				keyReader,
-				visibleRows,
-				visibleRowsProvider: null,
-				ReplPagerMode.More,
-				ansiEnabled: false,
-				hasMorePayload,
-				fetchNextPayload,
-				pagerRenderers: null,
-				cancellationToken)
-			.ConfigureAwait(false);
-	}
-
-	internal static async ValueTask WriteAsync(
-		string payload,
-		TextWriter output,
-		IReplKeyReader keyReader,
-		int visibleRows,
-		ReplPagerMode pagerMode,
-		bool ansiEnabled,
-		bool hasMorePayload,
-		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		CancellationToken cancellationToken = default)
-	{
-		await WriteAsync(
-				payload,
-				output,
-				keyReader,
-				visibleRows,
-				visibleRowsProvider: null,
-				pagerMode,
-				ansiEnabled,
-				hasMorePayload,
-				fetchNextPayload,
-				pagerRenderers: null,
-				cancellationToken)
-			.ConfigureAwait(false);
-	}
-
-	internal static async ValueTask WriteAsync(
-		string payload,
-		TextWriter output,
-		IReplKeyReader keyReader,
-		int visibleRows,
-		Func<int> visibleRowsProvider,
-		ReplPagerMode pagerMode,
-		bool ansiEnabled,
-		bool hasMorePayload,
-		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		CancellationToken cancellationToken = default)
-	{
-		await WriteAsync(
-				payload,
-				output,
-				keyReader,
-				visibleRows,
-				visibleRowsProvider,
-				pagerMode,
-				ansiEnabled,
-				hasMorePayload,
-				fetchNextPayload,
-				pagerRenderers: null,
-				cancellationToken)
-			.ConfigureAwait(false);
-	}
-
-	internal static ValueTask WriteAsync(
-		string payload,
-		TextWriter output,
-		IReplKeyReader keyReader,
-		int visibleRows,
-		Func<int>? visibleRowsProvider,
-		ReplPagerMode pagerMode,
-		bool ansiEnabled,
-		bool hasMorePayload,
-		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		IEnumerable<IReplPagerRenderer>? pagerRenderers,
-		CancellationToken cancellationToken = default)
-		=> WriteAsync(
-			payload,
-			output,
-			keyReader,
-			visibleRows,
-			visibleRowsProvider,
-			pagerMode,
-			ansiEnabled,
-			hasMorePayload,
-			fetchNextPayload,
-			pagerRenderers,
-			DefaultMaxBufferedLines,
-			cancellationToken);
-
-	internal static async ValueTask WriteAsync(
-		string payload,
-		TextWriter output,
-		IReplKeyReader keyReader,
-		int visibleRows,
-		Func<int>? visibleRowsProvider,
-		ReplPagerMode pagerMode,
-		bool ansiEnabled,
-		bool hasMorePayload,
-		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
-		IEnumerable<IReplPagerRenderer>? pagerRenderers,
-		int maxBufferedLines,
+		ResultFlowPagerOptions options,
 		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(keyReader);
-		maxBufferedLines = Math.Max(1, maxBufferedLines);
+		ArgumentNullException.ThrowIfNull(options);
+		var visibleRows = options.VisibleRows;
+		var maxBufferedLines = Math.Max(1, options.MaxBufferedLines);
 
-		var mode = ResolveMode(pagerMode, ansiEnabled);
+		var mode = ResolveMode(options.PagerMode, options.AnsiEnabled);
 		if (await TryRenderCustomAsync(
 				mode,
-				pagerRenderers,
+				options.PagerRenderers,
 				payload,
 				output,
 				keyReader,
 				visibleRows,
-				visibleRowsProvider,
-				ansiEnabled,
-				hasMorePayload,
-				fetchNextPayload,
+				options.VisibleRowsProvider,
+				options.AnsiEnabled,
+				options.HasMorePayload,
+				options.FetchNextPayload,
 				cancellationToken)
 			.ConfigureAwait(false))
 		{
 			return;
 		}
 
-		var session = new PagerSession(payload, hasMorePayload, maxBufferedLines);
+		var session = new PagerSession(payload, options.HasMorePayload, maxBufferedLines);
 		await RenderBuiltInAsync(
 				mode,
 				session,
 				output,
 				keyReader,
 				visibleRows,
-				visibleRowsProvider,
-				ansiEnabled,
-				fetchNextPayload,
+				options.VisibleRowsProvider,
+				options.AnsiEnabled,
+				options.FetchNextPayload,
 				cancellationToken)
 			.ConfigureAwait(false);
 	}
@@ -650,7 +518,7 @@ internal static class ResultFlowPager
 		bool appendNewLine = true)
 	{
 		await output.WriteAsync(line).ConfigureAwait(false);
-		var visualLength = GetVisualLength(line);
+		var visualLength = Repl.Terminal.AnsiTextMetrics.GetVisualLength(line);
 		var previousLength = state.GetRenderedLineLength(row);
 		if (previousLength > visualLength)
 		{
@@ -725,34 +593,6 @@ internal static class ResultFlowPager
 			await output.WriteAsync(SpacePadding.AsMemory(0, take)).ConfigureAwait(false);
 			count -= take;
 		}
-	}
-
-	private static int GetVisualLength(string line)
-	{
-		var length = 0;
-		for (var i = 0; i < line.Length; i++)
-		{
-			if (line[i] == '\u001b')
-			{
-				if (i + 1 < line.Length && line[i + 1] == '[')
-				{
-					i += 2;
-					while (i < line.Length && (line[i] < '@' || line[i] > '~'))
-					{
-						i++;
-					}
-				}
-
-				continue;
-			}
-
-			if (!char.IsControl(line[i]))
-			{
-				length++;
-			}
-		}
-
-		return length;
 	}
 
 	private static int GetCurrentVisibleRows(int fallbackVisibleRows, Func<int>? visibleRowsProvider)

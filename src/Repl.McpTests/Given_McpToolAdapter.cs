@@ -246,4 +246,73 @@ public sealed class Given_McpToolAdapter
 		action.Should().Throw<InvalidOperationException>()
 			.WithMessage("*not defined*schema*");
 	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects token-like MCP argument values before reconstructing CLI tokens.")]
+	public void When_ArgumentValueStartsWithDashDash_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "contacts",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: [new ReplDocOption("format", "string", Required: false, Description: null, Aliases: [], ReverseAliases: [], ValueAliases: [], EnumValues: [], DefaultValue: null)]);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["format"] = JsonSerializer.SerializeToElement("--result:all"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*argument value*CLI option*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects answer prefills that are not declared by the command schema.")]
+	public void When_AnswerPrefillIsNotInToolSchema_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "wizard",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: []);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["answer.confirm"] = JsonSerializer.SerializeToElement("yes"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*not defined*schema*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result-flow inputs for commands that do not expose paging in their schema.")]
+	public void When_ResultFlowInputIsNotInToolSchema_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "contacts",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: []);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc123"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*not defined*schema*");
+	}
 }

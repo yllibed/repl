@@ -335,6 +335,14 @@ Not all MCP clients support sampling and elicitation. The table below lists agen
 
 Check [mcp-availability.com](https://mcp-availability.com/) for the latest data. Support is expanding rapidly — design your commands to degrade gracefully so they work everywhere even when a capability is missing.
 
+Paged Repl tools do not require a special MCP capability for the first page:
+every client that can call tools receives a bounded result. Continuation is
+better when the client preserves structured tool results, because the raw cursor
+is carried in `StructuredContent.pageInfo.nextCursor`. For clients that mostly
+consume text, configure `ReplMcpServerOptions.PagedResultTextMode` to choose
+between compatibility (`SerializedJson`) and lower token cost (`SummaryOnly`).
+See [Paged tool results](mcp-reference.md#paged-tool-results).
+
 ## Direct MCP interfaces vs IReplInteractionChannel
 
 | | `IMcpSampling` / `IMcpElicitation` / `IMcpFeedback` | `IReplInteractionChannel` |
