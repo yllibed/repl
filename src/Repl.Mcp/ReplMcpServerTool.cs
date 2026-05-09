@@ -29,6 +29,7 @@ internal sealed class ReplMcpServerTool : McpServerTool
 			Name = toolName,
 			Description = McpSchemaGenerator.BuildDescription(command),
 			InputSchema = McpSchemaGenerator.BuildInputSchema(command),
+			OutputSchema = McpSchemaGenerator.BuildOutputSchema(command),
 			Annotations = McpSchemaGenerator.MapAnnotations(command.Annotations),
 			Execution = command.Annotations?.LongRunning == true
 				? new ToolExecution { TaskSupport = ToolTaskSupport.Optional }

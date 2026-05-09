@@ -5,6 +5,7 @@ Expose a Repl command graph as an MCP server for AI agents, including a minimal 
 ## What this sample shows
 
 - `app.UseMcpServer()` — one line to enable MCP stdio server
+- `contacts paged` — paged structured output for large result sets
 - `IReplInteractionChannel` in MCP mode — portable notices, warnings, problems, and progress updates
 - `feedback demo` / `feedback fail` — deterministic progress sequences that are easy to inspect in MCP Inspector
 - `.ReadOnly()` / `.Destructive()` / `.OpenWorld()` — behavioral annotations
@@ -44,6 +45,8 @@ In the current Repl.Mcp version, MCP Apps are experimental and the UI handler re
 
 In the interactive REPL, try:
 
+- `contacts paged --result:page-size=5` to inspect the first page of a synthetic long directory
+- `contacts paged --result:page-size=5 --result:cursor=5` to continue from the next cursor
 - `feedback demo` to emit a successful sequence with normal, indeterminate, and warning progress states
 - `feedback fail` to emit warning and error progress, then finish with a problem result
 - `import contacts.csv` to see the realistic workflow that uses sampling and elicitation when the connected client supports them
@@ -51,11 +54,13 @@ In the interactive REPL, try:
 In MCP Inspector:
 
 1. Start the sample in MCP mode.
-2. Call `feedback_demo`.
-3. Watch the tool emit `notifications/progress` during the run.
-4. Call `feedback_fail`.
-5. Watch the warning/error feedback arrive before the final tool error result.
-6. Call `import` with any file name to see the longer workflow:
+2. Call `contacts_paged` with `_replPageSize` set to `5`.
+3. Call `contacts_paged` again with `_replPageSize` set to `5` and `_replCursor` set to the returned `pageInfo.nextCursor`.
+4. Call `feedback_demo`.
+5. Watch the tool emit `notifications/progress` during the run.
+6. Call `feedback_fail`.
+7. Watch the warning/error feedback arrive before the final tool error result.
+8. Call `import` with any file name to see the longer workflow:
    the tool reports progress while reading, column-mapping, duplicate review, and commit.
 
 The deterministic `feedback_*` tools make it easy to verify the host's notification rendering without depending on a real CSV file.

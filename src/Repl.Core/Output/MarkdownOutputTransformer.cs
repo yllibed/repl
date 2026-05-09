@@ -26,9 +26,19 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 			return ValueTask.FromResult(RenderDocumentation(documentation));
 		}
 
+		if (value is HelpRenderDocument help)
+		{
+			return ValueTask.FromResult(RenderHelp(help));
+		}
+
 		if (value is string text)
 		{
 			return ValueTask.FromResult(text);
+		}
+
+		if (value is IReplPage page)
+		{
+			return ValueTask.FromResult(RenderPage(page));
 		}
 
 		if (value is IReplResult result)
@@ -68,6 +78,8 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 
 		var details = result.Details is string detailsText
 			? detailsText
+			: result.Details is IReplPage page
+				? RenderPage(page)
 			: result.Details is System.Collections.IEnumerable enumerable && result.Details is not string
 				? RenderEnumerable(enumerable)
 				: RenderObject(result.Details);
@@ -80,9 +92,20 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 		return string.Concat(message, Environment.NewLine, Environment.NewLine, details);
 	}
 
+	private static string RenderPage(IReplPage page)
+	{
+		var body = page.UntypedItems.Count == 0
+			? "No results."
+			: RenderEnumerable(page.UntypedItems);
+		var footer = ResultFlowPageFooterBuilder.RenderMarkdown(page);
+		return string.IsNullOrWhiteSpace(footer)
+			? body
+			: string.Concat(body, Environment.NewLine, Environment.NewLine, footer);
+	}
+
 	private static string RenderEnumerable(System.Collections.IEnumerable enumerable)
 	{
-		var items = enumerable.Cast<object?>().ToArray();
+		var items = ToObjectArray(enumerable);
 		if (items.Length == 0)
 		{
 			return "No results.";
@@ -109,6 +132,8 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 				items.Select(item => $"- {item?.ToString() ?? string.Empty}"));
 		}
 
+		var emptyRow = new string[members.Length];
+		Array.Fill(emptyRow, string.Empty);
 		var rows = new List<string[]>(items.Length + 1)
 		{
 			members.Select(member => EscapeCell(member.Label)).ToArray(),
@@ -118,7 +143,7 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 		{
 			if (item is null)
 			{
-				rows.Add(members.Select(_ => string.Empty).ToArray());
+				rows.Add(emptyRow);
 				continue;
 			}
 
@@ -183,7 +208,7 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 
 		if (value is System.Collections.IEnumerable enumerable)
 		{
-			var count = enumerable.Cast<object?>().Count();
+			var count = CountEnumerable(enumerable);
 			return count.ToString(System.Globalization.CultureInfo.InvariantCulture);
 		}
 
@@ -210,6 +235,120 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 		|| type == typeof(TimeSpan);
 
 	private static string EscapeCell(string value) =>
+		value.Replace("|", "\\|", StringComparison.Ordinal);
+
+	private static object?[] ToObjectArray(System.Collections.IEnumerable enumerable)
+	{
+		if (enumerable is object?[] array)
+		{
+			return array;
+		}
+
+		if (enumerable is IReplPage page)
+		{
+			return page.UntypedItems as object?[] ?? [.. page.UntypedItems];
+		}
+
+		return enumerable.Cast<object?>().ToArray();
+	}
+
+	private static int CountEnumerable(System.Collections.IEnumerable enumerable)
+	{
+		if (enumerable is System.Collections.ICollection collection)
+		{
+			return collection.Count;
+		}
+
+		if (enumerable is IReadOnlyCollection<object?> readonlyCollection)
+		{
+			return readonlyCollection.Count;
+		}
+
+		return enumerable.Cast<object?>().Count();
+	}
+
+	private static string RenderHelp(HelpRenderDocument help)
+	{
+		var builder = new StringBuilder();
+		if (help.IsCommandHelp)
+		{
+			if (help.Commands.Count == 1)
+			{
+				RenderCommandHelp(builder, help.Commands[0]);
+			}
+			else
+			{
+				AppendEntrySection(builder, "Commands", help.Commands.Select(CommandEntry).ToArray());
+			}
+
+			return builder.ToString().TrimEnd();
+		}
+
+		builder.AppendLine($"# Help: {EscapeMarkdown(help.Scope)}");
+		AppendCommandSection(builder, help.Commands);
+		AppendEntrySection(builder, "Scopes", help.Scopes);
+		AppendEntrySection(builder, "Global Options", help.GlobalOptions);
+		AppendEntrySection(builder, "Global Commands", help.GlobalCommands);
+		return builder.ToString().TrimEnd();
+	}
+
+	private static void RenderCommandHelp(StringBuilder builder, HelpRenderCommand command)
+	{
+		builder.AppendLine($"# `{EscapeMarkdown(command.Usage)}`");
+		builder.AppendLine();
+		builder.AppendLine($"- **Usage**: `{EscapeMarkdown(command.Usage)}`");
+		builder.AppendLine($"- **Description**: {EscapeMarkdown(command.Description)}");
+		if (command.Aliases.Count > 0)
+		{
+			builder.AppendLine($"- **Aliases**: {EscapeMarkdown(string.Join(", ", command.Aliases))}");
+		}
+
+		AppendEntrySection(builder, "Arguments", command.Arguments);
+		AppendEntrySection(builder, "Options", command.Options);
+		AppendEntrySection(builder, "Result Flow", command.ResultFlow);
+		AppendEntrySection(builder, "Answers", command.Answers);
+	}
+
+	private static void AppendCommandSection(StringBuilder builder, IReadOnlyList<HelpRenderCommand> commands)
+	{
+		if (commands.Count == 0)
+		{
+			return;
+		}
+
+		AppendEntrySection(builder, "Commands", commands.Select(CommandEntry).ToArray());
+	}
+
+	private static HelpRenderEntry CommandEntry(HelpRenderCommand command) =>
+		new(command.Name, command.Description);
+
+	private static void AppendEntrySection(
+		StringBuilder builder,
+		string title,
+		IReadOnlyList<HelpRenderEntry> entries)
+	{
+		if (entries.Count == 0)
+		{
+			return;
+		}
+
+		builder.AppendLine();
+		builder.AppendLine($"## {title}");
+		builder.AppendLine();
+		builder.AppendLine("| Name | Description |");
+		builder.AppendLine("| --- | --- |");
+		foreach (var entry in entries)
+		{
+			builder
+				.Append("| `")
+				.Append(EscapeCell(entry.Name))
+				.Append("` | ")
+				.Append(EscapeCell(entry.Description))
+				.AppendLine(" |");
+		}
+	}
+
+	private static string EscapeMarkdown(string value) =>
 		value.Replace("|", "\\|", StringComparison.Ordinal);
 
 	[UnconditionalSuppressMessage(

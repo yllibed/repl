@@ -7,6 +7,14 @@ namespace Repl;
 
 internal static partial class HelpTextBuilder
 {
+	private static readonly HelpRenderEntry[] ResultFlowRows =
+	[
+		new($"{ReplResultFlowOptionNames.PageSize} <n>", "Request a page size for paged handlers."),
+		new($"{ReplResultFlowOptionNames.Cursor} <value>", "Continue from a cursor returned by a previous page."),
+		new(ReplResultFlowOptionNames.All, "Request all rows when the handler supports it."),
+		new($"{ReplResultFlowOptionNames.Pager}=auto|off|more|inline|full", "Control the integrated pager for human output."),
+	];
+
 	private static string BuildCommandHelp(RouteDefinition[] routes, bool useAnsi, AnsiPalette palette)
 	{
 		if (routes.Length == 1)
@@ -47,10 +55,11 @@ internal static partial class HelpTextBuilder
 			: $"{Environment.NewLine}Aliases: {string.Join(", ", route.Command.Aliases)}";
 		var argumentSection = BuildArgumentSection(route, useAnsi, palette);
 		var optionSection = BuildOptionSection(route, useAnsi, palette);
+		var resultFlowSection = BuildResultFlowSection(route, useAnsi, palette);
 		var answerSection = BuildAnswerSection(route, useAnsi, palette);
 		if (!useAnsi)
 		{
-			return $"Usage: {displayTemplate}{Environment.NewLine}Description: {description}{aliases}{argumentSection}{optionSection}{answerSection}";
+			return $"Usage: {displayTemplate}{Environment.NewLine}Description: {description}{aliases}{argumentSection}{optionSection}{resultFlowSection}{answerSection}";
 		}
 
 		var usage = $"{AnsiText.Apply("Usage:", palette.SectionStyle)} {AnsiText.Apply(displayTemplate, palette.CommandStyle)}";
@@ -58,7 +67,7 @@ internal static partial class HelpTextBuilder
 		var aliasText = route.Command.Aliases.Count == 0
 			? string.Empty
 			: $"{Environment.NewLine}{AnsiText.Apply("Aliases:", palette.SectionStyle)} {AnsiText.Apply(string.Join(", ", route.Command.Aliases), palette.CommandStyle)}";
-		return $"{usage}{Environment.NewLine}{desc}{aliasText}{argumentSection}{optionSection}{answerSection}";
+		return $"{usage}{Environment.NewLine}{desc}{aliasText}{argumentSection}{optionSection}{resultFlowSection}{answerSection}";
 	}
 
 	private static string BuildArgumentSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
@@ -99,6 +108,29 @@ internal static partial class HelpTextBuilder
 			? AnsiText.Apply("Answers:", palette.SectionStyle)
 			: "Answers:");
 		foreach (var row in rows)
+		{
+			builder.AppendLine();
+			builder.Append(useAnsi
+				? $"  {AnsiText.Apply(row.Name, palette.CommandStyle)}  {AnsiText.Apply(row.Description, palette.DescriptionStyle)}"
+				: $"  {row.Name}  {row.Description}");
+		}
+
+		return builder.ToString();
+	}
+
+	private static string BuildResultFlowSection(RouteDefinition route, bool useAnsi, AnsiPalette palette)
+	{
+		if (!UsesResultFlow(route))
+		{
+			return string.Empty;
+		}
+
+		var builder = new StringBuilder();
+		builder.AppendLine();
+		builder.Append(useAnsi
+			? AnsiText.Apply("Result Flow:", palette.SectionStyle)
+			: "Result Flow:");
+		foreach (var row in ResultFlowRows)
 		{
 			builder.AppendLine();
 			builder.Append(useAnsi
@@ -255,6 +287,31 @@ internal static partial class HelpTextBuilder
 			.Where(row => row is not null)
 			.Select(row => new HelpRenderEntry(row![0], row[1]))
 			.ToArray();
+	}
+
+	private static bool UsesResultFlow(RouteDefinition route) =>
+		route.Command.Handler.Method.GetParameters()
+			.Any(static parameter => parameter.ParameterType == typeof(IReplPagingContext))
+		|| IsPagedReturnType(route.Command.Handler.Method.ReturnType);
+
+	private static bool IsPagedReturnType(Type returnType)
+	{
+		var effectiveType = UnwrapAsyncReturnType(returnType);
+		return typeof(IReplPage).IsAssignableFrom(effectiveType)
+			|| typeof(IReplPageSource).IsAssignableFrom(effectiveType);
+	}
+
+	private static Type UnwrapAsyncReturnType(Type returnType)
+	{
+		if (!returnType.IsGenericType)
+		{
+			return returnType;
+		}
+
+		var definition = returnType.GetGenericTypeDefinition();
+		return definition == typeof(Task<>) || definition == typeof(ValueTask<>)
+			? returnType.GetGenericArguments()[0]
+			: returnType;
 	}
 
 	private static bool IsDefaultForType(object value, Type type)

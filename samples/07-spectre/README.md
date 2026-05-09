@@ -3,7 +3,7 @@
 **Rich Spectre.Console integration: renderables, visualizations, and interactive prompts**
 
 This sample showcases the `Repl.Spectre` package with **21 Spectre.Console features**
-across **14 commands**. It demonstrates both direct `IAnsiConsole` usage for custom
+across **15 commands**. It demonstrates both direct `IAnsiConsole` usage for custom
 renderables and the transparent prompt upgrade where `IReplInteractionChannel` calls
 are automatically rendered as Spectre prompts.
 
@@ -38,6 +38,17 @@ A multi-step flow chaining 10 Spectre features sequentially:
 
 Returns a collection; the `"spectre"` output transformer renders it as a bordered
 table automatically. Zero rendering code in the handler.
+
+### `activity` — Paged long data source
+
+Returns a synthetic activity feed through `IReplPagingContext` and
+`IReplPageSource<T>`. The Spectre output transformer renders the requested page,
+and the integrated pager can fetch more data in the same run.
+
+```bash
+dotnet run --project samples/07-spectre/SpectreOpsSample.csproj -- activity --result:page-size=8
+dotnet run --project samples/07-spectre/SpectreOpsSample.csproj -- activity --result:page-size=8 --result:cursor=8
+```
 
 ### `detail {name}` — Panel + Grid
 
@@ -101,7 +112,7 @@ Uses `AskSecretAsync` which renders as a Spectre `TextPrompt` with masked input.
 |---------|-------|---------|
 | FigletText | `FigletText` | `tour`, `figlet`, banner |
 | Table | `Table` | `tour` |
-| Table (auto) | via output transformer | `list` |
+| Table (auto) | via output transformer | `list`, `activity` |
 | Tree | `Tree` | `tour`, `tree` |
 | Panel | `Panel` | `tour`, `detail`, `json`, `calendar`, `chart` |
 | Rule | `Rule` | `tour` |

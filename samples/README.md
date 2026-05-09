@@ -7,7 +7,7 @@ If you’re new, start with **01**, then follow the sequence.
 ## Index (recommended order)
 
 1. [01 — Core Basics](01-core-basics/)  
-   `Repl.Core` only: routing, parsing/binding, typed params + constraints, reusable options groups, temporal ranges, help/discovery, CLI + REPL from the same command graph.
+   `Repl.Core` only: routing, parsing/binding, typed params + constraints, reusable options groups, temporal ranges, result-flow paging, help/discovery, CLI + REPL from the same command graph.
 2. [02 — Scoped Contacts](02-scoped-contacts/)  
    Dynamic scopes + REPL navigation (`..`) + DI-backed handlers.
 3. [03 — Modular Ops](03-modular-ops/)  
@@ -19,9 +19,9 @@ If you’re new, start with **01**, then follow the sequence.
 6. [06 — Testing](06-testing/)
    `Repl.Testing` harness: multi-step + multi-session, typed results, interaction/timeline events, metadata snapshots.
 7. [07 — Spectre](07-spectre/)
-   `Repl.Spectre` integration: FigletText, Table, Panel, Tree, BarChart, BreakdownChart, Calendar, JsonText, TextPath, Grid, Columns, Rule, Status, Progress, and all Spectre-powered prompts.
+   `Repl.Spectre` integration: FigletText, Table, paged result tables, Panel, Tree, BarChart, BreakdownChart, Calendar, JsonText, TextPath, Grid, Columns, Rule, Status, Progress, and all Spectre-powered prompts.
 8. [08 — MCP Server](08-mcp-server/)
-   MCP server mode: tools, resources, prompts, behavioral annotations, automation visibility, and a minimal MCP Apps UI.
+   MCP server mode: tools, paged structured results, resources, prompts, behavioral annotations, automation visibility, and a minimal MCP Apps UI.
 
 ## Run
 

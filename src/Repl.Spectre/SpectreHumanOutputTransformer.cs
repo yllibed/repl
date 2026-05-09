@@ -11,7 +11,7 @@ namespace Repl.Spectre;
 /// <summary>
 /// Output transformer that renders values using light Spectre.Console layouts.
 /// </summary>
-internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
+internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
 
@@ -30,6 +30,9 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 	public string Name => "spectre";
 
 	/// <inheritdoc />
+	public bool SupportsInteractivePaging => true;
+
+	/// <inheritdoc />
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
@@ -42,12 +45,23 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return ValueTask.FromResult(value switch
 		{
 			HelpRenderDocument help => RenderHelp(help),
+			IReplPage page => RenderPage(page),
 			IReplResult replResult => RenderReplResult(replResult),
 			string text => text,
 			System.Collections.IEnumerable enumerable => RenderEnumerable(enumerable),
 			_ when TryRenderObject(value, out var objectText) => objectText,
 			_ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
 		});
+	}
+
+	public ValueTask<string> TransformPageAsync(
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(page);
+		cancellationToken.ThrowIfCancellationRequested();
+		return ValueTask.FromResult(RenderPage(page, mode, includeFooter: false));
 	}
 
 	private string RenderHelp(HelpRenderDocument help)
@@ -119,6 +133,13 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			sections.Add(BuildEntryTable(command.Options));
 		}
 
+		if (command.ResultFlow.Count > 0)
+		{
+			AppendSpacer(sections);
+			sections.Add(new Markup("[bold]Result Flow[/]"));
+			sections.Add(BuildEntryTable(command.ResultFlow));
+		}
+
 		if (command.Answers.Count > 0)
 		{
 			AppendSpacer(sections);
@@ -157,7 +178,9 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			return RenderToString(new Markup(statusMarkup));
 		}
 
-		var details = RenderValueRenderable(result.Details, nested: false);
+		var details = result.Details is IReplPage page
+			? new Text(RenderPage(page))
+			: RenderValueRenderable(result.Details, nested: false);
 		return RenderToString(new Rows(new IRenderable[]
 		{
 			new Markup(statusMarkup),
@@ -166,7 +189,9 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		}));
 	}
 
-	private string RenderEnumerable(System.Collections.IEnumerable enumerable)
+	private string RenderEnumerable(
+		System.Collections.IEnumerable enumerable,
+		bool includeTableHeader = true)
 	{
 		var items = enumerable.Cast<object?>().ToArray();
 		if (items.Length == 0)
@@ -195,7 +220,46 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 				items.Select(item => Convert.ToString(item, CultureInfo.InvariantCulture) ?? string.Empty));
 		}
 
-		return RenderToString(BuildObjectTable(items, members));
+		return RenderToString(BuildObjectTable(items, members, includeTableHeader));
+	}
+
+	private string RenderPage(IReplPage page) =>
+		RenderPage(page, ResultFlowPageRenderMode.Initial, includeFooter: true);
+
+	private string RenderPage(
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		bool includeFooter)
+	{
+		var body = page.UntypedItems.Count == 0
+			? "No results."
+			: RenderEnumerable(
+				page.UntypedItems,
+				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
+		var footer = includeFooter ? RenderPageFooter(page) : string.Empty;
+		return string.IsNullOrWhiteSpace(footer)
+			? body
+			: string.Concat(body, Environment.NewLine, footer);
+	}
+
+	private static string RenderPageFooter(IReplPage page)
+	{
+		var info = page.PageInfo;
+		var count = page.UntypedItems.Count;
+		if (info.TotalCount is { } total)
+		{
+			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
+			return info.HasMore
+				? $"{prefix} Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}."
+				: prefix;
+		}
+
+		if (!info.HasMore)
+		{
+			return string.Empty;
+		}
+
+		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}.";
 	}
 
 	private bool TryRenderObject(object value, out string text)
@@ -228,11 +292,18 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 		return grid;
 	}
 
-	private static Table BuildObjectTable(object?[] items, IReadOnlyList<DisplayMember> members)
+	private static Table BuildObjectTable(
+		object?[] items,
+		IReadOnlyList<DisplayMember> members,
+		bool includeHeaders = true)
 	{
 		var table = new Table()
 			.Border(TableBorder.None)
 			.Collapse();
+		if (!includeHeaders)
+		{
+			table.HideHeaders();
+		}
 
 		foreach (var member in members)
 		{
@@ -251,13 +322,25 @@ internal sealed class SpectreHumanOutputTransformer : IOutputTransformer
 			for (var i = 0; i < members.Count; i++)
 			{
 				var memberValue = members[i].Property.GetValue(item);
-				cells[i] = new Text(RenderInlineValue(memberValue, members[i]));
+				cells[i] = CreateTableCell(RenderInlineValue(memberValue, members[i]), table.Rows.Count, i);
 			}
 
 			table.AddRow(cells);
 		}
 
 		return table;
+	}
+
+	private static Text CreateTableCell(string text, int rowIndex, int columnIndex)
+	{
+		if (columnIndex == 0)
+		{
+			return new Text(text, new Style(Color.Cyan1, decoration: Decoration.Bold));
+		}
+
+		return rowIndex % 2 == 1
+			? new Text(text, new Style(Color.Grey))
+			: new Text(text);
 	}
 
 	private static Table BuildCommandsTable(IReadOnlyList<HelpRenderCommand> commands)

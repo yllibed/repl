@@ -160,6 +160,37 @@ public sealed class Given_HandlerBinding
 		exitCode.Should().Be(1);
 	}
 
+	[TestMethod]
+	[Description("Result-flow paging context is injected so handlers can page data at the source.")]
+	public void When_HandlerRequestsPagingContext_Then_ResultFlowOptionsAreAvailable()
+	{
+		var sut = ReplApp.Create();
+		IReplPagingContext? captured = null;
+		ReplPage<string>? page = null;
+
+		sut.Map("users list", (IReplPagingContext paging) =>
+		{
+			captured = paging;
+			page = paging.Page(["Alice", "Bob"], nextCursor: "next", totalCount: 3);
+			return "ok";
+		});
+
+		var exitCode = sut.Run(
+			["users", "list", "--result:page-size=2", "--result:cursor=start", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		captured.Should().NotBeNull();
+		captured!.SuggestedPageSize.Should().Be(2);
+		captured.Cursor.Should().Be("start");
+		captured.MaxPageSize.Should().BeGreaterThanOrEqualTo(2);
+		page.Should().NotBeNull();
+		page!.Items.Should().Equal("Alice", "Bob");
+		page.PageInfo.Cursor.Should().Be("start");
+		page.PageInfo.NextCursor.Should().Be("next");
+		page.PageInfo.TotalCount.Should().Be(3);
+		page.PageInfo.HasMore.Should().BeTrue();
+	}
+
 	private interface ITestCounter
 	{
 		int Value { get; }
@@ -170,7 +201,6 @@ public sealed class Given_HandlerBinding
 		public int Value { get; } = value;
 	}
 }
-
 
 
 

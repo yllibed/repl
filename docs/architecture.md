@@ -67,6 +67,11 @@
  	- Built-in `markdown` (with `--markdown` alias via output alias map).
  	- Global format selectors: `--json`, `--xml`, `--yaml`, `--yml`, `--output:<format>`.
  	- Unknown format returns explicit error text and non-zero exit code.
+- Result flow:
+ 	- `IReplPagingContext` lets handlers page at the data source.
+ 	- `ReplPage<T>` carries current-page data plus continuation metadata.
+ 	- Human/Spectre terminal output can use an integrated pager; redirected stdout remains pipe-friendly.
+ 	- MCP maps `_replCursor` and `_replPageSize` to structured paged tool results.
 - Numeric parsing:
  	- Numeric culture is configurable via `ParsingOptions.NumericCulture` (`Invariant` default, `Current` optional).
  	- Integer literals support C-like forms: hexadecimal (`0xFF`), binary (`0b1010` or `1010b`), and `_` separators (`1_000_000`).
@@ -101,6 +106,7 @@ The toolkit provides two application entry points for different scenarios.
 ## Related docs
 
 - Command reference: `docs/commands.md`
+- Result flow and paging: `docs/result-flow.md`
 - Parameter system: `docs/parameter-system.md`
 - Shell completion: `docs/shell-completion.md`
 

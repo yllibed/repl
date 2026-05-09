@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Repl;
 
@@ -9,9 +10,23 @@ internal sealed class JsonOutputTransformer(JsonSerializerOptions serializerOpti
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
+		if (value is IReplPage page)
+		{
+#pragma warning disable IL2026 // JSON object serialization is an explicit extensibility behavior in v1.
+			return ValueTask.FromResult(JsonSerializer.Serialize(
+				new ReplPageJsonResult("page", page.UntypedItems, page.PageInfo),
+				serializerOptions));
+#pragma warning restore IL2026
+		}
+
 #pragma warning disable IL2026 // JSON object serialization is an explicit extensibility behavior in v1.
 		var payload = JsonSerializer.Serialize(value, serializerOptions);
 #pragma warning restore IL2026
 		return ValueTask.FromResult(payload);
 	}
+
+	private sealed record ReplPageJsonResult(
+		[property: JsonPropertyName("$type")] string Type,
+		IReadOnlyList<object?> Items,
+		ReplPageInfo PageInfo);
 }

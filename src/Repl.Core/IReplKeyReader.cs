@@ -4,6 +4,9 @@ namespace Repl;
 /// Injectable service for handlers that need raw key input (watch/top pattern).
 /// When a handler declares this parameter, it owns the console input and decides
 /// what each key means.
+/// Custom <see cref="IReplPagerRenderer"/> implementations can also use this
+/// service through <see cref="ReplPagerRenderContext"/> to drive interactive
+/// navigation without depending directly on <see cref="Console"/>.
 /// </summary>
 public interface IReplKeyReader
 {

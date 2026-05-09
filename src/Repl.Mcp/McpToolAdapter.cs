@@ -95,7 +95,7 @@ internal sealed partial class McpToolAdapter
 			return ErrorResult($"Unknown tool: {toolName}");
 		}
 
-		var (tokens, prefills) = PrepareExecution(command.Path, arguments);
+		var (tokens, prefills) = PrepareExecution(command, arguments);
 		return await ExecuteThroughPipelineAsync(tokens, prefills, server, progressToken, ct)
 			.ConfigureAwait(false);
 	}
@@ -107,8 +107,8 @@ internal sealed partial class McpToolAdapter
 		ProgressToken? progressToken,
 		CancellationToken ct)
 	{
-		var coreApp = _app as CoreReplApp
-			?? throw new InvalidOperationException("MCP tool adapter requires CoreReplApp.");
+		var invocableApp = _app as ISubInvocableReplApp
+			?? throw new InvalidOperationException("MCP tool adapter requires an app that supports sub-invocation.");
 
 		var outputWriter = new StringWriter();
 		var inputReader = new StringReader(string.Empty);
@@ -136,7 +136,7 @@ internal sealed partial class McpToolAdapter
 			isHostedSession: true))
 		{
 			ReplSessionIO.IsProgrammatic = true;
-			var exitCode = await coreApp.RunSubInvocationAsync(
+			var exitCode = await invocableApp.RunSubInvocationAsync(
 				effectiveTokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
 
 			var output = outputWriter.ToString().Trim();
@@ -145,20 +145,109 @@ internal sealed partial class McpToolAdapter
 				output = exitCode == 0 ? "OK" : $"Command failed with exit code {exitCode}.";
 			}
 
+			return BuildToolResult(output, exitCode, _options.PagedResultTextMode);
+		}
+	}
+
+	private static CallToolResult BuildToolResult(string output, int exitCode, McpPagedResultTextMode pagedTextMode)
+	{
+		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
+		{
 			return new CallToolResult
 			{
-				Content = [new TextContentBlock { Text = output }],
-				IsError = exitCode != 0,
+				Content = [new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) }],
+				StructuredContent = structuredContent,
+				IsError = false,
 			};
 		}
+
+		return new CallToolResult
+		{
+			Content = [new TextContentBlock { Text = output }],
+			IsError = exitCode != 0,
+		};
+	}
+
+	private static string BuildPagedTextContent(
+		string serializedPage,
+		string summary,
+		McpPagedResultTextMode mode) =>
+		mode switch
+		{
+			McpPagedResultTextMode.SummaryOnly => summary,
+			McpPagedResultTextMode.SummaryAndSerializedJson => string.Concat(summary, Environment.NewLine, serializedPage),
+			_ => serializedPage,
+		};
+
+	private static bool TryCreatePagedStructuredResult(
+		string output,
+		out JsonElement structuredContent,
+		out string summary)
+	{
+		structuredContent = default;
+		summary = string.Empty;
+		try
+		{
+			using var document = JsonDocument.Parse(output);
+			var root = document.RootElement;
+			if (root.ValueKind != JsonValueKind.Object
+				|| !root.TryGetProperty(ReplPageWireNames.Type, out var type)
+				|| type.ValueKind != JsonValueKind.String
+				|| !string.Equals(type.GetString(), ReplPageWireNames.PageType, StringComparison.Ordinal)
+				|| !root.TryGetProperty(ReplPageWireNames.Items, out var items)
+				|| items.ValueKind != JsonValueKind.Array
+				|| !root.TryGetProperty(ReplPageWireNames.PageInfo, out var pageInfo)
+				|| pageInfo.ValueKind != JsonValueKind.Object)
+			{
+				return false;
+			}
+
+			structuredContent = root.Clone();
+			summary = BuildPagedSummary(items.GetArrayLength(), pageInfo);
+			return true;
+		}
+		catch (JsonException)
+		{
+			return false;
+		}
+	}
+
+	private static string BuildPagedSummary(int count, JsonElement pageInfo)
+	{
+		var summary = $"Returned {count.ToString(System.Globalization.CultureInfo.InvariantCulture)} item(s).";
+		if (pageInfo.TryGetProperty(ReplPageWireNames.TotalCount, out var totalCount)
+			&& totalCount.ValueKind == JsonValueKind.Number
+			&& totalCount.TryGetInt64(out var total))
+		{
+			summary += $" Total: {total.ToString(System.Globalization.CultureInfo.InvariantCulture)}.";
+		}
+
+		if (pageInfo.TryGetProperty(ReplPageWireNames.NextCursor, out var nextCursor)
+			&& nextCursor.ValueKind == JsonValueKind.String
+			&& !string.IsNullOrWhiteSpace(nextCursor.GetString()))
+		{
+			summary += $" Continue with {McpResultFlowArgumentNames.Cursor}; cursor available in structured content.";
+		}
+
+		return summary;
+	}
+
+	internal static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
+		ReplDocCommand command,
+		IDictionary<string, JsonElement> arguments)
+	{
+		var allowedArgumentNames = BuildAllowedArgumentNames(command);
+		return PrepareExecution(command.Path, arguments, allowedArgumentNames);
 	}
 
 	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
 		string routePath,
-		IDictionary<string, JsonElement> arguments)
+		IDictionary<string, JsonElement> arguments,
+		HashSet<string>? allowedArgumentNames)
 	{
 		var stringArgs = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 		var prefills = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		var resultFlowTokens = new List<string>();
 
 		foreach (var (key, value) in arguments)
 		{
@@ -166,17 +255,98 @@ internal sealed partial class McpToolAdapter
 				? value.GetString() ?? ""
 				: value.GetRawText();
 
+			if (allowedArgumentNames is not null && !allowedArgumentNames.Contains(key))
+			{
+				throw new InvalidOperationException(
+					$"The MCP argument '{key}' is not defined by the tool schema.");
+			}
+
 			if (key.StartsWith("answer.", StringComparison.OrdinalIgnoreCase))
 			{
 				prefills[key["answer.".Length..]] = strValue;
 			}
+			else if (string.Equals(key, McpResultFlowArgumentNames.Cursor, StringComparison.OrdinalIgnoreCase))
+			{
+				ValidateResultCursor(strValue);
+				resultFlowTokens.Add(ReplResultFlowOptionNames.Cursor);
+				resultFlowTokens.Add(strValue);
+			}
+			else if (string.Equals(key, McpResultFlowArgumentNames.PageSize, StringComparison.OrdinalIgnoreCase))
+			{
+				ValidateResultPageSize(strValue);
+				resultFlowTokens.Add(ReplResultFlowOptionNames.PageSize);
+				resultFlowTokens.Add(strValue);
+			}
 			else
 			{
+				ValidateCommandArgumentValue(strValue);
 				stringArgs[key] = strValue;
 			}
 		}
 
-		return (ReconstructTokens(routePath, stringArgs), prefills);
+		var tokens = ReconstructTokens(routePath, stringArgs);
+		tokens.InsertRange(0, resultFlowTokens);
+		return (tokens, prefills);
+	}
+
+	private static void ValidateResultCursor(string cursor)
+		=> ResultFlowCursorPolicy.ValidateOrThrow(cursor);
+
+	private static void ValidateResultPageSize(string pageSize)
+	{
+		if (pageSize.Length > 10)
+		{
+			throw new InvalidOperationException("The MCP result page size cannot exceed 10 characters.");
+		}
+
+		if (pageSize.Length == 0 || pageSize.AsSpan().IndexOfAnyExceptInRange('0', '9') >= 0)
+		{
+			throw new InvalidOperationException("The MCP result page size must be numeric.");
+		}
+
+		if (!int.TryParse(pageSize, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var value)
+			|| value <= 0)
+		{
+			throw new InvalidOperationException("The MCP result page size must fit in a positive 32-bit integer.");
+		}
+	}
+
+	private static void ValidateCommandArgumentValue(string value)
+	{
+		if (value.StartsWith("--", StringComparison.Ordinal))
+		{
+			throw new InvalidOperationException("The MCP argument value cannot start like a CLI option.");
+		}
+	}
+
+	private static HashSet<string> BuildAllowedArgumentNames(ReplDocCommand command)
+	{
+		var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var argument in command.Arguments)
+		{
+			names.Add(argument.Name);
+		}
+
+		foreach (var option in command.Options)
+		{
+			names.Add(option.Name);
+		}
+
+		if (command.Answers is { Count: > 0 })
+		{
+			foreach (var answer in command.Answers)
+			{
+				names.Add($"answer.{answer.Name}");
+			}
+		}
+
+		if (command.AcceptsPagingInput || command.EmitsPagedResult)
+		{
+			names.Add(McpResultFlowArgumentNames.Cursor);
+			names.Add(McpResultFlowArgumentNames.PageSize);
+		}
+
+		return names;
 	}
 
 	/// <summary>

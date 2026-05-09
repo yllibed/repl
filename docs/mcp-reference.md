@@ -178,7 +178,7 @@ app.UseMcpServer(o => o.InteractivityMode = InteractivityMode.PrefillThenElicita
 
 | Method | Where it goes | Use? |
 |---|---|---|
-| **Return value** | `CallToolResult.Content` (JSON) | **Yes.** Preferred for all data. |
+| **Return value** | `CallToolResult.Content` and, for paged results, `StructuredContent` | **Yes.** Preferred for all data. |
 | **`IReplInteractionChannel`** | MCP primitives (progress, prompts, user-facing notices/problems) | **Yes.** Portable feedback that also works outside MCP. |
 | **`IMcpFeedback`** | MCP progress and logging/message notifications | **Yes.** MCP-specific feedback when you need direct control. |
 | **`ReplSessionIO.Output`** | Session output | Advanced cases only. |
@@ -186,6 +186,74 @@ app.UseMcpServer(o => o.InteractivityMode = InteractivityMode.PrefillThenElicita
 | **`Console.OpenStandardOutput()`** | MCP stdio transport directly | **Never.** Corrupts JSON-RPC. |
 
 > **Why this matters:** Console-style writes blur the boundary between result data, progress, logs, and protocol traffic. In MCP, this ranges from confusing agent behavior to protocol corruption.
+
+### Paged tool results
+
+Paged MCP tool schemas include two reserved Repl result-flow inputs:
+
+- `_replCursor`: opaque continuation cursor returned by a previous paged result.
+- `_replPageSize`: requested page size.
+
+These inputs are emitted only for commands that accept `IReplPagingContext` or
+return a paged result. Other tools reject them like any undeclared MCP argument.
+
+Handlers receive these values through `IReplPagingContext`, not as business parameters. A handler can return `ReplPage<T>`:
+
+```csharp
+app.Map("contacts", (IReplPagingContext paging, ContactStore store) =>
+{
+    var page = store.Query(paging.Cursor, paging.SuggestedPageSize);
+    return paging.Page(page.Items, page.NextCursor, page.TotalCount);
+}).ReadOnly();
+```
+
+MCP responses for `ReplPage<T>` include:
+
+- `StructuredContent`: `{ "$type": "page", items, pageInfo }`
+- `Content`: configurable text fallback for clients that do not use structured content
+
+By default, `Content` contains compact serialized JSON so agents that ignore
+`StructuredContent` can still see the first page and cursor. Applications can
+choose a cheaper text fallback:
+
+```csharp
+app.UseMcpServer(o =>
+{
+    o.PagedResultTextMode = McpPagedResultTextMode.SummaryOnly;
+});
+```
+
+| `PagedResultTextMode` | `Content` behavior | Trade-off |
+|---|---|---|
+| `SerializedJson` (default) | Compact JSON page envelope | Best compatibility; higher token cost |
+| `SummaryOnly` | Short summary; cursor value stays only in structured content | Lowest token cost; clients must read structured content to continue |
+| `SummaryAndSerializedJson` | Summary plus compact JSON page envelope | Most verbose; useful for diagnostics and weak clients |
+
+Repl accepts compact cursor tokens only: non-empty, at most 512 characters, no
+whitespace, no control characters, and not starting with `-`. Page-size tokens
+must be numeric and at most 10 characters before normal result-flow clamping is
+applied. Tool-call arguments are validated against the generated MCP input
+schema before Repl reconstructs CLI tokens. Undeclared keys are rejected instead
+of being converted to `--{key}` options, and business argument values that start
+with `--` are rejected because the downstream CLI parser treats those as option
+tokens.
+
+MCP paging continuation works best when the client preserves structured tool
+content. When `PagedResultTextMode` includes serialized JSON, the text fallback
+also contains the page envelope; when it is `SummaryOnly`, the raw cursor stays
+only in `StructuredContent.pageInfo.nextCursor`.
+
+| Agent/client behavior | Paging support | Repl fallback |
+|---|---|---|
+| Reads `StructuredContent` and can call the same tool again | Full continuation with `_replCursor` and `_replPageSize` | Not needed |
+| Reads only `Content` text | Sees first-page JSON by default; can continue only if it can reuse the cursor text safely | Configure `SerializedJson` or `SummaryAndSerializedJson` for compatibility, `SummaryOnly` for token savings |
+| Ignores custom/reserved input properties | First page still works | Tool returns bounded first page |
+| Does not support structured content | First page still works through text fallback; automatic continuation depends on `PagedResultTextMode` | Keep `SerializedJson` for weak clients or expose a command-specific cursor option |
+
+Applications should not rely on all agents supporting continuation equally.
+For important workflows, include enough data in the first page summary for the
+agent to decide whether it needs a follow-up call, and keep handlers safe when
+only the first page is consumed.
 
 `WriteProgressAsync` maps to MCP progress notifications. `WriteStatusAsync` maps to log messages (`level: info`). See [Progress](progress.md#mcp) for the centralized progress model across console, hosted sessions, Spectre, and MCP:
 
@@ -249,6 +317,7 @@ app.UseMcpServer(o =>
     o.ResourceFallbackToTools = false;                          // also expose resources as tools
     o.PromptFallbackToTools = false;                            // also expose prompts as tools
     o.DynamicToolCompatibility = DynamicToolCompatibilityMode.Disabled; // shim for weak clients
+    o.PagedResultTextMode = McpPagedResultTextMode.SerializedJson;      // paged result text fallback
     o.EnableApps = false;                                       // usually auto-enabled by MCP App mappings
     o.CommandFilter = cmd => true;                              // filter which commands become tools
     o.Prompt("summarize", (string topic) => ...);               // explicit prompt registration
@@ -332,6 +401,8 @@ Feature support varies across agents. Check [mcp-availability.com](https://mcp-a
 | Feature | Claude Desktop | Claude Code | Codex | VS Code Copilot | Cursor | Continue |
 |---|---|---|---|---|---|---|
 | Tools | Yes | Yes | Yes | Yes | Yes | Yes |
+| Paged tools, first page | Yes | Yes | Yes | Yes | Yes | Yes |
+| Paged tools, automatic continuation | Depends on structured tool-result handling | Depends on structured tool-result handling | Depends on structured tool-result handling | Depends on structured tool-result handling | Depends on structured tool-result handling | Depends on structured tool-result handling |
 | Resources | Yes | — | — | Yes | Yes | — |
 | Prompts | Yes | — | — | Yes | — | Yes |
 | Discovery (`list_changed`) | — | Yes | — | — | — | — |

@@ -134,6 +134,57 @@ public sealed class Given_McpSchemaGenerator
 		prop.GetProperty("description").GetString().Should().Be("Contact name");
 	}
 
+	[TestMethod]
+	[Description("Paged commands expose result-flow continuation inputs.")]
+	public void When_CommandUsesResultFlow_Then_InputSchemaContainsContinuationInputs()
+	{
+		var cmd = CreateCommand(usesResultFlow: true);
+
+		var schema = McpSchemaGenerator.BuildInputSchema(cmd);
+		var properties = schema.GetProperty("properties");
+
+		properties.TryGetProperty("_replCursor", out _).Should().BeTrue();
+		properties.TryGetProperty("_replPageSize", out _).Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Non-paged commands do not expose result-flow continuation inputs.")]
+	public void When_CommandDoesNotUseResultFlow_Then_InputSchemaDoesNotContainContinuationInputs()
+	{
+		var cmd = CreateCommand(usesResultFlow: false);
+
+		var schema = McpSchemaGenerator.BuildInputSchema(cmd);
+		var properties = schema.GetProperty("properties");
+
+		properties.TryGetProperty("_replCursor", out _).Should().BeFalse();
+		properties.TryGetProperty("_replPageSize", out _).Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Paged commands expose an output schema for structured page results.")]
+	public void When_CommandEmitsPagedResult_Then_OutputSchemaContainsPageEnvelope()
+	{
+		var cmd = CreateCommand(emitsPagedResult: true);
+
+		var schema = McpSchemaGenerator.BuildOutputSchema(cmd);
+
+		schema.Should().NotBeNull();
+		var schemaValue = schema!.Value;
+		schemaValue.GetProperty("properties").GetProperty("$type").GetProperty("const").GetString()
+			.Should().Be("page");
+		schemaValue.GetProperty("properties").TryGetProperty("items", out _).Should().BeTrue();
+		schemaValue.GetProperty("properties").TryGetProperty("pageInfo", out _).Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Non-paged commands do not expose a result-flow output schema.")]
+	public void When_CommandDoesNotEmitPagedResult_Then_OutputSchemaIsNull()
+	{
+		var cmd = CreateCommand(emitsPagedResult: false);
+
+		McpSchemaGenerator.BuildOutputSchema(cmd).Should().BeNull();
+	}
+
 	// ── Annotation mapping ─────────────────────────────────────────────
 
 	[TestMethod]
@@ -208,7 +259,9 @@ public sealed class Given_McpSchemaGenerator
 		string? description = null,
 		string? details = null,
 		ReplDocArgument[]? arguments = null,
-		ReplDocOption[]? options = null) =>
+		ReplDocOption[]? options = null,
+		bool usesResultFlow = false,
+		bool emitsPagedResult = false) =>
 		new(
 			Path: path,
 			Description: description,
@@ -216,7 +269,14 @@ public sealed class Given_McpSchemaGenerator
 			IsHidden: false,
 			Arguments: arguments ?? [],
 			Options: options ?? [],
-			Details: details);
+			Details: details,
+			AcceptsPagingInput: usesResultFlow,
+			EmitsPagedResult: emitsPagedResult,
+			Metadata: new Dictionary<string, object>(StringComparer.Ordinal)
+			{
+				["ResultFlow.AcceptsPagingInput"] = usesResultFlow,
+				["ResultFlow.EmitsPagedResult"] = emitsPagedResult,
+			});
 
 	private static ReplDocOption CreateOption(
 		string name,

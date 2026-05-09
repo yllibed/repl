@@ -6,7 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace Repl;
 
-internal sealed class HumanOutputTransformer : IOutputTransformer
+internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
 
@@ -23,6 +23,8 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 
 	public string Name => "human";
 
+	public bool SupportsInteractivePaging => true;
+
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
@@ -31,6 +33,11 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 		if (value is null)
 		{
 			return ValueTask.FromResult(string.Empty);
+		}
+
+		if (value is IReplPage page)
+		{
+			return ValueTask.FromResult(RenderPage(page, settings));
 		}
 
 		if (value is IReplResult replResult)
@@ -53,7 +60,7 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 				return ValueTask.FromResult("No results.");
 			}
 
-			if (TryRenderTable(lines, settings, out var tableText))
+			if (TryRenderTable(lines, settings, includeHeader: true, out var tableText))
 			{
 				return ValueTask.FromResult(tableText);
 			}
@@ -78,6 +85,41 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 
 		return ValueTask.FromResult(
 			Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty);
+	}
+
+	public ValueTask<string> TransformPageAsync(
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(page);
+		cancellationToken.ThrowIfCancellationRequested();
+		return ValueTask.FromResult(RenderPage(page, _resolveRenderSettings(), mode));
+	}
+
+	private static string RenderPage(IReplPage page, HumanRenderSettings settings) =>
+		RenderPage(page, settings, ResultFlowPageRenderMode.Initial, includeFooter: true);
+
+	private static string RenderPage(IReplPage page, HumanRenderSettings settings, ResultFlowPageRenderMode mode) =>
+		RenderPage(page, settings, mode, includeFooter: false);
+
+	private static string RenderPage(
+		IReplPage page,
+		HumanRenderSettings settings,
+		ResultFlowPageRenderMode mode,
+		bool includeFooter)
+	{
+		var body = page.UntypedItems.Count == 0
+			? "No results."
+			: RenderCollection(
+				page.UntypedItems,
+				depth: 0,
+				settings,
+				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
+		var footer = includeFooter ? ResultFlowPageFooterBuilder.RenderHuman(page) : string.Empty;
+		return string.IsNullOrWhiteSpace(footer)
+			? body
+			: string.Concat(body, Environment.NewLine, footer);
 	}
 
 	private static bool TryRenderObject(object value, HumanRenderSettings settings, out string text)
@@ -126,7 +168,11 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 		return true;
 	}
 
-	private static string RenderCollection(System.Collections.IEnumerable collection, int depth, HumanRenderSettings settings)
+	private static string RenderCollection(
+		System.Collections.IEnumerable collection,
+		int depth,
+		HumanRenderSettings settings,
+		bool includeTableHeader = true)
 	{
 		var values = collection.Cast<object?>().ToArray();
 		if (values.Length == 0)
@@ -134,7 +180,7 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 			return string.Empty;
 		}
 
-		if (TryRenderTable(values, settings, out var tableText))
+		if (TryRenderTable(values, settings, includeTableHeader, out var tableText))
 		{
 			return tableText;
 		}
@@ -144,7 +190,11 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 			values.Select(value => $"- {RenderScalar(value, member: null, depth, compactCollection: false, settings.Width, settings)}"));
 	}
 
-	private static bool TryRenderTable(object?[] values, HumanRenderSettings settings, out string text)
+	private static bool TryRenderTable(
+		object?[] values,
+		HumanRenderSettings settings,
+		bool includeHeader,
+		out string text)
 	{
 		var firstNonNull = values.FirstOrDefault(value => value is not null);
 		if (firstNonNull is null)
@@ -168,24 +218,30 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 			return false;
 		}
 
-		var rows = BuildTableRows(values, members, settings);
-		var style = settings.UseAnsi
+		var rows = BuildTableRows(values, members, settings, includeHeader);
+		var style = includeHeader && settings.UseAnsi
 			? TextTableStyle.ForHeader(settings.Palette.TableHeaderStyle)
 			: TextTableStyle.None;
 		text = TextTableFormatter.FormatRows(
 			rows,
 			settings.Width,
-			includeHeaderSeparator: !settings.UseAnsi,
+			includeHeaderSeparator: includeHeader && !settings.UseAnsi,
 			style);
 		return true;
 	}
 
-	private static List<string[]> BuildTableRows(object?[] values, DisplayMember[] members, HumanRenderSettings settings)
+	private static List<string[]> BuildTableRows(
+		object?[] values,
+		DisplayMember[] members,
+		HumanRenderSettings settings,
+		bool includeHeader)
 	{
-		var rows = new List<string[]>(values.Length + 1)
+		var rows = new List<string[]>(values.Length + (includeHeader ? 1 : 0));
+		if (includeHeader)
 		{
-			members.Select(member => member.Label).ToArray(),
-		};
+			rows.Add(members.Select(member => member.Label).ToArray());
+		}
+
 		foreach (var item in values)
 		{
 			if (item is null)
@@ -361,6 +417,11 @@ internal sealed class HumanOutputTransformer : IOutputTransformer
 		if (result.Details is null)
 		{
 			return message;
+		}
+
+		if (result.Details is IReplPage page)
+		{
+			return $"{message}{Environment.NewLine}{RenderPage(page, settings)}";
 		}
 
 		if (TryRenderDictionary(result.Details, settings, out var dictionaryText))

@@ -11,6 +11,11 @@ public interface IOutputTransformer
 	string Name { get; }
 
 	/// <summary>
+	/// Gets a value indicating whether this transformer can be displayed by the interactive result pager.
+	/// </summary>
+	bool SupportsInteractivePaging => false;
+
+	/// <summary>
 	/// Transforms a value to the target representation.
 	/// </summary>
 	/// <param name="value">Input value.</param>

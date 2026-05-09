@@ -53,6 +53,11 @@ public sealed class ReplMcpServerOptions
 	public InteractivityMode InteractivityMode { get; set; } = InteractivityMode.PrefillThenFail;
 
 	/// <summary>
+	/// Controls the text fallback emitted alongside structured paged tool results.
+	/// </summary>
+	public McpPagedResultTextMode PagedResultTextMode { get; set; } = McpPagedResultTextMode.SerializedJson;
+
+	/// <summary>
 	/// Optional filter controlling which commands are exposed as MCP tools.
 	/// When <c>null</c>, all non-hidden, non-<see cref="CommandAnnotations.AutomationHidden"/> commands are exposed.
 	/// </summary>

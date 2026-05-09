@@ -57,6 +57,10 @@ internal static class McpSchemaGenerator
 		}
 
 		AddAnswerProperties(command, properties);
+		if (command.AcceptsPagingInput || command.EmitsPagedResult)
+		{
+			AddResultFlowProperties(properties);
+		}
 
 		var schema = new JsonObject
 		{
@@ -68,6 +72,62 @@ internal static class McpSchemaGenerator
 		{
 			schema["required"] = required;
 		}
+
+		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
+	}
+
+	private static void AddResultFlowProperties(JsonObject properties)
+	{
+		properties[McpResultFlowArgumentNames.Cursor] = new JsonObject
+		{
+			["type"] = "string",
+			["description"] = "Opaque Repl continuation cursor returned by a previous paged tool result.",
+		};
+		properties[McpResultFlowArgumentNames.PageSize] = new JsonObject
+		{
+			["type"] = "integer",
+			["description"] = "Requested Repl page size for large tool results.",
+			["minimum"] = 1,
+		};
+	}
+
+	public static JsonElement? BuildOutputSchema(ReplDocCommand command)
+	{
+		if (!command.EmitsPagedResult)
+		{
+			return null;
+		}
+
+		var schema = new JsonObject
+		{
+			["type"] = "object",
+			["properties"] = new JsonObject
+			{
+				[ReplPageWireNames.Type] = new JsonObject
+				{
+					["type"] = "string",
+					["const"] = ReplPageWireNames.PageType,
+				},
+				[ReplPageWireNames.Items] = new JsonObject
+				{
+					["type"] = "array",
+					[ReplPageWireNames.Items] = new JsonObject(),
+				},
+				[ReplPageWireNames.PageInfo] = new JsonObject
+				{
+					["type"] = "object",
+					["properties"] = new JsonObject
+					{
+						[ReplPageWireNames.Cursor] = new JsonObject { ["type"] = "string" },
+						[ReplPageWireNames.NextCursor] = new JsonObject { ["type"] = "string" },
+						[ReplPageWireNames.TotalCount] = new JsonObject { ["type"] = "integer" },
+						[ReplPageWireNames.PageSize] = new JsonObject { ["type"] = "integer" },
+						[ReplPageWireNames.HasMore] = new JsonObject { ["type"] = "boolean" },
+					},
+				},
+			},
+			["required"] = new JsonArray([ReplPageWireNames.Type, ReplPageWireNames.Items, ReplPageWireNames.PageInfo]),
+		};
 
 		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
 	}

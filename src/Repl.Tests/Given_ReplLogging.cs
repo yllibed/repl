@@ -97,6 +97,75 @@ public sealed partial class Given_ReplLogging
 	}
 
 	[TestMethod]
+	[Description("Result-flow page-source fetch failures are logged through the Repl logging bridge.")]
+	public void When_ResultFlowPageFetchFails_Then_DiagnosticIsLogged()
+	{
+		var provider = new CapturingLoggerProvider();
+		var app = ReplApp.Create(services =>
+		{
+			services.AddSingleton(provider);
+			services.AddLogging(builder =>
+			{
+				builder.ClearProviders();
+				builder.AddProvider(provider);
+			});
+		});
+
+		app.Map("items", () => ReplPageSource.Create<string>((_, _) =>
+			throw new InvalidOperationException("fetch failed")));
+
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = app.Run(
+			["items", "--no-logo"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(1);
+		provider.Entries.Should().Contain(entry =>
+			entry.Category == "Repl.ResultFlow"
+			&& entry.Level == LogLevel.Error
+			&& entry.Message.Contains("page fetch failed", StringComparison.OrdinalIgnoreCase));
+	}
+
+	[TestMethod]
+	[Description("Result-flow diagnostics fall back to the app root provider when a hosted runtime provider does not register diagnostics.")]
+	public void When_RuntimeProviderDoesNotRegisterResultFlowDiagnostics_Then_AppProviderStillLogsFetchFailure()
+	{
+		var provider = new CapturingLoggerProvider();
+		var app = ReplApp.Create(services =>
+		{
+			services.AddSingleton(provider);
+			services.AddLogging(builder =>
+			{
+				builder.ClearProviders();
+				builder.AddProvider(provider);
+			});
+		});
+		app.Map("items", () => ReplPageSource.Create<string>((_, _) =>
+			throw new InvalidOperationException("fetch failed")));
+
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+		using var runtimeProvider = new ServiceCollection().BuildServiceProvider();
+
+		var exitCode = app.Run(
+			["items", "--no-logo"],
+			host,
+			runtimeProvider,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(1);
+		provider.Entries.Should().Contain(entry =>
+			entry.Category == "Repl.ResultFlow"
+			&& entry.Level == LogLevel.Error
+			&& entry.Message.Contains("page fetch failed", StringComparison.OrdinalIgnoreCase));
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies ambient Repl log context reflects hosted session metadata so apps can route logs to the active session.")]
 	public void When_HostedSessionRuns_Then_LogContextExposesSessionMetadata()
 	{

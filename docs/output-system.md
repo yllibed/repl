@@ -2,6 +2,8 @@
 
 The output system controls how command results are serialized and rendered to the user. It supports multiple built-in formats, custom transformers, ANSI detection, and banner rendering.
 
+Large result flow and paging are documented separately in [Result Flow And Paging](result-flow.md).
+
 ## Format Selection Precedence
 
 The active output format is resolved in this order:
@@ -102,7 +104,14 @@ The output width used for wrapping and table layout is resolved as:
 
 In interactive mode, when ANSI is supported, JSON output is syntax-highlighted automatically. This applies only to the `json` format rendered to a terminal — redirected or non-ANSI output remains plain.
 
+## Paging
+
+Human terminal formats (`human` and `spectre`) can use the integrated result pager when rendered output exceeds the visible row capacity or a result-flow page source has more data. The pager is never used for redirected stdout, protocol passthrough, MCP/programmatic execution, or machine formats.
+
+Paged handler results should return `ReplPage<T>` through `IReplPagingContext`. JSON serializes these as `{ items, pageInfo }`; human and Spectre formats render the current page plus continuation metadata.
+
 ## See Also
 
 - [Configuration Reference](configuration-reference.md) — `OutputOptions` properties.
 - [Execution Pipeline](execution-pipeline.md) — output formatting occurs at stage 11.
+- [Result Flow And Paging](result-flow.md) - paging contracts, CLI flags, and MCP behavior.

@@ -1,11 +1,12 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text.RegularExpressions;
 using Repl.Spectre;
 
 namespace Repl.IntegrationTests;
 
 [TestClass]
 [DoNotParallelize]
-public sealed class Given_OutputFormatting
+public sealed partial class Given_OutputFormatting
 {
 	[TestMethod]
 	[Description("Regression guard: verifies rendering human string result so that output contains raw text.")]
@@ -194,6 +195,153 @@ public sealed class Given_OutputFormatting
 		output.Text.Should().Contain("| --- | --- | --- |");
 		output.Text.Should().Contain("| 1 | Alice Martin | alice@example.com |");
 		output.Text.Should().NotContain("System.Collections.Generic.List");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies paged results render their current page and continuation hint in human output.")]
+	public void When_RenderingPagedResultInHuman_Then_ItemsAndContinuationAreRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.Page(
+				new[]
+				{
+					new ContactRow("Alice Martin", "alice@example.com"),
+					new ContactRow("Bob Tremblay", "bob@example.com"),
+				},
+				nextCursor: "page-2",
+				totalCount: 3));
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["contact", "list", "--result:page-size=2", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Alice Martin");
+		output.Text.Should().Contain("Bob Tremblay");
+		output.Text.Should().Contain("Showing 2 of 3.");
+		output.Text.Should().Contain("Next data page:");
+		output.Text.Should().Contain("--result:cursor page-2");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies human page sources continue interactively instead of asking users to rerun with a cursor.")]
+	public void When_RenderingPageSourceInHumanPager_Then_SpaceFetchesNextPageWithoutCursorRerun()
+	{
+		var sut = ReplApp.Create();
+		var fetchedCursors = new List<string?>();
+		var contacts = new[]
+		{
+			new ContactRow("Alice Martin", "alice@example.com"),
+			new ContactRow("Bob Tremblay", "bob@example.com"),
+		};
+
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.CreateSource<ContactRow>((request, _) =>
+			{
+				fetchedCursors.Add(request.Cursor);
+				var offset = string.Equals(request.Cursor, "1", StringComparison.Ordinal) ? 1 : 0;
+				var items = contacts.Skip(offset).Take(request.PageSize).ToArray();
+				var nextOffset = offset + items.Length;
+				var nextCursor = nextOffset < contacts.Length ? "1" : null;
+				return ValueTask.FromResult(new ReplPage<ContactRow>(
+					items,
+					new ReplPageInfo(
+						request.Cursor,
+						nextCursor,
+						contacts.Length,
+						request.PageSize)));
+			}));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		ReplSessionIO.KeyReader = new QueueKeyReader([Key(ConsoleKey.Spacebar, ' ')]);
+		ReplSessionIO.WindowSize = (100, 20);
+
+		var exitCode = sut.Run(["contact", "list", "--result:page-size=1", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		fetchedCursors.Should().Equal(null, "1");
+		var text = output.ToString();
+		text.Should().Contain("Alice Martin");
+		text.Should().Contain("Bob Tremblay");
+		text.Should().NotContain("rerun with --result:cursor");
+		text.Split("Name", StringSplitOptions.None).Should().HaveCount(2);
+		text.Should().NotContain("Showing ");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies paging.CreateSource receives the caller cursor and suggested page size through the first source request.")]
+	public void When_PageSourceIsCreatedFromPagingContext_Then_FirstRequestUsesCurrentPagingIntent()
+	{
+		var sut = ReplApp.Create();
+		ReplPageRequest? capturedRequest = null;
+
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.CreateSource<ContactRow>((request, _) =>
+			{
+				capturedRequest = request;
+				return ValueTask.FromResult(request.Page(
+					[new ContactRow("Alice Martin", "alice@example.com")]));
+			}));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+
+		var exitCode = sut.Run(["contact", "list", "--result:page-size=7", "--result:cursor=page-2", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		capturedRequest.Should().NotBeNull();
+		capturedRequest!.Cursor.Should().Be("page-2");
+		capturedRequest.PageSize.Should().Be(7);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies paged results serialize to a clean JSON envelope for automation.")]
+	public void When_RenderingPagedResultInJson_Then_ItemsAndPageInfoAreSerialized()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.Page(
+				new[]
+				{
+					new Contact(1, "Alice"),
+				},
+				nextCursor: "page-2",
+				totalCount: 2));
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["contact", "list", "--json", "--result:page-size=1", "--result:cursor=start", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("\"items\"");
+		output.Text.Should().Contain("\"pageInfo\"");
+		output.Text.Should().Contain("\"nextCursor\": \"page-2\"");
+		output.Text.Should().Contain("\"cursor\": \"start\"");
+		output.Text.Should().Contain("\"totalCount\": 2");
+		output.Text.Should().NotContain("itemType");
+		output.Text.Should().NotContain("untypedItems");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies paged results render their current page in markdown output.")]
+	public void When_RenderingPagedResultInMarkdown_Then_ItemsAndContinuationAreRendered()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.Page(
+				new[]
+				{
+					new ContactMarkdownRow(1, "Alice Martin", "alice@example.com"),
+				},
+				nextCursor: "page-2"));
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["contact", "list", "--markdown", "--result:page-size=1", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("| Id | Name | Email |");
+		output.Text.Should().Contain("| 1 | Alice Martin | alice@example.com |");
+		output.Text.Should().Contain("`--result:cursor page-2`");
 	}
 
 	[TestMethod]
@@ -457,11 +605,36 @@ public sealed class Given_OutputFormatting
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["contact", "list", "--no-logo"]));
 		var lines = output.Text
-			.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+			.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Select(StripAnsi);
 
 		output.ExitCode.Should().Be(0);
 		lines.Should().OnlyContain(line => line.Length <= width);
 		output.Text.Should().Contain("ong@example.com");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies Spectre renders paged result pages with continuation metadata.")]
+	public void When_SpectreOutputAndPagedResult_Then_ItemsAndContinuationAreRendered()
+	{
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("contact list", (IReplPagingContext paging) =>
+			paging.Page(
+				new[]
+				{
+					new ContactRow("Alice Martin", "alice@example.com"),
+				},
+				nextCursor: "page-2",
+				totalCount: 2));
+
+		var output = ConsoleCaptureHelper.Capture(() =>
+			sut.Run(["contact", "list", "--result:page-size=1", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("Alice Martin");
+		output.Text.Should().Contain("Showing 1 of 2.");
+		output.Text.Should().Contain("--result:cursor page-2");
 	}
 
 	[TestMethod]
@@ -519,6 +692,29 @@ public sealed class Given_OutputFormatting
 				DescriptionStyle: "\u001b[33m");
 	}
 
+	private sealed class QueueKeyReader(IEnumerable<ConsoleKeyInfo> keys) : IReplKeyReader
+	{
+		private readonly Queue<ConsoleKeyInfo> _keys = new(keys);
+
+		public bool KeyAvailable => _keys.Count > 0;
+
+		public ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct)
+		{
+			ct.ThrowIfCancellationRequested();
+			return _keys.TryDequeue(out var key)
+				? ValueTask.FromResult(key)
+				: throw new InvalidOperationException("No key available in QueueKeyReader.");
+		}
+	}
+
+	private static ConsoleKeyInfo Key(ConsoleKey key, char keyChar) =>
+		new(keyChar, key, shift: false, alt: false, control: false);
+
+	private static string StripAnsi(string value) =>
+		BuildAnsiEscapeRegex().Replace(value, string.Empty);
+
+	[GeneratedRegex(@"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", RegexOptions.None, matchTimeoutMilliseconds: 50)]
+	private static partial Regex BuildAnsiEscapeRegex();
 }
 
 

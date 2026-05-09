@@ -30,6 +30,8 @@ public sealed class OutputOptions
 		_transformers["xml"] = new XmlOutputTransformer(JsonSerializerOptions);
 		_transformers["yaml"] = new YamlOutputTransformer(JsonSerializerOptions);
 		_transformers["markdown"] = new MarkdownOutputTransformer();
+		_helpOutputFactories["markdown"] = static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>
+			HelpTextBuilder.BuildRenderModel(routes, contexts, scopeTokens, parsingOptions, ambientOptions);
 
 		_aliases["json"] = "json";
 		_aliases["xml"] = "xml";
@@ -89,6 +91,11 @@ public sealed class OutputOptions
 	/// Gets or sets the fallback render width when terminal width is unavailable.
 	/// </summary>
 	public int FallbackWidth { get; set; } = 120;
+
+	/// <summary>
+	/// Gets result-flow options for paging and large result sets.
+	/// </summary>
+	public ResultFlowOptions ResultFlow { get; } = new();
 
 	/// <summary>
 	/// Gets JSON serializer options used by the JSON transformer.

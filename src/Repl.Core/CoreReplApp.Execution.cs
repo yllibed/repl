@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 
 namespace Repl;
 
-public sealed partial class CoreReplApp
+public sealed partial class CoreReplApp : ISubInvocableReplApp
 {
 	/// <summary>
 	/// Runs the app in synchronous mode.
@@ -53,6 +53,12 @@ public sealed partial class CoreReplApp
 		CancellationToken cancellationToken = default) =>
 		ExecuteCoreAsync(args, serviceProvider, isSubInvocation: true, cancellationToken);
 
+	ValueTask<int> ISubInvocableReplApp.RunSubInvocationAsync(
+		string[] args,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken) =>
+		RunSubInvocationAsync(args, serviceProvider, cancellationToken);
+
 	private async ValueTask<int> ExecuteCoreAsync(
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
@@ -63,6 +69,23 @@ public sealed partial class CoreReplApp
 		try
 		{
 			var globalOptions = GlobalOptionParser.Parse(args, _options.Output, _options.Parsing);
+			if (await TryHandleGlobalDiagnosticsAsync(globalOptions, cancellationToken).ConfigureAwait(false) is { } globalDiagnosticsExitCode) return globalDiagnosticsExitCode;
+
+			return await ExecuteParsedCoreAsync(globalOptions, serviceProvider, isSubInvocation, cancellationToken)
+				.ConfigureAwait(false);
+		}
+		finally
+		{
+			_options.Interaction.SetObserver(observer: null);
+		}
+	}
+
+	private async ValueTask<int> ExecuteParsedCoreAsync(
+		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
+		bool isSubInvocation,
+		CancellationToken cancellationToken)
+	{
 			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions); // volatile ref swap — safe under concurrent sub-invocations
 			if (!isSubInvocation)
 			{
@@ -71,14 +94,14 @@ public sealed partial class CoreReplApp
 			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
-				var ambiguousExitCode = await TryHandleAmbiguousPrefixAsync(
+			var ambiguousExitCode = await TryHandleAmbiguousPrefixAsync(
 						prefixResolution,
 						globalOptions,
 						resolvedGlobalOptions,
 						serviceProvider,
 						cancellationToken)
 					.ConfigureAwait(false);
-				if (ambiguousExitCode is not null) return ambiguousExitCode.Value;
+			if (ambiguousExitCode is not null) return ambiguousExitCode.Value;
 
 			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions);
 			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedRouteResolution?.Match))
@@ -86,26 +109,26 @@ public sealed partial class CoreReplApp
 				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
 			}
 
-				var preExecutionExitCode = await TryHandlePreExecutionAsync(
+			var preExecutionExitCode = await TryHandlePreExecutionAsync(
 						resolvedGlobalOptions,
 						serviceProvider,
 						cancellationToken)
 					.ConfigureAwait(false);
-				if (preExecutionExitCode is not null) return preExecutionExitCode.Value;
+			if (preExecutionExitCode is not null) return preExecutionExitCode.Value;
 
 			var resolution = preResolvedRouteResolution
 				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
 			var match = resolution.Match;
-				if (match is null)
-				{
-					return await TryHandleContextDeeplinkAsync(
+			if (match is null)
+			{
+				return await TryHandleContextDeeplinkAsync(
 							resolvedGlobalOptions,
 							serviceProvider,
 							cancellationToken,
 							constraintFailure: resolution.ConstraintFailure,
 							missingArgumentsFailure: resolution.MissingArgumentsFailure)
 						.ConfigureAwait(false);
-				}
+			}
 
 			return await ExecuteMatchedCommandAndMaybeEnterInteractiveAsync(
 					match,
@@ -113,11 +136,6 @@ public sealed partial class CoreReplApp
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
-		}
-		finally
-		{
-			_options.Interaction.SetObserver(observer: null);
-		}
 	}
 
 	private async ValueTask<int?> TryHandleAmbiguousPrefixAsync(
@@ -516,7 +534,12 @@ public sealed partial class CoreReplApp
 				{
 					if (enterInteractive.Payload is not null)
 					{
-						_ = await RenderOutputAsync(enterInteractive.Payload, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
+						_ = await RenderOutputAsync(
+								enterInteractive.Payload,
+								globalOptions.OutputFormat,
+								cancellationToken,
+								scopeTokens is not null,
+								globalOptions.ResultFlow)
 							.ConfigureAwait(false);
 					}
 
@@ -525,7 +548,12 @@ public sealed partial class CoreReplApp
 
 				var normalizedResult = ApplyNavigationResult(result, scopeTokens);
 				ExecutionObserver?.OnResult(normalizedResult);
-				var rendered = await RenderOutputAsync(normalizedResult, globalOptions.OutputFormat, cancellationToken, scopeTokens is not null)
+				var rendered = await RenderOutputAsync(
+						normalizedResult,
+						globalOptions.OutputFormat,
+						cancellationToken,
+						scopeTokens is not null,
+						globalOptions.ResultFlow)
 					.ConfigureAwait(false);
 				return (rendered ? ComputeExitCode(normalizedResult) : 1, false);
 		}
@@ -617,7 +645,12 @@ public sealed partial class CoreReplApp
 
 			ExecutionObserver?.OnResult(normalized);
 
-			var rendered = await RenderOutputAsync(normalized, globalOptions.OutputFormat, cancellationToken, isInteractive)
+			var rendered = await RenderOutputAsync(
+					normalized,
+					globalOptions.OutputFormat,
+					cancellationToken,
+					isInteractive,
+					globalOptions.ResultFlow)
 				.ConfigureAwait(false);
 
 			if (!rendered)
@@ -664,7 +697,8 @@ public sealed partial class CoreReplApp
 		object? result,
 		string? requestedFormat,
 		CancellationToken cancellationToken,
-		bool isInteractive = false)
+		bool isInteractive = false,
+		ResultFlowInvocationOptions? resultFlow = null)
 	{
 		if (result is IExitResult exitResult)
 		{
@@ -686,14 +720,348 @@ public sealed partial class CoreReplApp
 			return false;
 		}
 
+		if (result is IReplPageSource pageSource)
+		{
+			return await RenderPageSourceAsync(
+				pageSource,
+				transformer,
+				isInteractive,
+				resultFlow,
+				cancellationToken)
+				.ConfigureAwait(false);
+		}
+
 		var payload = await transformer.TransformAsync(result, cancellationToken).ConfigureAwait(false);
 		payload = TryColorizeStructuredPayload(payload, format, isInteractive);
+		if (!string.IsNullOrEmpty(payload))
+		{
+			await WritePayloadAsync(payload, transformer, resultFlow, cancellationToken).ConfigureAwait(false);
+		}
+
+		return true;
+	}
+
+	private async ValueTask<bool> RenderPageSourceAsync(
+		IReplPageSource source,
+		IOutputTransformer transformer,
+		bool isInteractive,
+		ResultFlowInvocationOptions? resultFlow,
+		CancellationToken cancellationToken)
+	{
+		var request = CreatePageSourceRequest(resultFlow);
+		var page = await FetchPageSourceAsync(source, request, cancellationToken).ConfigureAwait(false);
+		var payload = await transformer.TransformAsync(page, cancellationToken).ConfigureAwait(false);
+		payload = TryColorizeStructuredPayload(payload, transformer.Name, isInteractive);
+
+		if (!TryCreatePager(
+				payload,
+				transformer,
+				resultFlow,
+				page.PageInfo.HasMore,
+				out var keyReader,
+				out var visibleRows,
+				out var pagerMode,
+				out var ansiEnabled))
+		{
+			return await WritePageSourcePayloadAsync(payload).ConfigureAwait(false);
+		}
+
+		return await RenderPageSourcePagerAsync(
+				source,
+				transformer,
+				isInteractive,
+				request,
+				page,
+				keyReader,
+				visibleRows,
+				pagerMode,
+				ansiEnabled,
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	private static async ValueTask<bool> WritePageSourcePayloadAsync(string payload)
+	{
 		if (!string.IsNullOrEmpty(payload))
 		{
 			await ReplSessionIO.Output.WriteLineAsync(payload).ConfigureAwait(false);
 		}
 
 		return true;
+	}
+
+	private async ValueTask<bool> RenderPageSourcePagerAsync(
+		IReplPageSource source,
+		IOutputTransformer transformer,
+		bool isInteractive,
+		ReplPageRequest request,
+		IReplPage page,
+		IReplKeyReader keyReader,
+		int visibleRows,
+		ReplPagerMode pagerMode,
+		bool ansiEnabled,
+		CancellationToken cancellationToken)
+	{
+		var nextCursor = page.PageInfo.NextCursor;
+		var pagerPayload = await TransformPagerPageAsync(transformer, page, ResultFlowPageRenderMode.Initial, cancellationToken)
+			.ConfigureAwait(false);
+		pagerPayload = TryColorizeStructuredPayload(pagerPayload, transformer.Name, isInteractive);
+		await ResultFlowPager.WriteAsync(
+				pagerPayload,
+				ReplSessionIO.Output,
+				keyReader,
+				new ResultFlowPagerOptions
+				{
+					VisibleRows = visibleRows,
+					VisibleRowsProvider = ResolvePagerVisibleRows,
+					PagerMode = pagerMode,
+					AnsiEnabled = ansiEnabled,
+					HasMorePayload = page.PageInfo.HasMore,
+					FetchNextPayload = FetchNextPayloadAsync,
+					PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
+					MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
+				},
+				cancellationToken)
+			.ConfigureAwait(false);
+		return true;
+
+		async ValueTask<ResultFlowPagerPage?> FetchNextPayloadAsync(CancellationToken token)
+		{
+			if (string.IsNullOrWhiteSpace(nextCursor))
+			{
+				return null;
+			}
+
+			var nextRequest = request with { Cursor = nextCursor };
+			var nextPage = await FetchPageSourceAsync(source, nextRequest, token).ConfigureAwait(false);
+			nextCursor = nextPage.PageInfo.NextCursor;
+			var nextPayload = await TransformPagerPageAsync(transformer, nextPage, ResultFlowPageRenderMode.Continuation, token)
+				.ConfigureAwait(false);
+			nextPayload = TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive);
+			return new ResultFlowPagerPage(
+				nextPayload,
+				nextPage.PageInfo.HasMore,
+				ContainsPresentationChrome: false);
+		}
+	}
+
+	private async ValueTask<int?> TryHandleGlobalDiagnosticsAsync(
+		GlobalInvocationOptions globalOptions,
+		CancellationToken cancellationToken)
+	{
+		if (!globalOptions.HasErrors)
+		{
+			return null;
+		}
+
+		var firstError = globalOptions.Diagnostics
+			.First(diagnostic => diagnostic.Severity == ParseDiagnosticSeverity.Error);
+		_ = await RenderOutputAsync(
+				Results.Validation(firstError.Message),
+				globalOptions.OutputFormat,
+				cancellationToken)
+			.ConfigureAwait(false);
+		return 1;
+	}
+
+	private static ValueTask<string> TransformPagerPageAsync(
+		IOutputTransformer transformer,
+		IReplPage page,
+		ResultFlowPageRenderMode mode,
+		CancellationToken cancellationToken)
+	{
+		var displayPage = CreatePagerDisplayPage(page);
+		return transformer is IResultFlowOutputTransformer resultFlowTransformer
+			? resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken)
+			: transformer.TransformAsync(displayPage, cancellationToken);
+	}
+
+	private async ValueTask WritePayloadAsync(
+		string payload,
+		IOutputTransformer transformer,
+		ResultFlowInvocationOptions? resultFlow,
+		CancellationToken cancellationToken)
+	{
+		if (TryCreatePager(
+				payload,
+				transformer,
+				resultFlow,
+				out var keyReader,
+				out var visibleRows,
+				out var pagerMode,
+				out var ansiEnabled))
+		{
+			await ResultFlowPager.WriteAsync(
+					payload,
+					ReplSessionIO.Output,
+					keyReader,
+					new ResultFlowPagerOptions
+					{
+						VisibleRows = visibleRows,
+						PagerMode = pagerMode,
+						AnsiEnabled = ansiEnabled,
+						PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
+						MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
+					},
+					cancellationToken)
+				.ConfigureAwait(false);
+			return;
+		}
+
+		await ReplSessionIO.Output.WriteLineAsync(payload).ConfigureAwait(false);
+	}
+
+	private bool TryCreatePager(
+		string payload,
+		IOutputTransformer transformer,
+		ResultFlowInvocationOptions? resultFlow,
+		[NotNullWhen(true)] out IReplKeyReader? keyReader,
+		out int visibleRows,
+		out ReplPagerMode pagerMode,
+		out bool ansiEnabled)
+		=> TryCreatePager(
+			payload,
+			transformer,
+			resultFlow,
+			hasMorePayload: false,
+			out keyReader,
+			out visibleRows,
+			out pagerMode,
+			out ansiEnabled);
+
+	private bool TryCreatePager(
+		string payload,
+		IOutputTransformer transformer,
+		ResultFlowInvocationOptions? resultFlow,
+		bool hasMorePayload,
+		[NotNullWhen(true)] out IReplKeyReader? keyReader,
+		out int visibleRows,
+		out ReplPagerMode pagerMode,
+		out bool ansiEnabled)
+	{
+		keyReader = null;
+		visibleRows = 0;
+		ansiEnabled = false;
+
+		pagerMode = resultFlow?.PagerMode ?? _options.Output.ResultFlow.DefaultPagerMode;
+		if (pagerMode == ReplPagerMode.Off
+			|| ReplSessionIO.IsProgrammatic
+			|| ReplSessionIO.IsProtocolPassthrough
+			|| !transformer.SupportsInteractivePaging)
+		{
+			return false;
+		}
+
+		if (!TryResolvePagerVisibleRows(out visibleRows)
+			|| (!hasMorePayload && ResultFlowPager.CountLines(payload) <= visibleRows)
+			|| !TryResolvePagerKeyReader(out keyReader))
+		{
+			return false;
+		}
+
+		ansiEnabled = _options.Output.IsAnsiEnabled();
+		return true;
+	}
+
+	private bool TryResolvePagerVisibleRows(out int visibleRows)
+	{
+		visibleRows = ResolvePagerVisibleRows();
+		return visibleRows > 0;
+	}
+
+	private int ResolvePagerVisibleRows()
+	{
+		var height = ReplSessionIO.WindowSize?.Height ?? TryGetConsoleWindowHeight();
+		var reservedRows = Math.Max(0, _options.Output.ResultFlow.ReservedVisibleRows);
+		return height is > 0
+			? Math.Max(1, height.Value - reservedRows)
+			: Math.Max(1, _options.Output.ResultFlow.DefaultPageSize);
+	}
+
+	private static bool TryResolvePagerKeyReader([NotNullWhen(true)] out IReplKeyReader? keyReader)
+	{
+		if (ReplSessionIO.KeyReader is { } sessionKeyReader)
+		{
+			keyReader = sessionKeyReader;
+			return true;
+		}
+
+		if (!Console.IsInputRedirected && !Console.IsOutputRedirected && !ReplSessionIO.IsSessionActive)
+		{
+			keyReader = new ConsoleKeyReader();
+			return true;
+		}
+
+		keyReader = null;
+		return false;
+	}
+
+	private ReplPageRequest CreatePageSourceRequest(ResultFlowInvocationOptions? resultFlow)
+	{
+		var surface = ResolveResultSurface();
+		return new ReplPagingContext(
+				_options.Output.ResultFlow,
+				resultFlow ?? new ResultFlowInvocationOptions(),
+				surface,
+				ResolveVisibleRowCapacityHint(surface))
+			.CreateRequest();
+	}
+
+	private static IReplPage CreatePagerDisplayPage(IReplPage page)
+	{
+		if (!page.PageInfo.HasMore)
+		{
+			return page;
+		}
+
+		var pageInfo = page.PageInfo with
+		{
+			NextCursor = null,
+		};
+		return new ReplPageDisplaySnapshot(page, pageInfo);
+	}
+
+	private async ValueTask<IReplPage> FetchPageSourceAsync(
+		IReplPageSource source,
+		ReplPageRequest request,
+		CancellationToken cancellationToken)
+	{
+		var diagnostics = ResolveResultFlowDiagnostics();
+		diagnostics?.OnDiagnostic(new ReplResultFlowDiagnostic(
+			ReplResultFlowDiagnosticKind.PageFetchStarting,
+			request.Cursor,
+			request.PageSize));
+
+		try
+		{
+			var page = await source.FetchPageAsync(request, cancellationToken).ConfigureAwait(false);
+			diagnostics?.OnDiagnostic(new ReplResultFlowDiagnostic(
+				ReplResultFlowDiagnosticKind.PageFetchSucceeded,
+				request.Cursor,
+				request.PageSize,
+				page.UntypedItems.Count));
+			return page;
+		}
+		catch (OperationCanceledException)
+		{
+			throw;
+		}
+		catch (Exception ex)
+		{
+			diagnostics?.OnDiagnostic(new ReplResultFlowDiagnostic(
+				ReplResultFlowDiagnosticKind.PageFetchFailed,
+				request.Cursor,
+				request.PageSize,
+				Exception: ex));
+			throw;
+		}
+	}
+
+	private IReplResultFlowDiagnostics? ResolveResultFlowDiagnostics()
+	{
+		var serviceProvider = _runtimeState.Value?.ServiceProvider ?? _services;
+		return serviceProvider.GetService(typeof(IReplResultFlowDiagnostics)) as IReplResultFlowDiagnostics
+			?? _services.GetService(typeof(IReplResultFlowDiagnostics)) as IReplResultFlowDiagnostics;
 	}
 
 	private string TryColorizeStructuredPayload(string payload, string format, bool isInteractive)
@@ -831,6 +1199,7 @@ public sealed partial class CoreReplApp
 		CancellationToken cancellationToken)
 	{
 		var contextValues = BuildContextHierarchyValues(match.Route.Template, matchedPathTokens, contexts);
+		contextValues.Add(CreatePagingContext(globalOptions));
 		var mergedNamedOptions = MergeNamedOptions(
 			parsedOptions.NamedOptions,
 			globalOptions.CustomGlobalNamedOptions);
@@ -846,6 +1215,81 @@ public sealed partial class CoreReplApp
 			_options.Interaction,
 			_implicitServiceParameters,
 			cancellationToken);
+	}
+
+	private ReplPagingContext CreatePagingContext(GlobalInvocationOptions globalOptions)
+	{
+		var surface = ResolveResultSurface();
+		var visibleRows = ResolveVisibleRowCapacityHint(surface);
+		return new ReplPagingContext(
+			_options.Output.ResultFlow,
+			globalOptions.ResultFlow,
+			surface,
+			visibleRows);
+	}
+
+	private ReplResultSurface ResolveResultSurface()
+	{
+		if (ReplSessionIO.IsProgrammatic)
+		{
+			return ReplResultSurface.Programmatic;
+		}
+
+		if (_runtimeState.Value?.IsInteractiveSession == true)
+		{
+			return ReplResultSurface.Interactive;
+		}
+
+		if (ReplSessionIO.IsHostedSession)
+		{
+			return ReplResultSurface.Hosted;
+		}
+
+		return Console.IsOutputRedirected
+			? ReplResultSurface.Redirected
+			: ReplResultSurface.Console;
+	}
+
+	private int? ResolveVisibleRowCapacityHint(ReplResultSurface surface)
+	{
+		if (surface is ReplResultSurface.Redirected or ReplResultSurface.Programmatic)
+		{
+			return null;
+		}
+
+		var height = ReplSessionIO.WindowSize?.Height ?? TryGetConsoleWindowHeight();
+		if (height is not > 0)
+		{
+			return null;
+		}
+
+		var reservedRows = Math.Max(0, _options.Output.ResultFlow.ReservedVisibleRows);
+		return Math.Max(1, height.Value - reservedRows);
+	}
+
+	private static int? TryGetConsoleWindowHeight()
+	{
+		try
+		{
+			var height = Console.WindowHeight;
+			return height > 0 ? height : null;
+		}
+		catch (IOException)
+		{
+			return null;
+		}
+		catch (PlatformNotSupportedException)
+		{
+			return null;
+		}
+		catch (InvalidOperationException)
+		{
+			return null;
+		}
+		catch (System.Security.SecurityException)
+		{
+			return null;
+		}
 	}
 
 	private static bool TryFindGlobalCommandOptionCollision(

@@ -1,4 +1,6 @@
 using Repl.Mcp;
+using Repl.Documentation;
+using System.Text.Json;
 
 namespace Repl.McpTests;
 
@@ -87,4 +89,257 @@ public sealed class Given_McpToolAdapter
 
 		tokens.Should().BeEquivalentTo(["contact", "42", "delete", "--verbose", "true"]);
 	}
+
+	[TestMethod]
+	[Description("PrepareExecution accepts compact opaque result cursors and emits them as result-flow tokens.")]
+	public void When_ResultCursorIsValid_Then_ResultFlowTokenIsEmitted()
+	{
+		var (tokens, _) = McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc_DEF-123"),
+			});
+
+		tokens.Should().ContainInOrder("--result:cursor", "abc_DEF-123", "contacts");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result cursors that could be confused with CLI token boundaries.")]
+	public void When_ResultCursorContainsWhitespace_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc def"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cursor*whitespace*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result cursors that start like CLI options.")]
+	public void When_ResultCursorStartsWithDash_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("--result:all"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cursor*option*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects overly large result cursors.")]
+	public void When_ResultCursorIsTooLong_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement(new string('a', 513)),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cursor*512*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result cursors that contain control characters.")]
+	public void When_ResultCursorContainsControlCharacter_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc\u001b[2J"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*cursor*control*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution accepts compact numeric result page sizes and emits them as result-flow tokens.")]
+	public void When_ResultPageSizeIsValid_Then_ResultFlowTokenIsEmitted()
+	{
+		var (tokens, _) = McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(25),
+			});
+
+		tokens.Should().ContainInOrder("--result:page-size", "25", "contacts");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result page sizes that are not numeric.")]
+	public void When_ResultPageSizeIsNotNumeric_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement("abc"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*page size*numeric*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects overly large result page size tokens.")]
+	public void When_ResultPageSizeTokenIsTooLong_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(new string('1', 11)),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*page size*10*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result page sizes that do not fit in a positive Int32.")]
+	public void When_ResultPageSizeOverflowsInt32_Then_Rejected()
+	{
+		var action = () => McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement("9999999999"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*page size*32-bit*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution treats reserved result-flow argument names case-insensitively.")]
+	public void When_ResultFlowInputsUseDifferentCase_Then_ReservedDispatchStillValidatesAndEmitsTokens()
+	{
+		var (tokens, _) = McpToolAdapter.PrepareExecution(
+			CreatePagedCommand("contacts"),
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["_replcursor"] = JsonSerializer.SerializeToElement("abc_DEF-123"),
+				["_replpagesize"] = JsonSerializer.SerializeToElement(25),
+			});
+
+		tokens.Should().ContainInOrder("--result:cursor", "abc_DEF-123", "--result:page-size", "25", "contacts");
+		tokens.Should().NotContain("--_replcursor");
+		tokens.Should().NotContain("--_replpagesize");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects MCP arguments that are not declared by the command schema.")]
+	public void When_ArgumentIsNotInToolSchema_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "contacts {id}",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [new ReplDocArgument("id", "string", Required: true, Description: null)],
+			Options: [new ReplDocOption("format", "string", Required: false, Description: null, Aliases: [], ReverseAliases: [], ValueAliases: [], EnumValues: [], DefaultValue: null)]);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["id"] = JsonSerializer.SerializeToElement("abc"),
+				["output:xml"] = JsonSerializer.SerializeToElement("true"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*not defined*schema*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects token-like MCP argument values before reconstructing CLI tokens.")]
+	public void When_ArgumentValueStartsWithDashDash_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "contacts",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: [new ReplDocOption("format", "string", Required: false, Description: null, Aliases: [], ReverseAliases: [], ValueAliases: [], EnumValues: [], DefaultValue: null)]);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["format"] = JsonSerializer.SerializeToElement("--result:all"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*argument value*CLI option*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects answer prefills that are not declared by the command schema.")]
+	public void When_AnswerPrefillIsNotInToolSchema_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "wizard",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: []);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["answer.confirm"] = JsonSerializer.SerializeToElement("yes"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*not defined*schema*");
+	}
+
+	[TestMethod]
+	[Description("PrepareExecution rejects result-flow inputs for commands that do not expose paging in their schema.")]
+	public void When_ResultFlowInputIsNotInToolSchema_Then_Rejected()
+	{
+		var command = new ReplDocCommand(
+			Path: "contacts",
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: []);
+
+		var action = () => McpToolAdapter.PrepareExecution(
+			command,
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				[McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement("abc123"),
+			});
+
+		action.Should().Throw<InvalidOperationException>()
+			.WithMessage("*not defined*schema*");
+	}
+
+	private static ReplDocCommand CreatePagedCommand(string path) =>
+		new(
+			Path: path,
+			Description: null,
+			Aliases: [],
+			IsHidden: false,
+			Arguments: [],
+			Options: [],
+			AcceptsPagingInput: true);
 }

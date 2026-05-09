@@ -16,6 +16,7 @@ using Repl.Mcp;
 var app = ReplApp.Create(services =>
 {
 	services.AddSingleton<ContactStore>();
+	services.AddSingleton<DirectoryContactFeed>();
 }).UseDefaultInteractive();
 
 app.UseMcpServer(o =>
@@ -29,6 +30,14 @@ app.Map("contacts", (ContactStore contacts) => contacts.All)
 	.WithDescription("List all contacts")
 	.ReadOnly()
 	.AsResource();
+
+app.Map("contacts paged", (DirectoryContactFeed contacts, IReplPagingContext paging) => contacts.Query(paging))
+	.WithDescription("List the large contact directory as a paged result")
+	.WithDetails("""
+		Demonstrates result-flow paging on both CLI and MCP surfaces.
+		In MCP mode, continue with the reserved _replCursor input returned by pageInfo.nextCursor.
+		""")
+	.ReadOnly();
 
 app.Map("contacts dashboard", (ContactStore contacts) =>
 	{

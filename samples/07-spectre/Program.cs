@@ -6,14 +6,15 @@ using Repl;
 var app = ReplApp.Create(services =>
 	{
 		services.AddSingleton<IContactStore, InMemoryContactStore>();
+		services.AddSingleton<ActivityFeed>();
 		services.AddSpectreConsole();
 	})
 	.WithDescription("Spectre.Console integration: rich renderables, interactive prompts, data visualization.")
 	.WithBanner((IAnsiConsole console) =>
 	{
 		console.Write(new FigletText("Spectre").Color(Color.Blue));
-		console.MarkupLine("  [grey]Commands:[/] tour, list, detail, chart, tree, json, path, calendar,");
-		console.MarkupLine("           figlet, status, progress, add, configure, login");
+		console.MarkupLine("  [grey]Commands:[/] tour, list, activity, detail, chart, tree, json, path,");
+		console.MarkupLine("           calendar, figlet, status, progress, add, configure, login");
 	})
 	.UseDefaultInteractive()
 	.UseCliProfile()
@@ -132,6 +133,13 @@ app.Map("tour",
 app.Map("list",
 	[Description("List all contacts (auto-rendered table)")]
 	(IContactStore store) => store.All());
+
+// ──────────────────────────────────────────────────────────────
+// activity — Paged long data source
+// ──────────────────────────────────────────────────────────────
+app.Map("activity",
+	[Description("List a paged activity feed generated from a long data source")]
+	(ActivityFeed feed, IReplPagingContext paging) => feed.Query(paging));
 
 // ──────────────────────────────────────────────────────────────
 // detail — Panel + Grid
