@@ -55,7 +55,7 @@ internal static class McpHttpBindingFactory
 			normalized = "/" + normalized;
 		}
 
-		return normalized.Length == 0 ? ReplMcpHttpServerOptions.DefaultPath : normalized;
+		return normalized;
 	}
 
 	private static bool IsLoopbackHost(string host)

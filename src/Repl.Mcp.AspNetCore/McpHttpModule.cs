@@ -64,7 +64,8 @@ internal sealed class McpHttpModule : IReplModule
 		}
 		catch (Exception ex)
 		{
-			await io.Output.WriteLineAsync($"Error: {ex.Message}").ConfigureAwait(false);
+			ReplMcpHttpDiagnostics.StartupFailures.Add(1);
+			await io.Error.WriteLineAsync(ex.ToString()).ConfigureAwait(false);
 			return Results.Exit(1);
 		}
 	}
