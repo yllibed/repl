@@ -31,6 +31,7 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<bool> s_isProtocolPassthrough = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
+	private static readonly ConcurrentDictionary<string, CancellationTokenSource> s_commandCancellation = new(StringComparer.Ordinal);
 
 	/// <summary>
 	/// Gets the current session output writer, or <see cref="Console.Out"/> when no session is active.
@@ -294,6 +295,7 @@ internal static class ReplSessionIO
 		if (!string.IsNullOrWhiteSpace(sessionId))
 		{
 			s_sessions.TryRemove(sessionId, out _);
+			s_commandCancellation.TryRemove(sessionId, out _);
 		}
 	}
 
@@ -318,6 +320,38 @@ internal static class ReplSessionIO
 
 	internal static bool TryGetSession(string sessionId, out SessionMetadata session) =>
 		s_sessions.TryGetValue(sessionId, out session);
+
+	internal static void SetCurrentCommandCancellation(CancellationTokenSource? cts)
+	{
+		if (!TryGetCurrentSessionId(out var sessionId))
+		{
+			return;
+		}
+
+		if (cts is null)
+		{
+			s_commandCancellation.TryRemove(sessionId, out _);
+			return;
+		}
+
+		s_commandCancellation.AddOrUpdate(sessionId, cts, (_, _) => cts);
+	}
+
+	internal static bool TryCancelCommand(string sessionId)
+	{
+		if (string.IsNullOrWhiteSpace(sessionId)
+			|| !s_commandCancellation.TryGetValue(sessionId, out var cts))
+		{
+			return false;
+		}
+
+		if (!cts.IsCancellationRequested)
+		{
+			cts.Cancel();
+		}
+
+		return true;
+	}
 
 	private static SessionMetadata? GetCurrentSession()
 	{

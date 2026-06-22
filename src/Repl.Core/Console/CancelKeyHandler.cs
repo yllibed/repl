@@ -36,6 +36,7 @@ internal sealed class CancelKeyHandler : IDisposable
 		lock (_lock)
 		{
 			_commandCts = cts;
+			ReplSessionIO.SetCurrentCommandCancellation(cts);
 		}
 	}
 
