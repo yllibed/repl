@@ -50,6 +50,7 @@ public static class ReplMcpHttpServer
 		builder.Logging.AddSimpleConsole();
 		options.ConfigureBuilder?.Invoke(builder);
 		builder.WebHost.UseUrls(binding.ListenUrl);
+		ApplyBindingSecurityDefaults(binding, options.Security);
 		builder.Services.AddSingleton(options.Security);
 		builder.Services.AddReplMcpHttp(replApp, options.Http);
 
@@ -83,6 +84,16 @@ public static class ReplMcpHttpServer
 			{
 				await webApp.StopAsync(CancellationToken.None).ConfigureAwait(false);
 			}
+		}
+	}
+
+	internal static void ApplyBindingSecurityDefaults(
+		McpHttpBinding binding,
+		ReplMcpHttpSecurityOptions security)
+	{
+		if (binding.AllowsRemote && security.UsesDefaultAllowedHosts())
+		{
+			security.AllowAnyHost = true;
 		}
 	}
 }

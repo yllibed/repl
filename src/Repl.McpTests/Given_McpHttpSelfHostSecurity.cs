@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using ModelContextProtocol.AspNetCore;
+using ModelContextProtocol.Server;
 using Repl.Mcp.AspNetCore;
 
 namespace Repl.McpTests;
@@ -107,6 +110,90 @@ public sealed class Given_McpHttpSelfHostSecurity
 		clone.Security.AllowAnyHost.Should().BeTrue();
 		clone.Security.AllowedOrigins.Should().ContainSingle("https://trusted.example");
 		clone.Security.AllowedOrigins.Should().NotBeSameAs(options.Security.AllowedOrigins);
+	}
+
+	[TestMethod]
+	public void When_ServerOptionsAreCreated_Then_UsesConservativeStatefulLimits()
+	{
+		var options = new ReplMcpHttpServerOptions();
+
+		options.Http.IdleTimeout.Should().Be(TimeSpan.FromMinutes(30));
+		options.Http.MaxIdleSessionCount.Should().Be(100);
+	}
+
+	[TestMethod]
+	public void When_RemoteBindingUsesDefaultSecurity_Then_AnyHostIsAllowedButOriginsStayRestricted()
+	{
+		var binding = McpHttpBindingFactory.Create("0.0.0.0", 7375, "/mcp", allowRemote: true);
+		var security = new ReplMcpHttpSecurityOptions();
+
+		ReplMcpHttpServer.ApplyBindingSecurityDefaults(binding, security);
+
+		security.AllowAnyHost.Should().BeTrue();
+		security.AllowAnyOrigin.Should().BeFalse();
+	}
+
+	[TestMethod]
+	public void When_RemoteBindingUsesCustomHostList_Then_HostListIsPreserved()
+	{
+		var binding = McpHttpBindingFactory.Create("0.0.0.0", 7375, "/mcp", allowRemote: true);
+		var security = new ReplMcpHttpSecurityOptions();
+		security.AllowedHosts.Clear();
+		security.AllowedHosts.Add("internal.example");
+
+		ReplMcpHttpServer.ApplyBindingSecurityDefaults(binding, security);
+
+		security.AllowAnyHost.Should().BeFalse();
+		security.AllowedHosts.Should().ContainSingle("internal.example");
+	}
+
+	[TestMethod]
+	public async Task When_HttpSessionCompletes_Then_SessionItemIsReleased()
+	{
+		var app = ReplApp.Create();
+		app.Map("ping", () => "pong");
+		var transport = new HttpServerTransportOptions();
+		var runCalled = false;
+#pragma warning disable MCPEXP002
+		transport.RunSessionHandler = (_, _, _) =>
+		{
+			runCalled = true;
+			return Task.CompletedTask;
+		};
+#pragma warning restore MCPEXP002
+		ReplMcpHttpServiceCollectionExtensions.ConfigureTransport(transport, app, new ReplMcpHttpOptions());
+		var context = CreateContext("127.0.0.1:7375");
+		context.RequestServices = new ServiceCollection().BuildServiceProvider();
+
+		await transport.ConfigureSessionOptions!(context, new McpServerOptions(), CancellationToken.None);
+		context.Items.Should().NotBeEmpty();
+
+#pragma warning disable MCPEXP002
+		await transport.RunSessionHandler!(context, null!, CancellationToken.None);
+#pragma warning restore MCPEXP002
+
+		runCalled.Should().BeTrue();
+		context.Items.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	public async Task When_ExternalSessionConfigurationFails_Then_SessionItemIsReleased()
+	{
+		var app = ReplApp.Create();
+		app.Map("ping", () => "pong");
+		var transport = new HttpServerTransportOptions
+		{
+			ConfigureSessionOptions = (_, _, _) => throw new InvalidOperationException("boom"),
+		};
+		ReplMcpHttpServiceCollectionExtensions.ConfigureTransport(transport, app, new ReplMcpHttpOptions());
+		var context = CreateContext("127.0.0.1:7375");
+		context.RequestServices = new ServiceCollection().BuildServiceProvider();
+
+		var act = () => transport.ConfigureSessionOptions!(context, new McpServerOptions(), CancellationToken.None);
+
+		await act.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("boom");
+		context.Items.Should().BeEmpty();
 	}
 
 	private static ReplMcpHttpSecurityMiddleware CreateMiddleware(

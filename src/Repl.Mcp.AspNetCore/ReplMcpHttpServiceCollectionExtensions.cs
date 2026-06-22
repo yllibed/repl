@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ModelContextProtocol.AspNetCore;
@@ -11,6 +12,8 @@ namespace Repl.Mcp.AspNetCore;
 /// </summary>
 public static class ReplMcpHttpServiceCollectionExtensions
 {
+	private static readonly object SessionItemKey = new();
+
 	/// <summary>
 	/// Registers Repl MCP server services using the MCP Streamable HTTP transport.
 	/// </summary>
@@ -52,26 +55,80 @@ public static class ReplMcpHttpServiceCollectionExtensions
 			builder.AddAuthorizationFilters();
 		}
 
-		builder.WithHttpTransport(http =>
-		{
-			ApplyTransportOptions(http, options);
-			options.ConfigureTransport?.Invoke(http);
+		builder.WithHttpTransport(http => ConfigureTransport(http, app, options));
 
-			var configureSessionOptions = http.ConfigureSessionOptions;
-			http.ConfigureSessionOptions = async (context, serverOptions, cancellationToken) =>
+		return builder;
+	}
+
+	internal static void ConfigureTransport(
+		HttpServerTransportOptions http,
+		ReplApp app,
+		ReplMcpHttpOptions options)
+	{
+		ApplyTransportOptions(http, options);
+		options.ConfigureTransport?.Invoke(http);
+		ConfigureSessionOptions(http, app, options);
+		ConfigureRunSessionHandler(http);
+	}
+
+	private static void ConfigureSessionOptions(
+		HttpServerTransportOptions http,
+		ReplApp app,
+		ReplMcpHttpOptions options)
+	{
+		var configureSessionOptions = http.ConfigureSessionOptions;
+		http.ConfigureSessionOptions = async (context, serverOptions, cancellationToken) =>
+		{
+			var sessionServices = new CompositeServiceProvider(context.RequestServices, app.Services);
+			var session = app.CreateMcpServerSession(sessionServices, options.ConfigureServer);
+			try
 			{
-				var sessionServices = new CompositeServiceProvider(context.RequestServices, app.Services);
-				var session = app.CreateMcpServerSession(sessionServices, options.ConfigureServer);
 				CopyServerOptions(session.ServerOptions, serverOptions);
+				context.Items[SessionItemKey] = session;
 
 				if (configureSessionOptions is not null)
 				{
 					await configureSessionOptions(context, serverOptions, cancellationToken).ConfigureAwait(false);
 				}
-			};
-		});
+			}
+			catch
+			{
+				context.Items.Remove(SessionItemKey);
+				session.Dispose();
+				throw;
+			}
+		};
+	}
 
-		return builder;
+	private static void ConfigureRunSessionHandler(HttpServerTransportOptions http)
+	{
+#pragma warning disable MCPEXP002
+		var runSessionHandler = http.RunSessionHandler;
+		http.RunSessionHandler = async (context, server, cancellationToken) =>
+		{
+			var session = TakeSession(context);
+			ReplMcpHttpDiagnostics.SessionsStarted.Add(1);
+			ReplMcpHttpDiagnostics.SessionsActive.Add(1);
+			try
+			{
+				if (runSessionHandler is not null)
+				{
+					await runSessionHandler(context, server, cancellationToken).ConfigureAwait(false);
+				}
+				else
+				{
+					await server.RunAsync(cancellationToken).ConfigureAwait(false);
+				}
+			}
+			finally
+			{
+				session ??= TakeSession(context);
+				session?.Dispose();
+				ReplMcpHttpDiagnostics.SessionsEnded.Add(1);
+				ReplMcpHttpDiagnostics.SessionsActive.Add(-1);
+			}
+		};
+#pragma warning restore MCPEXP002
 	}
 
 	private static void ApplyTransportOptions(
@@ -97,5 +154,17 @@ public static class ReplMcpHttpServiceCollectionExtensions
 		target.ServerInfo = source.ServerInfo;
 		target.Capabilities = source.Capabilities;
 		target.Handlers = source.Handlers;
+	}
+
+	private static ReplMcpServerSession? TakeSession(HttpContext context)
+	{
+		if (context.Items.TryGetValue(SessionItemKey, out var value)
+			&& value is ReplMcpServerSession session)
+		{
+			context.Items.Remove(SessionItemKey);
+			return session;
+		}
+
+		return null;
 	}
 }

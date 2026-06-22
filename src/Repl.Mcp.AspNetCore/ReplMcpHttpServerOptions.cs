@@ -24,6 +24,15 @@ public sealed class ReplMcpHttpServerOptions
 	public static readonly string DefaultPath = "/mcp";
 
 	/// <summary>
+	/// Initializes a new instance of the <see cref="ReplMcpHttpServerOptions"/> class.
+	/// </summary>
+	public ReplMcpHttpServerOptions()
+	{
+		Http.IdleTimeout = TimeSpan.FromMinutes(30);
+		Http.MaxIdleSessionCount = 100;
+	}
+
+	/// <summary>
 	/// Gets or sets the hostname or IP address to bind.
 	/// </summary>
 	public string Host { get; set; } = DefaultHost;
