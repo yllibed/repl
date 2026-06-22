@@ -81,6 +81,25 @@ public static class McpReplExtensions
 	}
 
 	/// <summary>
+	/// Creates a session-aware MCP server configuration from a <see cref="ReplApp"/>'s command graph
+	/// using an externally supplied service provider during tool dispatch.
+	/// </summary>
+	/// <param name="app">The Repl app.</param>
+	/// <param name="services">Service provider used for DI during tool dispatch.</param>
+	/// <param name="configure">Optional MCP configuration callback.</param>
+	/// <returns>A disposable MCP server session.</returns>
+	public static ReplMcpServerSession CreateMcpServerSession(
+		this ReplApp app,
+		IServiceProvider services,
+		Action<ReplMcpServerOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+		ArgumentNullException.ThrowIfNull(services);
+
+		return app.Core.CreateMcpServerSession(configure, services);
+	}
+
+	/// <summary>
 	/// Builds <see cref="McpServerOptions"/> from the Repl app's command graph.
 	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
 	/// without going through the <c>mcp serve</c> CLI command.
