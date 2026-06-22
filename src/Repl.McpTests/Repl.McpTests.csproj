@@ -13,6 +13,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Repl.Mcp\Repl.Mcp.csproj" />
+		<ProjectReference Include="..\Repl.Mcp.AspNetCore\Repl.Mcp.AspNetCore.csproj" />
 	</ItemGroup>
 
 </Project>

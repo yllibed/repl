@@ -7,6 +7,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="Repl.McpTests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\Repl.Mcp\Repl.Mcp.csproj" />
 	</ItemGroup>
 
