@@ -65,6 +65,22 @@ public static class McpReplExtensions
 	}
 
 	/// <summary>
+	/// Creates a session-aware MCP server configuration from a <see cref="ReplApp"/>'s command graph.
+	/// Use this for multi-session transports such as Streamable HTTP.
+	/// </summary>
+	/// <param name="app">The Repl app.</param>
+	/// <param name="configure">Optional MCP configuration callback.</param>
+	/// <returns>A disposable MCP server session.</returns>
+	public static ReplMcpServerSession CreateMcpServerSession(
+		this ReplApp app,
+		Action<ReplMcpServerOptions>? configure = null)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+
+		return app.Core.CreateMcpServerSession(configure, app.Services);
+	}
+
+	/// <summary>
 	/// Builds <see cref="McpServerOptions"/> from the Repl app's command graph.
 	/// Use this to integrate with custom transports (WebSocket, HTTP) or ASP.NET Core
 	/// without going through the <c>mcp serve</c> CLI command.
@@ -87,6 +103,28 @@ public static class McpReplExtensions
 
 		var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
 		return handler.BuildStaticServerOptions();
+	}
+
+	/// <summary>
+	/// Creates a session-aware MCP server configuration from a Repl command graph.
+	/// Use this for multi-session transports such as Streamable HTTP.
+	/// </summary>
+	/// <param name="app">The core Repl app.</param>
+	/// <param name="configure">Optional MCP configuration callback.</param>
+	/// <param name="services">Optional service provider for DI during tool dispatch.</param>
+	/// <returns>A disposable MCP server session.</returns>
+	public static ReplMcpServerSession CreateMcpServerSession(
+		this ICoreReplApp app,
+		Action<ReplMcpServerOptions>? configure = null,
+		IServiceProvider? services = null)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+
+		var options = new ReplMcpServerOptions();
+		configure?.Invoke(options);
+
+		var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
+		return new ReplMcpServerSession(handler);
 	}
 
 	private sealed class EmptyServiceProvider : IServiceProvider
