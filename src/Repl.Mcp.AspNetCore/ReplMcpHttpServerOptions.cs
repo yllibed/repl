@@ -1,5 +1,5 @@
-using ModelContextProtocol.AspNetCore;
-using Repl.Mcp;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 
 namespace Repl.Mcp.AspNetCore;
 
@@ -11,17 +11,17 @@ public sealed class ReplMcpHttpServerOptions
 	/// <summary>
 	/// Default local-only host.
 	/// </summary>
-	public const string DefaultHost = "127.0.0.1";
+	public static readonly string DefaultHost = "127.0.0.1";
 
 	/// <summary>
 	/// Default HTTP port. The digits correspond to "repl" on a phone keypad.
 	/// </summary>
-	public const int DefaultPort = 7375;
+	public static readonly int DefaultPort = 7375;
 
 	/// <summary>
 	/// Default Streamable HTTP endpoint path.
 	/// </summary>
-	public const string DefaultPath = "/mcp";
+	public static readonly string DefaultPath = "/mcp";
 
 	/// <summary>
 	/// Gets or sets the hostname or IP address to bind.
@@ -49,64 +49,79 @@ public sealed class ReplMcpHttpServerOptions
 	public bool Quiet { get; set; }
 
 	/// <summary>
-	/// Gets or sets a callback for configuring the Repl MCP server surface created for each MCP session.
+	/// Gets the shared Repl MCP HTTP transport options.
 	/// </summary>
-	public Action<ReplMcpServerOptions>? ConfigureServer { get; set; }
+	public ReplMcpHttpOptions Http { get; } = new();
 
 	/// <summary>
-	/// Gets or sets a callback for configuring the underlying MCP HTTP transport.
+	/// Gets the self-hosted HTTP security options.
 	/// </summary>
-	public Action<HttpServerTransportOptions>? ConfigureTransport { get; set; }
+	public ReplMcpHttpSecurityOptions Security { get; } = new();
 
 	/// <summary>
-	/// Gets or sets a value indicating whether MCP authorization filters should be registered.
+	/// Gets or sets a callback invoked before the inner <see cref="WebApplication"/> is built.
 	/// </summary>
-	public bool EnableAuthorizationFilters { get; set; }
+	public Action<WebApplicationBuilder>? ConfigureBuilder { get; set; }
 
 	/// <summary>
-	/// Gets or sets a value indicating whether HTTP sessions should be stateless.
+	/// Gets or sets a callback invoked after the inner <see cref="WebApplication"/> is built and before MCP is mapped.
 	/// </summary>
-	public bool Stateless { get; set; }
+	public Action<WebApplication>? ConfigureApp { get; set; }
 
 	/// <summary>
-	/// Gets or sets a value indicating whether a single execution context should be used per MCP session.
+	/// Gets or sets a callback invoked after the MCP endpoint is mapped.
 	/// </summary>
-	public bool PerSessionExecutionContext { get; set; }
+	public Action<IEndpointConventionBuilder>? ConfigureEndpoint { get; set; }
 
-	/// <summary>
-	/// Gets or sets the amount of idle time after which a stateful MCP session expires.
-	/// </summary>
-	public TimeSpan? IdleTimeout { get; set; }
-
-	/// <summary>
-	/// Gets or sets the maximum number of idle stateful MCP sessions to keep in memory.
-	/// </summary>
-	public int? MaxIdleSessionCount { get; set; }
-
-	internal ReplMcpHttpOptions ToHttpOptions() => new()
+	internal ReplMcpHttpServerOptions Clone()
 	{
-		ConfigureServer = ConfigureServer,
-		ConfigureTransport = ConfigureTransport,
-		EnableAuthorizationFilters = EnableAuthorizationFilters,
-		Stateless = Stateless,
-		PerSessionExecutionContext = PerSessionExecutionContext,
-		IdleTimeout = IdleTimeout,
-		MaxIdleSessionCount = MaxIdleSessionCount,
-	};
+		var clone = new ReplMcpHttpServerOptions
+		{
+			Host = Host,
+			Port = Port,
+			Path = Path,
+			AllowRemote = AllowRemote,
+			Quiet = Quiet,
+			ConfigureBuilder = ConfigureBuilder,
+			ConfigureApp = ConfigureApp,
+			ConfigureEndpoint = ConfigureEndpoint,
+		};
 
-	internal ReplMcpHttpServerOptions Clone() => new()
+		CopyNestedOptionsTo(clone);
+		return clone;
+	}
+
+	internal void CopyNestedOptionsTo(ReplMcpHttpServerOptions target)
 	{
-		Host = Host,
-		Port = Port,
-		Path = Path,
-		AllowRemote = AllowRemote,
-		Quiet = Quiet,
-		ConfigureServer = ConfigureServer,
-		ConfigureTransport = ConfigureTransport,
-		EnableAuthorizationFilters = EnableAuthorizationFilters,
-		Stateless = Stateless,
-		PerSessionExecutionContext = PerSessionExecutionContext,
-		IdleTimeout = IdleTimeout,
-		MaxIdleSessionCount = MaxIdleSessionCount,
-	};
+		CopyHttpOptions(Http, target.Http);
+		CopySecurityOptions(Security, target.Security);
+	}
+
+	private static void CopyHttpOptions(ReplMcpHttpOptions source, ReplMcpHttpOptions target)
+	{
+		target.ConfigureServer = source.ConfigureServer;
+		target.ConfigureTransport = source.ConfigureTransport;
+		target.EnableAuthorizationFilters = source.EnableAuthorizationFilters;
+		target.Stateless = source.Stateless;
+		target.PerSessionExecutionContext = source.PerSessionExecutionContext;
+		target.IdleTimeout = source.IdleTimeout;
+		target.MaxIdleSessionCount = source.MaxIdleSessionCount;
+	}
+
+	private static void CopySecurityOptions(ReplMcpHttpSecurityOptions source, ReplMcpHttpSecurityOptions target)
+	{
+		target.AllowAnyHost = source.AllowAnyHost;
+		target.AllowAnyOrigin = source.AllowAnyOrigin;
+		target.AllowedHosts.Clear();
+		foreach (var host in source.AllowedHosts)
+		{
+			target.AllowedHosts.Add(host);
+		}
+
+		target.AllowedOrigins.Clear();
+		foreach (var origin in source.AllowedOrigins)
+		{
+			target.AllowedOrigins.Add(origin);
+		}
+	}
 }

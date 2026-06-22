@@ -13,7 +13,7 @@ internal sealed class McpHttpModule : IReplModule
 		_app = app;
 		_options = options;
 		_mcpOptions = new ReplMcpServerOptions();
-		options.ConfigureServer?.Invoke(_mcpOptions);
+		options.Http.ConfigureServer?.Invoke(_mcpOptions);
 	}
 
 	public void Map(IReplMap map)
@@ -35,7 +35,6 @@ internal sealed class McpHttpModule : IReplModule
 		int? port,
 		string? path,
 		bool allowRemote,
-		bool stateless,
 		int? idleTimeoutSeconds,
 		int? maxIdleSessions,
 		bool quiet,
@@ -46,7 +45,6 @@ internal sealed class McpHttpModule : IReplModule
 			port,
 			path,
 			allowRemote,
-			stateless,
 			idleTimeoutSeconds,
 			maxIdleSessions,
 			quiet);
@@ -76,7 +74,6 @@ internal sealed class McpHttpModule : IReplModule
 		int? port,
 		string? path,
 		bool allowRemote,
-		bool stateless,
 		int? idleTimeoutSeconds,
 		int? maxIdleSessions,
 		bool quiet)
@@ -85,17 +82,16 @@ internal sealed class McpHttpModule : IReplModule
 		ApplyEndpointOptions(runOptions, host, port, path);
 
 		runOptions.AllowRemote |= allowRemote;
-		runOptions.Stateless |= stateless;
 		runOptions.Quiet |= quiet;
 
 		if (idleTimeoutSeconds is { } idleSeconds)
 		{
-			runOptions.IdleTimeout = TimeSpan.FromSeconds(idleSeconds);
+			runOptions.Http.IdleTimeout = TimeSpan.FromSeconds(idleSeconds);
 		}
 
 		if (maxIdleSessions is { } maxSessions)
 		{
-			runOptions.MaxIdleSessionCount = maxSessions;
+			runOptions.Http.MaxIdleSessionCount = maxSessions;
 		}
 
 		return runOptions;

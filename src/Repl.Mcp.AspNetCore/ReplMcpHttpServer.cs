@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Repl.Mcp.AspNetCore;
@@ -46,24 +47,19 @@ public static class ReplMcpHttpServer
 			options.AllowRemote);
 
 		var builder = WebApplication.CreateSlimBuilder();
-		builder.Logging.ClearProviders();
+		builder.Logging.AddSimpleConsole();
+		options.ConfigureBuilder?.Invoke(builder);
 		builder.WebHost.UseUrls(binding.ListenUrl);
-		builder.Services.AddReplMcpHttp(replApp, http =>
-		{
-			var httpOptions = options.ToHttpOptions();
-			http.ConfigureServer = httpOptions.ConfigureServer;
-			http.ConfigureTransport = httpOptions.ConfigureTransport;
-			http.EnableAuthorizationFilters = httpOptions.EnableAuthorizationFilters;
-			http.Stateless = httpOptions.Stateless;
-			http.PerSessionExecutionContext = httpOptions.PerSessionExecutionContext;
-			http.IdleTimeout = httpOptions.IdleTimeout;
-			http.MaxIdleSessionCount = httpOptions.MaxIdleSessionCount;
-		});
+		builder.Services.AddSingleton(options.Security);
+		builder.Services.AddReplMcpHttp(replApp, options.Http);
 
 		var webApp = builder.Build();
 		await using (webApp.ConfigureAwait(false))
 		{
-			webApp.MapReplMcp(binding.Path);
+			webApp.UseMiddleware<ReplMcpHttpSecurityMiddleware>();
+			options.ConfigureApp?.Invoke(webApp);
+			var endpoint = webApp.MapReplMcp(binding.Path);
+			options.ConfigureEndpoint?.Invoke(endpoint);
 
 			if (!options.Quiet && output is not null)
 			{
@@ -79,6 +75,9 @@ public static class ReplMcpHttpServer
 			try
 			{
 				await Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
 			}
 			finally
 			{

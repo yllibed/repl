@@ -23,11 +23,26 @@ public static class ReplMcpHttpServiceCollectionExtensions
 		ReplApp app,
 		Action<ReplMcpHttpOptions>? configure = null)
 	{
-		ArgumentNullException.ThrowIfNull(services);
-		ArgumentNullException.ThrowIfNull(app);
-
 		var options = new ReplMcpHttpOptions();
 		configure?.Invoke(options);
+		return services.AddReplMcpHttp(app, options);
+	}
+
+	/// <summary>
+	/// Registers Repl MCP server services using the MCP Streamable HTTP transport.
+	/// </summary>
+	/// <param name="services">Service collection.</param>
+	/// <param name="app">The Repl app to expose over MCP.</param>
+	/// <param name="options">HTTP MCP configuration.</param>
+	/// <returns>The MCP server builder.</returns>
+	public static IMcpServerBuilder AddReplMcpHttp(
+		this IServiceCollection services,
+		ReplApp app,
+		ReplMcpHttpOptions options)
+	{
+		ArgumentNullException.ThrowIfNull(services);
+		ArgumentNullException.ThrowIfNull(app);
+		ArgumentNullException.ThrowIfNull(options);
 
 		services.TryAddSingleton(app);
 

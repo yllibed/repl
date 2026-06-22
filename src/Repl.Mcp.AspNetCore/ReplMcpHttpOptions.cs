@@ -42,4 +42,15 @@ public sealed class ReplMcpHttpOptions
 	/// Gets or sets the maximum number of idle stateful MCP sessions to keep in memory.
 	/// </summary>
 	public int? MaxIdleSessionCount { get; set; }
+
+	internal ReplMcpHttpOptions Clone() => new()
+	{
+		ConfigureServer = ConfigureServer,
+		ConfigureTransport = ConfigureTransport,
+		EnableAuthorizationFilters = EnableAuthorizationFilters,
+		Stateless = Stateless,
+		PerSessionExecutionContext = PerSessionExecutionContext,
+		IdleTimeout = IdleTimeout,
+		MaxIdleSessionCount = MaxIdleSessionCount,
+	};
 }
