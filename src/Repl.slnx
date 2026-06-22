@@ -15,6 +15,7 @@
 	<Project Path="Repl.Telnet/Repl.Telnet.csproj" />
 	<Project Path="Repl.Testing/Repl.Testing.csproj" />
 	<Project Path="Repl.Mcp/Repl.Mcp.csproj" />
+	<Project Path="Repl.Mcp.AspNetCore/Repl.Mcp.AspNetCore.csproj" />
 	<Project Path="Repl.Spectre/Repl.Spectre.csproj" />
 	<Project Path="Repl.ShellCompletionTestHost/Repl.ShellCompletionTestHost.csproj" />
 	<Project Path="Repl.Tests/Repl.Tests.csproj" />
