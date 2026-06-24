@@ -2,7 +2,7 @@
 
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>
-		<Description>MCP server integration for Repl Toolkit: expose commands as AI agent tools, resources, and prompts.</Description>
+		<Description>MCP server integration for Repl Toolkit: expose a .NET command graph as AI agent tools, resources, prompts, and MCP Apps.</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>
 

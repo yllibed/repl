@@ -21,7 +21,7 @@
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 		<PackageProjectUrl>https://github.com/yllibed/repl</PackageProjectUrl>
 		<Authors>Carl de Billy</Authors>
-		<PackageTags>repl;cli;terminal;automation;dotnet</PackageTags>
+		<PackageTags>repl;cli;command-line;terminal;interactive-shell;automation;dotnet;csharp;mcp;model-context-protocol;ai-agents;developer-tools</PackageTags>
 	</PropertyGroup>
 
 	<!-- Reproducible build — enable only under CI to preserve local debug paths -->

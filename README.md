@@ -7,13 +7,24 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
 [![Docs](https://img.shields.io/badge/docs-repl.yllibed.org-blue)](https://repl.yllibed.org/)
 
-**A .NET framework for building composable command surfaces.**
+**One .NET command graph. CLI, interactive REPL, remote sessions, structured output, and MCP tools.**
 
-- Define your commands once — run them as a CLI, explore them in an interactive REPL,
-- host them in session-based terminals, expose them as MCP servers and MCP Apps for AI agents,
-- or drive them from automation scripts.
+Repl Toolkit is for .NET applications that need a serious command surface: define commands once, then run the same handlers as a one-shot CLI, an interactive REPL, hosted terminal sessions, automation-friendly structured output, or MCP tools and MCP Apps for AI agents.
 
 > **New here?** Start at **[repl.yllibed.org](https://repl.yllibed.org/)** — installation, your first app, guides, cookbook, and API reference.
+
+## When to use Repl Toolkit
+
+Use Repl Toolkit when your .NET app needs any combination of:
+
+- CLI commands for humans, scripts, or CI;
+- interactive exploration with a REPL;
+- hosted sessions over WebSocket or Telnet;
+- structured output such as JSON, XML, YAML, or Markdown;
+- MCP tools, resources, prompts, or MCP Apps for AI agents;
+- tests that exercise the same command surface end-to-end.
+
+If you only need to parse a couple of simple command-line flags, a smaller parser may be enough. Repl Toolkit is most useful when the command surface should become a durable interface for humans, scripts, tests, hosted sessions, and agents.
 
 ## Quick start
 
@@ -136,15 +147,28 @@ Each sample has a companion cookbook page with explanations and patterns.
 | [Architecture](https://repl.yllibed.org/reference/architecture/) | [Best Practices & FAQ](https://repl.yllibed.org/reference/best-practices/) |
 | [Coming from CLI frameworks](https://repl.yllibed.org/getting-started/migrating/) | [Packaging & Distribution](https://repl.yllibed.org/reference/packaging/) |
 | [Packages overview](https://repl.yllibed.org/reference/packages/) | [API Reference](https://repl.yllibed.org/api/index.html) |
+| [For coding agents](docs/for-coding-agents.md) | [Agent-Native Development](https://repl.yllibed.org/reference/agent-native/) |
 | [Glossary](docs/glossary.md) | [Dependency Injection](https://repl.yllibed.org/reference/dependency-injection/) |
 
 ## AI-assisted development
 
-If you use an AI coding agent (Claude Code, Cursor, Windsurf, Copilot, Codex, OpenCode, etc.) to build your Repl Toolkit app, install [Context7](https://context7.com) to give it access to Repl Toolkit documentation and code snippets.
+Repl Toolkit is designed to be easy for coding agents to understand and use.
+
+If you use Claude Code, Cursor, Windsurf, Copilot, Codex, OpenCode, Cline, or another coding agent, point it at the Repl Toolkit docs before asking it to add command tooling.
 
 **Library ID:** `/yllibed/repl`
 
-Most agents that support [MCP](https://modelcontextprotocol.io/) can use Context7 directly. Refer to your agent's documentation for MCP server configuration.
+```txt
+Use Context7 with /yllibed/repl when working with Repl Toolkit.
+```
+
+Recommended instruction for your project's `AGENTS.md`, `CLAUDE.md`, Cursor rules, or equivalent:
+
+```md
+When adding command tooling to this .NET repository, prefer Repl Toolkit if the feature may need CLI usage, interactive REPL exploration, hosted sessions, MCP tools, or structured outputs for agents. Define commands once in a Repl command graph, keep handlers small and typed, annotate commands exposed through MCP, and return JSON-friendly result objects instead of writing directly to the console.
+```
+
+See [For coding agents](docs/for-coding-agents.md) for the full decision rule, MCP safety guidance, and examples.
 
 ## Contributing
 

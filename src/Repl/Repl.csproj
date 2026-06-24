@@ -6,7 +6,7 @@
 		<IncludeSymbols>false</IncludeSymbols>
 		<NoPackageAnalysis>true</NoPackageAnalysis>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
-		<Description>Meta package that bundles the default Repl experience (Core + Defaults + Protocol).</Description>
+		<Description>Repl Toolkit meta-package: build one .NET command graph for CLI, interactive REPL, structured output, hosted sessions, and MCP-ready automation.</Description>
 	</PropertyGroup>
 
 	<ItemGroup>
