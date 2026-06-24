@@ -122,8 +122,7 @@ public static class ReplMcpHttpServiceCollectionExtensions
 			}
 			finally
 			{
-				session ??= TakeSession(context);
-				session?.Dispose();
+				using var sessionToDispose = session ?? TakeSession(context);
 				ReplMcpHttpDiagnostics.SessionsEnded.Add(1);
 				ReplMcpHttpDiagnostics.SessionsActive.Add(-1);
 			}

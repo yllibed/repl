@@ -40,27 +40,9 @@ public sealed class ReplMcpHttpSecurityOptions
 			return false;
 		}
 
-		foreach (var defaultHost in DefaultAllowedHosts)
-		{
-			if (!ContainsAllowedHost(defaultHost))
-			{
-				return false;
-			}
-		}
-
-		return true;
+		return !DefaultAllowedHosts.Any(defaultHost => !ContainsAllowedHost(defaultHost));
 	}
 
-	private bool ContainsAllowedHost(string host)
-	{
-		foreach (var allowedHost in AllowedHosts)
-		{
-			if (StringComparer.OrdinalIgnoreCase.Equals(allowedHost, host))
-			{
-				return true;
-			}
-		}
-
-		return false;
-	}
+	private bool ContainsAllowedHost(string host) =>
+		AllowedHosts.Any(allowedHost => StringComparer.OrdinalIgnoreCase.Equals(allowedHost, host));
 }

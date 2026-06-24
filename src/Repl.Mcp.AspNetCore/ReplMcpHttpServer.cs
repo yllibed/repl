@@ -10,6 +10,12 @@ namespace Repl.Mcp.AspNetCore;
 /// </summary>
 public static class ReplMcpHttpServer
 {
+	private static readonly Action<ILogger, Exception?> LogShutdownRequested =
+		LoggerMessage.Define(
+			LogLevel.Debug,
+			new EventId(1, nameof(LogShutdownRequested)),
+			"MCP HTTP server shutdown requested.");
+
 	/// <summary>
 	/// Runs a self-hosted Repl MCP Streamable HTTP server until cancellation is requested.
 	/// </summary>
@@ -79,6 +85,7 @@ public static class ReplMcpHttpServer
 			}
 			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 			{
+				LogShutdownRequested(webApp.Logger, null);
 			}
 			finally
 			{

@@ -62,7 +62,7 @@ internal sealed class McpHttpModule : IReplModule
 		{
 			return Results.Exit(0);
 		}
-		catch (Exception ex)
+		catch (InvalidOperationException ex)
 		{
 			ReplMcpHttpDiagnostics.StartupFailures.Add(1);
 			await io.Error.WriteLineAsync(ex.ToString()).ConfigureAwait(false);
