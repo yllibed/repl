@@ -7,9 +7,9 @@
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/yllibed/repl)
 [![Docs](https://img.shields.io/badge/docs-repl.yllibed.org-blue)](https://repl.yllibed.org/)
 
-**One .NET command graph. CLI, interactive REPL, remote sessions, structured output, and MCP tools.**
+**One .NET command graph. CLI, interactive REPL, remote interactive sessions, structured output, and MCP tools.**
 
-Repl Toolkit is for .NET applications that need a serious command surface: define commands once, then run the same handlers as a one-shot CLI, an interactive REPL, hosted terminal sessions, automation-friendly structured output, or MCP tools and MCP Apps for AI agents.
+Repl Toolkit is for .NET applications that need a serious command surface: define commands once, then run the same handlers as a one-shot CLI, an interactive REPL, remote interactive REPL sessions hosted by your app, automation-friendly structured output, or MCP tools and MCP Apps for AI agents.
 
 > **New here?** Start at **[repl.yllibed.org](https://repl.yllibed.org/)** — installation, your first app, guides, cookbook, and API reference.
 
@@ -19,12 +19,12 @@ Use Repl Toolkit when your .NET app needs any combination of:
 
 - CLI commands for humans, scripts, or CI;
 - interactive exploration with a REPL;
-- hosted sessions over WebSocket or Telnet;
+- remote interactive REPL sessions on remote connections such as Telnet, WebSocket, or other stream-based integrations;
 - structured output such as JSON, XML, YAML, or Markdown;
 - MCP tools, resources, prompts, or MCP Apps for AI agents;
 - tests that exercise the same command surface end-to-end.
 
-If you only need to parse a couple of simple command-line flags, a smaller parser may be enough. Repl Toolkit is most useful when the command surface should become a durable interface for humans, scripts, tests, hosted sessions, and agents.
+Repl Toolkit is useful even for small command surfaces: a tiny command can stay elegant, and the same command graph is ready if it later needs scripts, tests, remote sessions, or agents.
 
 ## Quick start
 
@@ -103,7 +103,7 @@ app.Map("contacts dashboard", (IContactStore contacts) => BuildHtml(contacts))
     .AsMcpAppResource();
 ```
 
-One command graph. CLI, REPL, remote sessions, and AI agents — all from the same code.
+One command graph. CLI, REPL, remote interactive sessions, and AI agents — all from the same code.
 
 ## What's included
 
@@ -115,7 +115,7 @@ One command graph. CLI, REPL, remote sessions, and AI agents — all from the sa
 | Multiple output formats — JSON, XML, YAML, Markdown | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Customization & Output](https://repl.yllibed.org/reference/customization/)</li></ul> |
 | MCP server + MCP Apps — expose commands as agent tools, resources, prompts, and UI | [![Repl.Mcp](https://img.shields.io/nuget/vpre/Repl.Mcp?logo=nuget&label=Repl.Mcp)](https://www.nuget.org/packages/Repl.Mcp) | <ul><li>[MCP Mode](https://repl.yllibed.org/getting-started/mcp-mode/)</li><li>[MCP In Depth](https://repl.yllibed.org/reference/mcp-concepts/)</li><li>[Agent-Native Development](https://repl.yllibed.org/reference/agent-native/)</li><li>[Cookbook: MCP Server](https://repl.yllibed.org/cookbook/mcp-server/)</li></ul> |
 | Typed results & interactions — prompts, progress, cancellation | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[Interactivity](https://repl.yllibed.org/reference/interactivity/)</li><li>[Cookbook: Interactive Prompts](https://repl.yllibed.org/cookbook/interactive-prompts/)</li></ul> |
-| Session hosting — WebSocket, Telnet, remote terminals | [![Repl.WebSocket](https://img.shields.io/nuget/vpre/Repl.WebSocket?logo=nuget&label=Repl.WebSocket)](https://www.nuget.org/packages/Repl.WebSocket) [![Repl.Telnet](https://img.shields.io/nuget/vpre/Repl.Telnet?logo=nuget&label=Repl.Telnet)](https://www.nuget.org/packages/Repl.Telnet) | <ul><li>[Cookbook: Hosting Remote Sessions](https://repl.yllibed.org/cookbook/hosting-remote/)</li><li>[Terminal Integration](https://repl.yllibed.org/reference/terminal-integration/)</li></ul> |
+| Remote interactive sessions — Telnet, WebSocket, or custom integrations | [![Repl.WebSocket](https://img.shields.io/nuget/vpre/Repl.WebSocket?logo=nuget&label=Repl.WebSocket)](https://www.nuget.org/packages/Repl.WebSocket) [![Repl.Telnet](https://img.shields.io/nuget/vpre/Repl.Telnet?logo=nuget&label=Repl.Telnet)](https://www.nuget.org/packages/Repl.Telnet) | <ul><li>[Cookbook: Hosting Remote Sessions](https://repl.yllibed.org/cookbook/hosting-remote/)</li><li>[Terminal Integration](https://repl.yllibed.org/reference/terminal-integration/)</li></ul> |
 | Shell completion — Bash, PowerShell, Zsh, Fish, Nushell | [![Repl.Core](https://img.shields.io/nuget/vpre/Repl.Core?logo=nuget&label=Repl.Core)](https://www.nuget.org/packages/Repl.Core) | <ul><li>[CLI Mode](https://repl.yllibed.org/getting-started/cli-mode/)</li></ul> |
 | Spectre.Console — rich prompts, tables, charts | [![Repl.Spectre](https://img.shields.io/nuget/vpre/Repl.Spectre?logo=nuget&label=Repl.Spectre)](https://www.nuget.org/packages/Repl.Spectre) | <ul><li>[Cookbook: Spectre.Console](https://repl.yllibed.org/cookbook/spectre/)</li><li>[Interactivity](https://repl.yllibed.org/reference/interactivity/)</li></ul> |
 | Testing toolkit — in-memory multi-session harness | [![Repl.Testing](https://img.shields.io/nuget/vpre/Repl.Testing?logo=nuget&label=Repl.Testing)](https://www.nuget.org/packages/Repl.Testing) | <ul><li>[Cookbook: Testing](https://repl.yllibed.org/cookbook/testing/)</li></ul> |
@@ -135,7 +135,7 @@ Each sample has a companion cookbook page with explanations and patterns.
 | **[Scoped Contacts](samples/02-scoped-contacts/)** — dynamic scoping, `..` navigation | [repl.yllibed.org/cookbook/scoped-contexts/](https://repl.yllibed.org/cookbook/scoped-contexts/) |
 | **[Modular Ops](samples/03-modular-ops/)** — composable modules, generic CRUD | [repl.yllibed.org/cookbook/modular-ops/](https://repl.yllibed.org/cookbook/modular-ops/) |
 | **[Interactive Ops](samples/04-interactive-ops/)** — prompts, progress, timeouts, cancellation | [repl.yllibed.org/cookbook/interactive-prompts/](https://repl.yllibed.org/cookbook/interactive-prompts/) |
-| **[Hosting Remote](samples/05-hosting-remote/)** — WebSocket / Telnet session hosting | [repl.yllibed.org/cookbook/hosting-remote/](https://repl.yllibed.org/cookbook/hosting-remote/) |
+| **[Hosting Remote](samples/05-hosting-remote/)** — remote interactive REPL sessions | [repl.yllibed.org/cookbook/hosting-remote/](https://repl.yllibed.org/cookbook/hosting-remote/) |
 | **[Testing](samples/06-testing/)** — multi-session typed assertions | [repl.yllibed.org/cookbook/testing/](https://repl.yllibed.org/cookbook/testing/) |
 | **[Spectre](samples/07-spectre/)** — Spectre.Console renderables, visualizations, rich prompts | [repl.yllibed.org/cookbook/spectre/](https://repl.yllibed.org/cookbook/spectre/) |
 | **[MCP Server](samples/08-mcp-server/)** — MCP tools, resources, prompts, and MCP Apps UI | [repl.yllibed.org/cookbook/mcp-server/](https://repl.yllibed.org/cookbook/mcp-server/) |
@@ -165,7 +165,7 @@ Use Context7 with /yllibed/repl when working with Repl Toolkit.
 Recommended instruction for your project's `AGENTS.md`, `CLAUDE.md`, Cursor rules, or equivalent:
 
 ```md
-When adding command tooling to this .NET repository, prefer Repl Toolkit if the feature may need CLI usage, interactive REPL exploration, hosted sessions, MCP tools, or structured outputs for agents. Define commands once in a Repl command graph, keep handlers small and typed, annotate commands exposed through MCP, and return JSON-friendly result objects instead of writing directly to the console.
+When adding command tooling to this .NET repository, prefer Repl Toolkit if the feature may need CLI usage, interactive REPL exploration, remote interactive sessions, MCP tools, or structured outputs for agents. Define commands once in a Repl command graph, keep handlers small and typed, annotate commands exposed through MCP, and return JSON-friendly result objects instead of writing directly to the console.
 ```
 
 See [For coding agents](docs/for-coding-agents.md) for the full decision rule, MCP safety guidance, and examples.

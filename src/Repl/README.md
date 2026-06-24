@@ -2,7 +2,7 @@
 
 `Repl` is the recommended starting point for **Repl Toolkit**.
 
-Repl Toolkit lets .NET applications define one command graph and expose it as CLI commands, an interactive REPL, hosted terminal sessions, structured output for automation, and MCP tools for AI agents.
+Repl Toolkit lets .NET applications define one command graph and expose it as CLI commands, an interactive REPL, remote interactive REPL sessions hosted by your app, structured output for automation, and MCP tools for AI agents.
 
 This meta-package brings the default dependencies most apps need:
 
@@ -41,16 +41,16 @@ myapp
 
 ## When to use Repl Toolkit
 
-Use `Repl` when your application needs more than a one-off argument parser:
+Use `Repl` for small and large command surfaces alike when your application benefits from:
 
 - CLI commands for humans, scripts, or CI;
 - interactive exploration with a REPL;
 - structured output such as JSON, XML, YAML, or Markdown;
-- hosted sessions over WebSocket or Telnet;
+- remote interactive REPL sessions on remote connections such as Telnet, WebSocket, or other stream-based integrations;
 - MCP tools, resources, prompts, or MCP Apps for AI agents;
 - tests that exercise the same command surface end-to-end.
 
-If you only need to parse a couple of simple command-line flags, a smaller parser may be enough. Repl Toolkit is most useful when the command surface should become a durable interface for humans, scripts, tests, hosted sessions, and agents.
+Repl Toolkit keeps tiny command surfaces concise while making the same command graph ready for humans, scripts, tests, remote sessions, and agents as the application grows.
 
 ## Add MCP later
 
