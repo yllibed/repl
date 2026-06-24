@@ -12,7 +12,7 @@ namespace Repl.Mcp;
 /// Orchestrates the MCP server lifecycle: builds the documentation model,
 /// generates MCP primitives, and runs the server until cancellation.
 /// </summary>
-internal sealed class McpServerHandler
+internal sealed class McpServerHandler : IDisposable
 {
 	private const string DiscoverToolsName = "discover_tools";
 	private const string CallToolName = "call_tool";
@@ -68,6 +68,8 @@ internal sealed class McpServerHandler
 				[typeof(IMcpFeedback)] = _feedback,
 			});
 	}
+
+	internal IServiceProvider SessionServices => _sessionServices;
 
 	[UnconditionalSuppressMessage(
 		"Trimming",
@@ -533,6 +535,12 @@ internal sealed class McpServerHandler
 			_debounceTimer?.Dispose();
 			_debounceTimer = null;
 		}
+	}
+
+	public void Dispose()
+	{
+		UnsubscribeFromRoutingChanges();
+		_snapshotGate.Dispose();
 	}
 
 	private ServerCapabilities BuildCapabilities()
