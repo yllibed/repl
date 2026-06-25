@@ -31,6 +31,7 @@ myapp              # still works as CLI / interactive REPL
 One command graph. CLI, REPL, remote sessions, and AI agents — all from the same code.
 
 > `UseMcpServer()` registers a hidden `mcp serve` context. The tool list is built lazily when an agent connects, so it sees all commands regardless of registration order.
+> Repl.Mcp is the component that lets your app become an MCP server; it is not itself the MCP server you configure in an agent host.
 
 ## What it does
 
@@ -105,7 +106,7 @@ Most MCP clients use the same format:
 }
 ```
 
-See [mcp-reference.md](mcp-reference.md#agent-configuration) for all client-specific paths and formats (Claude Desktop, Claude Code, VS Code Copilot, Cursor, MCP Inspector).
+See [mcp-reference.md](mcp-reference.md#agent-configuration) for all client-specific paths and formats (Claude Desktop, Claude Code, VS Code Copilot, Cursor, Cline, MCP Inspector). For a complete copy/paste sample, see [sample 08 — Build an MCP Server with Repl.Mcp](../samples/08-mcp-server/).
 
 ## What most apps need vs what few apps need
 

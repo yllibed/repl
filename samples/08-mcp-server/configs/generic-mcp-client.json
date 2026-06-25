@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "repl-contacts-sample": {
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "/absolute/path/to/repl/samples/08-mcp-server/McpServerSample.csproj",
+        "--",
+        "mcp",
+        "serve"
+      ]
+    }
+  }
+}

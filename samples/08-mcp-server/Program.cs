@@ -7,10 +7,13 @@ using Repl.Mcp;
 
 // ── A Repl app exposed as an MCP server for AI agents ──────────────
 //
+// Repl.Mcp is the component that lets this sample app become an MCP server.
+// Agent hosts install/configure the sample app command, not Repl.Mcp itself.
+//
 // Run interactively:  dotnet run
 // Run as MCP server:  dotnet run -- mcp serve
 //
-// Configure in Claude Desktop or VS Code:
+// Configure in an MCP host with:
 //   { "command": "dotnet", "args": ["run", "--project", "path/to/08-mcp-server", "--", "mcp", "serve"] }
 
 var app = ReplApp.Create(services =>

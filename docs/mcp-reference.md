@@ -335,7 +335,11 @@ app.UseMcpServer(o =>
 
 ## Agent configuration
 
-### Claude Desktop
+Agent hosts configure the app or tool you built with Repl.Mcp. They do not install Repl.Mcp directly.
+
+Prefer a stable executable command, such as a published `dotnet tool`, for shared team configs. When documenting a local sample, use an absolute path to the sample project because most hosts do not launch from your repository root.
+
+### Generic MCP client / Claude Desktop
 
 **File:** `~/.config/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows)
 
@@ -350,24 +354,21 @@ app.UseMcpServer(o =>
 }
 ```
 
+For a local sample project, use the same shape with `dotnet run --project /absolute/path/to/project.csproj -- mcp serve`.
+
 ### Claude Code
 
-**File:** `~/.claude.json` or project `.claude/settings.json`
+Claude Code can use a command registration flow when available:
 
-```json
-{
-  "mcpServers": {
-    "myapp": {
-      "command": "myapp",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
+```bash
+claude mcp add myapp -- myapp mcp serve
 ```
 
-### VS Code (GitHub Copilot)
+If your Claude Code version uses settings files instead, use the generic `mcpServers` JSON shape above in user or project settings.
 
-**File:** `.vscode/mcp.json` (workspace) or `~/.mcp.json` (global)
+### VS Code / GitHub Copilot
+
+**File:** `.vscode/mcp.json` (workspace)
 
 ```json
 {
@@ -379,6 +380,12 @@ app.UseMcpServer(o =>
     }
   }
 }
+```
+
+VS Code also supports command-line registration:
+
+```bash
+code --add-mcp '{"name":"myapp","command":"myapp","args":["mcp","serve"]}'
 ```
 
 ### Cursor
@@ -395,6 +402,19 @@ app.UseMcpServer(o =>
   }
 }
 ```
+
+### Cline
+
+Use Cline's MCP settings or marketplace flow to add a local stdio server with the same command and args:
+
+- command: `myapp`
+- args: `mcp`, `serve`
+
+If your Cline version asks for JSON, start from the generic `mcpServers` block above.
+
+### Complete copy/paste sample
+
+See [sample 08 — Build an MCP Server with Repl.Mcp](../samples/08-mcp-server/) for Cursor, VS Code, Claude Code, Cline, generic JSON, and MCP Inspector examples.
 
 ### Debugging with MCP Inspector
 
