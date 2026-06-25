@@ -100,9 +100,19 @@ public sealed class ParsingOptions
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value metadata.</param>
+	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default) =>
+		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)));
+
+	/// <summary>
+	/// Registers a custom global option consumed before command routing.
+	/// </summary>
+	/// <typeparam name="T">Declared value type.</typeparam>
+	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
 	/// <param name="description">Optional description shown in help output.</param>
-	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default, string? description = null) =>
-		AddGlobalOptionCore(name, typeof(T), aliases, defaultValue?.ToString(), description);
+	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
+	/// <param name="defaultValue">Optional default value metadata.</param>
+	public void AddGlobalOption<T>(string name, string? description, string[]? aliases = null, T? defaultValue = default) =>
+		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)), description);
 
 	/// <summary>
 	/// Registers a custom global option using a type or constraint name
@@ -115,8 +125,22 @@ public sealed class ParsingOptions
 	/// </param>
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value as string.</param>
+	public void AddGlobalOption(string name, string constraintOrTypeName, string[]? aliases = null, string? defaultValue = null) =>
+		AddGlobalOptionCore(name, ResolveConstraintOrTypeName(constraintOrTypeName, _customRouteConstraints), aliases, defaultValue);
+
+	/// <summary>
+	/// Registers a custom global option using a type or constraint name
+	/// (for example: "int", "guid", "bool", or a registered custom route constraint name).
+	/// </summary>
+	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
+	/// <param name="constraintOrTypeName">
+	/// Built-in type name ("string", "int", "long", "bool", "guid", "uri", "date", "datetime", "timespan")
+	/// or a registered custom route constraint name. Custom constraints resolve to <c>string</c>.
+	/// </param>
 	/// <param name="description">Optional description shown in help output.</param>
-	public void AddGlobalOption(string name, string constraintOrTypeName, string[]? aliases = null, string? defaultValue = null, string? description = null) =>
+	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
+	/// <param name="defaultValue">Optional default value as string.</param>
+	public void AddGlobalOption(string name, string constraintOrTypeName, string? description, string[]? aliases = null, string? defaultValue = null) =>
 		AddGlobalOptionCore(name, ResolveConstraintOrTypeName(constraintOrTypeName, _customRouteConstraints), aliases, defaultValue, description);
 
 	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue, string? description = null, Type? ownerType = null)
@@ -162,6 +186,37 @@ public sealed class ParsingOptions
 			? "this registration"
 			: $"typed global options '{newOwner.Name}'";
 		return $"A global option named '{name}' is already registered by {existingSource} and cannot also be registered by {newSource}.";
+	}
+
+	internal static string? FormatDefaultValue(object? value, Type type) =>
+		value is not null && !IsDefaultForType(value, type)
+			? value.ToString()
+			: null;
+
+	internal static bool IsDefaultForType(object value, Type type)
+	{
+		var effectiveType = Nullable.GetUnderlyingType(type) ?? type;
+		if (effectiveType == typeof(bool))
+		{
+			return value is false;
+		}
+
+		if (effectiveType == typeof(int))
+		{
+			return value is 0;
+		}
+
+		if (effectiveType == typeof(long))
+		{
+			return value is 0L;
+		}
+
+		if (effectiveType == typeof(double))
+		{
+			return value is 0.0d;
+		}
+
+		return false;
 	}
 
 	private static Type ResolveConstraintOrTypeName(

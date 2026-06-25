@@ -65,6 +65,7 @@ public sealed class Given_CustomGlobalOptions
 		output.Text.Should().Contain("Tenant id used for all commands. [default: default]");
 		output.Text.Should().Contain("--verbose, -v");
 		output.Text.Should().Contain("Enable verbose diagnostics for all commands.");
+		output.Text.Should().NotContain("Enable verbose diagnostics for all commands. [default: False]");
 	}
 
 	[TestMethod]
@@ -74,15 +75,16 @@ public sealed class Given_CustomGlobalOptions
 		var sut = ReplApp.Create()
 			.Options(options => options.Parsing.AddGlobalOption<string>(
 				"tenant",
+				description: "Tenant id used for all commands.",
 				aliases: ["-t"],
-				description: "Tenant id used for all commands."));
+				defaultValue: "default"));
 		sut.Map("ping", () => "ok");
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help", "--no-logo"]));
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("--tenant, -t");
-		output.Text.Should().Contain("Tenant id used for all commands.");
+		output.Text.Should().Contain("Tenant id used for all commands. [default: default]");
 	}
 
 	private sealed class DemoGlobals

@@ -34,7 +34,7 @@ public static class GlobalOptionsExtensions
 				var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
 				var name = optionAttr?.Name ?? ToKebabCase(property.Name);
 				var aliases = optionAttr?.Aliases;
-				var defaultValue = property.GetValue(prototype)?.ToString();
+				var defaultValue = ParsingOptions.FormatDefaultValue(property.GetValue(prototype), property.PropertyType);
 				var description = property.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
 				options.Parsing.AddGlobalOptionCore(name, property.PropertyType, aliases, defaultValue, description, typeof(T));

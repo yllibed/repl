@@ -316,27 +316,7 @@ internal static partial class HelpTextBuilder
 
 	private static bool IsDefaultForType(object value, Type type)
 	{
-		if (type == typeof(bool))
-		{
-			return value is false;
-		}
-
-		if (type == typeof(int))
-		{
-			return value is 0;
-		}
-
-		if (type == typeof(long))
-		{
-			return value is 0L;
-		}
-
-		if (type == typeof(double))
-		{
-			return value is 0.0d;
-		}
-
-		return false;
+		return ParsingOptions.IsDefaultForType(value, type);
 	}
 
 	private static string ResolveOptionPlaceholder(Type parameterType)
