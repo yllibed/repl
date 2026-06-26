@@ -75,8 +75,9 @@ public sealed class Given_CustomGlobalOptions
 		var sut = ReplApp.Create()
 			.Options(options => options.Parsing.AddGlobalOption<string>(
 				"tenant",
-				description: "Tenant id used for all commands.",
-				aliases: ["-t"]));
+				aliases: ["-t"],
+				defaultValue: null,
+				description: "Tenant id used for all commands."));
 		sut.Map("ping", () => "ok");
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help", "--no-logo"]));

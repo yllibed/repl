@@ -104,14 +104,21 @@ public sealed class ParsingOptions
 		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)));
 
 	/// <summary>
-	/// Registers a custom global option consumed before command routing.
+	/// Registers a custom global option with an explicit help description.
 	/// </summary>
+	/// <remarks>
+	/// <paramref name="description"/> is the trailing required parameter so this overload never collides with
+	/// <see cref="AddGlobalOption{T}(string, string[], T)"/> during overload resolution: a positional
+	/// <c>null</c> second argument (for example <c>AddGlobalOption&lt;string&gt;("tenant", null)</c>) binds
+	/// unambiguously to the aliases-only overload. The typed <see cref="System.ComponentModel.DescriptionAttribute"/>
+	/// path (<c>UseGlobalOptions&lt;T&gt;()</c>) remains the primary way to attach descriptions.
+	/// </remarks>
 	/// <typeparam name="T">Declared value type.</typeparam>
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
-	/// <param name="description">Optional description shown in help output.</param>
-	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
-	/// <param name="defaultValue">Optional default value metadata.</param>
-	public void AddGlobalOption<T>(string name, string? description, string[]? aliases = null, T? defaultValue = default) =>
+	/// <param name="aliases">Aliases (pass <c>null</c> for none). Values without prefix are normalized to <c>--alias</c>.</param>
+	/// <param name="defaultValue">Default value metadata (pass <c>default</c> for none).</param>
+	/// <param name="description">Description shown in help output.</param>
+	public void AddGlobalOption<T>(string name, string[]? aliases, T? defaultValue, string description) =>
 		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)), description);
 
 	/// <summary>
@@ -129,18 +136,23 @@ public sealed class ParsingOptions
 		AddGlobalOptionCore(name, ResolveConstraintOrTypeName(constraintOrTypeName, _customRouteConstraints), aliases, defaultValue);
 
 	/// <summary>
-	/// Registers a custom global option using a type or constraint name
-	/// (for example: "int", "guid", "bool", or a registered custom route constraint name).
+	/// Registers a custom global option (by type or constraint name) with an explicit help description.
 	/// </summary>
+	/// <remarks>
+	/// <paramref name="description"/> is the trailing required parameter so this overload never collides with
+	/// <see cref="AddGlobalOption(string, string, string[], string)"/> during overload resolution: a positional
+	/// <c>null</c> third argument (for example <c>AddGlobalOption("port", "int", null)</c>) binds unambiguously
+	/// to the aliases-only overload.
+	/// </remarks>
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
 	/// <param name="constraintOrTypeName">
 	/// Built-in type name ("string", "int", "long", "bool", "guid", "uri", "date", "datetime", "timespan")
 	/// or a registered custom route constraint name. Custom constraints resolve to <c>string</c>.
 	/// </param>
-	/// <param name="description">Optional description shown in help output.</param>
-	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
-	/// <param name="defaultValue">Optional default value as string.</param>
-	public void AddGlobalOption(string name, string constraintOrTypeName, string? description, string[]? aliases = null, string? defaultValue = null) =>
+	/// <param name="aliases">Aliases (pass <c>null</c> for none). Values without prefix are normalized to <c>--alias</c>.</param>
+	/// <param name="defaultValue">Default value as string (pass <c>null</c> for none).</param>
+	/// <param name="description">Description shown in help output.</param>
+	public void AddGlobalOption(string name, string constraintOrTypeName, string[]? aliases, string? defaultValue, string description) =>
 		AddGlobalOptionCore(name, ResolveConstraintOrTypeName(constraintOrTypeName, _customRouteConstraints), aliases, defaultValue, description);
 
 	internal void AddGlobalOptionCore(string name, Type valueType, string[]? aliases, string? defaultValue, string? description = null, Type? ownerType = null)

@@ -84,11 +84,30 @@ public sealed class Given_GlobalOptionsAccessor
 	public void When_DescribedValueTypeOptionNotProvidedAndNoRegisteredDefault_Then_GetValueReturnsCallerDefault()
 	{
 		var parsing = new ParsingOptions();
-		parsing.AddGlobalOption<int>("port", "Port used by the server.");
+		parsing.AddGlobalOption<int>("port", aliases: null, defaultValue: default, description: "Port used by the server.");
 		var sut = new GlobalOptionsSnapshot(parsing);
 		sut.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
 
 		sut.GetValue<int>("port", 8080).Should().Be(8080);
+	}
+
+	[TestMethod]
+	[Description("Regression (#34 review): a positional null second argument keeps binding the aliases-only overload. The description overloads take description as the trailing required parameter precisely so this call never becomes ambiguous (CS0121) with the description overload.")]
+	public void When_AddGlobalOptionCalledWithPositionalNull_Then_BindsAliasesOnlyOverload()
+	{
+		var parsing = new ParsingOptions();
+
+		// The positional null is the regression scenario itself: naming the argument would make
+		// resolution trivial and defeat the test. These calls must compile and bind unambiguously
+		// to the aliases-only overloads (description overloads take description as a trailing required arg).
+#pragma warning disable MA0003 // Name the parameter — intentionally positional here; see comment above.
+		parsing.AddGlobalOption<string>("tenant", null);
+		parsing.AddGlobalOption("port", "int", null);
+#pragma warning restore MA0003
+
+		parsing.GlobalOptions["tenant"].Description.Should().BeNull();
+		parsing.GlobalOptions["tenant"].Aliases.Should().BeEmpty();
+		parsing.GlobalOptions["port"].Description.Should().BeNull();
 	}
 
 	[TestMethod]
