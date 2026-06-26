@@ -34,9 +34,17 @@ internal sealed partial class McpToolAdapter
 	{
 		get
 		{
-			var coreApp = _app as CoreReplApp
-				?? throw new InvalidOperationException("MCP tool adapter requires a CoreReplApp to resolve output metadata.");
-			return coreApp.OptionsSnapshot.Output.Transformers[ForcedOutputFormat].MimeType;
+			if (_app is not CoreReplApp coreApp)
+			{
+				throw new InvalidOperationException("MCP tool adapter requires a CoreReplApp to resolve output metadata.");
+			}
+
+			if (!coreApp.OptionsSnapshot.Output.Transformers.TryGetValue(ForcedOutputFormat, out var transformer))
+			{
+				throw new InvalidOperationException("MCP server requires the 'json' output transformer.");
+			}
+
+			return transformer.MimeType;
 		}
 	}
 
@@ -148,7 +156,9 @@ internal sealed partial class McpToolAdapter
 
 		if (string.IsNullOrWhiteSpace(invocation.Output))
 		{
-			return new McpResourceReadInvocation("OK", TextPlainMimeType, IsError: false);
+			// Results.Exit(0) without a payload intentionally renders no CLI output.
+			// Resource reads still need a body that matches the advertised forced JSON MIME type.
+			return new McpResourceReadInvocation("null", ForcedOutputMimeType, IsError: false);
 		}
 
 		return new McpResourceReadInvocation(invocation.Output, ForcedOutputMimeType, IsError: false);

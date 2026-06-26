@@ -58,6 +58,10 @@ var ok = execution.TryGetResult<Contact>(out var typed);
 
 Use `OutputText` when you intentionally validate the rendered contract (format/content as seen by users or external clients).
 For application tests, prefer `GetResult<T>()` / `TryGetResult<T>(...)` as the default assertion path.
+`ReadJson<T>()` is available when the rendered output is JSON and the test should validate the serialized representation.
+
+`Repl.Testing` intentionally validates the Repl command pipeline rather than MCP protocol metadata.
+For MCP wire contracts such as resource `mimeType` values, use the MCP test fixture or an external smoke test such as MCP Inspector CLI.
 
 ### Semantic interaction events
 

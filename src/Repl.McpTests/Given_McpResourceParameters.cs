@@ -1,3 +1,6 @@
+using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using Repl.Documentation;
 using Repl.Mcp;
@@ -156,8 +159,8 @@ public sealed class Given_McpResourceParameters
 	}
 
 	[TestMethod]
-	[Description("Resource reads bypass the tool OK placeholder and keep the serialized JSON null payload.")]
-	public async Task When_ResourceHandlerProducesNoOutput_Then_ReadUsesSerializedJsonNull()
+	[Description("Void resource handlers are serialized by the forced JSON converter as JSON null, not tool fallback text.")]
+	public async Task When_ResourceHandlerReturnsVoid_Then_ReadUsesSerializedJsonNull()
 	{
 		var session = await McpTestFixture.CreateAsync(
 			app => app.Map("noop", () => { })
@@ -176,6 +179,66 @@ public sealed class Given_McpResourceParameters
 			content.MimeType.Should().Be("application/json");
 			content.Text.Should().Be("null");
 		}
+	}
+
+	[TestMethod]
+	[Description("Exit results without payload keep the advertised resource MIME by returning a JSON null payload.")]
+	public async Task When_ResourceHandlerReturnsSuccessfulExitWithoutPayload_Then_ReadUsesSerializedJsonNull()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("silent", () => Results.Exit(0))
+				.ReadOnly()
+				.AsResource()).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			var resources = await session.Client.ListResourcesAsync().ConfigureAwait(false);
+			resources.Should().ContainSingle(r => string.Equals(r.Uri, "repl://silent", StringComparison.Ordinal)).Which
+				.MimeType.Should().Be("application/json");
+
+			var result = await session.Client.ReadResourceAsync("repl://silent").ConfigureAwait(false);
+			var content = result.Contents.OfType<TextResourceContents>().Single();
+
+			content.MimeType.Should().Be("application/json");
+			content.Text.Should().Be("null");
+		}
+	}
+
+	[TestMethod]
+	[Description("Failed resource commands surface as MCP exceptions instead of typed resource contents.")]
+	public async Task When_ResourceCommandFails_Then_ReadThrowsMcpException()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("boom", () => Results.Error("boom", "nope"))
+				.ReadOnly()
+				.AsResource()).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			Func<Task> act = async () => await session.Client.ReadResourceAsync("repl://boom").ConfigureAwait(false);
+
+			var exception = (await act.Should().ThrowAsync<McpException>().ConfigureAwait(false)).Which;
+			exception.Message.Should().Contain("nope");
+		}
+	}
+
+	[TestMethod]
+	[Description("The resource adapter reports unknown routes as text/plain errors.")]
+	public async Task When_ResourceRouteIsUnknown_Then_AdapterReturnsTextError()
+	{
+		await using var services = new ServiceCollection().BuildServiceProvider();
+		var adapter = new McpToolAdapter(ReplApp.Create().Core, new ReplMcpServerOptions(), services);
+
+		var result = await adapter.InvokeResourceAsync(
+			"missing",
+			new Dictionary<string, JsonElement>(StringComparer.Ordinal),
+			server: null,
+			progressToken: null,
+			ct: CancellationToken.None).ConfigureAwait(false);
+
+		result.IsError.Should().BeTrue();
+		result.MimeType.Should().Be("text/plain");
+		result.Text.Should().Be("Unknown resource: missing");
 	}
 
 	[TestMethod]

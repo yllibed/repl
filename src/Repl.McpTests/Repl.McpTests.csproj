@@ -13,6 +13,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Repl.Mcp\Repl.Mcp.csproj" />
+		<ProjectReference Include="..\..\samples\08-mcp-server\McpServerSample.csproj" ReferenceOutputAssembly="false" />
 	</ItemGroup>
 
 </Project>

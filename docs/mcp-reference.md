@@ -398,9 +398,31 @@ app.UseMcpServer(o =>
 
 ### Debugging with MCP Inspector
 
+Use the UI for interactive exploration:
+
 ```bash
 npx @modelcontextprotocol/inspector myapp mcp serve
 ```
+
+Use CLI mode for repeatable smoke checks. `resources/list` exposes the advertised resource MIME type, and `resources/read` exposes the MIME type and body returned on the wire:
+
+```bash
+# Build or publish the server first; this example uses a built sample DLL.
+dotnet build samples/08-mcp-server/McpServerSample.csproj -c Release
+
+npx -y @modelcontextprotocol/inspector@0.22.0 --cli \
+  dotnet samples/08-mcp-server/bin/Release/net10.0/McpServerSample.dll mcp serve \
+  --method resources/list \
+  | jq '.resources[] | { uri, mimeType }'
+
+npx -y @modelcontextprotocol/inspector@0.22.0 --cli \
+  dotnet samples/08-mcp-server/bin/Release/net10.0/McpServerSample.dll mcp serve \
+  --method resources/read \
+  --uri repl://contacts \
+  | jq '.contents[] | { uri, mimeType, text }'
+```
+
+For command-level tests, use `Repl.Testing`: `CommandExecution.GetResult<T>()` validates the handler return value before rendering, while `OutputText` / `ReadJson<T>()` validate rendered output. For MCP wire contracts such as `Resource.MimeType` and `TextResourceContents.MimeType`, use the MCP test fixture or an Inspector CLI smoke check because those values are protocol metadata, not `Repl.Testing` command results.
 
 ## Client compatibility
 
