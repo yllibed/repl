@@ -154,9 +154,17 @@ internal sealed partial class McpToolAdapter
 
 		if (invocation.ExitCode != 0)
 		{
-			var error = string.IsNullOrWhiteSpace(invocation.Output)
-				? $"Command failed with exit code {invocation.ExitCode}."
-				: invocation.Output;
+			var error = invocation.Output;
+			if (string.IsNullOrWhiteSpace(error))
+			{
+				error = invocation.Error;
+			}
+
+			if (string.IsNullOrWhiteSpace(error))
+			{
+				error = $"Command failed with exit code {invocation.ExitCode}.";
+			}
+
 			return new McpResourceReadInvocation(error, TextPlainMimeType, IsError: true);
 		}
 
@@ -182,6 +190,7 @@ internal sealed partial class McpToolAdapter
 			?? throw new InvalidOperationException("MCP tool adapter requires an app that supports sub-invocation.");
 
 		var outputWriter = new StringWriter();
+		var errorWriter = captureCommandOutput ? outputWriter : new StringWriter();
 		var inputReader = new StringReader(string.Empty);
 		var feedback = _services.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
 		var interactionChannel = new McpInteractionChannel(
@@ -200,7 +209,7 @@ internal sealed partial class McpToolAdapter
 		effectiveTokens.AddRange(tokens);
 
 		// Command-backed resources expose the rendered return value as the resource body.
-		// Low-level handler writes to IReplIoContext.Output are side-channel output, not resource content.
+		// Low-level handler writes to IReplIoContext.Output/Error are side-channel output, not resource content.
 		var commandOutput = captureCommandOutput ? outputWriter : TextWriter.Null;
 		using (ReplSessionIO.SetSession(
 			output: outputWriter,
@@ -208,6 +217,7 @@ internal sealed partial class McpToolAdapter
 			ansiMode: Rendering.AnsiMode.Never,
 			sessionId: $"mcp-{Guid.NewGuid():N}",
 			commandOutput: commandOutput,
+			error: errorWriter,
 			isHostedSession: true))
 		{
 			ReplSessionIO.IsProgrammatic = true;
@@ -215,13 +225,14 @@ internal sealed partial class McpToolAdapter
 				effectiveTokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
 
 			var output = outputWriter.ToString().Trim();
-			return new McpPipelineInvocation(output, exitCode);
+			var error = captureCommandOutput ? string.Empty : errorWriter.ToString().Trim();
+			return new McpPipelineInvocation(output, error, exitCode);
 		}
 	}
 
 	internal readonly record struct McpResourceReadInvocation(string Text, string MimeType, bool IsError);
 
-	private readonly record struct McpPipelineInvocation(string Output, int ExitCode);
+	private readonly record struct McpPipelineInvocation(string Output, string Error, int ExitCode);
 
 	private static CallToolResult BuildToolResult(string output, int exitCode, McpPagedResultTextMode pagedTextMode)
 	{

@@ -159,13 +159,14 @@ public sealed class Given_McpResourceParameters
 	}
 
 	[TestMethod]
-	[Description("Resource reads discard low-level handler output so application/json only labels the JSON return payload.")]
+	[Description("Resource reads discard low-level handler output and diagnostics so application/json only labels the JSON return payload.")]
 	public async Task When_ResourceHandlerWritesSideChannelOutput_Then_ReadReturnsOnlyJsonPayload()
 	{
 		var session = await McpTestFixture.CreateAsync(
 			app => app.Map("mixed", (IReplIoContext io) =>
 			{
 				io.Output.WriteLine("side-channel text");
+				io.Error.WriteLine("diagnostic text");
 				return new { Value = 42 };
 			})
 				.ReadOnly()
@@ -179,6 +180,7 @@ public sealed class Given_McpResourceParameters
 
 			content.MimeType.Should().Be("application/json");
 			content.Text.Should().NotContain("side-channel text");
+			content.Text.Should().NotContain("diagnostic text");
 			using var json = JsonDocument.Parse(content.Text);
 			json.RootElement.EnumerateObject().Single().Value.GetInt32().Should().Be(42);
 		}
