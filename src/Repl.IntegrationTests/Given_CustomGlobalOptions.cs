@@ -51,8 +51,8 @@ public sealed class Given_CustomGlobalOptions
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies typed global option descriptions and defaults are rendered in root help.")]
-	public void When_RequestingRootHelpForTypedGlobalOptions_Then_DescriptionsAndDefaultsAreListed()
+	[Description("Regression guard: verifies typed global option descriptions are rendered in root help without adding default-value display.")]
+	public void When_RequestingRootHelpForTypedGlobalOptions_Then_DescriptionsAreListed()
 	{
 		var sut = ReplApp.Create()
 			.UseGlobalOptions<DemoGlobals>();
@@ -62,10 +62,10 @@ public sealed class Given_CustomGlobalOptions
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("--tenant, -t");
-		output.Text.Should().Contain("Tenant id used for all commands. [default: default]");
+		output.Text.Should().Contain("Tenant id used for all commands.");
 		output.Text.Should().Contain("--verbose, -v");
 		output.Text.Should().Contain("Enable verbose diagnostics for all commands.");
-		output.Text.Should().NotContain("Enable verbose diagnostics for all commands. [default: False]");
+		output.Text.Should().NotContain("[default:");
 	}
 
 	[TestMethod]
@@ -76,15 +76,15 @@ public sealed class Given_CustomGlobalOptions
 			.Options(options => options.Parsing.AddGlobalOption<string>(
 				"tenant",
 				description: "Tenant id used for all commands.",
-				aliases: ["-t"],
-				defaultValue: "default"));
+				aliases: ["-t"]));
 		sut.Map("ping", () => "ok");
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--help", "--no-logo"]));
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("--tenant, -t");
-		output.Text.Should().Contain("Tenant id used for all commands. [default: default]");
+		output.Text.Should().Contain("Tenant id used for all commands.");
+		output.Text.Should().NotContain("[default:");
 	}
 
 	private sealed class DemoGlobals

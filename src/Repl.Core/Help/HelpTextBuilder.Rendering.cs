@@ -316,7 +316,27 @@ internal static partial class HelpTextBuilder
 
 	private static bool IsDefaultForType(object value, Type type)
 	{
-		return ParsingOptions.IsDefaultForType(value, type);
+		if (type == typeof(bool))
+		{
+			return value is false;
+		}
+
+		if (type == typeof(int))
+		{
+			return value is 0;
+		}
+
+		if (type == typeof(long))
+		{
+			return value is 0L;
+		}
+
+		if (type == typeof(double))
+		{
+			return value is 0.0d;
+		}
+
+		return false;
 	}
 
 	private static string ResolveOptionPlaceholder(Type parameterType)
@@ -605,10 +625,6 @@ internal static partial class HelpTextBuilder
 				var description = string.IsNullOrWhiteSpace(option.Description)
 					? "Custom global option."
 					: option.Description;
-				if (!string.IsNullOrWhiteSpace(option.DefaultValue))
-				{
-					description = $"{description} [default: {option.DefaultValue}]";
-				}
 
 				return new[]
 				{

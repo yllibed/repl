@@ -101,7 +101,7 @@ public sealed class ParsingOptions
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value metadata.</param>
 	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default) =>
-		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)));
+		AddGlobalOptionCore(name, typeof(T), aliases, defaultValue?.ToString());
 
 	/// <summary>
 	/// Registers a custom global option consumed before command routing.
@@ -112,7 +112,7 @@ public sealed class ParsingOptions
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
 	/// <param name="defaultValue">Optional default value metadata.</param>
 	public void AddGlobalOption<T>(string name, string? description, string[]? aliases = null, T? defaultValue = default) =>
-		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)), description);
+		AddGlobalOptionCore(name, typeof(T), aliases, defaultValue?.ToString(), description);
 
 	/// <summary>
 	/// Registers a custom global option using a type or constraint name
@@ -188,36 +188,6 @@ public sealed class ParsingOptions
 		return $"A global option named '{name}' is already registered by {existingSource} and cannot also be registered by {newSource}.";
 	}
 
-	internal static string? FormatDefaultValue(object? value, Type type) =>
-		value is not null && !IsDefaultForType(value, type)
-			? value.ToString()
-			: null;
-
-	internal static bool IsDefaultForType(object value, Type type)
-	{
-		var effectiveType = Nullable.GetUnderlyingType(type) ?? type;
-		if (effectiveType == typeof(bool))
-		{
-			return value is false;
-		}
-
-		if (effectiveType == typeof(int))
-		{
-			return value is 0;
-		}
-
-		if (effectiveType == typeof(long))
-		{
-			return value is 0L;
-		}
-
-		if (effectiveType == typeof(double))
-		{
-			return value is 0.0d;
-		}
-
-		return false;
-	}
 
 	private static Type ResolveConstraintOrTypeName(
 		string constraintOrTypeName,
