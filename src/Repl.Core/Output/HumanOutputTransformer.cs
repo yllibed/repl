@@ -23,6 +23,8 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 
 	public string Name => "human";
 
+	public string MimeType => "text/plain";
+
 	public bool SupportsInteractivePaging => true;
 
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)

@@ -7,6 +7,8 @@ internal sealed class JsonOutputTransformer(JsonSerializerOptions serializerOpti
 {
 	public string Name => "json";
 
+	public string MimeType => "application/json";
+
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();

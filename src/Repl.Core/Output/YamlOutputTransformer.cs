@@ -7,6 +7,8 @@ internal sealed class YamlOutputTransformer(JsonSerializerOptions serializerOpti
 {
 	public string Name => "yaml";
 
+	public string MimeType => "application/yaml";
+
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();

@@ -82,6 +82,11 @@ public sealed class CommandBuilder
 	public bool IsResource { get; private set; }
 
 	/// <summary>
+	/// Gets the MIME type to advertise when this command is exposed as an MCP resource.
+	/// </summary>
+	public string? ResourceMimeType { get; private set; }
+
+	/// <summary>
 	/// Gets a value indicating whether this command is a prompt source.
 	/// </summary>
 	public bool IsPrompt { get; private set; }
@@ -336,6 +341,19 @@ public sealed class CommandBuilder
 	public CommandBuilder AsResource()
 	{
 		IsResource = true;
+		return this;
+	}
+
+	/// <summary>
+	/// Marks this command as a resource and declares the MIME type advertised through MCP.
+	/// </summary>
+	/// <param name="mimeType">MIME type to expose in MCP resource metadata and read results.</param>
+	/// <returns>The same builder instance.</returns>
+	public CommandBuilder AsResource(string mimeType)
+	{
+		ArgumentException.ThrowIfNullOrWhiteSpace(mimeType);
+		IsResource = true;
+		ResourceMimeType = mimeType.Trim();
 		return this;
 	}
 

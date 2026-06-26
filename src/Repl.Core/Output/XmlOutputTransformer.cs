@@ -9,6 +9,8 @@ internal sealed class XmlOutputTransformer(JsonSerializerOptions serializerOptio
 {
 	public string Name => "xml";
 
+	public string MimeType => "application/xml";
+
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();

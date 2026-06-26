@@ -30,6 +30,9 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 	public string Name => "spectre";
 
 	/// <inheritdoc />
+	public string MimeType => "text/plain";
+
+	/// <inheritdoc />
 	public bool SupportsInteractivePaging => true;
 
 	/// <inheritdoc />

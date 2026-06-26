@@ -14,6 +14,8 @@ namespace Repl.Mcp;
 /// </summary>
 internal sealed partial class McpToolAdapter
 {
+	internal const string ForcedOutputFormat = "json";
+
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
@@ -125,7 +127,7 @@ internal sealed partial class McpToolAdapter
 			?.PushProgressToken(progressToken);
 
 		// Force JSON output — agents consume structured data, not human tables/banners.
-		var effectiveTokens = new List<string>(tokens.Count + 1) { "--output:json" };
+		var effectiveTokens = new List<string>(tokens.Count + 1) { $"--output:{ForcedOutputFormat}" };
 		effectiveTokens.AddRange(tokens);
 
 		using (ReplSessionIO.SetSession(

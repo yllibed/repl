@@ -15,6 +15,7 @@ public sealed record ReplDocCommand(
 	IReadOnlyDictionary<string, object>? Metadata = null,
 	IReadOnlyList<ReplDocAnswer>? Answers = null,
 	bool IsResource = false,
+	string? ResourceMimeType = null,
 	bool IsPrompt = false,
 	bool AcceptsPagingInput = false,
 	bool EmitsPagedResult = false);

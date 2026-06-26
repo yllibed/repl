@@ -11,6 +11,11 @@ public interface IOutputTransformer
 	string Name { get; }
 
 	/// <summary>
+	/// Gets the MIME type produced by this transformer.
+	/// </summary>
+	string MimeType => "text/plain";
+
+	/// <summary>
 	/// Gets a value indicating whether this transformer can be displayed by the interactive result pager.
 	/// </summary>
 	bool SupportsInteractivePaging => false;

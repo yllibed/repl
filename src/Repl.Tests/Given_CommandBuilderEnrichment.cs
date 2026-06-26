@@ -104,6 +104,32 @@ public sealed class Given_CommandBuilderEnrichment
 	}
 
 	[TestMethod]
+	[Description("Verifies AsResource can declare an explicit MCP resource MIME type override.")]
+	public void When_AsResourceIsCalledWithMimeType_Then_ResourceMimeTypeIsStored()
+	{
+		var sut = CoreReplApp.Create();
+		var command = sut.Map("contacts", () => "ok");
+
+		var chained = command.AsResource(mimeType: "application/vnd.repl.contacts+json");
+
+		chained.Should().BeSameAs(command);
+		command.IsResource.Should().BeTrue();
+		command.ResourceMimeType.Should().Be("application/vnd.repl.contacts+json");
+	}
+
+	[TestMethod]
+	[Description("Verifies AsResource rejects empty MIME types.")]
+	public void When_AsResourceIsCalledWithEmptyMimeType_Then_Throws()
+	{
+		var sut = CoreReplApp.Create();
+		var command = sut.Map("contacts", () => "ok");
+
+		var act = () => command.AsResource(mimeType: "   ");
+
+		act.Should().Throw<ArgumentException>();
+	}
+
+	[TestMethod]
 	[Description("Verifies AsPrompt marks the command as a prompt source.")]
 	public void When_AsPromptIsCalled_Then_IsPromptIsTrue()
 	{
@@ -163,8 +189,43 @@ public sealed class Given_CommandBuilderEnrichment
 		cmd.Annotations.Should().NotBeNull();
 		cmd.Annotations!.ReadOnly.Should().BeTrue();
 		cmd.IsResource.Should().BeTrue();
+		cmd.ResourceMimeType.Should().BeNull();
 		cmd.Metadata.Should().NotBeNull();
 		cmd.Metadata!["scope"].Should().Be("crm");
+	}
+
+	[TestMethod]
+	[Description("Verifies explicit resource MIME type override propagates through the documentation model.")]
+	public void When_ResourceMimeTypeIsConfigured_Then_DocumentationModelContainsIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("contacts", () => "ok")
+			.WithDescription("List contacts")
+			.AsResource(mimeType: "application/vnd.repl.contacts+json");
+
+		var model = sut.CreateDocumentationModel();
+
+		model.Commands.Should().ContainSingle(c => c.Path == "contacts").Which
+			.ResourceMimeType.Should().Be("application/vnd.repl.contacts+json");
+		model.Resources.Should().ContainSingle(r => r.Path == "contacts").Which
+			.MimeType.Should().Be("application/vnd.repl.contacts+json");
+	}
+
+	[TestMethod]
+	[Description("Verifies an undeclared resource MIME type stays null in documentation so consumers can use their active converter.")]
+	public void When_ResourceMimeTypeIsNotConfigured_Then_DocumentationResourceMimeTypeIsNull()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("contacts", () => "ok")
+			.WithDescription("List contacts")
+			.AsResource();
+
+		var model = sut.CreateDocumentationModel();
+
+		model.Commands.Should().ContainSingle(c => c.Path == "contacts").Which
+			.ResourceMimeType.Should().BeNull();
+		model.Resources.Should().ContainSingle(r => r.Path == "contacts").Which
+			.MimeType.Should().BeNull();
 	}
 
 	[TestMethod]

@@ -13,6 +13,8 @@ internal sealed class MarkdownOutputTransformer : IOutputTransformer
 
 	public string Name => "markdown";
 
+	public string MimeType => "text/markdown";
+
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();

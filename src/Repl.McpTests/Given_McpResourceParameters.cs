@@ -69,9 +69,82 @@ public sealed class Given_McpResourceParameters
 		await using (session.ConfigureAwait(false))
 		{
 			var result = await session.Client.ReadResourceAsync("repl://status").ConfigureAwait(false);
+			var content = result.Contents.OfType<TextResourceContents>().First();
 
-			var text = result.Contents.OfType<TextResourceContents>().First().Text;
-			text.Should().Contain("all-ok");
+			content.Text.Should().Contain("all-ok");
+			content.MimeType.Should().Be("application/json");
+		}
+	}
+
+	[TestMethod]
+	[Description("Undeclared resource MIME type defaults to the forced MCP output converter MIME type.")]
+	public async Task When_ResourceHasNoDeclaredMimeType_Then_ListAndReadUseForcedJsonMimeType()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("ops status", () => new
+				{
+					Service = "checkout",
+					Healthy = true,
+				})
+				.ReadOnly()
+				.AsResource()).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			var resources = await session.Client.ListResourcesAsync().ConfigureAwait(false);
+			resources.Should().ContainSingle(r => string.Equals(r.Uri, "repl://ops/status", StringComparison.Ordinal)).Which
+				.MimeType.Should().Be("application/json");
+
+			var result = await session.Client.ReadResourceAsync("repl://ops/status").ConfigureAwait(false);
+			var content = result.Contents.OfType<TextResourceContents>().Single();
+
+			content.MimeType.Should().Be("application/json");
+			content.Text.Should().Contain("checkout");
+		}
+	}
+
+	[TestMethod]
+	[Description("Explicit resource MIME type override wins over the forced MCP output converter MIME type.")]
+	public async Task When_ResourceHasExplicitMimeTypeOverride_Then_ListAndReadUseOverride()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("ops status", () => new
+				{
+					Service = "checkout",
+					Healthy = true,
+				})
+				.ReadOnly()
+				.AsResource(mimeType: "application/vnd.repl.status+json")).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			var resources = await session.Client.ListResourcesAsync().ConfigureAwait(false);
+			resources.Should().ContainSingle(r => string.Equals(r.Uri, "repl://ops/status", StringComparison.Ordinal)).Which
+				.MimeType.Should().Be("application/vnd.repl.status+json");
+
+			var result = await session.Client.ReadResourceAsync("repl://ops/status").ConfigureAwait(false);
+			var content = result.Contents.OfType<TextResourceContents>().Single();
+
+			content.MimeType.Should().Be("application/vnd.repl.status+json");
+			content.Text.Should().Contain("checkout");
+		}
+	}
+
+	[TestMethod]
+	[Description("Undeclared resource templates use the forced MCP output converter MIME type.")]
+	public async Task When_TemplatedResourceHasNoDeclaredMimeType_Then_TemplateUsesForcedJsonMimeType()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("docs {name}", (string name) => $"# {name}")
+				.ReadOnly()
+				.AsResource()).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			var templates = await session.Client.ListResourceTemplatesAsync().ConfigureAwait(false);
+
+			templates.Should().ContainSingle(t => t.UriTemplate.Contains("{name}", StringComparison.Ordinal)).Which
+				.MimeType.Should().Be("application/json");
 		}
 	}
 

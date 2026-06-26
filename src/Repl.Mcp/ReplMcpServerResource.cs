@@ -13,7 +13,10 @@ namespace Repl.Mcp;
 /// </summary>
 internal sealed partial class ReplMcpServerResource : McpServerResource
 {
+	private const string DefaultMimeType = "text/plain";
+
 	private readonly string _resourceName;
+	private readonly string _mimeType;
 	private readonly McpToolAdapter _adapter;
 	private readonly ResourceTemplate _protocolResourceTemplate;
 	private readonly Regex? _uriParser;
@@ -23,16 +26,20 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 		ReplDocResource resource,
 		string resourceName,
 		string uriTemplate,
-		McpToolAdapter adapter)
+		McpToolAdapter adapter,
+		string? defaultMimeType = null)
 	{
 		_resourceName = resourceName;
+		_mimeType = !string.IsNullOrWhiteSpace(resource.MimeType)
+			? resource.MimeType
+			: string.IsNullOrWhiteSpace(defaultMimeType) ? DefaultMimeType : defaultMimeType;
 		_adapter = adapter;
 		_protocolResourceTemplate = new ResourceTemplate
 		{
 			Name = resourceName,
 			Description = resource.Description,
 			UriTemplate = uriTemplate,
-			MimeType = "text/plain",
+			MimeType = _mimeType,
 		};
 
 		// Build a regex to extract template variables from the URI.
@@ -90,7 +97,7 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 				new TextResourceContents
 				{
 					Uri = request.Params.Uri,
-					MimeType = "text/plain",
+					MimeType = _mimeType,
 					Text = text,
 				},
 			],

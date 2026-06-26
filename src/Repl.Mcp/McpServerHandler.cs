@@ -822,6 +822,7 @@ internal sealed class McpServerHandler
 		Dictionary<string, ReplDocCommand> commandsByPath)
 	{
 		var resources = new List<McpServerResource>();
+		var defaultResourceMimeType = ResolveForcedOutputMimeType();
 
 		foreach (var resource in model.Resources)
 		{
@@ -854,7 +855,12 @@ internal sealed class McpServerHandler
 			}
 
 			var uriTemplate = McpToolNameFlattener.BuildResourceUri(resource.Path, _options.ResourceUriScheme);
-			var mcpResource = new ReplMcpServerResource(resource, resourceName, uriTemplate, adapter);
+			var mcpResource = new ReplMcpServerResource(
+				resource,
+				resourceName,
+				uriTemplate,
+				adapter,
+				defaultResourceMimeType);
 
 			if (docCommand is not null)
 			{
@@ -870,6 +876,20 @@ internal sealed class McpServerHandler
 		}
 
 		return resources;
+	}
+
+	private string ResolveForcedOutputMimeType()
+	{
+		if (_app is CoreReplApp coreApp
+			&& coreApp.OptionsSnapshot.Output.Transformers.TryGetValue(
+				McpToolAdapter.ForcedOutputFormat,
+				out var transformer)
+			&& !string.IsNullOrWhiteSpace(transformer.MimeType))
+		{
+			return transformer.MimeType;
+		}
+
+		return "text/plain";
 	}
 
 	private static bool TryGetAppResourceOptions(
