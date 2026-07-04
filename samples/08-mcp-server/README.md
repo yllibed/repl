@@ -131,7 +131,7 @@ For this sample:
 Replace path placeholders before copying:
 
 - macOS/Linux JSON: `/absolute/path/to/repl`.
-- Windows JSON: `C:\Users\you\src\repl` (JSON requires doubled
+- Windows JSON: `C:\\Users\\you\\src\\repl` (JSON requires doubled
   backslashes).
 
 ### Shared `mcpServers` JSON
@@ -187,7 +187,7 @@ code --add-mcp '{"name":"repl-contacts-sample","command":"dotnet","args":["run",
 On Windows, prefer editing `.vscode/mcp.json`. The `code.cmd --add-mcp`
 argument path can mangle inline JSON in common shells. If you write JSON by
 hand, use doubled backslashes in paths, for example
-`C:\Users\you\src\repl\samples\08-mcp-server\McpServerSample.csproj`.
+`C:\\Users\\you\\src\\repl\\samples\\08-mcp-server\\McpServerSample.csproj`.
 
 ### Claude Code
 

@@ -383,7 +383,7 @@ For a local sample project, split the launch into `command` and `args`:
 ```
 
 On Windows JSON, write paths with doubled backslashes, for example
-`C:\Users\you\src\repl\samples\08-mcp-server\McpServerSample.csproj`.
+`C:\\Users\\you\\src\\repl\\samples\\08-mcp-server\\McpServerSample.csproj`.
 
 ### Claude Code
 
