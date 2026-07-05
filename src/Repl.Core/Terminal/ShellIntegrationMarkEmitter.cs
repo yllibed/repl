@@ -97,6 +97,13 @@ internal sealed class ShellIntegrationMarkEmitter
 	}
 
 	/// <summary>
+	/// Closes the current cycle without writing anything. Used for protocol-passthrough
+	/// commands, where a trailing D mark would land in the protocol stream; the next
+	/// prompt-start mark implicitly aborts the unterminated cycle on the terminal side.
+	/// </summary>
+	public void AbandonCycle() => _phase = Phase.Idle;
+
+	/// <summary>
 	/// Command end (mark D): call once per prompt cycle. Pass <c>null</c> for aborted or
 	/// empty input (FinalTerm "command aborted" form, no exit-code parameter). No-op when
 	/// no cycle is open, so a double call can never emit two D marks.

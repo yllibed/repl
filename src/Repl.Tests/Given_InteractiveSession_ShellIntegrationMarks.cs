@@ -187,6 +187,54 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	}
 
 	[TestMethod]
+	[Description("An ambient help invocation that fails to render (unknown output format) reports exit code 1 in the command-end mark, matching the non-ambient --help path.")]
+	public void When_HelpAmbientCommandFailsToRender_Then_CommandEndReportsExitCodeOne()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		sut.Map("ping", () => "pong");
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "help --output:bogus\rexit\r");
+
+		raw.Should().Contain("]133;D;1");
+	}
+
+	[TestMethod]
+	[Description("A protocol-passthrough command run interactively gets no output-start or command-end marks: OSC bytes must never precede or trail a protocol payload on the same stream.")]
+	public void When_ProtocolPassthroughCommandRunsInteractively_Then_NoOutputMarksWrapTheProtocolStream()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		sut.Map("serve", () => "protocol-payload").AsProtocolPassthrough();
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "serve\rexit\r");
+
+		raw.Should().Contain("protocol-payload");
+		CountOccurrences(raw, "]133;C").Should().Be(1, because: "only the exit cycle may open an output region");
+		CountOccurrences(raw, "]133;D").Should().Be(1, because: "no command-end mark may trail the protocol payload");
+		raw.IndexOf("]133;C", StringComparison.Ordinal)
+			.Should().BeGreaterThan(
+				raw.IndexOf("protocol-payload", StringComparison.Ordinal),
+				because: "the only output-start mark belongs to the later exit command");
+	}
+
+	[TestMethod]
+	[Description("A dispatch that throws (history with a non-numeric --limit) still closes the lifecycle with a failed command-end mark so the terminal never keeps an unterminated command segment.")]
+	public void When_AmbientCommandThrows_Then_CommandEndStillReportsFailure()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		sut.Map("ping", () => "pong");
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "history --limit abc\r", swallowRunExceptions: true);
+
+		raw.Should().Contain("]133;D;1");
+	}
+
+	[TestMethod]
 	[Description("Without UseTerminalIntegration the interactive loop emits no shell-integration marks at all: the feature is opt-in.")]
 	public void When_IntegrationIsNotConfigured_Then_NoMarksAreEmitted()
 	{
@@ -239,7 +287,8 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		TerminalHarness harness,
 		ReplApp sut,
 		string typedInput,
-		string? terminalIdentity = null)
+		string? terminalIdentity = null,
+		bool swallowRunExceptions = false)
 	{
 		var keyReader = new FakeKeyReader(typedInput.Select(ToKeyInfo).ToArray());
 		var previousReader = ReplSessionIO.KeyReader;
@@ -255,7 +304,15 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 				ReplSessionIO.TerminalIdentity = terminalIdentity;
 			}
 
-			_ = sut.Run([]);
+			try
+			{
+				_ = sut.Run([]);
+			}
+			catch when (swallowRunExceptions)
+			{
+				// The test asserts on the marks emitted before the crash propagated.
+			}
+
 			return harness.RawOutput;
 		}
 		finally

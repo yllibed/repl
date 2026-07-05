@@ -79,12 +79,9 @@ internal sealed class InteractiveSession(CoreReplApp app)
 					cancellationToken)
 				.ConfigureAwait(false);
 
-			await marks.WriteCommandLineAsync(line).ConfigureAwait(false);
-			await marks.WriteOutputStartAsync().ConfigureAwait(false);
-			var (outcome, exitCode) = await DispatchInteractiveCommandAsync(
-					inputTokens, scopeTokens, serviceProvider, cancelHandler, cancellationToken)
+			var outcome = await ExecuteCommittedInputAsync(
+					marks, line, inputTokens, scopeTokens, serviceProvider, cancelHandler, cancellationToken)
 				.ConfigureAwait(false);
-			await marks.WriteCommandEndAsync(exitCode).ConfigureAwait(false);
 			if (outcome == AmbientCommandOutcome.Exit)
 			{
 				return 0;
@@ -212,6 +209,76 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		}
 	}
 
+	/// <summary>
+	/// Runs one committed input line inside its shell-integration lifecycle: opens the
+	/// output region, dispatches, and guarantees the cycle is closed on every path.
+	/// </summary>
+	private async ValueTask<AmbientCommandOutcome> ExecuteCommittedInputAsync(
+		ShellIntegrationMarkEmitter marks,
+		string line,
+		List<string> inputTokens,
+		List<string> scopeTokens,
+		IServiceProvider serviceProvider,
+		CancelKeyHandler cancelHandler,
+		CancellationToken cancellationToken)
+	{
+		// A protocol-passthrough command turns the output stream into a protocol
+		// channel: no mark may precede or trail its payload. A/B were already
+		// written around the prompt (before the command was known); the cycle is
+		// abandoned silently and the next prompt-start implicitly closes it.
+		var isProtocolPassthrough = IsProtocolPassthroughInvocation(inputTokens, scopeTokens);
+		if (!isProtocolPassthrough)
+		{
+			await marks.WriteCommandLineAsync(line).ConfigureAwait(false);
+			await marks.WriteOutputStartAsync().ConfigureAwait(false);
+		}
+
+		AmbientCommandOutcome outcome;
+		int exitCode;
+		try
+		{
+			(outcome, exitCode) = await DispatchInteractiveCommandAsync(
+					inputTokens, scopeTokens, serviceProvider, cancelHandler, cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch when (!isProtocolPassthrough)
+		{
+			// Close the lifecycle before the exception propagates so the terminal
+			// never keeps an unterminated command segment.
+			await marks.WriteCommandEndAsync(exitCode: 1).ConfigureAwait(false);
+			throw;
+		}
+
+		if (isProtocolPassthrough)
+		{
+			marks.AbandonCycle();
+		}
+		else
+		{
+			await marks.WriteCommandEndAsync(exitCode).ConfigureAwait(false);
+		}
+
+		return outcome;
+	}
+
+	/// <summary>
+	/// Pre-resolves the typed input (without executing it) to detect protocol-passthrough
+	/// routes before any lifecycle mark opens the output region.
+	/// </summary>
+	private bool IsProtocolPassthroughInvocation(List<string> inputTokens, List<string> scopeTokens)
+	{
+		var invocationTokens = scopeTokens.Concat(inputTokens).ToArray();
+		var globalOptions = GlobalOptionParser.Parse(invocationTokens, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+		var prefixResolution = app.ResolveUniquePrefixes(globalOptions.RemainingTokens);
+		if (prefixResolution.IsAmbiguous)
+		{
+			return false;
+		}
+
+		var match = app.Resolve(prefixResolution.Tokens);
+		return match?.Route.Command.IsProtocolPassthrough == true;
+	}
+
 	private static void SetCommandTokenOnChannel(IServiceProvider serviceProvider, CancellationToken ct)
 	{
 		if (serviceProvider.GetService(typeof(IReplInteractionChannel)) is ICommandTokenReceiver receiver)
@@ -305,8 +372,8 @@ internal sealed class InteractiveSession(CoreReplApp app)
 				helpTokens,
 				app.OptionsSnapshot.Output,
 				app.OptionsSnapshot.Parsing);
-			_ = await app.RenderHelpAsync(globalOptions, cancellationToken).ConfigureAwait(false);
-			return AmbientCommandOutcome.Handled;
+			var helpRendered = await app.RenderHelpAsync(globalOptions, cancellationToken).ConfigureAwait(false);
+			return helpRendered ? AmbientCommandOutcome.Handled : AmbientCommandOutcome.HandledError;
 		}
 
 		if (inputTokens.Count == 1 && string.Equals(token, "..", StringComparison.Ordinal))
