@@ -30,4 +30,21 @@ internal static class TerminalEnvironmentClassifier
 			|| string.Equals(Environment.GetEnvironmentVariable("ConEmuANSI"), "ON", StringComparison.OrdinalIgnoreCase)
 			|| string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "WezTerm", StringComparison.OrdinalIgnoreCase);
 	}
+
+	public static bool IsKnownShellIntegrationTerminal()
+	{
+		if (IsTerminalMultiplexerSession())
+		{
+			return false;
+		}
+
+		// ConEmu is deliberately absent: it renders OSC 9;4 progress but not
+		// FinalTerm/VS Code prompt marks.
+		return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WT_SESSION"))
+			|| IsVsCodeTerminal()
+			|| string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "WezTerm", StringComparison.OrdinalIgnoreCase);
+	}
+
+	public static bool IsVsCodeTerminal() =>
+		string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "vscode", StringComparison.OrdinalIgnoreCase);
 }

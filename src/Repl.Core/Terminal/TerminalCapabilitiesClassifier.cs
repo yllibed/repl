@@ -25,6 +25,7 @@ internal static class TerminalCapabilitiesClassifier
 		    || normalized.Contains("ghostty", StringComparison.Ordinal)
 		    || normalized.Contains("conemu", StringComparison.Ordinal)
 		    || normalized.Contains("windows terminal", StringComparison.Ordinal)
+		    || normalized.Contains("vscode", StringComparison.Ordinal)
 		    || normalized.Contains("alacritty", StringComparison.Ordinal)
 		    || normalized.Contains("rxvt", StringComparison.Ordinal)
 		    || normalized.Contains("konsole", StringComparison.Ordinal)
@@ -42,6 +43,17 @@ internal static class TerminalCapabilitiesClassifier
 				|| normalized.Contains("windows terminal", StringComparison.Ordinal))
 			{
 				capabilities |= TerminalCapabilities.ProgressReporting;
+			}
+
+			// ConEmu handles OSC 9;4 progress but not FinalTerm/VS Code prompt marks,
+			// so it deliberately stays out of this list.
+			if (normalized.Contains("wezterm", StringComparison.Ordinal)
+				|| normalized.Contains("iterm", StringComparison.Ordinal)
+				|| normalized.Contains("ghostty", StringComparison.Ordinal)
+				|| normalized.Contains("windows terminal", StringComparison.Ordinal)
+				|| normalized.Contains("vscode", StringComparison.Ordinal))
+			{
+				capabilities |= TerminalCapabilities.ShellIntegrationMarks;
 			}
 
 			return capabilities;
