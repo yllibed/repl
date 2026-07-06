@@ -44,49 +44,82 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		while (true)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			var readResult = await ReadInteractiveInputAsync(
-					marks,
-					scopeTokens,
-					historyProvider,
-					serviceProvider,
-					cancellationToken)
-				.ConfigureAwait(false);
-			if (readResult.Escaped)
+			try
 			{
-				await marks.WriteCommandEndAsync(exitCode: null).ConfigureAwait(false);
-				await ReplSessionIO.Output.WriteLineAsync().ConfigureAwait(false);
-				continue; // Esc at bare prompt → fresh line.
+				var (exit, updatedHistory) = await RunPromptCycleAsync(
+						marks, scopeTokens, historyProvider, lastHistoryEntry, serviceProvider, cancelHandler, cancellationToken)
+					.ConfigureAwait(false);
+				lastHistoryEntry = updatedHistory;
+				if (exit)
+				{
+					return 0;
+				}
 			}
-
-			var line = readResult.Line;
-			if (line is null)
+			catch
 			{
-				await marks.WriteCommandEndAsync(exitCode: null).ConfigureAwait(false);
-				return 0;
-			}
-
-			var inputTokens = TokenizeInteractiveInput(line);
-			if (inputTokens.Count == 0)
-			{
-				await marks.WriteCommandEndAsync(exitCode: null).ConfigureAwait(false);
-				continue;
-			}
-
-			lastHistoryEntry = await TryAppendHistoryAsync(
-					historyProvider,
-					lastHistoryEntry,
-					line,
-					cancellationToken)
-				.ConfigureAwait(false);
-
-			var outcome = await ExecuteCommittedInputAsync(
-					marks, line, inputTokens, scopeTokens, serviceProvider, cancelHandler, cancellationToken)
-				.ConfigureAwait(false);
-			if (outcome == AmbientCommandOutcome.Exit)
-			{
-				return 0;
+				// The prompt marks (A/B) may have opened a cycle before the read or the
+				// history append failed. Close it with an aborted command-end (no exit
+				// code) so the terminal keeps no unterminated segment, then propagate.
+				// No-op if the cycle was already closed (ExecuteCommittedInputAsync handles
+				// its own exceptions), since the emitter's phase guard drops a second D.
+				await TryWriteCommandEndAsync(marks, exitCode: null).ConfigureAwait(false);
+				throw;
 			}
 		}
+	}
+
+	/// <summary>
+	/// Runs one prompt cycle: emits the prompt marks, reads a line, and dispatches it.
+	/// Returns whether the session should exit and the updated last-history entry.
+	/// </summary>
+	private async ValueTask<(bool Exit, string? LastHistoryEntry)> RunPromptCycleAsync(
+		ShellIntegrationMarkEmitter marks,
+		List<string> scopeTokens,
+		IHistoryProvider? historyProvider,
+		string? lastHistoryEntry,
+		IServiceProvider serviceProvider,
+		CancelKeyHandler cancelHandler,
+		CancellationToken cancellationToken)
+	{
+		var readResult = await ReadInteractiveInputAsync(
+				marks,
+				scopeTokens,
+				historyProvider,
+				serviceProvider,
+				cancellationToken)
+			.ConfigureAwait(false);
+		if (readResult.Escaped)
+		{
+			await marks.WriteCommandEndAsync(exitCode: null).ConfigureAwait(false);
+			await ReplSessionIO.Output.WriteLineAsync().ConfigureAwait(false);
+			return (false, lastHistoryEntry); // Esc at bare prompt → fresh line.
+		}
+
+		var line = readResult.Line;
+		if (line is null)
+		{
+			await marks.WriteCommandEndAsync(exitCode: null).ConfigureAwait(false);
+			return (true, lastHistoryEntry);
+		}
+
+		var inputTokens = TokenizeInteractiveInput(line);
+		if (inputTokens.Count == 0)
+		{
+			await marks.WriteCommandEndAsync(exitCode: null).ConfigureAwait(false);
+			return (false, lastHistoryEntry);
+		}
+
+		lastHistoryEntry = await TryAppendHistoryAsync(
+				historyProvider,
+				lastHistoryEntry,
+				line,
+				cancellationToken)
+			.ConfigureAwait(false);
+
+		var outcome = await ExecuteCommittedInputAsync(
+				marks, line, inputTokens, scopeTokens, serviceProvider, cancelHandler, cancellationToken)
+			.ConfigureAwait(false);
+		return (outcome == AmbientCommandOutcome.Exit, lastHistoryEntry);
 	}
 
 	private async ValueTask<ConsoleLineReader.ReadResult> ReadInteractiveInputAsync(

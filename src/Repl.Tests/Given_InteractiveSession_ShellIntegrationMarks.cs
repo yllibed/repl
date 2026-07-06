@@ -412,6 +412,24 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		}
 	}
 
+	[TestMethod]
+	[Description("If the line read throws after the prompt marks are written (A/B), the loop closes the open cycle with an aborted command-end mark (no exit code) before the exception propagates, so the terminal keeps no unterminated command segment.")]
+	public void When_LineReadFailsAfterPromptMarks_Then_AbortedCommandEndIsEmitted()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		sut.Map("ping", () => "pong");
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		// An empty key queue makes ConsoleLineReader's first ReadKeyAsync throw, after
+		// WritePromptStart (A) and WriteInputStart (B) have already run for that cycle.
+		var raw = RunInteractiveSession(harness, sut, typedInput: string.Empty, swallowRunExceptions: true);
+
+		raw.Should().Contain("]133;B", because: "the prompt cycle opened before the read failed");
+		raw.Should().Contain("]133;D", because: "the failed read must still close the cycle");
+		raw.Should().NotContain("]133;D;", because: "a read failure is an aborted cycle, not a failure exit code");
+	}
+
 	private static ReplApp CreateMarkedApp(ShellIntegrationMode mode = ShellIntegrationMode.Always)
 	{
 		var sut = ReplApp.Create()
