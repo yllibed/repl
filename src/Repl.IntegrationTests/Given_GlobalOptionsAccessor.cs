@@ -420,6 +420,47 @@ public sealed class Given_GlobalOptionsAccessor
 		captured.Should().AllBe("acme");
 	}
 
+	[TestMethod]
+	[Description("Regression for the interactive committed-input order: parsed globals are applied BEFORE route resolution, so once the routing cache is invalidated, a module gated on a per-command global (--env prod) is present for that same command line. Red was observed with the Update call moved after route resolution.")]
+	public async Task When_GlobalGatedModuleResolvesInteractively_Then_PerCommandGlobalIsVisibleToPresencePredicate()
+	{
+		var output = new StringWriter();
+		var sut = ReplApp.Create();
+		// Autocomplete resolves the routing graph per keystroke; keep it out of the way so
+		// the committed-input resolution is the first one after the invalidation below.
+		sut.Options(options =>
+		{
+			options.Interactive.Autocomplete.Mode = AutocompleteMode.Off;
+			options.Parsing.AddGlobalOption<string>("env");
+		});
+		sut.MapModule(
+			new EnvGatedModule(),
+			context => string.Equals(
+				(context.ServiceProvider.GetService(typeof(IGlobalOptionsAccessor)) as IGlobalOptionsAccessor)
+					?.GetValue<string>("env"),
+				"prod",
+				StringComparison.Ordinal));
+		sut.Map("reload", () =>
+		{
+			sut.Core.InvalidateRouting();
+			return "reloaded";
+		});
+		var host = new StreamedReplHost(output, new StaticWindowSizeProvider());
+
+		host.EnqueueInput($"reload{Environment.NewLine}secret --env prod{Environment.NewLine}exit{Environment.NewLine}");
+		var exitCode = await host.RunSessionAsync(sut, new ReplRunOptions());
+
+		exitCode.Should().Be(0);
+		output.ToString().Should().Contain(
+			"classified-42",
+			because: "the per-command global must be applied before the re-evaluated routing graph gates the module");
+	}
+
+	private sealed class EnvGatedModule : IReplModule
+	{
+		public void Map(IReplMap map) => map.Map("secret", () => "classified-42");
+	}
+
 	private sealed class DecimalGlobalOptions
 	{
 		public double Rate { get; set; }
