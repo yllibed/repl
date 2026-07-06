@@ -393,6 +393,29 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	}
 
 	[TestMethod]
+	[Description("Auto mode honors a mid-session identity downgrade: capability bits earned only by a previous identity inference are dropped when the client re-identifies as a markless terminal, so marks stop on the next prompt cycle instead of flowing forever.")]
+	public async Task When_HostedClientDowngradesToDumbMidSession_Then_MarksStopOnNextPromptCycle()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null,
+			ansiMode: AnsiMode.Always);
+		var emitter = CreateEmitter(ShellIntegrationMode.Auto);
+		ReplSessionIO.TerminalIdentity = "Windows Terminal";
+		await RunFullLifecycleAsync(emitter);
+		harness.RawOutput.Should().Contain("]133;A", because: "sanity: marks flow while the client identifies as Windows Terminal");
+
+		ReplSessionIO.TerminalIdentity = "dumb";
+		var markCountBeforeSecondCycle = TerminalMarks.Count(harness.RawOutput, "]133;");
+		await RunFullLifecycleAsync(emitter);
+
+		TerminalMarks.Count(harness.RawOutput, "]133;")
+			.Should().Be(markCountBeforeSecondCycle, because: "the latest identity no longer advertises shell-integration marks");
+	}
+
+	[TestMethod]
 	[Description("An aborted or empty command reports D without an exit-code parameter, matching the FinalTerm 'command aborted' form.")]
 	public async Task When_CommandEndsWithoutExitCode_Then_DIsEmittedWithoutParameter()
 	{

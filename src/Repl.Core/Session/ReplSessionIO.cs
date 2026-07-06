@@ -19,7 +19,46 @@ internal static class ReplSessionIO
 		string? RemotePeer,
 		string? TerminalIdentity,
 		TerminalCapabilities TerminalCapabilities,
-		DateTimeOffset LastUpdatedUtc);
+		TerminalCapabilities IdentityInferredCapabilities,
+		DateTimeOffset LastUpdatedUtc)
+	{
+		/// <summary>
+		/// Applies a reported terminal identity. Capability bits earned only by the previous
+		/// identity inference are replaced by the new inference, while explicitly granted bits
+		/// (overrides, control messages, actual resize/ANSI reports) are preserved — so a
+		/// Windows Terminal → dumb downgrade revokes the inferred marks support instead of
+		/// keeping it for the rest of the session.
+		/// </summary>
+		public SessionMetadata WithTerminalIdentity(string? terminalIdentity)
+		{
+			var explicitCapabilities = TerminalCapabilities & ~IdentityInferredCapabilities;
+			var inferred = TerminalCapabilitiesClassifier.InferFromIdentity(terminalIdentity);
+			return this with
+			{
+				TerminalIdentity = terminalIdentity,
+				TerminalCapabilities = explicitCapabilities | inferred,
+				// Only bits this identity actually earned are attributed to inference; bits
+				// already granted explicitly stay revocation-proof on the next identity change.
+				IdentityInferredCapabilities = inferred & ~explicitCapabilities,
+			};
+		}
+
+		/// <summary>Grants capability bits explicitly, so a later identity change cannot revoke them.</summary>
+		public SessionMetadata WithExplicitCapabilities(TerminalCapabilities granted) =>
+			this with
+			{
+				TerminalCapabilities = TerminalCapabilities | granted,
+				IdentityInferredCapabilities = IdentityInferredCapabilities & ~granted,
+			};
+
+		/// <summary>Revokes capability bits explicitly (for example an ANSI opt-out).</summary>
+		public SessionMetadata WithoutCapabilities(TerminalCapabilities revoked) =>
+			this with
+			{
+				TerminalCapabilities = TerminalCapabilities & ~revoked,
+				IdentityInferredCapabilities = IdentityInferredCapabilities & ~revoked,
+			};
+	}
 
 	private static readonly AsyncLocal<TextWriter?> s_output = new();
 	private static readonly AsyncLocal<TextWriter?> s_error = new();
@@ -100,13 +139,13 @@ internal static class ReplSessionIO
 					sessionId,
 					session =>
 					{
-						var capabilities = value switch
+						var updated = value switch
 						{
-							true => session.TerminalCapabilities | TerminalCapabilities.Ansi,
-							false => session.TerminalCapabilities & ~TerminalCapabilities.Ansi,
-							_ => session.TerminalCapabilities,
+							true => session.WithExplicitCapabilities(TerminalCapabilities.Ansi),
+							false => session.WithoutCapabilities(TerminalCapabilities.Ansi),
+							_ => session,
 						};
-						return session with { AnsiSupport = value, TerminalCapabilities = capabilities };
+						return updated with { AnsiSupport = value };
 					});
 			}
 		}
@@ -126,10 +165,10 @@ internal static class ReplSessionIO
 					sessionId,
 					session =>
 					{
-						var capabilities = value is { }
-							? session.TerminalCapabilities | TerminalCapabilities.ResizeReporting
-							: session.TerminalCapabilities;
-						return session with { WindowSize = value, TerminalCapabilities = capabilities };
+						var updated = value is { }
+							? session.WithExplicitCapabilities(TerminalCapabilities.ResizeReporting)
+							: session;
+						return updated with { WindowSize = value };
 					});
 			}
 		}
@@ -184,14 +223,7 @@ internal static class ReplSessionIO
 		{
 			if (TryGetCurrentSessionId(out var sessionId))
 			{
-				UpdateSession(
-					sessionId,
-					session =>
-					{
-						var inferred = TerminalCapabilitiesClassifier.InferFromIdentity(value);
-						var capabilities = session.TerminalCapabilities | inferred;
-						return session with { TerminalIdentity = value, TerminalCapabilities = capabilities };
-					});
+				UpdateSession(sessionId, session => session.WithTerminalIdentity(value));
 			}
 		}
 	}
@@ -206,7 +238,15 @@ internal static class ReplSessionIO
 		{
 			if (TryGetCurrentSessionId(out var sessionId))
 			{
-				UpdateSession(sessionId, session => session with { TerminalCapabilities = value });
+				UpdateSession(
+					sessionId,
+					session => session with
+					{
+						TerminalCapabilities = value,
+						// A wholesale set is authoritative: nothing remains attributable to
+						// identity inference until the next identity report.
+						IdentityInferredCapabilities = TerminalCapabilities.None,
+					});
 			}
 		}
 	}
@@ -253,21 +293,13 @@ internal static class ReplSessionIO
 		{
 			UpdateSession(
 				resolvedSessionId,
-				session => session with
-				{
-					AnsiSupport = true,
-					TerminalCapabilities = session.TerminalCapabilities | TerminalCapabilities.Ansi,
-				});
+				session => session.WithExplicitCapabilities(TerminalCapabilities.Ansi) with { AnsiSupport = true });
 		}
 		else if (ansiMode == AnsiMode.Never)
 		{
 			UpdateSession(
 				resolvedSessionId,
-				session => session with
-				{
-					AnsiSupport = false,
-					TerminalCapabilities = session.TerminalCapabilities & ~TerminalCapabilities.Ansi,
-				});
+				session => session.WithoutCapabilities(TerminalCapabilities.Ansi) with { AnsiSupport = false });
 		}
 
 		return new SessionScope(
@@ -347,6 +379,7 @@ internal static class ReplSessionIO
 			RemotePeer: null,
 			TerminalIdentity: null,
 			TerminalCapabilities: TerminalCapabilities.None,
+			IdentityInferredCapabilities: TerminalCapabilities.None,
 			LastUpdatedUtc: DateTimeOffset.UtcNow);
 
 	private static SessionMetadata NormalizeSession(string sessionId, SessionMetadata session) =>
