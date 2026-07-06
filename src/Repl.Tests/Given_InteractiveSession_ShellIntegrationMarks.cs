@@ -206,7 +206,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	{
 		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
 		var sut = CreateMarkedApp();
-		sut.Map("serve", () => "protocol-payload").AsProtocolPassthrough();
+		sut.Map("serve", (IReplIoContext _) => "protocol-payload").AsProtocolPassthrough();
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 
 		var raw = RunInteractiveSession(harness, sut, "serve --json\rexit\r");
@@ -221,7 +221,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	{
 		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
 		var sut = CreateMarkedApp();
-		sut.Map("serve", () => "protocol-payload").AsProtocolPassthrough();
+		sut.Map("serve", (IReplIoContext _) => "protocol-payload").AsProtocolPassthrough();
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 
 		var raw = RunInteractiveSession(harness, sut, "serve\rexit\r");
@@ -241,7 +241,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	{
 		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
 		var sut = CreateMarkedApp();
-		sut.Map("serve", () => "protocol-payload").AsProtocolPassthrough();
+		sut.Map("serve", (IReplIoContext _) => "protocol-payload").AsProtocolPassthrough();
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 
 		var raw = RunInteractiveSession(harness, sut, "serve --bogus 42\rexit\r");
@@ -257,13 +257,59 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	{
 		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
 		var sut = CreateMarkedApp();
-		sut.Map("serve", () => Results.Exit(7)).AsProtocolPassthrough();
+		sut.Map("serve", (IReplIoContext _) => Results.Exit(7)).AsProtocolPassthrough();
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 
 		var raw = RunInteractiveSession(harness, sut, "serve\rexit\r");
 
 		raw.Should().NotContain("]133;D;7");
 		TerminalMarks.Count(raw, "]133;D").Should().Be(1, because: "only the exit cycle may report a command end");
+	}
+
+	[TestMethod]
+	[Description("A protocol-passthrough route dispatched from the interactive loop runs under the same passthrough contract as CLI one-shot execution: the handler observes an active protocol-passthrough scope, so the stdout/stderr/session isolation contract holds in both modes.")]
+	public void When_PassthroughCommandRunsInteractively_Then_HandlerObservesPassthroughScope()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		bool? observedPassthrough = null;
+		sut.Map(
+				"serve",
+				(IReplIoContext _) =>
+				{
+					observedPassthrough = ReplSessionIO.IsProtocolPassthrough;
+					return "protocol-payload";
+				})
+			.AsProtocolPassthrough();
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		_ = RunInteractiveSession(harness, sut, "serve\rexit\r");
+
+		observedPassthrough.Should().BeTrue(
+			because: "interactive dispatch must honor the same protocol-passthrough contract as the CLI one-shot path");
+	}
+
+	[TestMethod]
+	[Description("In a hosted interactive session, a protocol-passthrough route whose handler cannot run hosted (no IReplIoContext parameter) is rejected with the same error as the CLI one-shot path, instead of silently running without the isolation contract.")]
+	public void When_HostedInteractivePassthroughLacksIoContext_Then_HostedGuardRejectsLikeCli()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		var handlerRan = false;
+		sut.Map(
+				"serve",
+				() =>
+				{
+					handlerRan = true;
+					return "protocol-payload";
+				})
+			.AsProtocolPassthrough();
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "serve\rexit\r");
+
+		handlerRan.Should().BeFalse(because: "the hosted guard must reject before dispatch, matching CLI one-shot behavior");
+		raw.Should().Contain("requires a handler parameter of type IReplIoContext");
 	}
 
 	[TestMethod]
@@ -288,7 +334,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	{
 		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
 		var sut = CreateMarkedApp();
-		sut.Map("serve", () => "protocol-payload").AsProtocolPassthrough();
+		sut.Map("serve", (IReplIoContext _) => "protocol-payload").AsProtocolPassthrough();
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 
 		var raw = RunInteractiveSession(harness, sut, "ser\rexit\r");

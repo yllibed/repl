@@ -447,10 +447,36 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		var match = resolution.Match;
 		if (match is not null)
 		{
+			if (match.Route.Command.IsProtocolPassthrough)
+			{
+				// Same execution contract as the CLI one-shot path — hosted-capability guard,
+				// protocol-passthrough scope, and stream isolation — so a handler probing
+				// IsProtocolPassthrough observes the same value in both modes.
+				return await app.ExecuteProtocolPassthroughCommandAsync(match, globalOptions, serviceProvider, cancellationToken)
+					.ConfigureAwait(false);
+			}
+
 			var (exitCode, _) = await app.ExecuteMatchedCommandAsync(match, globalOptions, serviceProvider, scopeTokens, cancellationToken).ConfigureAwait(false);
 			return exitCode;
 		}
 
+		return await HandleUnmatchedInteractiveInputAsync(
+				activeGraph, resolution, globalOptions, scopeTokens, serviceProvider, cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Handles a committed input that matched no route: context navigation when the tokens
+	/// name a context, a route-resolution failure otherwise.
+	/// </summary>
+	private async ValueTask<int> HandleUnmatchedInteractiveInputAsync(
+		ActiveRoutingGraph activeGraph,
+		RouteResolver.RouteResolutionResult resolution,
+		GlobalInvocationOptions globalOptions,
+		List<string> scopeTokens,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, app.OptionsSnapshot.Parsing);
 		if (contextMatch is not null)
 		{
