@@ -23,7 +23,8 @@ internal sealed class ShellIntegrationMarkEmitter
 	private const string Bell = "\x07";
 
 	// The A/B/C/D-no-code marks are constant per backend; precomputed so the per-prompt
-	// path allocates no throw-away interpolated strings (only D-with-exit-code does).
+	// path allocates no throw-away interpolated strings. Only the variable-payload marks
+	// still format per call: D-with-exit-code and the 633;E command-line report.
 	private static readonly MarkSet Osc133 = new("\x1b]133;A\x07", "\x1b]133;B\x07", "\x1b]133;C\x07", "\x1b]133;D\x07");
 	private static readonly MarkSet Osc633 = new("\x1b]633;A\x07", "\x1b]633;B\x07", "\x1b]633;C\x07", "\x1b]633;D\x07");
 

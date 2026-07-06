@@ -319,7 +319,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken)
 	{
 		if (options.RemainingTokens.Count == 0
-			|| !string.Equals(options.RemainingTokens[0], "complete", StringComparison.OrdinalIgnoreCase))
+			|| !string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase))
 		{
 			return null;
 		}
@@ -345,11 +345,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 		var token = options.RemainingTokens[0];
 		AmbientCommandOutcome ambientOutcome;
-		if (string.Equals(token, "exit", StringComparison.OrdinalIgnoreCase))
+		if (string.Equals(token, InteractiveSession.ExitAmbientToken, StringComparison.OrdinalIgnoreCase))
 		{
 			ambientOutcome = await HandleExitAmbientCommandAsync().ConfigureAwait(false);
 		}
-		else if (string.Equals(token, "..", StringComparison.Ordinal))
+		else if (string.Equals(token, InteractiveSession.UpAmbientToken, StringComparison.Ordinal))
 		{
 			ambientOutcome = await HandleUpAmbientCommandAsync(scopeTokens: [], isInteractiveSession: false)
 				.ConfigureAwait(false);
