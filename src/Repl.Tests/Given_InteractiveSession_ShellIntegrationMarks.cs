@@ -478,6 +478,26 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		raw.Should().NotContain("]133;D;", because: "a read failure is an aborted cycle, not a failure exit code");
 	}
 
+	[TestMethod]
+	[Description("CLI one-shot execution emits no marks even with UseTerminalIntegration configured, Always mode, and a fully capable terminal: Repl does not own the surrounding shell prompt there, and protocol streams (MCP stdio) must stay clean. Pins the guarantee that is otherwise only structural (the interactive loop owns the emitter).")]
+	public void When_OneShotRunsWithIntegrationConfigured_Then_NoMarksAreEmitted()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var sut = CreateMarkedApp();
+		sut.Map("ping", () => "pong");
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(harness.Writer, TextReader.Null);
+		ReplSessionIO.AnsiSupport = true;
+		ReplSessionIO.TerminalIdentity = "Windows Terminal";
+
+		var exitCode = sut.Run(["ping"]);
+
+		exitCode.Should().Be(0);
+		harness.RawOutput.Should().Contain("pong");
+		harness.RawOutput.Should().NotContain("]133;");
+		harness.RawOutput.Should().NotContain("]633;");
+	}
+
 	private static ReplApp CreateMarkedApp(ShellIntegrationMode mode = ShellIntegrationMode.Always)
 	{
 		var sut = ReplApp.Create()
