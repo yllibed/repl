@@ -6,20 +6,12 @@ namespace Repl.Tests;
 [DoNotParallelize]
 public sealed class Given_ShellIntegrationMarkEmitter
 {
-	private static readonly (string Name, string? Value)[] NeutralTerminalEnvironment =
-	[
-		("TMUX", null),
-		("TERM", null),
-		("WT_SESSION", null),
-		("ConEmuANSI", null),
-		("TERM_PROGRAM", null),
-	];
 
 	[TestMethod]
 	[Description("Always mode emits the full OSC 133 lifecycle in order: prompt start (A), input start (B), output start (C), command end with exit code (D).")]
 	public async Task When_ModeAlways_AndAnsiSession_Then_LifecycleMarksAreEmittedInOrder()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -49,7 +41,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	{
 		var esc = ((char)0x1b).ToString();
 		var bel = ((char)0x07).ToString();
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -75,7 +67,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	{
 		var esc = ((char)0x1b).ToString();
 		var bel = ((char)0x07).ToString();
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -172,7 +164,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("A session reporting a VS Code identity selects the OSC 633 backend and reports the command line with 633;E between input start and output start.")]
 	public async Task When_ModeAuto_AndVsCodeDetected_Then_Osc633MarksAreEmittedIncludingCommandLine()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -225,7 +217,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("Auto mode honors a hosted session that advertises ShellIntegrationMarks through its terminal identity, without any local environment hint.")]
 	public async Task When_ModeAuto_AndHostedSessionAdvertisesShellIntegrationMarks_Then_MarksAreEmitted()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -243,7 +235,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("A hosted session reporting a VS Code identity selects the OSC 633 backend even without TERM_PROGRAM in the host process environment.")]
 	public async Task When_HostedSessionReportsVsCodeIdentity_Then_Osc633BackendIsSelected()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -262,7 +254,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("Protocol passthrough (raw bytes piped to stdout) suppresses every mark regardless of mode: OSC bytes must never corrupt protocol streams.")]
 	public async Task When_ProtocolPassthroughIsActive_Then_NoMarksAreEmitted()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -281,7 +273,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("Disabled ANSI output suppresses every mark regardless of mode: escape bytes must never reach non-ANSI writers.")]
 	public async Task When_AnsiIsDisabled_Then_NoMarksAreEmitted()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -355,7 +347,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("A hosted client advertising ANSI only through capability flags (no AnsiSupport override) still gets marks: the server console's redirection state must not suppress a capability the client explicitly advertised.")]
 	public async Task When_HostedClientAdvertisesAnsiThroughCapabilities_Then_MarksAreEmitted()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -375,7 +367,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("A hosted client advertising ShellIntegrationMarks after the session started (Telnet TTYPE, control messages) gets marks from the next prompt cycle: enablement is re-evaluated per cycle, not frozen at session start.")]
 	public async Task When_HostedSessionAdvertisesMarksMidSession_Then_MarksAppearOnNextPromptCycle()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -396,7 +388,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("Auto mode honors a mid-session identity downgrade: capability bits earned only by a previous identity inference are dropped when the client re-identifies as a markless terminal, so marks stop on the next prompt cycle instead of flowing forever.")]
 	public async Task When_HostedClientDowngradesToDumbMidSession_Then_MarksStopOnNextPromptCycle()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -419,7 +411,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("An aborted or empty command reports D without an exit-code parameter, matching the FinalTerm 'command aborted' form.")]
 	public async Task When_CommandEndsWithoutExitCode_Then_DIsEmittedWithoutParameter()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -439,7 +431,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("The phase state machine makes a second command-end call a no-op so a command can never report two D marks.")]
 	public async Task When_CommandEndIsCalledTwice_Then_OnlyOneDIsEmitted()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -483,7 +475,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("Each prompt cycle records which gate decided the enablement, in the documented order, so a wrong on/off decision is triaged exactly instead of by symptom guessing. This pins the hosted Auto path: not advertised → advertised.")]
 	public async Task When_HostedAutoResolves_Then_DecidingGateIsRecorded()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -505,7 +497,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("The protocol-passthrough gate is recorded as the deciding reason when a passthrough scope is active, ahead of any mode or capability consideration.")]
 	public async Task When_ProtocolPassthroughIsActive_Then_GateRecordsIt()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
@@ -523,7 +515,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	[Description("An app that never called UseTerminalIntegration records the not-configured gate, and Never mode records the mode gate — the two 'off by design' reasons stay distinguishable.")]
 	public async Task When_IntegrationIsOffByDesign_Then_GateDistinguishesWhy()
 	{
-		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		using var session = ReplSessionIO.SetSession(
 			output: harness.Writer,
