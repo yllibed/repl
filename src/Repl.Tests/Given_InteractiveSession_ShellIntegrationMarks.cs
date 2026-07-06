@@ -385,7 +385,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		thrown!.Message.Should().Contain("history --limit must be a positive integer");
 	}
 
-	private static Exception? CaptureInteractiveRun(TextWriter writer, ReplApp sut, string typedInput)
+	private static InvalidOperationException? CaptureInteractiveRun(TextWriter writer, ReplApp sut, string typedInput)
 	{
 		var keyReader = new FakeKeyReader(typedInput.Select(ToKeyInfo).ToArray());
 		var previousReader = ReplSessionIO.KeyReader;
@@ -401,8 +401,10 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 				_ = sut.Run([]);
 				return null;
 			}
-			catch (Exception ex)
+			catch (InvalidOperationException ex)
 			{
+				// Only the expected ambient-failure exception is captured for assertion;
+				// any other type escapes as a genuine test failure.
 				return ex;
 			}
 		}
