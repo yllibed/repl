@@ -29,9 +29,9 @@ In interactive REPL mode, each prompt cycle is delimited with the FinalTerm sema
 | Right before command execution | `C` (output start) |
 | After the command completes | `D;<exit code>` (command end) |
 
-Exit codes follow shell conventions: `0` for success, `1` for errors (failed results, unknown commands, validation failures), and `130` (128+SIGINT) when a command is cancelled with Ctrl+C. An abandoned cycle — Escape at the prompt, an empty line, or end of input — reports `D` without an exit code, the FinalTerm "command aborted" form.
+Exit codes follow shell conventions: `0` for success, `1` for errors (failed results, unknown commands, validation failures), and `130` (128+SIGINT) when a command is cancelled with Ctrl+C. The interruption decoration is intentionally broad: a handler that throws `OperationCanceledException` for any other reason (its own timeout, a linked token) also reports `130`, because the loop cannot tell who requested the cancellation. An abandoned cycle — Escape at the prompt, an empty line, or end of input — reports `D` without an exit code, the FinalTerm "command aborted" form.
 
-The VS Code `E` mark reports the exact committed command line (with protocol escaping), which makes VS Code's command detection independent of what is visible on screen.
+The VS Code `E` mark reports the exact committed command line (with protocol escaping), which makes VS Code's command detection independent of what is visible on screen. Note the privacy implication: whatever was typed at the prompt — including secrets passed as command arguments — is transmitted verbatim to the terminal, which may persist it for command detection and history. This mirrors what VS Code's own shell integration does for regular shells; if commands take secrets, prefer prompting for them interactively instead of passing them as arguments.
 
 CLI one-shot mode emits no marks: Repl does not own the surrounding shell prompt there, and fake prompt markers would corrupt the host shell's own command navigation. Nested interaction prompts (`IReplInteractionChannel` questions asked *during* a command) emit no marks either — they are not shell prompts.
 
