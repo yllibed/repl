@@ -194,8 +194,8 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		{
 			// Globals were already applied in ResolveCommittedInput (before routing);
 			// reuse the prefix result from that single resolution — do not re-resolve.
-			var ambiguous = RoutingEngine.CreateAmbiguousPrefixResult(resolution.Prefix!);
-			_ = await app.RenderOutputAsync(ambiguous, resolution.Options!.OutputFormat, cancellationToken, isInteractive: true)
+			var ambiguous = RoutingEngine.CreateAmbiguousPrefixResult(resolution.Prefix);
+			_ = await app.RenderOutputAsync(ambiguous, resolution.Options.OutputFormat, cancellationToken, isInteractive: true)
 				.ConfigureAwait(false);
 			return (AmbientCommandOutcome.Handled, 1);
 		}
@@ -339,16 +339,68 @@ internal sealed class InteractiveSession(CoreReplApp app)
 	/// The single resolution of one committed input line: whether it is an ambient
 	/// command, a help request, an ambiguous prefix, or a resolved route — captured
 	/// against one routing-graph snapshot and reused by both the mark decision and dispatch.
+	/// Built through the per-kind factories so which fields are populated is structural:
+	/// the guarded accessors throw on a kind mismatch instead of null-forgiving reads.
 	/// </summary>
-	private readonly record struct CommittedResolution(
-		CommittedKind Kind,
-		GlobalInvocationOptions? Options,
-		ActiveRoutingGraph? Graph,
-		PrefixResolutionResult? Prefix,
-		RouteResolver.RouteResolutionResult? Routes)
+	private readonly struct CommittedResolution
 	{
+		private readonly GlobalInvocationOptions? _options;
+		private readonly ActiveRoutingGraph? _graph;
+		private readonly PrefixResolutionResult? _prefix;
+		private readonly RouteResolver.RouteResolutionResult? _routes;
+
+		private CommittedResolution(
+			CommittedKind kind,
+			GlobalInvocationOptions? options,
+			ActiveRoutingGraph? graph,
+			PrefixResolutionResult? prefix,
+			RouteResolver.RouteResolutionResult? routes)
+		{
+			Kind = kind;
+			_options = options;
+			_graph = graph;
+			_prefix = prefix;
+			_routes = routes;
+		}
+
+		public static CommittedResolution Ambient() =>
+			new(CommittedKind.Ambient, options: null, graph: null, prefix: null, routes: null);
+
+		public static CommittedResolution Ambiguous(
+			GlobalInvocationOptions options,
+			ActiveRoutingGraph graph,
+			PrefixResolutionResult prefix) =>
+			new(CommittedKind.Ambiguous, options, graph, prefix, routes: null);
+
+		public static CommittedResolution Help(
+			GlobalInvocationOptions options,
+			ActiveRoutingGraph graph,
+			PrefixResolutionResult prefix) =>
+			new(CommittedKind.Help, options, graph, prefix, routes: null);
+
+		public static CommittedResolution Routed(
+			GlobalInvocationOptions options,
+			ActiveRoutingGraph graph,
+			PrefixResolutionResult prefix,
+			RouteResolver.RouteResolutionResult routes) =>
+			new(CommittedKind.Routed, options, graph, prefix, routes);
+
+		public CommittedKind Kind { get; }
+
+		public GlobalInvocationOptions Options =>
+			_options ?? throw new InvalidOperationException("An ambient resolution captures no global options.");
+
+		public ActiveRoutingGraph Graph =>
+			_graph ?? throw new InvalidOperationException("An ambient resolution captures no routing graph.");
+
+		public PrefixResolutionResult Prefix =>
+			_prefix ?? throw new InvalidOperationException("An ambient resolution captures no prefix result.");
+
+		public RouteResolver.RouteResolutionResult Routes =>
+			_routes ?? throw new InvalidOperationException($"A {Kind} resolution captures no route match.");
+
 		public bool IsProtocolPassthrough =>
-			Kind == CommittedKind.Routed && Routes?.Match?.Route.Command.IsProtocolPassthrough == true;
+			Kind == CommittedKind.Routed && _routes?.Match?.Route.Command.IsProtocolPassthrough == true;
 	}
 
 	/// <summary>
@@ -364,7 +416,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		{
 			// Ambient commands win over routes sharing the same token and produce
 			// normal terminal output, never a protocol payload.
-			return new CommittedResolution(CommittedKind.Ambient, Options: null, Graph: null, Prefix: null, Routes: null);
+			return CommittedResolution.Ambient();
 		}
 
 		var invocationTokens = scopeTokens.Concat(inputTokens).ToArray();
@@ -383,17 +435,17 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		var prefixResolution = app.ResolveUniquePrefixes(globalOptions.RemainingTokens, graph);
 		if (prefixResolution.IsAmbiguous)
 		{
-			return new CommittedResolution(CommittedKind.Ambiguous, globalOptions, graph, prefixResolution, Routes: null);
+			return CommittedResolution.Ambiguous(globalOptions, graph, prefixResolution);
 		}
 
 		var resolvedOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
 		if (resolvedOptions.HelpRequested)
 		{
-			return new CommittedResolution(CommittedKind.Help, resolvedOptions, graph, prefixResolution, Routes: null);
+			return CommittedResolution.Help(resolvedOptions, graph, prefixResolution);
 		}
 
 		var routes = app.ResolveWithDiagnostics(resolvedOptions.RemainingTokens, graph.Routes);
-		return new CommittedResolution(CommittedKind.Routed, resolvedOptions, graph, prefixResolution, routes);
+		return CommittedResolution.Routed(resolvedOptions, graph, prefixResolution, routes);
 	}
 
 	/// <summary>
@@ -432,7 +484,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		var globalOptions = committed.Options!;
+		var globalOptions = committed.Options;
 		if (globalOptions.HelpRequested)
 		{
 			var rendered = await app.RenderHelpAsync(globalOptions, cancellationToken).ConfigureAwait(false);
@@ -442,8 +494,8 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		// Reuse the single routing-graph snapshot and route resolution captured in
 		// ResolveCommittedInput — never re-resolve here (that reopened a TOCTOU window
 		// against concurrent routing-graph invalidation).
-		var activeGraph = committed.Graph!.Value;
-		var resolution = committed.Routes!.Value;
+		var activeGraph = committed.Graph;
+		var resolution = committed.Routes;
 		var match = resolution.Match;
 		if (match is not null)
 		{
