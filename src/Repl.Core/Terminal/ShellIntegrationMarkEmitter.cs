@@ -181,25 +181,46 @@ internal sealed class ShellIntegrationMarkEmitter
 	// be escaped too.
 	private static bool IsForbiddenControl(char ch) => ch <= ' ' || ch == '\x7f' || (ch >= '\x80' && ch <= '\x9f');
 
+	/// <summary>
+	/// The gate that decided enablement for the current prompt cycle. Diagnostic-only:
+	/// lets tests (and debugging sessions) see WHY marks are on or off instead of
+	/// reverse-engineering the decision from the emitted bytes.
+	/// </summary>
+	internal ShellIntegrationGate LastGate { get; private set; } = ShellIntegrationGate.NotConfigured;
+
 	// Resolves enablement and backend for the cycle that is about to start. Cheap by
 	// design: environment variables are only consulted when no hosted session is active.
 	private void RefreshCycleConfiguration()
 	{
-		_enabled = ResolveEnabled(_options, _outputOptions);
+		LastGate = ResolveGate(_options, _outputOptions);
+		_enabled = LastGate == ShellIntegrationGate.Enabled;
 		_isVsCodeBackend = _enabled && IsVsCodeBackend();
 		_marks = _isVsCodeBackend ? Osc633 : Osc133;
 	}
 
-	private static bool ResolveEnabled(TerminalIntegrationOptions? options, OutputOptions outputOptions)
+	// Gates are evaluated in ShellIntegrationGate member order; the first failing gate
+	// names the decision. The structural gates mirror advanced progress (OSC 9;4): marks
+	// must never reach protocol streams, non-ANSI writers, or redirected local output.
+	private static ShellIntegrationGate ResolveGate(TerminalIntegrationOptions? options, OutputOptions outputOptions)
 	{
-		// Same structural gates as advanced progress (OSC 9;4): marks must never reach
-		// protocol streams, non-ANSI writers, or redirected local output.
-		if (options is null
-			|| ReplSessionIO.IsProtocolPassthrough
-			|| !IsAnsiCapableForMarks(outputOptions)
-			|| (Console.IsOutputRedirected && !ReplSessionIO.IsSessionActive))
+		if (options is null)
 		{
-			return false;
+			return ShellIntegrationGate.NotConfigured;
+		}
+
+		if (ReplSessionIO.IsProtocolPassthrough)
+		{
+			return ShellIntegrationGate.ProtocolPassthrough;
+		}
+
+		if (!IsAnsiCapableForMarks(outputOptions))
+		{
+			return ShellIntegrationGate.AnsiUnsupported;
+		}
+
+		if (Console.IsOutputRedirected && !ReplSessionIO.IsSessionActive)
+		{
+			return ShellIntegrationGate.OutputRedirected;
 		}
 
 		// Hosted sessions decide from what the remote client advertised, never from the
@@ -207,10 +228,14 @@ internal sealed class ShellIntegrationMarkEmitter
 		// server runs in, not the WebSocket/Telnet client on the other end.
 		return options.ShellIntegration switch
 		{
-			ShellIntegrationMode.Always => true,
-			ShellIntegrationMode.Never => false,
-			_ when ReplSessionIO.IsSessionActive => SessionAdvertisesShellIntegration(),
-			_ => TerminalEnvironmentClassifier.IsKnownShellIntegrationTerminal(),
+			ShellIntegrationMode.Always => ShellIntegrationGate.Enabled,
+			ShellIntegrationMode.Never => ShellIntegrationGate.ModeNever,
+			_ when ReplSessionIO.IsSessionActive => SessionAdvertisesShellIntegration()
+				? ShellIntegrationGate.Enabled
+				: ShellIntegrationGate.SessionNotAdvertising,
+			_ => TerminalEnvironmentClassifier.IsKnownShellIntegrationTerminal()
+				? ShellIntegrationGate.Enabled
+				: ShellIntegrationGate.EnvironmentUnknown,
 		};
 	}
 

@@ -479,6 +479,66 @@ public sealed class Given_ShellIntegrationMarkEmitter
 		harness.RawOutput.Should().NotContain(";E;");
 	}
 
+	[TestMethod]
+	[Description("Each prompt cycle records which gate decided the enablement, in the documented order, so a wrong on/off decision is triaged exactly instead of by symptom guessing. This pins the hosted Auto path: not advertised → advertised.")]
+	public async Task When_HostedAutoResolves_Then_DecidingGateIsRecorded()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null,
+			ansiMode: AnsiMode.Always);
+		var emitter = CreateEmitter(ShellIntegrationMode.Auto);
+
+		await emitter.WritePromptStartAsync();
+		var beforeAdvertising = emitter.LastGate;
+		ReplSessionIO.TerminalIdentity = "Windows Terminal";
+		await emitter.WritePromptStartAsync();
+		var afterAdvertising = emitter.LastGate;
+
+		beforeAdvertising.Should().Be(ShellIntegrationGate.SessionNotAdvertising);
+		afterAdvertising.Should().Be(ShellIntegrationGate.Enabled);
+	}
+
+	[TestMethod]
+	[Description("The protocol-passthrough gate is recorded as the deciding reason when a passthrough scope is active, ahead of any mode or capability consideration.")]
+	public async Task When_ProtocolPassthroughIsActive_Then_GateRecordsIt()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null,
+			ansiMode: AnsiMode.Always);
+		var emitter = CreateEmitter(ShellIntegrationMode.Always);
+
+		using var passthrough = ReplSessionIO.PushProtocolPassthrough();
+		await emitter.WritePromptStartAsync();
+
+		emitter.LastGate.Should().Be(ShellIntegrationGate.ProtocolPassthrough);
+	}
+
+	[TestMethod]
+	[Description("An app that never called UseTerminalIntegration records the not-configured gate, and Never mode records the mode gate — the two 'off by design' reasons stay distinguishable.")]
+	public async Task When_IntegrationIsOffByDesign_Then_GateDistinguishesWhy()
+	{
+		using var env = new EnvironmentVariableScope(NeutralTerminalEnvironment);
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null,
+			ansiMode: AnsiMode.Always);
+		var notConfigured = ShellIntegrationMarkEmitter.Create(options: null, new OutputOptions { AnsiMode = AnsiMode.Always });
+		var neverMode = CreateEmitter(ShellIntegrationMode.Never);
+
+		await notConfigured.WritePromptStartAsync();
+		await neverMode.WritePromptStartAsync();
+
+		notConfigured.LastGate.Should().Be(ShellIntegrationGate.NotConfigured);
+		neverMode.LastGate.Should().Be(ShellIntegrationGate.ModeNever);
+	}
+
 	private static ShellIntegrationMarkEmitter CreateEmitter(ShellIntegrationMode mode) =>
 		ShellIntegrationMarkEmitter.Create(
 			new TerminalIntegrationOptions { ShellIntegration = mode },

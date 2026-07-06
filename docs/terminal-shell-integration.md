@@ -72,7 +72,7 @@ Hosted sessions (WebSocket, Telnet) receive marks when their reported terminal i
 
 ## Troubleshooting
 
-The enablement decision is a black box at runtime (it emits no diagnostics). When marks misbehave, walk the gate chain in order — the first gate that fails explains the symptom:
+The enablement decision emits no runtime diagnostics, but it is deterministic: the gates are evaluated in a fixed order and the first failing gate decides. In order: integration configured → not in protocol passthrough → ANSI capable → output not redirected (local only) → mode (`Always`/`Never`) → capability advertised (hosted) or terminal recognized (local). When marks misbehave, walk that chain — the first gate that fails explains the symptom:
 
 | Symptom | Gate to check |
 |---|---|
