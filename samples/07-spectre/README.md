@@ -100,6 +100,14 @@ no Spectre-specific code in the handler.
 Uses `AskMultiChoiceAsync` which renders as a Spectre `MultiSelectionPrompt`
 with checkbox-style selection.
 
+### `terminal` — Shell-integration autodetection
+
+Shows what the terminal-integration layer detected for the current session via
+`IReplSessionInfo`: whether shell-integration marks are active and which dialect was
+negotiated (`OSC 133`, `OSC 633 (VS Code)`, or `off (<gate>)` naming the gate that
+disabled them), plus the reported identity, capabilities, and window size. Run it from
+Windows Terminal and from the VS Code integrated terminal to see the detection change.
+
 ### `login` — Secret input
 
 Uses `AskSecretAsync` which renders as a Spectre `TextPrompt` with masked input.

@@ -38,21 +38,29 @@ internal sealed class ShellIntegrationMarkEmitter
 	private Phase _phase;
 	private bool _windowsPtyReported;
 	private string? _reportedPrompt;
+	private readonly ShellIntegrationStatusAmbient.Slot? _statusSlot;
+	private ShellIntegrationGate? _publishedGate;
+	private bool _publishedVsCodeBackend;
 
 	private readonly record struct MarkSet(string PromptStart, string InputStart, string OutputStart, string CommandEndNoCode);
 
-	private ShellIntegrationMarkEmitter(TerminalIntegrationOptions? options, OutputOptions outputOptions)
+	private ShellIntegrationMarkEmitter(
+		TerminalIntegrationOptions? options,
+		OutputOptions outputOptions,
+		ShellIntegrationStatusAmbient.Slot? statusSlot)
 	{
 		_options = options;
 		_outputOptions = outputOptions;
+		_statusSlot = statusSlot;
 	}
 
 	public static ShellIntegrationMarkEmitter Create(
 		TerminalIntegrationOptions? options,
-		OutputOptions outputOptions)
+		OutputOptions outputOptions,
+		ShellIntegrationStatusAmbient.Slot? statusSlot = null)
 	{
 		ArgumentNullException.ThrowIfNull(outputOptions);
-		return new ShellIntegrationMarkEmitter(options, outputOptions);
+		return new ShellIntegrationMarkEmitter(options, outputOptions, statusSlot);
 	}
 
 	/// <summary>
@@ -239,6 +247,24 @@ internal sealed class ShellIntegrationMarkEmitter
 		_enabled = LastGate == ShellIntegrationGate.Enabled;
 		_isVsCodeBackend = _enabled && IsVsCodeBackend();
 		_marks = _isVsCodeBackend ? Osc633 : Osc133;
+		PublishStatus();
+	}
+
+	// Publishes the human-readable detection outcome for IReplSessionInfo consumers
+	// (debug/sample commands); rebuilt only when the decision actually changed.
+	private void PublishStatus()
+	{
+		if (_statusSlot is not { } slot
+			|| (_publishedGate == LastGate && _publishedVsCodeBackend == _isVsCodeBackend))
+		{
+			return;
+		}
+
+		_publishedGate = LastGate;
+		_publishedVsCodeBackend = _isVsCodeBackend;
+		slot.Status = _enabled
+			? (_isVsCodeBackend ? "OSC 633 (VS Code)" : "OSC 133")
+			: $"off ({LastGate})";
 	}
 
 	// Gates are evaluated in ShellIntegrationGate member order; the first failing gate

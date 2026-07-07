@@ -227,6 +227,45 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	}
 
 	[TestMethod]
+	[Description("Handlers can read the shell-integration autodetection outcome through IReplSessionInfo.ShellIntegrationStatus: the active protocol when marks are on ('OSC 633 (VS Code)'), so a debug command can show which dialect the terminal negotiated.")]
+	public void When_HandlerReadsSessionInfo_Then_ShellIntegrationStatusExposesTheDetection()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp(ShellIntegrationMode.Auto);
+		string? observed = null;
+		sut.Map("probe", (IReplSessionInfo session) =>
+		{
+			observed = session.ShellIntegrationStatus;
+			return "ok";
+		});
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		_ = RunInteractiveSession(harness, sut, "probe\rexit\r", terminalIdentity: "vscode");
+
+		observed.Should().Be("OSC 633 (VS Code)");
+	}
+
+	[TestMethod]
+	[Description("When marks are off, ShellIntegrationStatus names the deciding gate, so a sample or debug command can explain why nothing is emitted instead of guessing from symptoms.")]
+	public void When_IntegrationNotConfigured_Then_ShellIntegrationStatusNamesTheGate()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.Options(options => options.Output.AnsiMode = AnsiMode.Always);
+		string? observed = null;
+		sut.Map("probe", (IReplSessionInfo session) =>
+		{
+			observed = session.ShellIntegrationStatus;
+			return "ok";
+		});
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		_ = RunInteractiveSession(harness, sut, "probe\rexit\r");
+
+		observed.Should().Be("off (NotConfigured)");
+	}
+
+	[TestMethod]
 	[Description("A failed completion ambient command (complete without --target) reports exit code 1 in the command-end mark instead of decorating the failure as success.")]
 	public void When_CompleteAmbientCommandFails_Then_CommandEndReportsExitCodeOne()
 	{

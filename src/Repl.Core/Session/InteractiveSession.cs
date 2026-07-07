@@ -59,7 +59,12 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		using var runtimeStateScope = app.PushRuntimeState(serviceProvider, isInteractiveSession: true);
 		using var cancelHandler = new CancelKeyHandler();
 		var cycle = new PromptCycleContext(
-			Marks: ShellIntegrationMarkEmitter.Create(app.OptionsSnapshot.TerminalIntegration, app.OptionsSnapshot.Output),
+			Marks: ShellIntegrationMarkEmitter.Create(
+				app.OptionsSnapshot.TerminalIntegration,
+				app.OptionsSnapshot.Output,
+				// Opened at loop scope so the async-local flows into command handlers,
+				// where IReplSessionInfo.ShellIntegrationStatus reads it.
+				ShellIntegrationStatusAmbient.Open()),
 			ScopeTokens: initialScopeTokens.ToList(),
 			HistoryProvider: serviceProvider.GetService(typeof(IHistoryProvider)) as IHistoryProvider,
 			ServiceProvider: serviceProvider,
