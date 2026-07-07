@@ -80,6 +80,7 @@ The enablement decision emits no runtime diagnostics, but it is deterministic: t
 
 | Symptom | Gate to check |
 |---|---|
+| Marks emitted but nothing visible in Windows Terminal | Terminal-side setup: unlike VS Code, Windows Terminal (≥ 1.21) exposes mark features only through settings — `"showMarksOnScrollbar": true` on the profile for scrollbar pips, and `scrollToMark` actions bound to keys (e.g. Ctrl+Up/Down) for command navigation; neither is on by default. |
 | Raw `]133;…` / `]633;…` text on screen | The terminal does not render marks. Set `ShellIntegrationMode.Never`, or `NO_COLOR=1` as an end-user escape hatch. |
 | No marks at all (expected some) | `ShellIntegration` mode (`Never`?); then `UseTerminalIntegration` actually called?; then the ANSI gate (`NO_COLOR`, `TERM=dumb`, `AnsiMode.Never`, redirected output with no hosted session). |
 | No marks under Auto specifically | Detection: locally `WT_SESSION`/`TERM_PROGRAM`; under tmux/screen Auto stays off; for a hosted client, the advertised `ShellIntegrationMarks` capability. |
