@@ -23,13 +23,6 @@ internal static class SessionAnsiConsole
 	internal static SpectreConsoleOptions Options { get; set; } = new();
 
 	/// <summary>
-	/// Diagnostic breadcrumb recording how the last console profile was derived
-	/// (origin + gate verdict or legacy fallback). Read by tests when a CI-only
-	/// environment produces a profile local runs cannot reproduce.
-	/// </summary>
-	internal static string? LastDetectionTrace { get; private set; }
-
-	/// <summary>
 	/// Creates a new <see cref="IAnsiConsole"/> bound to the current session I/O.
 	/// </summary>
 	public static IAnsiConsole Create(OutputOptions? outputOptions = null)
@@ -39,10 +32,16 @@ internal static class SessionAnsiConsole
 			Out = new SessionAnsiConsoleOutput(),
 			// Spectre's default profile enrichers (GitHub Actions, GitLab, TeamCity, …)
 			// force ANSI back on under CI, overriding the explicit Ansi/ColorSystem below;
-			// the host detection is authoritative here, so enrichment is disabled.
+			// the host detection is authoritative here, so enrichment is disabled. That
+			// also loses the enrichers' Interactive=false under CI, so interactivity is
+			// derived explicitly: prompts can only be answered on a local, non-redirected
+			// stdin (mirrors SpectreInteractionHandler.CanHandle).
 			Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
+			Interactive = !ReplSessionIO.IsHostedSession && !Console.IsInputRedirected
+				? InteractionSupport.Yes
+				: InteractionSupport.No,
 		};
-		ApplyTerminalDetection(settings, outputOptions, origin: "session");
+		ApplyTerminalDetection(settings, outputOptions);
 
 		return ApplyOptions(AnsiConsole.Create(settings));
 	}
@@ -57,9 +56,11 @@ internal static class SessionAnsiConsole
 		{
 			Out = new WriterAnsiConsoleOutput(writer, width),
 			// Same rationale as Create: CI enrichers must not override the host detection.
+			// A capture writer can never answer prompts.
 			Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
+			Interactive = InteractionSupport.No,
 		};
-		ApplyTerminalDetection(settings, outputOptions, origin: "writer");
+		ApplyTerminalDetection(settings, outputOptions);
 
 		return ApplyOptions(AnsiConsole.Create(settings));
 	}
@@ -70,21 +71,18 @@ internal static class SessionAnsiConsole
 	// the NO_COLOR > CLICOLOR_FORCE > TERM=dumb escape hatches honored. Callers pass
 	// their app's OutputOptions explicitly (no process-wide static: parallel apps or
 	// tests must not contaminate each other); when none is reachable (bare
-	// AddSpectreConsole outside a Repl DI container), the legacy always-on behavior is
-	// preserved so standalone consumers do not regress.
-	private static void ApplyTerminalDetection(AnsiConsoleSettings settings, OutputOptions? outputOptions, string origin)
+	// AddSpectreConsole outside a Repl DI container), the decision is handed to
+	// Spectre's own detection rather than forcing always-on output.
+	private static void ApplyTerminalDetection(AnsiConsoleSettings settings, OutputOptions? outputOptions)
 	{
-		var effectiveOptions = outputOptions;
-		if (effectiveOptions is null)
+		if (outputOptions is null)
 		{
-			LastDetectionTrace = origin + ":legacy";
-			settings.Ansi = AnsiSupport.Yes;
-			settings.ColorSystem = ColorSystemSupport.TrueColor;
+			settings.Ansi = AnsiSupport.Detect;
+			settings.ColorSystem = ColorSystemSupport.Detect;
 			return;
 		}
 
-		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(effectiveOptions);
-		LastDetectionTrace = origin + ":gate=" + (ansiCapable ? "true" : "false");
+		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(outputOptions);
 		settings.Ansi = ansiCapable ? AnsiSupport.Yes : AnsiSupport.No;
 		settings.ColorSystem = ansiCapable ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors;
 	}
@@ -100,6 +98,10 @@ internal static class SessionAnsiConsole
 		return console;
 	}
 
+	// Single-entry cache: the verdict is constant per Encoding instance (they are
+	// effectively singletons), and consoles are created per render/prompt.
+	private static (Encoding Encoding, bool Verdict)? s_boxDrawingVerdict;
+
 	/// <summary>
 	/// True when <paramref name="encoding"/> can carry Spectre's box-drawing glyphs.
 	/// Trial-encodes a representative glyph and checks the roundtrip: a legacy codepage
@@ -108,13 +110,28 @@ internal static class SessionAnsiConsole
 	/// </summary>
 	internal static bool CanRenderBoxDrawing(Encoding encoding)
 	{
+		if (s_boxDrawingVerdict is { } cached && ReferenceEquals(cached.Encoding, encoding))
+		{
+			return cached.Verdict;
+		}
+
+		var verdict = ProbeBoxDrawing(encoding);
+		s_boxDrawingVerdict = (encoding, verdict);
+		return verdict;
+	}
+
+	private static bool ProbeBoxDrawing(Encoding encoding)
+	{
 		const string probe = "╭";
 		try
 		{
 			return string.Equals(encoding.GetString(encoding.GetBytes(probe)), probe, StringComparison.Ordinal);
 		}
-		catch (EncoderFallbackException)
+		catch (Exception)
 		{
+			// Hosted transports can declare arbitrary TextWriter.Encoding implementations;
+			// anything the probe cannot roundtrip — including by throwing — conservatively
+			// means no box drawing rather than crashing every render of the session.
 			return false;
 		}
 	}
@@ -134,11 +151,19 @@ internal static class SessionAnsiConsole
 			// Encoding is managed by the session writer.
 		}
 
+		private const int FallbackWidth = 120;
+		private const int FallbackHeight = 24;
+
+		// Client-advertised sizes are untrusted input: a hosted client reporting
+		// int.MaxValue would otherwise drive Spectre into proportional allocations.
+		private const int MaxWidth = 10_000;
+		private const int MaxHeight = 1_000;
+
 		private static int ResolveWidth()
 		{
 			if (ReplSessionIO.WindowSize is { } size && size.Width > 0)
 			{
-				return size.Width;
+				return Math.Min(size.Width, MaxWidth);
 			}
 
 			try
@@ -146,11 +171,11 @@ internal static class SessionAnsiConsole
 				// Headless consoles (CI runners) can report 0 without throwing; a
 				// zero-width profile makes Spectre render nothing, so fall back.
 				var width = Console.WindowWidth;
-				return width > 0 ? width : 120;
+				return width > 0 ? Math.Min(width, MaxWidth) : FallbackWidth;
 			}
 			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
-				return 120;
+				return FallbackWidth;
 			}
 		}
 
@@ -158,18 +183,18 @@ internal static class SessionAnsiConsole
 		{
 			if (ReplSessionIO.WindowSize is { } size && size.Height > 0)
 			{
-				return size.Height;
+				return Math.Min(size.Height, MaxHeight);
 			}
 
 			try
 			{
 				// Same headless-console guard as ResolveWidth.
 				var height = Console.WindowHeight;
-				return height > 0 ? height : 24;
+				return height > 0 ? Math.Min(height, MaxHeight) : FallbackHeight;
 			}
 			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
-				return 24;
+				return FallbackHeight;
 			}
 		}
 	}

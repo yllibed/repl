@@ -50,7 +50,7 @@ public sealed class Given_SpectreTerminalDetection
 		var escapedText = output.Text.Replace(AnsiIntroducer, "<ESC>[", StringComparison.Ordinal);
 		output.Text.Should().NotContain(
 			AnsiIntroducer,
-			because: $"a console that does not interpret ANSI must not receive escape sequences ({gateVerdict}, redirected={Console.IsOutputRedirected}, trace={Repl.Spectre.SessionAnsiConsole.LastDetectionTrace}, text=[{escapedText}])");
+			because: $"a console that does not interpret ANSI must not receive escape sequences ({gateVerdict}, redirected={Console.IsOutputRedirected}, text=[{escapedText}])");
 	}
 
 	[TestMethod]
@@ -127,6 +127,70 @@ public sealed class Given_SpectreTerminalDetection
 		var text = writer.ToString();
 		text.Should().Contain("bib overalls");
 		text.Should().NotContain("╭", because: "the ASCII sink cannot carry box-drawing glyphs; Spectre's safe border must apply");
+	}
+
+	[TestMethod]
+	[Description("A hosted client advertising an absurd window size (int.MaxValue) must not flow into the Spectre profile: unclamped widths drive Spectre to allocate proportional buffers, a remote-triggered OOM vector.")]
+	public void When_ClientAdvertisesAbsurdWindowSize_Then_ProfileDimensionsAreClamped()
+	{
+		using var session = ReplSessionIO.SetSession(new StringWriter(), TextReader.Null);
+		ReplSessionIO.WindowSize = (int.MaxValue, int.MaxValue);
+
+		var console = Repl.Spectre.SessionAnsiConsole.Create(outputOptions: null);
+
+		console.Profile.Width.Should().BeLessThanOrEqualTo(10_000);
+		console.Profile.Height.Should().BeLessThanOrEqualTo(1_000);
+	}
+
+	[TestMethod]
+	[Description("With CI enrichers disabled, Interactive must be derived explicitly: under a redirected stdin (test hosts, CI) a handler calling console.Confirm() must fail fast instead of blocking on input that never comes.")]
+	public void When_InputIsRedirected_Then_ProfileIsNotInteractive()
+	{
+		using var session = ReplSessionIO.SetSession(new StringWriter(), TextReader.Null);
+
+		var console = Repl.Spectre.SessionAnsiConsole.Create(outputOptions: null);
+
+		console.Profile.Capabilities.Interactive.Should().BeFalse(
+			because: "a hosted session (and any redirected stdin) cannot answer interactive prompts");
+	}
+
+	[TestMethod]
+	[Description("A hosted session reporting a zero window size (headless transports) must not produce a zero-width profile: Spectre renders nothing at width 0, so the resolver falls back to the default dimensions.")]
+	public void When_SessionReportsZeroWindowSize_Then_BorderedTableStillRenders()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var writer = new StringWriter();
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("wardrobe", (IAnsiConsole console) =>
+		{
+			var table = new Table().Border(TableBorder.Rounded)
+				.AddColumn("Item").AddColumn("Quantity");
+			table.AddRow("bib overalls", "42");
+			console.Write(table);
+			return Results.Success("Wardrobe displayed.");
+		});
+		using var session = ReplSessionIO.SetSession(writer, TextReader.Null);
+		ReplSessionIO.WindowSize = (0, 0);
+
+		var exitCode = sut.Run(["wardrobe", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		writer.ToString().Should().Contain("bib overalls", because: "a zero-size report must fall back to usable dimensions instead of rendering nothing");
+	}
+
+	[TestMethod]
+	[Description("The container wiring the interaction handler depends on: OutputOptions must be registered and be the same instance the app configures, otherwise the prompt path silently falls back to Spectre-side detection.")]
+	public void When_ResolvingOutputOptionsFromTheContainer_Then_ConfiguredInstanceIsReturned()
+	{
+		OutputOptions? configuredOutput = null;
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Options(o => configuredOutput = o.Output);
+
+		var resolved = sut.Services.GetService(typeof(OutputOptions)) as OutputOptions;
+
+		resolved.Should().BeSameAs(configuredOutput);
 	}
 
 	private sealed record WardrobeRow(string Item, int Quantity);
