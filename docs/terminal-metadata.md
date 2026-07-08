@@ -51,6 +51,8 @@ using Repl.Terminal;
 | `TerminalCapabilities` | yes | `IReplSessionInfo.TerminalCapabilities` |
 | `LastUpdatedUtc` | yes | diagnostics/debugging freshness |
 
+Capability flags also gate terminal-specific emitters: `ProgressReporting` enables advanced progress sequences (OSC 9;4) and `ShellIntegrationMarks` enables shell-integration lifecycle marks — see [Terminal Shell Integration](terminal-shell-integration.md).
+
 ## Parsing and application points by source
 
 | Source | Parsed at | Not parsed at | Fields that can change |

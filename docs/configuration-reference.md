@@ -156,6 +156,12 @@ These options are configured through `app.Options(...)`. Repl does not currently
 - `AdvancedProgressMode` (`AdvancedProgressMode`, default: `Auto`) — Controls whether compatible hosts emit advanced terminal progress sequences. See [Progress](progress.md#advanced-terminal-progress).
 - `PromptFallback` (`PromptFallback`, default: `UseDefault`) — Behavior when interactive prompts are unavailable.
 
+## TerminalIntegrationOptions
+
+Configured through `app.UseTerminalIntegration(...)` (opt-in; no marks are emitted without the call). See [Terminal Shell Integration](terminal-shell-integration.md).
+
+- `ShellIntegration` (`ShellIntegrationMode`, default: `Auto`) — Controls whether shell-integration lifecycle marks (OSC 133 / OSC 633) are emitted around the interactive prompt and command execution.
+
 ## ShellCompletionOptions
 
 Accessed via `ReplOptions.ShellCompletion`. See [Shell Completion](shell-completion.md) for setup details.

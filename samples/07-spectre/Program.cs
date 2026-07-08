@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Repl;
+using Repl.Terminal;
 
 var app = ReplApp.Create(services =>
 	{
@@ -14,8 +15,9 @@ var app = ReplApp.Create(services =>
 	{
 		console.Write(new FigletText("Spectre").Color(Color.Blue));
 		console.MarkupLine("  [grey]Commands:[/] tour, list, activity, detail, chart, tree, json, path,");
-		console.MarkupLine("           calendar, figlet, status, progress, add, configure, login");
+		console.MarkupLine("           calendar, figlet, status, progress, add, configure, terminal, login");
 	})
+	.UseTerminalIntegration()
 	.UseDefaultInteractive()
 	.UseCliProfile()
 	.UseSpectreConsole();
@@ -409,6 +411,24 @@ app.Map("configure",
 			defaultIndices: [0, 1]);
 
 		return Results.Success($"Enabled {selected.Count} feature(s).");
+	});
+
+// ──────────────────────────────────────────────────────────────
+// terminal — Shell-integration autodetection status
+// ──────────────────────────────────────────────────────────────
+app.Map("terminal",
+	[Description("Show what the terminal-integration layer detected for this session")]
+	(IAnsiConsole console, IReplSessionInfo session) =>
+	{
+		var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Blue)
+			.AddColumn("Property").AddColumn("Detected");
+		table.AddRow("Shell integration", session.ShellIntegrationStatus ?? "no prompt cycle yet (CLI one-shot?)");
+		table.AddRow("Terminal identity", session.TerminalIdentity ?? "unknown");
+		table.AddRow("Capabilities", session.TerminalCapabilities.ToString());
+		table.AddRow("ANSI", session.AnsiSupported ? "yes" : "no");
+		table.AddRow("Window size", session.WindowSize is { } size ? $"{size.Width}x{size.Height}" : "unknown");
+		console.Write(table);
+		return Results.Success("Terminal detection displayed.");
 	});
 
 // ──────────────────────────────────────────────────────────────

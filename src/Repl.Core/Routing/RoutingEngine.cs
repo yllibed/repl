@@ -378,9 +378,14 @@ internal sealed class RoutingEngine(CoreReplApp app)
 			: $"{header}{Environment.NewLine}{description}";
 	}
 
-	internal PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens)
+	internal PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens) =>
+		ResolveUniquePrefixes(tokens, app.ResolveActiveRoutingGraph());
+
+	// Overload taking a caller-captured graph so a single committed input is resolved
+	// against one snapshot end-to-end (prefix expansion + route match), rather than
+	// re-fetching the active graph here and racing a concurrent routing invalidation.
+	internal PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens, ActiveRoutingGraph activeGraph)
 	{
-		var activeGraph = app.ResolveActiveRoutingGraph();
 		if (tokens.Count == 0)
 		{
 			return new PrefixResolutionResult(tokens: []);

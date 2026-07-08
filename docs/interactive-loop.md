@@ -26,6 +26,8 @@ app.Map("setup", () => Results.EnterInteractive()); // explicit transition
 5. Execute the command through the pipeline.
 6. Repeat until exit.
 
+When [terminal shell integration](terminal-shell-integration.md) is enabled, the loop brackets each cycle with semantic marks: prompt start before step 1, input start before step 2, the command-line report (VS Code) and output start between steps 3 and 5, and a single command-end mark carrying the exit code after step 5.
+
 ## Prompt and Autocompletion
 
 The prompt displays the current scope path. As the user types, the autocompletion system suggests available commands, contexts, and option names visible from the current scope. Tab completion resolves candidates from the command graph relative to `scopeTokens`.

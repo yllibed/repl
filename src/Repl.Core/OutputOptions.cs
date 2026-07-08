@@ -215,23 +215,22 @@ public sealed class OutputOptions
 			return false;
 		}
 
-		if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NO_COLOR")))
+		// Environment opt-outs (NO_COLOR > CLICOLOR_FORCE > TERM=dumb) share one predicate
+		// with the hosted capability fallback (TerminalAnsiCapability) so the two gates
+		// cannot drift on the documented escape hatches.
+		if (TerminalEnvironmentClassifier.IsAnsiOptOutEnvironment())
 		{
 			return false;
 		}
 
+		// CLICOLOR_FORCE also overrides the redirection heuristic below (its veto of
+		// TERM=dumb is handled inside the shared predicate).
 		if (string.Equals(Environment.GetEnvironmentVariable("CLICOLOR_FORCE"), "1", StringComparison.Ordinal))
 		{
 			return true;
 		}
 
 		if (Console.IsOutputRedirected)
-		{
-			return false;
-		}
-
-		var term = Environment.GetEnvironmentVariable("TERM");
-		if (string.Equals(term, "dumb", StringComparison.OrdinalIgnoreCase))
 		{
 			return false;
 		}

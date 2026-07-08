@@ -59,4 +59,10 @@ public sealed class ReplOptions
 	/// Gets shell completion setup options.
 	/// </summary>
 	public ShellCompletionOptions ShellCompletion { get; }
+
+	/// <summary>
+	/// Gets or sets terminal-integration options. Null (the default) keeps every
+	/// terminal-integration emitter disabled; set through <c>UseTerminalIntegration</c>.
+	/// </summary>
+	internal TerminalIntegrationOptions? TerminalIntegration { get; set; }
 }

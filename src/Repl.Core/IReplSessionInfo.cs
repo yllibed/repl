@@ -36,4 +36,14 @@ public interface IReplSessionInfo
 	/// Gets the terminal identity reported by the client (e.g. "xterm-256color"), or <c>null</c> when unknown.
 	/// </summary>
 	string? TerminalIdentity { get; }
+
+	/// <summary>
+	/// Gets a human-readable snapshot of the shell-integration mark autodetection for the
+	/// current interactive prompt cycle: the active protocol (<c>"OSC 133"</c>,
+	/// <c>"OSC 633 (VS Code)"</c>) or <c>"off (&lt;gate&gt;)"</c> naming the gate that
+	/// disabled emission. <c>null</c> when no interactive prompt cycle has run in this
+	/// scope (for example CLI one-shot execution). Informational only — the string format
+	/// is not a stable contract.
+	/// </summary>
+	string? ShellIntegrationStatus => null;
 }

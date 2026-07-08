@@ -417,6 +417,14 @@ Execution scope note:
 - protocol passthrough works out of the box for **local CLI/console execution**
 - hosted terminal sessions (`IReplHost` / remote transports) require handlers to request `IReplIoContext`; console-bound toolings that use `Console.*` directly remain CLI-only
 
+> **Behavior change:** interactive dispatch of `AsProtocolPassthrough()` routes now runs
+> under the same execution contract as CLI one-shot: handlers observe
+> `IsProtocolPassthrough == true`, framework diagnostics are isolated from the protocol stream,
+> and the hosted requirement above is now enforced interactively too — a hosted interactive
+> invocation of a passthrough route whose handler does not request `IReplIoContext` reports
+> `protocol_passthrough_hosted_not_supported` instead of running without the isolation
+> contract. Add an `IReplIoContext` parameter to keep such handlers hosted-capable.
+
 Why `IReplIoContext` is optional:
 
 - many protocol SDKs (for example some MCP/JSON-RPC stacks) read/write `Console.*` directly; these handlers can still work in local CLI passthrough without extra plumbing

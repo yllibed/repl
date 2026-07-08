@@ -17,4 +17,6 @@ internal sealed class LiveSessionInfo : IReplSessionInfo
 	public TerminalCapabilities TerminalCapabilities => ReplSessionIO.TerminalCapabilities;
 
 	public string? TerminalIdentity => ReplSessionIO.TerminalIdentity;
+
+	public string? ShellIntegrationStatus => ShellIntegrationStatusAmbient.Current;
 }

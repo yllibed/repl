@@ -23,4 +23,7 @@ public enum TerminalCapabilities
 
 	/// <summary>Terminal supports advanced progress reporting sequences.</summary>
 	ProgressReporting = 1 << 4,
+
+	/// <summary>Terminal renders shell-integration lifecycle marks (OSC 133 / OSC 633).</summary>
+	ShellIntegrationMarks = 1 << 5,
 }

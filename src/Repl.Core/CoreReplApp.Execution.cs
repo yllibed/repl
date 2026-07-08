@@ -217,20 +217,6 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		if (match.Route.Command.IsProtocolPassthrough
-			&& ReplSessionIO.IsHostedSession
-			&& !match.Route.Command.SupportsHostedProtocolPassthrough)
-		{
-			_ = await RenderOutputAsync(
-					Results.Error(
-						"protocol_passthrough_hosted_not_supported",
-						$"Command '{match.Route.Template.Template}' is protocol passthrough and requires a handler parameter of type IReplIoContext in hosted sessions."),
-					globalOptions.OutputFormat,
-					cancellationToken)
-				.ConfigureAwait(false);
-			return 1;
-		}
-
 		if (match.Route.Command.IsProtocolPassthrough)
 		{
 			return await ExecuteProtocolPassthroughCommandAsync(match, globalOptions, serviceProvider, cancellationToken)
@@ -256,12 +242,31 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return exitCode;
 	}
 
-	private async ValueTask<int> ExecuteProtocolPassthroughCommandAsync(
+	/// <summary>
+	/// Executes a protocol-passthrough command under the single passthrough contract shared
+	/// by the CLI one-shot and interactive paths: the hosted-capability guard, the
+	/// <see cref="ReplSessionIO.PushProtocolPassthrough"/> scope handlers can observe, and —
+	/// outside hosted sessions — stdout/stderr isolation (framework output on stderr, the
+	/// handler payload alone on stdout).
+	/// </summary>
+	internal async ValueTask<int> ExecuteProtocolPassthroughCommandAsync(
 		RouteMatch match,
 		GlobalInvocationOptions globalOptions,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		if (ReplSessionIO.IsHostedSession && !match.Route.Command.SupportsHostedProtocolPassthrough)
+		{
+			_ = await RenderOutputAsync(
+					Results.Error(
+						"protocol_passthrough_hosted_not_supported",
+						$"Command '{match.Route.Template.Template}' is protocol passthrough and requires a handler parameter of type IReplIoContext in hosted sessions."),
+					globalOptions.OutputFormat,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return 1;
+		}
+
 		using var protocolPassthroughScope = ReplSessionIO.PushProtocolPassthrough();
 
 		if (ReplSessionIO.IsSessionActive)
@@ -314,7 +319,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken)
 	{
 		if (options.RemainingTokens.Count == 0
-			|| !string.Equals(options.RemainingTokens[0], "complete", StringComparison.OrdinalIgnoreCase))
+			|| !string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase))
 		{
 			return null;
 		}
@@ -340,11 +345,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 		var token = options.RemainingTokens[0];
 		AmbientCommandOutcome ambientOutcome;
-		if (string.Equals(token, "exit", StringComparison.OrdinalIgnoreCase))
+		if (string.Equals(token, InteractiveSession.ExitAmbientToken, StringComparison.OrdinalIgnoreCase))
 		{
 			ambientOutcome = await HandleExitAmbientCommandAsync().ConfigureAwait(false);
 		}
-		else if (string.Equals(token, "..", StringComparison.Ordinal))
+		else if (string.Equals(token, InteractiveSession.UpAmbientToken, StringComparison.Ordinal))
 		{
 			ambientOutcome = await HandleUpAmbientCommandAsync(scopeTokens: [], isInteractiveSession: false)
 				.ConfigureAwait(false);

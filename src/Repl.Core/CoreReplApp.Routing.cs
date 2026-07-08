@@ -63,6 +63,9 @@ public sealed partial class CoreReplApp
 	internal PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens) =>
 		RoutingEng.ResolveUniquePrefixes(tokens);
 
+	internal PrefixResolutionResult ResolveUniquePrefixes(IReadOnlyList<string> tokens, ActiveRoutingGraph activeGraph) =>
+		RoutingEng.ResolveUniquePrefixes(tokens, activeGraph);
+
 	internal RouteDefinition[] ResolveDiscoverableRoutes(
 		IReadOnlyList<RouteDefinition> routes,
 		IReadOnlyList<ContextDefinition> contexts,

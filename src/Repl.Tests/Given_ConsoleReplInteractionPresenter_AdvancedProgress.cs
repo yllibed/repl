@@ -97,6 +97,32 @@ public sealed class Given_ConsoleReplInteractionPresenter_AdvancedProgress
 	}
 
 	[TestMethod]
+	[Description("A hosted client that advertises ANSI purely through capability flags (identity inference, no AnsiSupport override) gets advanced progress in Auto mode — the same hosted-ANSI fallback the shell-integration marks honor.")]
+	public async Task When_HostedClientAdvertisesAnsiViaCapabilities_Then_AdvancedProgressIsEmitted()
+	{
+		using var env = new EnvironmentVariableScope(
+			("TMUX", null),
+			("TERM", null),
+			("WT_SESSION", null),
+			("ConEmuANSI", null),
+			("TERM_PROGRAM", null));
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		var presenter = new ConsoleReplInteractionPresenter(
+			new InteractionOptions { AdvancedProgressMode = AdvancedProgressMode.Auto },
+			new OutputOptions { AnsiMode = AnsiMode.Auto });
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null);
+		ReplSessionIO.TerminalIdentity = "Windows Terminal";
+
+		await presenter.PresentAsync(
+			new ReplProgressEvent("Downloading", Percent: 42),
+			CancellationToken.None);
+
+		harness.RawOutput.Should().Contain("]9;4;1;42");
+	}
+
+	[TestMethod]
 	[Description("Auto mode emits advanced progress for known terminals such as Windows Terminal.")]
 	public async Task When_AdvancedProgressAuto_And_WindowsTerminalDetected_Then_PresenterEmitsOscSequence()
 	{
@@ -122,30 +148,5 @@ public sealed class Given_ConsoleReplInteractionPresenter_AdvancedProgress
 			CancellationToken.None);
 
 		harness.RawOutput.Should().Contain("\u001b]9;4;1;42\u0007");
-	}
-
-	private sealed class EnvironmentVariableScope : IDisposable
-	{
-		private readonly (string Name, string? PreviousValue)[] _previousValues;
-
-		public EnvironmentVariableScope(params (string Name, string? Value)[] variables)
-		{
-			_previousValues = variables
-				.Select(static variable => (variable.Name, Environment.GetEnvironmentVariable(variable.Name)))
-				.ToArray();
-
-			foreach (var (name, value) in variables)
-			{
-				Environment.SetEnvironmentVariable(name, value);
-			}
-		}
-
-		public void Dispose()
-		{
-			foreach (var (name, previousValue) in _previousValues)
-			{
-				Environment.SetEnvironmentVariable(name, previousValue);
-			}
-		}
 	}
 }

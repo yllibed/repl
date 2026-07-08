@@ -90,11 +90,8 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 
 		ReplSessionIO.UpdateSession(
 			SessionId,
-			session => session with
-			{
-				WindowSize = (width, height),
-				TerminalCapabilities = session.TerminalCapabilities | TerminalCapabilities.ResizeReporting,
-			});
+			session => session.WithExplicitCapabilities(TerminalCapabilities.ResizeReporting)
+				with { WindowSize = (width, height), });
 	}
 
 	/// <summary>
@@ -107,17 +104,11 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 			return;
 		}
 
+		// Same replace-inferred semantics as ReplSessionIO.TerminalIdentity: a downgrade
+		// (e.g. Windows Terminal → dumb) revokes the previously inferred capabilities.
 		ReplSessionIO.UpdateSession(
 			SessionId,
-			session =>
-			{
-				var inferred = TerminalCapabilitiesClassifier.InferFromIdentity(terminalIdentity);
-				return session with
-				{
-					TerminalIdentity = terminalIdentity,
-					TerminalCapabilities = session.TerminalCapabilities | inferred,
-				};
-			});
+			session => session.WithTerminalIdentity(terminalIdentity));
 	}
 
 	/// <summary>
@@ -130,14 +121,15 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 			return;
 		}
 
+		var isAnsiSupported = ansiSupported.Value;
 		ReplSessionIO.UpdateSession(
 			SessionId,
 			session =>
 			{
-				var capabilities = ansiSupported.Value
-					? session.TerminalCapabilities | TerminalCapabilities.Ansi
-					: session.TerminalCapabilities & ~TerminalCapabilities.Ansi;
-				return session with { AnsiSupport = ansiSupported.Value, TerminalCapabilities = capabilities };
+				var updated = isAnsiSupported
+					? session.WithExplicitCapabilities(TerminalCapabilities.Ansi)
+					: session.WithoutCapabilities(TerminalCapabilities.Ansi);
+				return updated with { AnsiSupport = isAnsiSupported };
 			});
 	}
 
@@ -148,7 +140,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	{
 		ReplSessionIO.UpdateSession(
 			SessionId,
-			session => session with { TerminalCapabilities = session.TerminalCapabilities | capabilities });
+			session => session.WithExplicitCapabilities(capabilities));
 	}
 
 	/// <summary>
@@ -306,7 +298,13 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 		{
 			ReplSessionIO.UpdateSession(
 				SessionId,
-				session => session with { TerminalCapabilities = forcedCapabilities });
+				session => session with
+				{
+					TerminalCapabilities = forcedCapabilities,
+					// Forced overrides are authoritative: nothing remains attributable to
+					// identity inference until the next identity report.
+					IdentityInferredCapabilities = TerminalCapabilities.None,
+				});
 		}
 	}
 

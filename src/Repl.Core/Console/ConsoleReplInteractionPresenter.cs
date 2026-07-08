@@ -9,6 +9,7 @@ internal sealed class ConsoleReplInteractionPresenter(
 	private const string OscPrefix = "\x1b]9;4;";
 	private const string Bell = "\x07";
 	private readonly InteractionOptions _options = options;
+	private readonly OutputOptions? _outputOptions = outputOptions;
 	private readonly bool _rewriteProgress = !Console.IsOutputRedirected || ReplSessionIO.IsSessionActive;
 	private readonly bool _useAnsi = outputOptions?.IsAnsiEnabled() ?? false;
 	private readonly AnsiPalette? _palette = outputOptions is not null && outputOptions.IsAnsiEnabled()
@@ -159,7 +160,12 @@ internal sealed class ConsoleReplInteractionPresenter(
 
 	private bool ShouldEmitAdvancedProgress()
 	{
-		if (ReplSessionIO.IsProtocolPassthrough || !_useAnsi || !IsInteractiveTerminalSession())
+		// Evaluated per event (not frozen at construction) through the shared ANSI gate,
+		// so a hosted client advertising ANSI via capability flags alone — or mid-session —
+		// gets the same treatment as shell-integration marks.
+		var ansiCapable = _outputOptions is { } outputOptions
+			&& TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(outputOptions);
+		if (ReplSessionIO.IsProtocolPassthrough || !ansiCapable || !IsInteractiveTerminalSession())
 		{
 			return false;
 		}
@@ -168,7 +174,7 @@ internal sealed class ConsoleReplInteractionPresenter(
 		{
 			AdvancedProgressMode.Always => true,
 			AdvancedProgressMode.Never => false,
-			_ => SessionAdvertisesAdvancedProgress() || IsKnownAdvancedProgressTerminal(),
+			_ => SessionAdvertisesAdvancedProgress() || TerminalEnvironmentClassifier.IsKnownAdvancedProgressTerminal(),
 		};
 	}
 
@@ -176,33 +182,9 @@ internal sealed class ConsoleReplInteractionPresenter(
 		(!Console.IsOutputRedirected || ReplSessionIO.IsSessionActive)
 		&& !ReplSessionIO.IsProtocolPassthrough;
 
-	private static bool IsKnownAdvancedProgressTerminal()
-	{
-		if (IsTerminalMultiplexerSession())
-		{
-			return false;
-		}
-
-		return !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("WT_SESSION"))
-			|| string.Equals(Environment.GetEnvironmentVariable("ConEmuANSI"), "ON", StringComparison.OrdinalIgnoreCase)
-			|| string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "WezTerm", StringComparison.OrdinalIgnoreCase);
-	}
-
 	private static bool SessionAdvertisesAdvancedProgress() =>
 		ReplSessionIO.IsSessionActive
 		&& ReplSessionIO.TerminalCapabilities.HasFlag(TerminalCapabilities.ProgressReporting);
-
-	private static bool IsTerminalMultiplexerSession()
-	{
-		if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("TMUX")))
-		{
-			return true;
-		}
-
-		var term = Environment.GetEnvironmentVariable("TERM");
-		return term?.StartsWith("screen", StringComparison.OrdinalIgnoreCase) is true
-			|| term?.StartsWith("tmux", StringComparison.OrdinalIgnoreCase) is true;
-	}
 
 	private static string? BuildAdvancedProgressSequence(ReplProgressEvent progress)
 	{
