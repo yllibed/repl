@@ -18,9 +18,13 @@ internal static class TerminalAnsiCapability
 			return true;
 		}
 
+		// The fallback only bypasses the server console's own state (redirection, host
+		// detection) — never the explicit opt-outs: AnsiSupport=false and AnsiMode.Never
+		// below, and the NO_COLOR / TERM=dumb escape hatches the docs promise to honor.
 		return ReplSessionIO.IsSessionActive
 			&& ReplSessionIO.AnsiSupport is null
 			&& outputOptions.AnsiMode != AnsiMode.Never
+			&& !TerminalEnvironmentClassifier.IsAnsiOptOutEnvironment()
 			&& ReplSessionIO.TerminalCapabilities.HasFlag(TerminalCapabilities.Ansi);
 	}
 }

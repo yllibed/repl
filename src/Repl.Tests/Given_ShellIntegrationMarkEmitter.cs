@@ -364,6 +364,58 @@ public sealed class Given_ShellIntegrationMarkEmitter
 	}
 
 	[TestMethod]
+	[Description("NO_COLOR is the documented end-user escape hatch and must win over the hosted capability fallback: a client advertising ANSI through capability flags still gets no marks when the operator disabled ANSI on the process.")]
+	public async Task When_NoColorIsSet_Then_HostedCapabilityFallbackDoesNotReenableMarks()
+	{
+		using var env = new EnvironmentVariableScope(
+			("NO_COLOR", "1"),
+			("TMUX", null),
+			("TERM", null),
+			("WT_SESSION", null),
+			("ConEmuANSI", null),
+			("TERM_PROGRAM", null));
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null);
+		ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.ShellIntegrationMarks;
+		var emitter = ShellIntegrationMarkEmitter.Create(
+			new TerminalIntegrationOptions { ShellIntegration = ShellIntegrationMode.Auto },
+			new OutputOptions());
+
+		await RunFullLifecycleAsync(emitter);
+
+		harness.RawOutput.Should().NotContain("]133;");
+		emitter.LastGate.Should().Be(ShellIntegrationGate.AnsiUnsupported);
+	}
+
+	[TestMethod]
+	[Description("TERM=dumb is the other documented environment opt-out and must also win over the hosted capability fallback, matching how styled output honors it.")]
+	public async Task When_TermIsDumb_Then_HostedCapabilityFallbackDoesNotReenableMarks()
+	{
+		using var env = new EnvironmentVariableScope(
+			("NO_COLOR", null),
+			("TMUX", null),
+			("TERM", "dumb"),
+			("WT_SESSION", null),
+			("ConEmuANSI", null),
+			("TERM_PROGRAM", null));
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		using var session = ReplSessionIO.SetSession(
+			output: harness.Writer,
+			input: TextReader.Null);
+		ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.ShellIntegrationMarks;
+		var emitter = ShellIntegrationMarkEmitter.Create(
+			new TerminalIntegrationOptions { ShellIntegration = ShellIntegrationMode.Auto },
+			new OutputOptions());
+
+		await RunFullLifecycleAsync(emitter);
+
+		harness.RawOutput.Should().NotContain("]133;");
+		emitter.LastGate.Should().Be(ShellIntegrationGate.AnsiUnsupported);
+	}
+
+	[TestMethod]
 	[Description("A hosted client advertising ShellIntegrationMarks after the session started (Telnet TTYPE, control messages) gets marks from the next prompt cycle: enablement is re-evaluated per cycle, not frozen at session start.")]
 	public async Task When_HostedSessionAdvertisesMarksMidSession_Then_MarksAppearOnNextPromptCycle()
 	{

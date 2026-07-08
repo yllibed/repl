@@ -47,4 +47,13 @@ internal static class TerminalEnvironmentClassifier
 
 	public static bool IsVsCodeTerminal() =>
 		string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "vscode", StringComparison.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// True when the environment explicitly opts out of ANSI output (NO_COLOR, TERM=dumb) —
+	/// the documented end-user escape hatches, which must win over any capability-based
+	/// fallback the way they already win for styled output.
+	/// </summary>
+	public static bool IsAnsiOptOutEnvironment() =>
+		!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("NO_COLOR"))
+		|| string.Equals(Environment.GetEnvironmentVariable("TERM"), "dumb", StringComparison.OrdinalIgnoreCase);
 }
