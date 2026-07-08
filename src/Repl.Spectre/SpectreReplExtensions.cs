@@ -52,10 +52,7 @@ public static class SpectreReplExtensions
 
 		app.Options(o =>
 		{
-			// Lets the non-DI console creation sites (interaction handler, output
-			// transformer) consult the host's terminal detection — see issue #46.
-			SessionAnsiConsole.HostOutputOptions = o.Output;
-			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer(o.Output.ResolveHumanRenderSettings));
+			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer(o.Output.ResolveHumanRenderSettings, o.Output));
 			o.Output.AddHelpOutputFactory(
 				"spectre",
 				static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>

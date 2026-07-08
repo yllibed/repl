@@ -5,7 +5,11 @@ namespace Repl.Spectre;
 /// Returns <see cref="InteractionResult.Unhandled"/> when the terminal
 /// does not support interactive Spectre prompts (hosted sessions, redirected input).
 /// </summary>
-public sealed class SpectreInteractionHandler : IReplInteractionHandler
+/// <param name="outputOptions">
+/// Host output options driving terminal detection for the prompt consoles; resolved from
+/// DI when available.
+/// </param>
+public sealed class SpectreInteractionHandler(OutputOptions? outputOptions = null) : IReplInteractionHandler
 {
 	/// <inheritdoc />
 	public ValueTask<InteractionResult> TryHandleAsync(
@@ -47,10 +51,10 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		return true;
 	}
 
-	private static async ValueTask<InteractionResult> HandleChoiceAsync(
+	private async ValueTask<InteractionResult> HandleChoiceAsync(
 		AskChoiceRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create();
+		var console = SessionAnsiConsole.Create(outputOptions);
 		var choices = StripMnemonics(r.Choices);
 
 		// Reorder so the default item appears first (Spectre highlights first item).
@@ -78,10 +82,10 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		return InteractionResult.Success(selectedIndex);
 	}
 
-	private static async ValueTask<InteractionResult> HandleMultiChoiceAsync(
+	private async ValueTask<InteractionResult> HandleMultiChoiceAsync(
 		AskMultiChoiceRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create();
+		var console = SessionAnsiConsole.Create(outputOptions);
 		var choices = StripMnemonics(r.Choices);
 		var prompt = new MultiSelectionPrompt<string>()
 			.Title(r.Prompt)
@@ -113,10 +117,10 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		return InteractionResult.Success((IReadOnlyList<int>)indices);
 	}
 
-	private static async ValueTask<InteractionResult> HandleConfirmationAsync(
+	private async ValueTask<InteractionResult> HandleConfirmationAsync(
 		AskConfirmationRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create();
+		var console = SessionAnsiConsole.Create(outputOptions);
 		var prompt = new ConfirmationPrompt(r.Prompt)
 		{
 			DefaultValue = r.DefaultValue,
@@ -128,10 +132,10 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		return InteractionResult.Success(result);
 	}
 
-	private static async ValueTask<InteractionResult> HandleTextAsync(
+	private async ValueTask<InteractionResult> HandleTextAsync(
 		AskTextRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create();
+		var console = SessionAnsiConsole.Create(outputOptions);
 		var prompt = new TextPrompt<string>(r.Prompt)
 			.AllowEmpty();
 
@@ -146,10 +150,10 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		return InteractionResult.Success(result);
 	}
 
-	private static async ValueTask<InteractionResult> HandleSecretAsync(
+	private async ValueTask<InteractionResult> HandleSecretAsync(
 		AskSecretRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create();
+		var console = SessionAnsiConsole.Create(outputOptions);
 		var prompt = new TextPrompt<string>(r.Prompt);
 
 		var effectiveMask = r.Options is { } options ? options.Mask : '*';
@@ -166,9 +170,9 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 		return InteractionResult.Success(result);
 	}
 
-	private static ValueTask<InteractionResult> HandleClearScreenAsync()
+	private ValueTask<InteractionResult> HandleClearScreenAsync()
 	{
-		var console = SessionAnsiConsole.Create();
+		var console = SessionAnsiConsole.Create(outputOptions);
 		console.Clear();
 		return new ValueTask<InteractionResult>(InteractionResult.Success(value: true));
 	}

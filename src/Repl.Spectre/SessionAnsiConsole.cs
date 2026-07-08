@@ -23,14 +23,6 @@ internal static class SessionAnsiConsole
 	internal static SpectreConsoleOptions Options { get; set; } = new();
 
 	/// <summary>
-	/// Gets or sets the host output options pushed by
-	/// <see cref="SpectreReplExtensions.UseSpectreConsole"/>, so the creation sites that
-	/// don't go through DI (interaction handler, output transformer) can consult the
-	/// host's terminal detection. Same process-wide caveat as <see cref="Options"/>.
-	/// </summary>
-	internal static OutputOptions? HostOutputOptions { get; set; }
-
-	/// <summary>
 	/// Creates a new <see cref="IAnsiConsole"/> bound to the current session I/O.
 	/// </summary>
 	public static IAnsiConsole Create(OutputOptions? outputOptions = null)
@@ -48,13 +40,13 @@ internal static class SessionAnsiConsole
 	/// Creates an <see cref="IAnsiConsole"/> that renders to the provided <see cref="TextWriter"/>.
 	/// Used by the output transformer to capture rendered output as a string.
 	/// </summary>
-	public static IAnsiConsole CreateForWriter(TextWriter writer, int width)
+	public static IAnsiConsole CreateForWriter(TextWriter writer, int width, OutputOptions? outputOptions = null)
 	{
 		var settings = new AnsiConsoleSettings
 		{
 			Out = new WriterAnsiConsoleOutput(writer, width),
 		};
-		ApplyTerminalDetection(settings, outputOptions: null);
+		ApplyTerminalDetection(settings, outputOptions);
 
 		return ApplyOptions(AnsiConsole.Create(settings));
 	}
@@ -62,13 +54,14 @@ internal static class SessionAnsiConsole
 	// Issue #46: the profile follows the host's terminal detection instead of hardcoding
 	// ANSI + TrueColor. The gate is the same one driving shell-integration marks and
 	// advanced progress: IsAnsiEnabled first, then the hosted capability fallback, with
-	// the NO_COLOR > CLICOLOR_FORCE > TERM=dumb escape hatches honored. When no
-	// OutputOptions is reachable (bare AddSpectreConsole without UseSpectreConsole and
-	// outside a Repl DI container), the legacy always-on behavior is preserved so
-	// standalone consumers do not regress.
+	// the NO_COLOR > CLICOLOR_FORCE > TERM=dumb escape hatches honored. Callers pass
+	// their app's OutputOptions explicitly (no process-wide static: parallel apps or
+	// tests must not contaminate each other); when none is reachable (bare
+	// AddSpectreConsole outside a Repl DI container), the legacy always-on behavior is
+	// preserved so standalone consumers do not regress.
 	private static void ApplyTerminalDetection(AnsiConsoleSettings settings, OutputOptions? outputOptions)
 	{
-		var effectiveOptions = outputOptions ?? HostOutputOptions;
+		var effectiveOptions = outputOptions;
 		if (effectiveOptions is null)
 		{
 			settings.Ansi = AnsiSupport.Yes;
