@@ -149,11 +149,17 @@ configuration required:
   `TERM=dumb` are honored with the usual precedence, hosted clients can advertise ANSI through
   capability flags, and a redirected console (an IDE Run window, a pipe) gets plain text instead
   of raw escape sequences. When ANSI is off, the color system degrades to `NoColors`.
-- **Unicode**: box-drawing glyphs are used only when the actual output sink's encoding can carry
-  them (checked per console creation); otherwise Spectre falls back to its safe borders
-  (square box glyphs, present in legacy OEM codepages) instead of producing mojibake. This read-side gate complements the write-side UTF-8 setup
-  above: `UseSpectreConsole()` upgrades a real local console to UTF-8, and the gate degrades
-  gracefully everywhere it could not.
+- **Unicode**: box-drawing degrades in three tiers, resolved per console creation from the
+  actual output sink. When the sink's encoding carries the rounded glyphs, full Unicode borders
+  render intact. When only the square safe-border glyphs survive (a real console on a legacy OEM
+  codepage), Spectre's own non-Unicode fallback applies. When no box glyph survives — an ASCII
+  transport, or a **redirected** local console on a legacy codepage, where the reading process
+  (IDE run windows, CI logs, pipes) decodes UTF-8 while the writer emits OEM bytes — box drawing
+  is transliterated to ASCII (`+`, `-`, `|`) so the output stays legible in every charset. This
+  read-side gate complements the write-side UTF-8 setup above: `UseSpectreConsole()` upgrades a
+  real local console to UTF-8, and the gate degrades gracefully everywhere it could not. The
+  active verdict is exposed as `SpectreTerminalDetection.CurrentBoxDrawingSupport` for
+  diagnostics commands.
 - **CI logs are plain by default**: Spectre's built-in CI enrichers are disabled so they cannot
   override the host detection; set `CLICOLOR_FORCE=1` in the workflow to restore colored logs.
 - Outside a Repl container (bare `AddSpectreConsole` without `UseSpectreConsole`), the profile

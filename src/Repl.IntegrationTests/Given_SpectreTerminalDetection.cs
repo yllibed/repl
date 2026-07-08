@@ -1,4 +1,5 @@
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using Repl.Spectre;
 using Spectre.Console;
 
@@ -103,8 +104,8 @@ public sealed class Given_SpectreTerminalDetection
 	}
 
 	[TestMethod]
-	[Description("Unicode box drawing follows the output sink's encoding: a handler-authored rounded table rendered into a sink that cannot carry the rounded glyph falls back to Spectre's safe border (square box glyphs, present in legacy OEM codepages) — the mojibake half of issue #46.")]
-	public void When_SessionWriterCannotCarryBoxDrawing_Then_BorderedTableFallsBackToSafeBorder()
+	[Description("Unicode box drawing follows the output sink's encoding: a handler-authored rounded table rendered into a sink that cannot carry ANY box-drawing glyph (rounded or square) is transliterated to ASCII — Spectre's own square safe border would hit the very same encoder fallback and ship '?' mojibake, the second half of issue #46.")]
+	public void When_SessionWriterCannotCarryBoxDrawing_Then_BordersAreTransliteratedToAscii()
 	{
 		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
 		var writer = new AsciiStringWriter();
@@ -128,8 +129,9 @@ public sealed class Given_SpectreTerminalDetection
 		exitCode.Should().Be(0);
 		var text = writer.ToString();
 		text.Should().Contain("bib overalls");
-		text.Should().NotContain("╭", because: "the sink cannot carry the rounded glyph; Spectre's safe border must apply");
-		text.Should().Contain("┌", because: "Spectre's safe border (square, carried by OEM codepages) must actually be present, not just the rounded one absent");
+		text.Should().NotContain("╭", because: "the sink cannot carry the rounded glyph");
+		text.Should().NotContain("┌", because: "the square safe-border glyph cannot survive an ASCII sink either — it would become '?' at the encoder");
+		text.Should().Contain("+", because: "box drawing must be transliterated to ASCII when the sink cannot carry any box glyph");
 	}
 
 	[TestMethod]
@@ -193,7 +195,24 @@ public sealed class Given_SpectreTerminalDetection
 
 		var resolved = sut.Services.GetService(typeof(OutputOptions)) as OutputOptions;
 
-		resolved.Should().BeSameAs(configuredOutput);
+		resolved.Should().NotBeNull().And.BeSameAs(configuredOutput);
+	}
+
+	[TestMethod]
+	[Description("External-DI hosting (the AddRepl pattern): a provider that carries the ReplApp but not the framework-registered OutputOptions must still honor the app's terminal detection for the injected IAnsiConsole — the factory falls back to the app's own container instead of silently reverting to Spectre-side detection.")]
+	public void When_ResolvingAnsiConsoleFromExternalContainer_Then_AppTerminalDetectionStillApplies()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var app = ReplApp.Create();
+		app.Options(o => o.Output.AnsiMode = Rendering.AnsiMode.Always);
+		var services = new ServiceCollection().AddSpectreConsole();
+		services.AddSingleton(app);
+		using var external = services.BuildServiceProvider();
+
+		var console = external.GetRequiredService<IAnsiConsole>();
+
+		console.Profile.Capabilities.Ansi.Should().BeTrue(
+			because: "the app forces ANSI on; a console resolved from the externally managed container must inherit that verdict");
 	}
 
 	[TestMethod]
@@ -224,6 +243,17 @@ public sealed class Given_SpectreTerminalDetection
 
 		exitCode.Should().Be(0);
 		writer.ToString().Should().Contain("╭", because: "the sibling app's Unicode opt-out must not leak into this app");
+	}
+
+	[TestMethod]
+	[Description("The framework exposes its box-drawing verdict (SpectreTerminalDetection) so diagnostics commands display it instead of re-implementing the probe: an ASCII session writer reports Ascii — the same verdict that activates the transliterating writer.")]
+	public void When_QueryingBoxDrawingSupport_Then_FrameworkVerdictIsExposed()
+	{
+		using var session = ReplSessionIO.SetSession(new AsciiStringWriter(), TextReader.Null);
+
+		var support = SpectreTerminalDetection.CurrentBoxDrawingSupport;
+
+		support.Should().Be(BoxDrawingSupport.Ascii);
 	}
 
 	private sealed record WardrobeRow(string Item, int Quantity);

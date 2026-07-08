@@ -18,9 +18,10 @@ internal static class SessionAnsiConsole
 	/// </summary>
 	public static IAnsiConsole Create(OutputOptions? outputOptions = null, SpectreConsoleOptions? spectreOptions = null)
 	{
+		var boxDrawing = ResolveBoxDrawingSupport(ReplSessionIO.Output.Encoding, IsLocalRedirected());
 		var settings = new AnsiConsoleSettings
 		{
-			Out = new SessionAnsiConsoleOutput(),
+			Out = new SessionAnsiConsoleOutput(transliterateBoxDrawing: boxDrawing == BoxDrawingSupport.Ascii),
 			// Spectre's default profile enrichers (GitHub Actions, GitLab, TeamCity, …)
 			// force ANSI back on under CI, overriding the explicit Ansi/ColorSystem below;
 			// the host detection is authoritative here, so enrichment is disabled. That
@@ -34,7 +35,7 @@ internal static class SessionAnsiConsole
 		};
 		ApplyTerminalDetection(settings, outputOptions);
 
-		return ApplyOptions(AnsiConsole.Create(settings), spectreOptions);
+		return ApplyOptions(AnsiConsole.Create(settings), spectreOptions, boxDrawing);
 	}
 
 	/// <summary>
@@ -43,9 +44,15 @@ internal static class SessionAnsiConsole
 	/// </summary>
 	public static IAnsiConsole CreateForWriter(TextWriter writer, int width, OutputOptions? outputOptions = null, SpectreConsoleOptions? spectreOptions = null)
 	{
+		// The support verdict comes from the FINAL sink (the capture writer is typically a
+		// UTF-16 StringWriter whose content is later written to the session output), but the
+		// transliteration must happen on the writer actually receiving the glyphs.
+		var boxDrawing = ResolveBoxDrawingSupport(ReplSessionIO.Output.Encoding, IsLocalRedirected());
 		var settings = new AnsiConsoleSettings
 		{
-			Out = new WriterAnsiConsoleOutput(writer, width),
+			Out = new WriterAnsiConsoleOutput(
+				boxDrawing == BoxDrawingSupport.Ascii ? new BoxDrawingTransliteratingWriter(writer) : writer,
+				width),
 			// Same rationale as Create: CI enrichers must not override the host detection.
 			// A capture writer can never answer prompts.
 			Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
@@ -53,7 +60,7 @@ internal static class SessionAnsiConsole
 		};
 		ApplyTerminalDetection(settings, outputOptions);
 
-		return ApplyOptions(AnsiConsole.Create(settings), spectreOptions);
+		return ApplyOptions(AnsiConsole.Create(settings), spectreOptions, boxDrawing);
 	}
 
 	// Issue #46: the profile follows the host's terminal detection instead of hardcoding
@@ -78,42 +85,75 @@ internal static class SessionAnsiConsole
 		settings.ColorSystem = ansiCapable ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors;
 	}
 
-	private static IAnsiConsole ApplyOptions(IAnsiConsole console, SpectreConsoleOptions? spectreOptions)
+	private static IAnsiConsole ApplyOptions(IAnsiConsole console, SpectreConsoleOptions? spectreOptions, BoxDrawingSupport boxDrawing)
 	{
-		// Unicode is gated on the FINAL sink's encoding, not the immediate writer: the
-		// transformer renders into a UTF-16 StringWriter whose content is later written to
-		// the session output, so the session writer (or Console.Out locally — the fallback
-		// of ReplSessionIO.Output) is the encoding that actually has to carry the glyphs.
 		console.Profile.Capabilities.Unicode =
-			(spectreOptions ?? s_defaultOptions).Unicode && CanRenderBoxDrawing(ReplSessionIO.Output.Encoding);
+			(spectreOptions ?? s_defaultOptions).Unicode && boxDrawing == BoxDrawingSupport.Rounded;
 		return console;
 	}
 
-	// Single-entry cache: the verdict is constant per Encoding instance (they are
-	// effectively singletons), and consoles are created per render/prompt.
-	private static (Encoding Encoding, bool Verdict)? s_boxDrawingVerdict;
+	internal static bool IsLocalRedirected() => !ReplSessionIO.IsHostedSession && Console.IsOutputRedirected;
 
 	/// <summary>
-	/// True when <paramref name="encoding"/> can carry Spectre's box-drawing glyphs.
-	/// Trial-encodes a representative glyph and checks the roundtrip: a legacy codepage
-	/// with a best-fit/replacement fallback turns it into '?', which is exactly the
-	/// mojibake this guards against — cheaper and more truthful than a codepage allowlist.
+	/// Resolves how much box drawing the FINAL sink can carry. The support verdict is gated on
+	/// the final sink's encoding, not any intermediate writer: the transformer renders into a
+	/// UTF-16 StringWriter whose content is later written to the session output, so the session
+	/// writer (or Console.Out locally — the fallback of ReplSessionIO.Output) is the encoding
+	/// that actually has to carry the glyphs. Trial-encodes representative glyphs and checks the
+	/// roundtrip: a legacy codepage with a best-fit/replacement fallback turns them into '?',
+	/// which is exactly the mojibake this guards against — cheaper and more truthful than a
+	/// codepage allowlist.
 	/// </summary>
-	internal static bool CanRenderBoxDrawing(Encoding encoding)
+	internal static BoxDrawingSupport ResolveBoxDrawingSupport(Encoding encoding, bool isLocalRedirected)
 	{
-		if (s_boxDrawingVerdict is { } cached && ReferenceEquals(cached.Encoding, encoding))
+		// A redirected local console on a non-Unicode codepage is undecodable by the reading
+		// process no matter which glyph is picked: the writer emits single-byte OEM codes
+		// (┌ is 0xDA in cp437) while modern readers (IDE run windows, CI logs, pipes) decode
+		// UTF-8, where lone bytes ≥ 0x80 are invalid. Only ASCII is charset-agnostic there.
+		// Field case: the Rider Run window (cp437, redirected) rendered every border byte as
+		// U+FFFD. A non-redirected console is exempt — it decodes its own codepage.
+		if (isLocalRedirected && !IsUnicodeCodePage(encoding))
 		{
-			return cached.Verdict;
+			return BoxDrawingSupport.Ascii;
 		}
 
-		var verdict = ProbeBoxDrawing(encoding);
-		s_boxDrawingVerdict = (encoding, verdict);
-		return verdict;
+		var probes = GetProbes(encoding);
+		if (probes.Rounded)
+		{
+			return BoxDrawingSupport.Rounded;
+		}
+
+		return probes.Square ? BoxDrawingSupport.Square : BoxDrawingSupport.Ascii;
 	}
 
-	private static bool ProbeBoxDrawing(Encoding encoding)
+	// Reference-typed cache entry: a single reference write publishes both probe results
+	// atomically, so a concurrent session can never observe a mismatched encoding/verdict
+	// pair (the previous nullable-tuple field could tear under racing reads and writes).
+	// Single entry: the sink encoding is constant per process/session, and Encoding
+	// instances are effectively singletons.
+	private sealed record BoxDrawingProbes(Encoding Encoding, bool Rounded, bool Square);
+
+	private static BoxDrawingProbes? s_probeCache;
+
+	private static BoxDrawingProbes GetProbes(Encoding encoding)
 	{
-		const string probe = "╭";
+		if (s_probeCache is { } cached && ReferenceEquals(cached.Encoding, encoding))
+		{
+			return cached;
+		}
+
+		// ╭ discriminates full Unicode sinks; ┌ discriminates OEM codepages (which carry the
+		// square safe-border glyphs but not the rounded ones) from ASCII-only sinks.
+		var probes = new BoxDrawingProbes(encoding, Roundtrips(encoding, "╭"), Roundtrips(encoding, "┌"));
+		s_probeCache = probes;
+		return probes;
+	}
+
+	private static bool IsUnicodeCodePage(Encoding encoding) =>
+		encoding.CodePage is 65001 or 1200 or 1201 or 12000 or 12001;
+
+	private static bool Roundtrips(Encoding encoding, string probe)
+	{
 		try
 		{
 			return string.Equals(encoding.GetString(encoding.GetBytes(probe)), probe, StringComparison.Ordinal);
@@ -127,9 +167,11 @@ internal static class SessionAnsiConsole
 		}
 	}
 
-	private sealed class SessionAnsiConsoleOutput : IAnsiConsoleOutput
+	private sealed class SessionAnsiConsoleOutput(bool transliterateBoxDrawing) : IAnsiConsoleOutput
 	{
-		public TextWriter Writer { get; } = new SessionDelegatingTextWriter();
+		public TextWriter Writer { get; } = transliterateBoxDrawing
+			? new BoxDrawingTransliteratingWriter(new SessionDelegatingTextWriter())
+			: new SessionDelegatingTextWriter();
 
 		public bool IsTerminal => !ReplSessionIO.IsHostedSession && !Console.IsOutputRedirected;
 

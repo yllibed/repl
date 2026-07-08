@@ -21,13 +21,26 @@ public static class SpectreReplExtensions
 		ArgumentNullException.ThrowIfNull(services);
 		services.TryAddSingleton<SpectreInteractionPresenter>();
 		services.TryAddSingleton<IReplInteractionPresenter>(sp => sp.GetRequiredService<SpectreInteractionPresenter>());
-		services.AddSingleton<IReplInteractionHandler, SpectreInteractionHandler>();
+		services.AddSingleton<IReplInteractionHandler>(sp =>
+			new SpectreInteractionHandler(ResolveOutputOptions(sp), ResolveSpectreOptions(sp)));
 		// The container carries the app's OutputOptions (registered by ReplApp), so the
 		// injected console follows the host's terminal detection even when
 		// UseSpectreConsole was not called.
-		services.TryAddTransient<IAnsiConsole>(sp => SessionAnsiConsole.Create(sp.GetService<OutputOptions>(), sp.GetService<SpectreConsoleOptions>()));
+		services.TryAddTransient<IAnsiConsole>(sp =>
+			SessionAnsiConsole.Create(ResolveOutputOptions(sp), ResolveSpectreOptions(sp)));
 		return services;
 	}
+
+	// Externally managed DI (the AddRepl pattern): the host's container does not carry the
+	// framework-registered options — those live in the ReplApp's own service collection —
+	// but it does carry the ReplApp itself. Deferring to the app's container keeps the host
+	// terminal detection and Spectre options flowing instead of silently reverting injected
+	// consoles and prompts to Spectre-side detection.
+	private static OutputOptions? ResolveOutputOptions(IServiceProvider sp) =>
+		sp.GetService<OutputOptions>() ?? sp.GetService<ReplApp>()?.Services.GetService<OutputOptions>();
+
+	private static SpectreConsoleOptions? ResolveSpectreOptions(IServiceProvider sp) =>
+		sp.GetService<SpectreConsoleOptions>() ?? sp.GetService<ReplApp>()?.Services.GetService<SpectreConsoleOptions>();
 
 	/// <summary>
 	/// Enables Spectre.Console output rendering by registering the "spectre" output
