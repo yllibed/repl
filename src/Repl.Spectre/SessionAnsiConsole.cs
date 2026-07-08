@@ -23,6 +23,13 @@ internal static class SessionAnsiConsole
 	internal static SpectreConsoleOptions Options { get; set; } = new();
 
 	/// <summary>
+	/// Diagnostic breadcrumb recording how the last console profile was derived
+	/// (origin + gate verdict or legacy fallback). Read by tests when a CI-only
+	/// environment produces a profile local runs cannot reproduce.
+	/// </summary>
+	internal static string? LastDetectionTrace { get; private set; }
+
+	/// <summary>
 	/// Creates a new <see cref="IAnsiConsole"/> bound to the current session I/O.
 	/// </summary>
 	public static IAnsiConsole Create(OutputOptions? outputOptions = null)
@@ -31,7 +38,7 @@ internal static class SessionAnsiConsole
 		{
 			Out = new SessionAnsiConsoleOutput(),
 		};
-		ApplyTerminalDetection(settings, outputOptions);
+		ApplyTerminalDetection(settings, outputOptions, origin: "session");
 
 		return ApplyOptions(AnsiConsole.Create(settings));
 	}
@@ -46,7 +53,7 @@ internal static class SessionAnsiConsole
 		{
 			Out = new WriterAnsiConsoleOutput(writer, width),
 		};
-		ApplyTerminalDetection(settings, outputOptions);
+		ApplyTerminalDetection(settings, outputOptions, origin: "writer");
 
 		return ApplyOptions(AnsiConsole.Create(settings));
 	}
@@ -59,17 +66,19 @@ internal static class SessionAnsiConsole
 	// tests must not contaminate each other); when none is reachable (bare
 	// AddSpectreConsole outside a Repl DI container), the legacy always-on behavior is
 	// preserved so standalone consumers do not regress.
-	private static void ApplyTerminalDetection(AnsiConsoleSettings settings, OutputOptions? outputOptions)
+	private static void ApplyTerminalDetection(AnsiConsoleSettings settings, OutputOptions? outputOptions, string origin)
 	{
 		var effectiveOptions = outputOptions;
 		if (effectiveOptions is null)
 		{
+			LastDetectionTrace = origin + ":legacy";
 			settings.Ansi = AnsiSupport.Yes;
 			settings.ColorSystem = ColorSystemSupport.TrueColor;
 			return;
 		}
 
 		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(effectiveOptions);
+		LastDetectionTrace = origin + ":gate=" + (ansiCapable ? "true" : "false");
 		settings.Ansi = ansiCapable ? AnsiSupport.Yes : AnsiSupport.No;
 		settings.ColorSystem = ansiCapable ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors;
 	}

@@ -47,9 +47,10 @@ public sealed class Given_SpectreTerminalDetection
 		var gateVerdict = configuredOutput is { } configured
 			? $"gate={TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(configured)}, ansiEnabled={configured.IsAnsiEnabled()}"
 			: "options not captured";
+		var escapedText = output.Text.Replace(AnsiIntroducer, "<ESC>[", StringComparison.Ordinal);
 		output.Text.Should().NotContain(
 			AnsiIntroducer,
-			because: $"a console that does not interpret ANSI must not receive escape sequences ({gateVerdict}, redirected={Console.IsOutputRedirected})");
+			because: $"a console that does not interpret ANSI must not receive escape sequences ({gateVerdict}, redirected={Console.IsOutputRedirected}, trace={Repl.Spectre.SessionAnsiConsole.LastDetectionTrace}, text=[{escapedText}])");
 	}
 
 	[TestMethod]
