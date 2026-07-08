@@ -25,7 +25,7 @@ public static class SpectreReplExtensions
 		// The container carries the app's OutputOptions (registered by ReplApp), so the
 		// injected console follows the host's terminal detection even when
 		// UseSpectreConsole was not called.
-		services.TryAddTransient<IAnsiConsole>(sp => SessionAnsiConsole.Create(sp.GetService<OutputOptions>()));
+		services.TryAddTransient<IAnsiConsole>(sp => SessionAnsiConsole.Create(sp.GetService<OutputOptions>(), sp.GetService<SpectreConsoleOptions>()));
 		return services;
 	}
 
@@ -43,7 +43,10 @@ public static class SpectreReplExtensions
 
 		var spectreOptions = new SpectreConsoleOptions();
 		configure?.Invoke(spectreOptions);
-		SessionAnsiConsole.Options = spectreOptions;
+		// Per-app options flow through the container (interaction handler, injected
+		// consoles) and the transformer parameter below — no process-wide static, so
+		// parallel apps cannot contaminate each other's Spectre configuration.
+		app.ServiceDescriptors.TryAddSingleton(spectreOptions);
 
 		if (spectreOptions.Unicode && !Console.IsOutputRedirected)
 		{
@@ -52,7 +55,7 @@ public static class SpectreReplExtensions
 
 		app.Options(o =>
 		{
-			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer(o.Output.ResolveHumanRenderSettings, o.Output));
+			o.Output.AddTransformer("spectre", new SpectreHumanOutputTransformer(o.Output.ResolveHumanRenderSettings, o.Output, spectreOptions));
 			o.Output.AddHelpOutputFactory(
 				"spectre",
 				static (routes, contexts, scopeTokens, parsingOptions, ambientOptions) =>

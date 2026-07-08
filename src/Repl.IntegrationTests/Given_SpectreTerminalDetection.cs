@@ -193,6 +193,36 @@ public sealed class Given_SpectreTerminalDetection
 		resolved.Should().BeSameAs(configuredOutput);
 	}
 
+	[TestMethod]
+	[Description("Spectre console options are per app: a second app configuring Unicode=false must not strip box-drawing from an earlier app whose sink carries Unicode — the same contamination class the OutputOptions flow already prevents.")]
+	public void When_AnotherAppDisablesUnicode_Then_FirstAppKeepsItsBoxDrawing()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var writer = new StringWriter();
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("wardrobe", (IAnsiConsole console) =>
+		{
+			var table = new Table().Border(TableBorder.Rounded)
+				.AddColumn("Item").AddColumn("Quantity");
+			table.AddRow("bib overalls", "42");
+			console.Write(table);
+			return Results.Success("Wardrobe displayed.");
+		});
+
+		// A second app in the same process opts out of Unicode AFTER the first app
+		// was configured; the first app must be unaffected.
+		_ = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole(o => o.Unicode = false);
+
+		using var session = ReplSessionIO.SetSession(writer, TextReader.Null);
+		ReplSessionIO.WindowSize = (80, 24);
+		var exitCode = sut.Run(["wardrobe", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		writer.ToString().Should().Contain("╭", because: "the sibling app's Unicode opt-out must not leak into this app");
+	}
+
 	private sealed record WardrobeRow(string Item, int Quantity);
 
 	// A session writer whose declared encoding cannot carry box-drawing glyphs, standing in

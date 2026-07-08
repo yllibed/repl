@@ -9,23 +9,14 @@ namespace Repl.Spectre;
 /// </summary>
 internal static class SessionAnsiConsole
 {
-	/// <summary>
-	/// Gets or sets the console options shared by all factory methods.
-	/// Set by <see cref="SpectreReplExtensions.UseSpectreConsole"/> during app configuration.
-	/// </summary>
-	/// <remarks>
-	/// This is process-wide shared state. When multiple <see cref="ReplApp"/> instances
-	/// coexist in the same process with different Spectre configurations, the last
-	/// <see cref="SpectreReplExtensions.UseSpectreConsole"/> call wins. If per-app
-	/// isolation is needed, this should be refactored to flow through the service
-	/// container or <see cref="ReplSessionIO"/> instead.
-	/// </remarks>
-	internal static SpectreConsoleOptions Options { get; set; } = new();
+	// Defaults used when no per-app options are reachable (bare AddSpectreConsole
+	// outside a Repl container). Never mutated.
+	private static readonly SpectreConsoleOptions s_defaultOptions = new();
 
 	/// <summary>
 	/// Creates a new <see cref="IAnsiConsole"/> bound to the current session I/O.
 	/// </summary>
-	public static IAnsiConsole Create(OutputOptions? outputOptions = null)
+	public static IAnsiConsole Create(OutputOptions? outputOptions = null, SpectreConsoleOptions? spectreOptions = null)
 	{
 		var settings = new AnsiConsoleSettings
 		{
@@ -43,14 +34,14 @@ internal static class SessionAnsiConsole
 		};
 		ApplyTerminalDetection(settings, outputOptions);
 
-		return ApplyOptions(AnsiConsole.Create(settings));
+		return ApplyOptions(AnsiConsole.Create(settings), spectreOptions);
 	}
 
 	/// <summary>
 	/// Creates an <see cref="IAnsiConsole"/> that renders to the provided <see cref="TextWriter"/>.
 	/// Used by the output transformer to capture rendered output as a string.
 	/// </summary>
-	public static IAnsiConsole CreateForWriter(TextWriter writer, int width, OutputOptions? outputOptions = null)
+	public static IAnsiConsole CreateForWriter(TextWriter writer, int width, OutputOptions? outputOptions = null, SpectreConsoleOptions? spectreOptions = null)
 	{
 		var settings = new AnsiConsoleSettings
 		{
@@ -62,7 +53,7 @@ internal static class SessionAnsiConsole
 		};
 		ApplyTerminalDetection(settings, outputOptions);
 
-		return ApplyOptions(AnsiConsole.Create(settings));
+		return ApplyOptions(AnsiConsole.Create(settings), spectreOptions);
 	}
 
 	// Issue #46: the profile follows the host's terminal detection instead of hardcoding
@@ -87,14 +78,14 @@ internal static class SessionAnsiConsole
 		settings.ColorSystem = ansiCapable ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors;
 	}
 
-	private static IAnsiConsole ApplyOptions(IAnsiConsole console)
+	private static IAnsiConsole ApplyOptions(IAnsiConsole console, SpectreConsoleOptions? spectreOptions)
 	{
 		// Unicode is gated on the FINAL sink's encoding, not the immediate writer: the
 		// transformer renders into a UTF-16 StringWriter whose content is later written to
 		// the session output, so the session writer (or Console.Out locally — the fallback
 		// of ReplSessionIO.Output) is the encoding that actually has to carry the glyphs.
 		console.Profile.Capabilities.Unicode =
-			Options.Unicode && CanRenderBoxDrawing(ReplSessionIO.Output.Encoding);
+			(spectreOptions ?? s_defaultOptions).Unicode && CanRenderBoxDrawing(ReplSessionIO.Output.Encoding);
 		return console;
 	}
 
