@@ -47,6 +47,25 @@ public sealed class Given_McpIntegration
 	}
 
 	[TestMethod]
+	[Description("MCP protocol passthrough help remains hidden from root discovery but is visible when users ask for the MCP scope or command help.")]
+	public void When_McpHelpIsRequested_Then_ProtocolServeCommandIsShown()
+	{
+		var app = ReplApp.Create().UseDefaultInteractive();
+		app.UseMcpServer();
+
+		var rootHelp = app.Core.BuildHumanHelp([]);
+		var mcpHelp = app.Core.BuildHumanHelp(["mcp"]);
+		var serveHelp = app.Core.BuildHumanHelp(["mcp", "serve"]);
+
+		rootHelp.Should().NotContain("mcp serve");
+		mcpHelp.Should().Contain("Commands:");
+		mcpHelp.Should().Contain("serve");
+		mcpHelp.Should().NotContain("(none)");
+		serveHelp.Should().Contain("Usage: mcp serve");
+		serveHelp.Should().Contain("Start MCP stdio server for agent integration.");
+	}
+
+	[TestMethod]
 	[Description("MCP server options advertise logging capability because interaction feedback can be routed through MCP notifications.")]
 	public void When_BuildingMcpOptions_Then_LoggingCapabilityIsAdvertised()
 	{

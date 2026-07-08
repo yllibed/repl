@@ -1,7 +1,7 @@
 namespace Repl.Mcp;
 
 /// <summary>
-/// Registers the <c>mcp serve</c> command as a hidden protocol passthrough context.
+/// Registers the <c>mcp serve</c> command under a hidden protocol passthrough context.
 /// Follows the same pattern as <c>ShellCompletionModule</c>.
 /// </summary>
 internal sealed class McpModule(ReplMcpServerOptions options) : IReplModule
@@ -22,8 +22,7 @@ internal sealed class McpModule(ReplMcpServerOptions options) : IReplModule
 					return Results.Exit(0);
 				})
 				.WithDescription("Start MCP stdio server for agent integration.")
-				.AsProtocolPassthrough()
-				.Hidden();
+				.AsProtocolPassthrough();
 		})
 		.Hidden();
 	}
