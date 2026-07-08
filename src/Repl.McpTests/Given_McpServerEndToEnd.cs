@@ -463,8 +463,9 @@ public sealed class Given_McpServerEndToEnd
 		var prompt = prompts.Should().ContainSingle(p =>
 			string.Equals(p.Name, "troubleshoot", StringComparison.Ordinal)).Which;
 		prompt.ProtocolPrompt.Description.Should().Be("Diagnose an issue");
-		prompt.ProtocolPrompt.Arguments.Should().ContainSingle(a =>
-			string.Equals(a.Name, "symptom", StringComparison.Ordinal));
+		var argument = prompt.ProtocolPrompt.Arguments.Should().ContainSingle(a =>
+			string.Equals(a.Name, "symptom", StringComparison.Ordinal)).Which;
+		argument.Required.Should().BeTrue("non-optional Repl route arguments are required when invoking the prompt");
 	}
 
 	[TestMethod]

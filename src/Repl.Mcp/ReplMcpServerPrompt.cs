@@ -31,7 +31,7 @@ internal sealed class ReplMcpServerPrompt : McpServerPrompt
 			{
 				Name = arg.Name,
 				Description = arg.Description,
-				Required = false, // MCP spec: all prompt arguments must be optional.
+				Required = arg.Required,
 			});
 		}
 
@@ -41,7 +41,7 @@ internal sealed class ReplMcpServerPrompt : McpServerPrompt
 			{
 				Name = opt.Name,
 				Description = opt.Description,
-				Required = false,
+				Required = opt.Required,
 			});
 		}
 
