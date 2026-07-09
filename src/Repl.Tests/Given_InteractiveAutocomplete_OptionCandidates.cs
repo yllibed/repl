@@ -164,6 +164,20 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			.Should().Be(1);
 	}
 
+	[TestMethod]
+	[Description("In option-prefix mode the live hint must describe the option alternatives, not the pending positional parameter: 'install --' lists --force/--help in the menu, so a 'Param skillName' hint would contradict what the user is looking at.")]
+	public async Task When_OptionPrefixWithMissingPositional_Then_HintShowsOptionsNotParameter()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("install {skillName}", static string (string skillName, [ReplOption] bool force) => skillName)
+			.WithDescription("Install a skill.");
+
+		var result = await ResolveAutocompleteAsync(sut, "install --").ConfigureAwait(false);
+
+		result.HintLine.Should().NotContain("skillName", because: "the user asked for options, not the positional parameter");
+		result.HintLine.Should().Contain("--force");
+	}
+
 	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(CoreReplApp app, string input)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(

@@ -776,8 +776,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				?? (string.IsNullOrWhiteSpace(currentTokenPrefix) ? null : $"Invalid: {currentTokenPrefix}");
 		}
 
+		// Option suggestions share AutocompleteSuggestionKind.Parameter, so without this
+		// guard the parameter shortcut would hint the pending positional ("Param skillName")
+		// while the menu is listing option names — the hint must describe what is shown.
 		var segmentIndex = commandPrefix.Length;
-		if (TryBuildParameterHint(matchingRoutes, segmentIndex, out var parameterHint)
+		if (!IsOptionPrefixToken(currentTokenPrefix)
+			&& TryBuildParameterHint(matchingRoutes, segmentIndex, out var parameterHint)
 			&& selectable.All(static suggestion =>
 				suggestion.Kind is ConsoleLineReader.AutocompleteSuggestionKind.Parameter
 					or ConsoleLineReader.AutocompleteSuggestionKind.Invalid))
