@@ -157,7 +157,9 @@ configuration required:
   (IDE run windows, CI logs, pipes) decodes UTF-8 while the writer emits OEM bytes — box drawing
   is transliterated to ASCII (`+`, `-`, `|`) so the output stays legible in every charset. This
   read-side gate complements the write-side UTF-8 setup above: `UseSpectreConsole()` upgrades a
-  real local console to UTF-8, and the gate degrades gracefully everywhere it could not. The
+  real local console to UTF-8, and the gate degrades gracefully everywhere it could not. If a
+  redirected consumer legitimately decodes UTF-8 (a log viewer, a UTF-8 pipe), set
+  `Console.OutputEncoding = Encoding.UTF8` in the app to opt back into full Unicode borders. The
   active verdict is exposed as `SpectreTerminalDetection.CurrentBoxDrawingSupport` for
   diagnostics commands.
 - **CI logs are plain by default**: Spectre's built-in CI enrichers are disabled so they cannot

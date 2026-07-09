@@ -9,8 +9,8 @@ public sealed class Given_BoxDrawingTransliteratingWriter
 	[Description("Box-drawing glyphs map to their ASCII skeleton: straight horizontals to '-', straight verticals to '|', corners/tees/crosses/arcs to '+', block elements (progress bars) to '#'. ASCII output is identical in every charset, so it is legible no matter who decodes the stream.")]
 	public void When_WritingBoxDrawing_Then_GlyphsAreTransliteratedToAscii()
 	{
-		var inner = new StringWriter();
-		var sut = new BoxDrawingTransliteratingWriter(inner);
+		using var inner = new StringWriter();
+		using var sut = new BoxDrawingTransliteratingWriter(inner);
 
 		sut.Write("╭─┬╮ │ ├┼┤ ╰┴╯ ┌═┐ ━ ║ █▓");
 
@@ -21,8 +21,8 @@ public sealed class Given_BoxDrawingTransliteratingWriter
 	[Description("Text without box glyphs passes through untouched (and takes the zero-copy fast path): only terminal chrome is rewritten, never payload data.")]
 	public void When_WritingPlainText_Then_ContentPassesThroughUnchanged()
 	{
-		var inner = new StringWriter();
-		var sut = new BoxDrawingTransliteratingWriter(inner);
+		using var inner = new StringWriter();
+		using var sut = new BoxDrawingTransliteratingWriter(inner);
 
 		sut.Write("bib overalls x42 — denim: ga bu zo meu");
 		sut.Write('!');
@@ -34,8 +34,8 @@ public sealed class Given_BoxDrawingTransliteratingWriter
 	[Description("The char-array overload transliterates too — Spectre's writer plumbing goes through several TextWriter entry points and none may leak a raw glyph.")]
 	public void When_WritingThroughCharArrayOverload_Then_GlyphsAreTransliterated()
 	{
-		var inner = new StringWriter();
-		var sut = new BoxDrawingTransliteratingWriter(inner);
+		using var inner = new StringWriter();
+		using var sut = new BoxDrawingTransliteratingWriter(inner);
 		var buffer = "a│b".ToCharArray();
 
 		sut.Write(buffer, 0, buffer.Length);

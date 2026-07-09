@@ -141,7 +141,7 @@ public sealed class Given_SpectreTerminalDetection
 		using var session = ReplSessionIO.SetSession(new StringWriter(), TextReader.Null);
 		ReplSessionIO.WindowSize = (int.MaxValue, int.MaxValue);
 
-		var console = Repl.Spectre.SessionAnsiConsole.Create(outputOptions: null);
+		var console = SessionAnsiConsole.Create(outputOptions: null);
 
 		console.Profile.Width.Should().BeLessThanOrEqualTo(10_000);
 		console.Profile.Height.Should().BeLessThanOrEqualTo(1_000);
@@ -153,7 +153,7 @@ public sealed class Given_SpectreTerminalDetection
 	{
 		using var session = ReplSessionIO.SetSession(new StringWriter(), TextReader.Null);
 
-		var console = Repl.Spectre.SessionAnsiConsole.Create(outputOptions: null);
+		var console = SessionAnsiConsole.Create(outputOptions: null);
 
 		console.Profile.Capabilities.Interactive.Should().BeFalse(
 			because: "a hosted session (and any redirected stdin) cannot answer interactive prompts");
@@ -256,7 +256,162 @@ public sealed class Given_SpectreTerminalDetection
 		support.Should().Be(BoxDrawingSupport.Ascii);
 	}
 
+	[TestMethod]
+	[Description("Contract pin for the Rounded branch of the public diagnostics API: a Unicode-capable session writer reports Rounded — dropping the redirection/probe arguments from the implementation would regress undetected without this.")]
+	public void When_SessionWriterCarriesUnicode_Then_BoxDrawingSupportIsRounded()
+	{
+		using var session = ReplSessionIO.SetSession(new StringWriter(), TextReader.Null);
+
+		var support = SpectreTerminalDetection.CurrentBoxDrawingSupport;
+
+		support.Should().Be(BoxDrawingSupport.Rounded);
+	}
+
+	[TestMethod]
+	[Description("External-DI hosting must be able to resolve the interaction presenter too: SpectreInteractionPresenter's dependencies live in the ReplApp's own container, so type activation in a host container (ReplApp present, framework options absent) throws — the session overlay probes IReplInteractionPresenter and would crash at session start.")]
+	public void When_ResolvingPresenterFromExternalContainer_Then_ResolutionSucceeds()
+	{
+		var app = ReplApp.Create();
+		var services = new ServiceCollection().AddSpectreConsole();
+		services.AddSingleton(app);
+		using var external = services.BuildServiceProvider();
+
+		var act = () => external.GetRequiredService<Repl.Interaction.IReplInteractionPresenter>();
+
+		act.Should().NotThrow(because: "the presenter must resolve in the AddRepl external-DI pattern like the console and handler do");
+	}
+
+	[TestMethod]
+	[Description("The capture-writer path must clamp untrusted widths exactly like the session path: the spectre output transformer feeds the hosted client's advertised window width straight into CreateForWriter, so an int.MaxValue report would otherwise drive Spectre into width-proportional allocations on every auto-rendered result.")]
+	public void When_CreatingWriterConsoleWithAbsurdWidth_Then_ProfileWidthIsClamped()
+	{
+		using var writer = new StringWriter();
+
+		var console = SessionAnsiConsole.CreateForWriter(writer, int.MaxValue);
+
+		console.Profile.Width.Should().BeLessThanOrEqualTo(10_000);
+	}
+
+	[TestMethod]
+	[Description("Regression guard on the full transformer path: a hosted client advertising an absurd window size must still get its collection auto-rendered promptly and with sane line lengths — the clamp has to sit on the writer path the transformer actually uses, not only on directly injected consoles.")]
+	public void When_HostedClientAdvertisesAbsurdWindowSize_Then_AutoRenderedOutputStaysSane()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var writer = new StringWriter();
+		var sut = ReplApp.Create(services => services.AddSpectreConsole())
+			.UseSpectreConsole();
+		sut.Map("wardrobe", () => new[]
+		{
+			new WardrobeRow("bib overalls", 42),
+			new WardrobeRow("denim jacket", 7),
+		});
+		using var session = ReplSessionIO.SetSession(writer, TextReader.Null);
+		ReplSessionIO.WindowSize = (int.MaxValue, int.MaxValue);
+
+		var exitCode = sut.Run(["wardrobe", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		var text = writer.ToString();
+		text.Should().Contain("bib overalls");
+		foreach (var line in text.Split('\n'))
+		{
+			line.Length.Should().BeLessThanOrEqualTo(10_001, because: "no rendered line may scale with the client-advertised width");
+		}
+	}
+
+	[TestMethod]
+	[Description("UseSpectreConsole configuration must reach DI consoles even when the app's shared provider was materialized first (MapModule/app.Services before UseSpectreConsole): late service descriptors are invisible to an already-built provider, which used to silently split the config between the transformer and injected consoles.")]
+	public void When_ServicesAreMaterializedBeforeUseSpectreConsole_Then_ConfiguredOptionsStillReachInjectedConsoles()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var app = ReplApp.Create(services => services.AddSpectreConsole());
+		_ = app.Services;
+		app.UseSpectreConsole(o => o.Unicode = false);
+		using var session = ReplSessionIO.SetSession(new StringWriter(), TextReader.Null);
+		ReplSessionIO.WindowSize = (80, 24);
+
+		var console = (IAnsiConsole)app.Services.GetService(typeof(IAnsiConsole))!;
+
+		console.Profile.Capabilities.Unicode.Should().BeFalse(
+			because: "the configured Unicode opt-out must apply no matter when the provider was materialized");
+	}
+
+	[TestMethod]
+	[Description("The transliteration decision must follow the writer's per-write session routing, not the console's creation time: a console captured during a Unicode session and used later inside an ASCII session would otherwise deliver raw box glyphs — the exact mojibake this PR eliminates.")]
+	public void When_ConsoleIsCreatedBeforeAnAsciiSession_Then_WritesAreStillTransliterated()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var app = ReplApp.Create(services => services.AddSpectreConsole());
+		IAnsiConsole console;
+		using (ReplSessionIO.SetSession(new StringWriter(), TextReader.Null))
+		{
+			ReplSessionIO.WindowSize = (80, 24);
+			console = (IAnsiConsole)app.Services.GetService(typeof(IAnsiConsole))!;
+		}
+
+		var asciiWriter = new AsciiStringWriter();
+		using (ReplSessionIO.SetSession(asciiWriter, TextReader.Null))
+		{
+			ReplSessionIO.WindowSize = (80, 24);
+			var table = new Table().Border(TableBorder.Rounded)
+				.AddColumn("Item").AddColumn("Quantity");
+			table.AddRow("bib overalls", "42");
+			console.Write(table);
+		}
+
+		var text = asciiWriter.ToString();
+		text.Should().NotContain("╭").And.NotContain("┌", because: "no box glyph survives an ASCII sink");
+		text.Should().Contain("+", because: "the stale creation-time verdict must not defeat the write-time transliteration");
+	}
+
+	[TestMethod]
+	[Description("A hosted writer whose Encoding getter itself throws must not crash console creation: the probe guards encoding OPERATIONS, but the getter runs before the probe — the conservative outcome is the Ascii tier, same as any sink the framework cannot reason about.")]
+	public void When_SessionWriterEncodingGetterThrows_Then_ConsoleCreationFallsBackToAscii()
+	{
+		using var session = ReplSessionIO.SetSession(new ThrowingEncodingWriter(), TextReader.Null);
+		ReplSessionIO.WindowSize = (80, 24);
+
+		var act = () => SessionAnsiConsole.Create();
+
+		act.Should().NotThrow(because: "an unreadable sink encoding must degrade, not crash every render");
+		SpectreTerminalDetection.CurrentBoxDrawingSupport.Should().Be(BoxDrawingSupport.Ascii);
+	}
+
+	[TestMethod]
+	[Description("Binary-compatibility pin: SpectreInteractionHandler keeps a real public parameterless constructor — consumers compiled against earlier versions call it, and a primary constructor with optional parameters only emits the two-parameter form.")]
+	public void When_ReflectingOverInteractionHandlerConstructors_Then_ParameterlessCtorExists()
+	{
+		var parameterless = typeof(SpectreInteractionHandler).GetConstructor(Type.EmptyTypes);
+
+		parameterless.Should().NotBeNull();
+	}
+
+	[TestMethod]
+	[Description("Resolution-precedence pin: when both the resolving container and the ReplApp carry OutputOptions, the container instance wins — swapping the fallback chain order would silently change which app's detection applies.")]
+	public void When_ContainerAndAppBothCarryOutputOptions_Then_ContainerInstanceWins()
+	{
+		using var env = new EnvironmentVariableScope(NeutralAnsiEnvironment);
+		var app = ReplApp.Create();
+		app.Options(o => o.Output.AnsiMode = Rendering.AnsiMode.Always);
+		var containerOptions = new OutputOptions { AnsiMode = Rendering.AnsiMode.Never };
+		var services = new ServiceCollection().AddSpectreConsole();
+		services.AddSingleton(app);
+		services.AddSingleton(containerOptions);
+		using var external = services.BuildServiceProvider();
+
+		var console = (IAnsiConsole)external.GetService(typeof(IAnsiConsole))!;
+
+		console.Profile.Capabilities.Ansi.Should().BeFalse(
+			because: "the container's explicit registration must take precedence over the app fallback");
+	}
+
 	private sealed record WardrobeRow(string Item, int Quantity);
+
+	// Stands in for a hosted transport whose TextWriter.Encoding getter itself throws.
+	private sealed class ThrowingEncodingWriter : StringWriter
+	{
+		public override Encoding Encoding => throw new InvalidOperationException("ga bu zo meu");
+	}
 
 	// A session writer whose declared encoding cannot carry box-drawing glyphs, standing in
 	// for a legacy-codepage console attached to a hosted transport.

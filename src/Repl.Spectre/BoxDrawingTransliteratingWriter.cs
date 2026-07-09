@@ -13,8 +13,11 @@ namespace Repl.Spectre;
 internal sealed class BoxDrawingTransliteratingWriter(TextWriter inner) : TextWriter
 {
 	// Box Drawing block (U+2500–U+257F) plus Block Elements (U+2580–U+259F, progress
-	// bars and shades) — the ranges Spectre draws chrome from.
+	// bars and shades) — the ranges Spectre draws chrome from. LastLineDrawingChar is
+	// the boundary between the two blocks: at or below it maps to line ASCII (-, |, +),
+	// above it maps to '#'.
 	private const char FirstBoxChar = '─';
+	private const char LastLineDrawingChar = '╿';
 	private const char LastBoxChar = '▟';
 
 	public override Encoding Encoding => inner.Encoding;
@@ -52,11 +55,35 @@ internal sealed class BoxDrawingTransliteratingWriter(TextWriter inner) : TextWr
 		WriteTransliterated(span);
 	}
 
+	public override void Write(ReadOnlySpan<char> buffer)
+	{
+		if (buffer.IndexOfAnyInRange(FirstBoxChar, LastBoxChar) < 0)
+		{
+			inner.Write(buffer);
+			return;
+		}
+
+		WriteTransliterated(buffer);
+	}
+
 	public override void WriteLine() => inner.WriteLine();
 
 	public override void WriteLine(string? value)
 	{
-		Write(value);
+		// Clean lines (the common case) go through as a single inner call.
+		if (string.IsNullOrEmpty(value) || value.AsSpan().IndexOfAnyInRange(FirstBoxChar, LastBoxChar) < 0)
+		{
+			inner.WriteLine(value);
+			return;
+		}
+
+		WriteTransliterated(value.AsSpan());
+		inner.WriteLine();
+	}
+
+	public override void WriteLine(ReadOnlySpan<char> buffer)
+	{
+		Write(buffer);
 		inner.WriteLine();
 	}
 
@@ -89,8 +116,8 @@ internal sealed class BoxDrawingTransliteratingWriter(TextWriter inner) : TextWr
 		'│' or '┃' or '┆' or '┇' or '┊' or '┋'
 			or '╎' or '╏' or '║' or '╵' or '╷'
 			or '╹' or '╻' or '╽' or '╿' => '|',
-		>= FirstBoxChar and <= '╿' => '+',
-		> '╿' and <= LastBoxChar => '#',
+		>= FirstBoxChar and <= LastLineDrawingChar => '+',
+		> LastLineDrawingChar and <= LastBoxChar => '#',
 		_ => value,
 	};
 

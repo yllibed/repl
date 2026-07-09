@@ -15,6 +15,6 @@ public static class SpectreTerminalDetection
 	/// </summary>
 	public static BoxDrawingSupport CurrentBoxDrawingSupport =>
 		SessionAnsiConsole.ResolveBoxDrawingSupport(
-			ReplSessionIO.Output.Encoding,
+			SessionAnsiConsole.TryResolveSinkEncoding(ReplSessionIO.Output),
 			SessionAnsiConsole.IsLocalRedirected());
 }

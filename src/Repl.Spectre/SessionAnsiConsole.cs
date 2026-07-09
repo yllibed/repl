@@ -18,10 +18,13 @@ internal static class SessionAnsiConsole
 	/// </summary>
 	public static IAnsiConsole Create(OutputOptions? outputOptions = null, SpectreConsoleOptions? spectreOptions = null)
 	{
-		var boxDrawing = ResolveBoxDrawingSupport(ReplSessionIO.Output.Encoding, IsLocalRedirected());
+		// The verdict here only shapes the profile (Unicode capability); the actual
+		// transliteration decision is re-made per write inside SessionDelegatingTextWriter,
+		// because a console captured early can serve a session activated later.
+		var boxDrawing = ResolveBoxDrawingSupport(TryResolveSinkEncoding(ReplSessionIO.Output), IsLocalRedirected());
 		var settings = new AnsiConsoleSettings
 		{
-			Out = new SessionAnsiConsoleOutput(transliterateBoxDrawing: boxDrawing == BoxDrawingSupport.Ascii),
+			Out = new SessionAnsiConsoleOutput(),
 			// Spectre's default profile enrichers (GitHub Actions, GitLab, TeamCity, …)
 			// force ANSI back on under CI, overriding the explicit Ansi/ColorSystem below;
 			// the host detection is authoritative here, so enrichment is disabled. That
@@ -46,13 +49,14 @@ internal static class SessionAnsiConsole
 	{
 		// The support verdict comes from the FINAL sink (the capture writer is typically a
 		// UTF-16 StringWriter whose content is later written to the session output), but the
-		// transliteration must happen on the writer actually receiving the glyphs.
-		var boxDrawing = ResolveBoxDrawingSupport(ReplSessionIO.Output.Encoding, IsLocalRedirected());
+		// transliteration must happen on the writer actually receiving the glyphs. The width
+		// is untrusted (the transformer forwards the hosted client's advertised window size).
+		var boxDrawing = ResolveBoxDrawingSupport(TryResolveSinkEncoding(ReplSessionIO.Output), IsLocalRedirected());
 		var settings = new AnsiConsoleSettings
 		{
 			Out = new WriterAnsiConsoleOutput(
 				boxDrawing == BoxDrawingSupport.Ascii ? new BoxDrawingTransliteratingWriter(writer) : writer,
-				width),
+				ClampWidth(width)),
 			// Same rationale as Create: CI enrichers must not override the host detection.
 			// A capture writer can never answer prompts.
 			Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
@@ -95,6 +99,37 @@ internal static class SessionAnsiConsole
 	internal static bool IsLocalRedirected() => !ReplSessionIO.IsHostedSession && Console.IsOutputRedirected;
 
 	/// <summary>
+	/// Reads a writer's declared encoding under guard: hosted transports can supply writers
+	/// whose <see cref="TextWriter.Encoding"/> getter itself throws, and that read happens
+	/// before the probe's own try/catch can help. <c>null</c> means "could not be read" and
+	/// resolves to the Ascii tier.
+	/// </summary>
+	internal static Encoding? TryResolveSinkEncoding(TextWriter writer)
+	{
+		try
+		{
+			return writer.Encoding;
+		}
+		catch (Exception)
+		{
+			return null;
+		}
+	}
+
+	private const int FallbackWidth = 120;
+	private const int FallbackHeight = 24;
+
+	// Client-advertised sizes are untrusted input: a hosted client reporting int.MaxValue
+	// would otherwise drive Spectre into width-proportional allocations. Shared by the
+	// session output and the capture-writer output (the transformer path).
+	private const int MaxWidth = 10_000;
+	private const int MaxHeight = 1_000;
+
+	internal static int ClampWidth(int width) => width > 0 ? Math.Min(width, MaxWidth) : FallbackWidth;
+
+	internal static int ClampHeight(int height) => height > 0 ? Math.Min(height, MaxHeight) : FallbackHeight;
+
+	/// <summary>
 	/// Resolves how much box drawing the FINAL sink can carry. The support verdict is gated on
 	/// the final sink's encoding, not any intermediate writer: the transformer renders into a
 	/// UTF-16 StringWriter whose content is later written to the session output, so the session
@@ -104,8 +139,15 @@ internal static class SessionAnsiConsole
 	/// which is exactly the mojibake this guards against — cheaper and more truthful than a
 	/// codepage allowlist.
 	/// </summary>
-	internal static BoxDrawingSupport ResolveBoxDrawingSupport(Encoding encoding, bool isLocalRedirected)
+	internal static BoxDrawingSupport ResolveBoxDrawingSupport(Encoding? encoding, bool isLocalRedirected)
 	{
+		if (encoding is null)
+		{
+			// The sink's Encoding getter threw — nothing can be reasoned about the bytes it
+			// will carry, so only charset-agnostic ASCII is safe.
+			return BoxDrawingSupport.Ascii;
+		}
+
 		// A redirected local console on a non-Unicode codepage is undecodable by the reading
 		// process no matter which glyph is picked: the writer emits single-byte OEM codes
 		// (┌ is 0xDA in cp437) while modern readers (IDE run windows, CI logs, pipes) decode
@@ -167,11 +209,9 @@ internal static class SessionAnsiConsole
 		}
 	}
 
-	private sealed class SessionAnsiConsoleOutput(bool transliterateBoxDrawing) : IAnsiConsoleOutput
+	private sealed class SessionAnsiConsoleOutput : IAnsiConsoleOutput
 	{
-		public TextWriter Writer { get; } = transliterateBoxDrawing
-			? new BoxDrawingTransliteratingWriter(new SessionDelegatingTextWriter())
-			: new SessionDelegatingTextWriter();
+		public TextWriter Writer { get; } = new SessionDelegatingTextWriter();
 
 		public bool IsTerminal => !ReplSessionIO.IsHostedSession && !Console.IsOutputRedirected;
 
@@ -184,27 +224,18 @@ internal static class SessionAnsiConsole
 			// Encoding is managed by the session writer.
 		}
 
-		private const int FallbackWidth = 120;
-		private const int FallbackHeight = 24;
-
-		// Client-advertised sizes are untrusted input: a hosted client reporting
-		// int.MaxValue would otherwise drive Spectre into proportional allocations.
-		private const int MaxWidth = 10_000;
-		private const int MaxHeight = 1_000;
-
 		private static int ResolveWidth()
 		{
 			if (ReplSessionIO.WindowSize is { } size && size.Width > 0)
 			{
-				return Math.Min(size.Width, MaxWidth);
+				return ClampWidth(size.Width);
 			}
 
 			try
 			{
 				// Headless consoles (CI runners) can report 0 without throwing; a
 				// zero-width profile makes Spectre render nothing, so fall back.
-				var width = Console.WindowWidth;
-				return width > 0 ? Math.Min(width, MaxWidth) : FallbackWidth;
+				return ClampWidth(Console.WindowWidth);
 			}
 			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
@@ -216,14 +247,13 @@ internal static class SessionAnsiConsole
 		{
 			if (ReplSessionIO.WindowSize is { } size && size.Height > 0)
 			{
-				return Math.Min(size.Height, MaxHeight);
+				return ClampHeight(size.Height);
 			}
 
 			try
 			{
 				// Same headless-console guard as ResolveWidth.
-				var height = Console.WindowHeight;
-				return height > 0 ? Math.Min(height, MaxHeight) : FallbackHeight;
+				return ClampHeight(Console.WindowHeight);
 			}
 			catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or InvalidOperationException)
 			{
@@ -240,42 +270,73 @@ internal static class SessionAnsiConsole
 
 		public int Width => width;
 
-		public int Height => 24;
+		public int Height => FallbackHeight;
 
 		public void SetEncoding(Encoding encoding)
 		{
+			// Encoding is fixed by the capture writer handed in by the transformer.
 		}
 	}
 
 	/// <summary>
 	/// TextWriter that delegates all writes to <see cref="ReplSessionIO.Output"/>
-	/// at call time, ensuring session-correct routing even if captured early.
+	/// at call time, ensuring session-correct routing even if captured early. The
+	/// box-drawing transliteration decision is made here too — per write, against the
+	/// CURRENT sink — so a console created during a Unicode session cannot leak raw box
+	/// glyphs into an ASCII session activated later.
 	/// </summary>
 	private sealed class SessionDelegatingTextWriter : TextWriter
 	{
-		public override Encoding Encoding => ReplSessionIO.Output.Encoding;
+		// Maps the current raw sink to its effective (possibly transliterating) writer.
+		// Reference-typed pair published atomically; a benign race recomputes the same value.
+		private sealed record ResolvedTarget(TextWriter Raw, TextWriter Effective);
 
-		public override void Write(char value) => ReplSessionIO.Output.Write(value);
+		private ResolvedTarget? _target;
 
-		public override void Write(string? value) => ReplSessionIO.Output.Write(value);
+		private TextWriter Target
+		{
+			get
+			{
+				var output = ReplSessionIO.Output;
+				if (_target is { } cached && ReferenceEquals(cached.Raw, output))
+				{
+					return cached.Effective;
+				}
+
+				var support = ResolveBoxDrawingSupport(TryResolveSinkEncoding(output), IsLocalRedirected());
+				var effective = support == BoxDrawingSupport.Ascii
+					? new BoxDrawingTransliteratingWriter(output)
+					: output;
+				_target = new ResolvedTarget(output, effective);
+				return effective;
+			}
+		}
+
+		// A hosted writer's Encoding getter can itself throw; report UTF-8 rather than
+		// crashing the caller — the box-drawing gate performs its own guarded read.
+		public override Encoding Encoding => TryResolveSinkEncoding(ReplSessionIO.Output) ?? Encoding.UTF8;
+
+		public override void Write(char value) => Target.Write(value);
+
+		public override void Write(string? value) => Target.Write(value);
 
 		public override void Write(char[] buffer, int index, int count) =>
-			ReplSessionIO.Output.Write(buffer, index, count);
+			Target.Write(buffer, index, count);
 
-		public override void WriteLine() => ReplSessionIO.Output.WriteLine();
+		public override void WriteLine() => Target.WriteLine();
 
-		public override void WriteLine(string? value) => ReplSessionIO.Output.WriteLine(value);
+		public override void WriteLine(string? value) => Target.WriteLine(value);
 
-		public override void Flush() => ReplSessionIO.Output.Flush();
+		public override void Flush() => Target.Flush();
 
-		public override Task WriteAsync(char value) => ReplSessionIO.Output.WriteAsync(value);
+		public override Task WriteAsync(char value) => Target.WriteAsync(value);
 
-		public override Task WriteAsync(string? value) => ReplSessionIO.Output.WriteAsync(value);
+		public override Task WriteAsync(string? value) => Target.WriteAsync(value);
 
-		public override Task WriteLineAsync() => ReplSessionIO.Output.WriteLineAsync();
+		public override Task WriteLineAsync() => Target.WriteLineAsync();
 
-		public override Task WriteLineAsync(string? value) => ReplSessionIO.Output.WriteLineAsync(value);
+		public override Task WriteLineAsync(string? value) => Target.WriteLineAsync(value);
 
-		public override Task FlushAsync() => ReplSessionIO.Output.FlushAsync();
+		public override Task FlushAsync() => Target.FlushAsync();
 	}
 }

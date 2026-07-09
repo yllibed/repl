@@ -5,17 +5,39 @@ namespace Repl.Spectre;
 /// Returns <see cref="InteractionResult.Unhandled"/> when the terminal
 /// does not support interactive Spectre prompts (hosted sessions, redirected input).
 /// </summary>
-/// <param name="outputOptions">
-/// Host output options driving terminal detection for the prompt consoles; resolved from
-/// DI when available.
-/// </param>
-/// <param name="spectreOptions">
-/// Per-app Spectre options (Unicode); resolved from DI when available.
-/// </param>
-public sealed class SpectreInteractionHandler(
-	OutputOptions? outputOptions = null,
-	SpectreConsoleOptions? spectreOptions = null) : IReplInteractionHandler
+public sealed class SpectreInteractionHandler : IReplInteractionHandler
 {
+	private readonly OutputOptions? _outputOptions;
+	private readonly SpectreConsoleOptions? _spectreOptions;
+
+	/// <summary>
+	/// Creates a handler whose prompt consoles fall back to Spectre-side terminal detection.
+	/// Kept as a real parameterless constructor for consumers instantiating the handler
+	/// without DI (and for binary compatibility with earlier versions).
+	/// </summary>
+	public SpectreInteractionHandler()
+		: this(outputOptions: null, spectreOptions: null)
+	{
+	}
+
+	/// <summary>
+	/// Creates a handler whose prompt consoles follow the host terminal detection.
+	/// </summary>
+	/// <param name="outputOptions">
+	/// Host output options driving terminal detection for the prompt consoles; resolved from
+	/// DI when available.
+	/// </param>
+	/// <param name="spectreOptions">
+	/// Per-app Spectre options (Unicode); resolved from DI when available.
+	/// </param>
+	public SpectreInteractionHandler(
+		OutputOptions? outputOptions,
+		SpectreConsoleOptions? spectreOptions)
+	{
+		_outputOptions = outputOptions;
+		_spectreOptions = spectreOptions;
+	}
+
 	/// <inheritdoc />
 	public ValueTask<InteractionResult> TryHandleAsync(
 		InteractionRequest request, CancellationToken cancellationToken)
@@ -59,7 +81,7 @@ public sealed class SpectreInteractionHandler(
 	private async ValueTask<InteractionResult> HandleChoiceAsync(
 		AskChoiceRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create(outputOptions, spectreOptions);
+		var console = SessionAnsiConsole.Create(_outputOptions, _spectreOptions);
 		var choices = StripMnemonics(r.Choices);
 
 		// Reorder so the default item appears first (Spectre highlights first item).
@@ -90,7 +112,7 @@ public sealed class SpectreInteractionHandler(
 	private async ValueTask<InteractionResult> HandleMultiChoiceAsync(
 		AskMultiChoiceRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create(outputOptions, spectreOptions);
+		var console = SessionAnsiConsole.Create(_outputOptions, _spectreOptions);
 		var choices = StripMnemonics(r.Choices);
 		var prompt = new MultiSelectionPrompt<string>()
 			.Title(r.Prompt)
@@ -125,7 +147,7 @@ public sealed class SpectreInteractionHandler(
 	private async ValueTask<InteractionResult> HandleConfirmationAsync(
 		AskConfirmationRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create(outputOptions, spectreOptions);
+		var console = SessionAnsiConsole.Create(_outputOptions, _spectreOptions);
 		var prompt = new ConfirmationPrompt(r.Prompt)
 		{
 			DefaultValue = r.DefaultValue,
@@ -140,7 +162,7 @@ public sealed class SpectreInteractionHandler(
 	private async ValueTask<InteractionResult> HandleTextAsync(
 		AskTextRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create(outputOptions, spectreOptions);
+		var console = SessionAnsiConsole.Create(_outputOptions, _spectreOptions);
 		var prompt = new TextPrompt<string>(r.Prompt)
 			.AllowEmpty();
 
@@ -158,7 +180,7 @@ public sealed class SpectreInteractionHandler(
 	private async ValueTask<InteractionResult> HandleSecretAsync(
 		AskSecretRequest r, CancellationToken ct)
 	{
-		var console = SessionAnsiConsole.Create(outputOptions, spectreOptions);
+		var console = SessionAnsiConsole.Create(_outputOptions, _spectreOptions);
 		var prompt = new TextPrompt<string>(r.Prompt);
 
 		var effectiveMask = r.Options is { } options ? options.Mask : '*';
@@ -177,7 +199,7 @@ public sealed class SpectreInteractionHandler(
 
 	private ValueTask<InteractionResult> HandleClearScreenAsync()
 	{
-		var console = SessionAnsiConsole.Create(outputOptions, spectreOptions);
+		var console = SessionAnsiConsole.Create(_outputOptions, _spectreOptions);
 		console.Clear();
 		return new ValueTask<InteractionResult>(InteractionResult.Success(value: true));
 	}
