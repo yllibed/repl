@@ -74,6 +74,8 @@ ANSI color and styling support is resolved through a chain of checks:
 
 The first check that produces a definitive answer wins.
 
+Terminal-sequence emitters (shell-integration marks, advanced progress) and Spectre rendering add one shared fallback on top: a hosted client that advertises ANSI purely through capability flags (terminal identity, control messages) is honored even when the server console's own state says no — the environment escape hatches above always win. Spectre rendering (the `spectre` format and injected `IAnsiConsole` instances) follows the same verdict: colors degrade to plain text when ANSI is off, and Unicode box drawing falls back to safe borders when the output sink's encoding cannot carry the glyphs. See [Terminal Shell Integration](terminal-shell-integration.md) for the gate order.
+
 ## Banner Rendering
 
 The startup banner is controlled by:

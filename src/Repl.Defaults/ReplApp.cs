@@ -21,13 +21,26 @@ public sealed class ReplApp : IReplApp
 	// as handler parameters resolved at runtime.
 	private ServiceProvider? _sharedProvider;
 
+	// Extension packages (e.g. Repl.Spectre) park per-app configuration here so it stays
+	// reachable even when the shared provider was materialized before the Use* call —
+	// service descriptors added after BuildServiceProvider are silently invisible.
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<Type, object> _extensionState = new();
+
 	internal IServiceCollection ServiceDescriptors => _services;
+
+	internal void SetExtensionState<T>(T value) where T : class => _extensionState[typeof(T)] = value;
+
+	internal T? GetExtensionState<T>() where T : class =>
+		_extensionState.TryGetValue(typeof(T), out var value) ? value as T : null;
 
 	private ReplApp(IServiceCollection services)
 	{
 		_services = services;
 		_core = CoreReplApp.Create();
 		EnsureDefaultServices(_services, _core);
+		// The app registers itself so service factories (e.g. the Spectre console factory)
+		// can reach per-app state regardless of registration/materialization ordering.
+		_services.TryAddSingleton(this);
 		_core.Use(ReplLoggingMiddleware.InvokeAsync);
 	}
 

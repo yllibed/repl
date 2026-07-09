@@ -14,16 +14,23 @@ namespace Repl.Spectre;
 internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
+	private readonly OutputOptions? _outputOptions;
+	private readonly SpectreConsoleOptions? _spectreOptions;
 
 	public SpectreHumanOutputTransformer()
 		: this(DefaultResolveRenderSettings)
 	{
 	}
 
-	public SpectreHumanOutputTransformer(Func<HumanRenderSettings> resolveRenderSettings)
+	public SpectreHumanOutputTransformer(
+		Func<HumanRenderSettings> resolveRenderSettings,
+		OutputOptions? outputOptions = null,
+		SpectreConsoleOptions? spectreOptions = null)
 	{
 		ArgumentNullException.ThrowIfNull(resolveRenderSettings);
 		_resolveRenderSettings = resolveRenderSettings;
+		_outputOptions = outputOptions;
+		_spectreOptions = spectreOptions;
 	}
 
 	/// <inheritdoc />
@@ -525,7 +532,7 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 #pragma warning disable MA0045
 		using var writer = new StringWriter();
 #pragma warning restore MA0045
-		var console = SessionAnsiConsole.CreateForWriter(writer, ResolveRenderWidth());
+		var console = SessionAnsiConsole.CreateForWriter(writer, ResolveRenderWidth(), _outputOptions, _spectreOptions);
 		console.Write(renderable);
 		return writer.ToString().TrimEnd();
 	}

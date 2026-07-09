@@ -139,6 +139,34 @@ app.WithBanner((IAnsiConsole console) =>
 When `Unicode` is enabled, `UseSpectreConsole()` sets `Console.OutputEncoding` to UTF-8 to ensure
 Unicode characters (progress bars, spinners, box-drawing) render correctly on Windows.
 
+### Terminal detection
+
+Spectre rendering follows the same terminal detection as the rest of the framework — no
+configuration required:
+
+- **ANSI**: colors are emitted only when the host detection allows them (the shared gate also
+  driving shell-integration marks and advanced progress). `NO_COLOR`, `CLICOLOR_FORCE`, and
+  `TERM=dumb` are honored with the usual precedence, hosted clients can advertise ANSI through
+  capability flags, and a redirected console (an IDE Run window, a pipe) gets plain text instead
+  of raw escape sequences. When ANSI is off, the color system degrades to `NoColors`.
+- **Unicode**: box-drawing degrades in three tiers, resolved per console creation from the
+  actual output sink. When the sink's encoding carries the rounded glyphs, full Unicode borders
+  render intact. When only the square safe-border glyphs survive (a real console on a legacy OEM
+  codepage), Spectre's own non-Unicode fallback applies. When no box glyph survives — an ASCII
+  transport, or a **redirected** local console on a legacy codepage, where the reading process
+  (IDE run windows, CI logs, pipes) decodes UTF-8 while the writer emits OEM bytes — box drawing
+  is transliterated to ASCII (`+`, `-`, `|`) so the output stays legible in every charset. This
+  read-side gate complements the write-side UTF-8 setup above: `UseSpectreConsole()` upgrades a
+  real local console to UTF-8, and the gate degrades gracefully everywhere it could not. If a
+  redirected consumer legitimately decodes UTF-8 (a log viewer, a UTF-8 pipe), set
+  `Console.OutputEncoding = Encoding.UTF8` in the app to opt back into full Unicode borders. The
+  active verdict is exposed as `SpectreTerminalDetection.CurrentBoxDrawingSupport` for
+  diagnostics commands.
+- **CI logs are plain by default**: Spectre's built-in CI enrichers are disabled so they cannot
+  override the host detection; set `CLICOLOR_FORCE=1` in the workflow to restore colored logs.
+- Outside a Repl container (bare `AddSpectreConsole` without `UseSpectreConsole`), the profile
+  falls back to Spectre's own detection instead of the host gate.
+
 ## Docs
 
 - [Cookbook: Spectre.Console](https://repl.yllibed.org/cookbook/spectre/) — setup, prompts, renderables, capture, banners

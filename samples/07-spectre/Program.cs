@@ -418,8 +418,9 @@ app.Map("configure",
 // ──────────────────────────────────────────────────────────────
 app.Map("terminal",
 	[Description("Show what the terminal-integration layer detected for this session")]
-	(IAnsiConsole console, IReplSessionInfo session) =>
+	(IAnsiConsole console, IReplSessionInfo session, IReplIoContext io) =>
 	{
+		var sinkEncoding = io.Output.Encoding;
 		var table = new Table().Border(TableBorder.Rounded).BorderColor(Color.Blue)
 			.AddColumn("Property").AddColumn("Detected");
 		table.AddRow("Shell integration", session.ShellIntegrationStatus ?? "no prompt cycle yet (CLI one-shot?)");
@@ -427,6 +428,9 @@ app.Map("terminal",
 		table.AddRow("Capabilities", session.TerminalCapabilities.ToString());
 		table.AddRow("ANSI", session.AnsiSupported ? "yes" : "no");
 		table.AddRow("Window size", session.WindowSize is { } size ? $"{size.Width}x{size.Height}" : "unknown");
+		table.AddRow("Output encoding", $"{sinkEncoding.WebName} (cp{sinkEncoding.CodePage})");
+		table.AddRow("Redirected (out/in)", $"{Console.IsOutputRedirected}/{Console.IsInputRedirected}");
+		table.AddRow("Box drawing", SpectreTerminalDetection.CurrentBoxDrawingSupport.ToString());
 		console.Write(table);
 		return Results.Success("Terminal detection displayed.");
 	});

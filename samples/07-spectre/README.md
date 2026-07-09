@@ -105,8 +105,13 @@ with checkbox-style selection.
 Shows what the terminal-integration layer detected for the current session via
 `IReplSessionInfo`: whether shell-integration marks are active and which dialect was
 negotiated (`OSC 133`, `OSC 633 (VS Code)`, or `off (<gate>)` naming the gate that
-disabled them), plus the reported identity, capabilities, and window size. Run it from
-Windows Terminal and from the VS Code integrated terminal to see the detection change.
+disabled them), plus the reported identity, capabilities, and window size. It also
+shows the console plumbing the framework detected — the active session writer's
+encoding (name + codepage), the stdout/stdin redirection states, and the box-drawing
+verdict (`SpectreTerminalDetection.CurrentBoxDrawingSupport`: `Rounded`, `Square`, or
+`Ascii` transliteration) — which makes it the first thing to run when an IDE console
+shows garbled output. Run it from Windows Terminal and from the VS Code integrated
+terminal to see the detection change.
 
 ### `login` — Secret input
 
