@@ -585,6 +585,68 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			because: "case-sensitive parsing binds -m and -M to different parameters; both are executable");
 	}
 
+	[TestMethod]
+	[Description("A later '--' separator must not retroactively invalidate an earlier option: in 'run --force --' the '--force' before the separator stays classified as a Parameter (option), because it executes with force=true.")]
+	public async Task When_SeparatorFollowsAnOption_Then_EarlierOptionStaysClassifiedAsOption()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] bool force) => force.ToString()).WithDescription("Run.");
+		const string input = "run --force --";
+
+		var result = await ResolveAutocompleteAsync(sut, input).ConfigureAwait(false);
+
+		var forceStart = input.IndexOf("--force", StringComparison.Ordinal);
+		result.TokenClassifications!.Single(c => c.Start == forceStart).Kind
+			.Should().Be(ConsoleLineReader.AutocompleteSuggestionKind.Parameter,
+				because: "an option before the '--' separator remains a valid option");
+	}
+
+	[TestMethod]
+	[Description("Global-option marking uses the parser's exact consumed indices, not string matching: with a valued global '--tenant' and a 'show' command, 'show' is the command and the tenant VALUE 'show' is the consumed global value — the second 'show' classifies as Command, not the first.")]
+	public async Task When_GlobalValueEqualsCommandName_Then_TheCommandTokenClassifiesAsCommand()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("tenant"));
+		sut.Map("show", static string () => "ok").WithDescription("Show.");
+		const string input = "--tenant show show";
+
+		var result = await ResolveAutocompleteAsync(sut, input).ConfigureAwait(false);
+
+		// The command token is the SECOND "show"; the first is the tenant value.
+		var secondShowStart = input.LastIndexOf("show", StringComparison.Ordinal);
+		result.TokenClassifications!.Single(c => c.Start == secondShowStart).Kind
+			.Should().Be(ConsoleLineReader.AutocompleteSuggestionKind.Command,
+				because: "the parser consumes the first 'show' as the tenant value and the second as the command");
+	}
+
+	[TestMethod]
+	[Description("A pending valued global option suppresses command suggestions: after '--tenant ' the current token is the tenant VALUE, so completing a root command ('install') would misparse as the value — no command names are offered.")]
+	public async Task When_ValuedGlobalOptionAwaitsValue_Then_NoCommandIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("tenant"));
+		sut.Map("install {skillName}", static string (string skillName) => skillName).WithDescription("Install.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--tenant install").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("install",
+			because: "the token after a pending valued global is its value, not a command");
+	}
+
+	[TestMethod]
+	[Description("A pending valued route option suppresses option-name suggestions: after 'run --channel -' the current token is --channel's VALUE, so offering '--force' would misparse (--channel left without a value) — no option names are offered.")]
+	public async Task When_ValuedRouteOptionAwaitsValue_Then_NoOptionNameIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel, [ReplOption] bool force) => channel ?? "none")
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel -").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("--force",
+			because: "the token after a pending valued route option is its value, not another option");
+	}
+
 	private enum ProbeMode
 	{
 		Debug,

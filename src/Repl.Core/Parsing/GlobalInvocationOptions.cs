@@ -23,5 +23,10 @@ internal sealed record GlobalInvocationOptions(
 
 	public IReadOnlyList<ParseDiagnostic> Diagnostics { get; init; } = [];
 
+	// The original input index of each surviving token in <see cref="RemainingTokens"/>.
+	// Lets callers identify EXACTLY which input tokens the parser consumed (a global flag or
+	// its value) instead of reconstructing identity from equal string values.
+	public IReadOnlyList<int> RemainingTokenIndices { get; init; } = [];
+
 	public bool HasErrors => Diagnostics.Any(static diagnostic => diagnostic.Severity == ParseDiagnosticSeverity.Error);
 }

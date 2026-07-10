@@ -100,7 +100,9 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			prefixComparison,
 			activeGraph.Routes,
 			activeGraph.Contexts);
-		var candidates = await CollectAutocompleteSuggestionsAsync(
+		var candidates = state.PendingOptionValue
+			? []
+			: await CollectAutocompleteSuggestionsAsync(
 				matchingRoutes,
 				state.CommandPrefix,
 				state.CurrentTokenPrefix,
@@ -121,22 +123,13 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				state.CurrentTokenPrefix,
 				app.OptionsSnapshot.Interactive.Autocomplete.LiveHintMaxAlternatives)
 			: null;
-		var discoverableRoutes = app.ResolveDiscoverableRoutes(
-			activeGraph.Routes,
-			activeGraph.Contexts,
-			scopeTokens,
-			prefixComparison);
-		var discoverableContexts = app.ResolveDiscoverableContexts(
-			activeGraph.Contexts,
-			scopeTokens,
-			prefixComparison);
 		var tokenClassifications = BuildTokenClassifications(
 			request.Input,
 			scopeTokens,
 			prefixComparison,
 			activeGraph,
-			discoverableRoutes,
-			discoverableContexts);
+			app.ResolveDiscoverableRoutes(activeGraph.Routes, activeGraph.Contexts, scopeTokens, prefixComparison),
+			app.ResolveDiscoverableContexts(activeGraph.Contexts, scopeTokens, prefixComparison));
 		return new ConsoleLineReader.AutocompleteResult(
 			state.ReplaceStart,
 			state.ReplaceLength,
@@ -161,6 +154,24 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		state.PriorTokens.CopyTo(committed, scopeTokens.Count);
 
 		var resolution = ResolveCommitted(committed, activeGraph);
+		// When the last committed token is a valued option still awaiting its value, the
+		// current token is that VALUE — not a command or another option. Suggesting either
+		// would produce a different parse (e.g. "--tenant install" binds "install" as the
+		// value), so the whole menu is suppressed for this position.
+		if (IsPendingOptionValue(committed, resolution.TerminalRoute))
+		{
+			return new AutocompleteResolutionState(
+				resolution.CommandPrefix,
+				state.CurrentTokenPrefix,
+				state.ReplaceStart,
+				state.ReplaceLength,
+				resolution.TerminalRoute,
+				resolution.OptionsTerminated)
+			{
+				PendingOptionValue = true,
+			};
+		}
+
 		var currentTokenPrefix = state.CurrentTokenPrefix;
 		if (!ShouldAdvanceToNextToken(
 				resolution.CommandPrefix,
@@ -239,6 +250,61 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		string[] CommandPrefix,
 		RouteMatch? TerminalRoute,
 		bool OptionsTerminated);
+
+	// True when the last committed token is a valued option that has not received its value
+	// yet, so the current token is that value. Covers a valued route option in the terminal
+	// route's trailing region (run --channel …) and a valued custom global (--tenant …).
+	// An inline value (--opt=x / --opt:x) is already satisfied and never pending.
+	private bool IsPendingOptionValue(string[] committedTokens, RouteMatch? terminalRoute)
+	{
+		if (committedTokens.Length == 0)
+		{
+			return false;
+		}
+
+		var last = committedTokens[^1];
+		if (!IsOptionPrefixToken(last) || last.IndexOfAny(['=', ':']) >= 0)
+		{
+			return false;
+		}
+
+		if (terminalRoute is { } match
+			&& match.RemainingTokens.Count > 0
+			&& string.Equals(match.RemainingTokens[^1], last, StringComparison.Ordinal))
+		{
+			foreach (var entry in match.Route.OptionSchema.ResolveToken(last, app.OptionsSnapshot.Parsing.OptionCaseSensitivity))
+			{
+				if (entry.TokenKind == OptionSchemaTokenKind.NamedOption)
+				{
+					return true;
+				}
+			}
+		}
+
+		var comparison = app.OptionsSnapshot.Parsing.OptionCaseSensitivity.ToStringComparison();
+		foreach (var definition in app.OptionsSnapshot.Parsing.GlobalOptions.Values)
+		{
+			if (definition.ValueType == typeof(bool))
+			{
+				continue;
+			}
+
+			if (string.Equals(definition.CanonicalToken, last, comparison))
+			{
+				return true;
+			}
+
+			foreach (var alias in definition.Aliases)
+			{
+				if (string.Equals(alias, last, comparison))
+				{
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
 
 	// Unique-prefix/alias expansion, bounded by the deepest template: beyond that depth no
 	// literal can match, and the per-index candidate derivation must not scale with the
@@ -1098,6 +1164,11 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		var output = new List<ConsoleLineReader.TokenClassification>(tokenSpans.Count);
 		var runningPrefix = new List<string>(scopeTokens);
 		var positionalIndex = scopeTokens.Count;
+		// The end-of-options separator is per-position, not a whole-input flag: options BEFORE
+		// a "--" remain options; only tokens after it leave the option region. (Using the
+		// resolution's whole-input OptionsTerminated here would retroactively invalidate a
+		// valid earlier "--force".)
+		var separatorSeen = false;
 		for (var i = 0; i < tokenSpans.Count; i++)
 		{
 			var start = tokenSpans[i].Start;
@@ -1110,14 +1181,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			}
 
 			var value = rawValues[i];
+			var isTrailing = resolution.TerminalRoute is not null && positionalIndex >= segmentBoundary;
 
 			// Past the matched segments a dash token is a route option, not a positional.
 			// (A dash token still within the segments falls through to ClassifyToken and is
 			// classified as the positional it binds to.)
-			var kind = resolution.TerminalRoute is not null
-				&& positionalIndex >= segmentBoundary
-				&& !resolution.OptionsTerminated
-				&& IsOptionPrefixToken(value)
+			var kind = isTrailing && !separatorSeen && IsOptionPrefixToken(value)
 				? ConsoleLineReader.AutocompleteSuggestionKind.Parameter
 				: ClassifyToken(
 					[.. runningPrefix],
@@ -1128,6 +1197,14 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 					scopeTokenCount: scopeTokens.Count,
 					isFirstInputToken: positionalIndex == scopeTokens.Count);
 			output.Add(new ConsoleLineReader.TokenClassification(start, length, kind));
+
+			// A bare "--" in the trailing option region is the separator; tokens after it are
+			// positional again.
+			if (isTrailing && string.Equals(value, "--", StringComparison.Ordinal))
+			{
+				separatorSeen = true;
+			}
+
 			runningPrefix.Add(value);
 			positionalIndex++;
 		}
@@ -1137,24 +1214,18 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 	// Marks which raw tokens the global-option parser consumes (a global flag or its value),
 	// so classification treats them as options and keeps them out of the positional command
-	// path. Sequence-matches the parser's surviving tokens against the raw ones.
+	// path. Uses the parser's exact surviving INDICES — not string-value matching, which
+	// cannot tell which occurrence of a duplicate value ("--tenant show show") was consumed.
 	private bool[] MarkGlobalOptionTokens(string[] rawValues)
 	{
-		var nonGlobal = GlobalOptionParser
+		var survivingIndices = GlobalOptionParser
 			.Parse(rawValues, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing)
-			.RemainingTokens;
+			.RemainingTokenIndices;
 		var isGlobal = new bool[rawValues.Length];
-		var survivor = 0;
-		for (var i = 0; i < rawValues.Length; i++)
+		Array.Fill(isGlobal, value: true);
+		foreach (var index in survivingIndices)
 		{
-			if (survivor < nonGlobal.Count && string.Equals(rawValues[i], nonGlobal[survivor], StringComparison.Ordinal))
-			{
-				survivor++;
-			}
-			else
-			{
-				isGlobal[i] = true;
-			}
+			isGlobal[index] = false;
 		}
 
 		return isGlobal;
@@ -1557,7 +1628,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		int ReplaceStart,
 		int ReplaceLength,
 		RouteMatch? TerminalRoute,
-		bool OptionsTerminated);
+		bool OptionsTerminated)
+	{
+		// True when the current token is the value of a valued option still awaiting one:
+		// no command or option-name suggestions may be offered for this position.
+		public bool PendingOptionValue { get; init; }
+	}
 
 	internal readonly record struct TokenSpan(string Value, int Start, int End);
 }

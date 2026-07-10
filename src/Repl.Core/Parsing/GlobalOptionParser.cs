@@ -21,6 +21,7 @@ internal static class GlobalOptionParser
 			? StringComparer.OrdinalIgnoreCase
 			: StringComparer.Ordinal;
 		var remaining = new List<string>(args.Count);
+		var remainingIndices = new List<int>(args.Count);
 		var promptAnswers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		var customGlobalValues = new Dictionary<string, List<string>>(tokenComparer);
 		var diagnostics = new List<ParseDiagnostic>();
@@ -100,6 +101,7 @@ internal static class GlobalOptionParser
 			}
 
 			remaining.Add(argument);
+			remainingIndices.Add(index);
 		}
 
 		var readonlyCustomGlobalValues = customGlobalValues.ToDictionary(
@@ -111,6 +113,7 @@ internal static class GlobalOptionParser
 			PromptAnswers = promptAnswers,
 			CustomGlobalNamedOptions = readonlyCustomGlobalValues,
 			Diagnostics = diagnostics,
+			RemainingTokenIndices = remainingIndices,
 		};
 	}
 
