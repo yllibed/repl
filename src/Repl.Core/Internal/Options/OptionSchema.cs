@@ -17,8 +17,13 @@ internal sealed class OptionSchema
 
 	public IReadOnlyDictionary<string, OptionSchemaParameter> Parameters { get; }
 
+	// Lazily materialized once: Entries is immutable and completion paths read this per
+	// keystroke — recomputing the Distinct projection on every access was pure waste.
+	// Benign race: concurrent first reads compute the same array.
+	private string[]? _knownTokens;
+
 	public IReadOnlyCollection<string> KnownTokens =>
-		Entries.Select(entry => entry.Token).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+		_knownTokens ??= [.. Entries.Select(entry => entry.Token).Distinct(StringComparer.OrdinalIgnoreCase)];
 
 	public IReadOnlyList<OptionSchemaEntry> ResolveToken(string token, ReplCaseSensitivity globalCaseSensitivity)
 	{

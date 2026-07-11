@@ -2,7 +2,7 @@ namespace Repl;
 
 /// <summary>
 /// Resolves one committed interactive input line against a single
-/// <see cref="CoreReplApp.ResolveActiveRoutingGraph"/> snapshot — prefix expansion, help
+/// <see cref="CoreReplApp.ResolveActiveRoutingGraph()"/> snapshot — prefix expansion, help
 /// scoping, and the route match all use that one snapshot, so the passthrough
 /// classification and the eventual execution can never diverge. Routing-resolution
 /// concern extracted from the interactive loop; ambient classification stays with the

@@ -138,9 +138,49 @@ public sealed class Given_ModulePresence
 		output.Text.Should().NotContain("member");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: a completion pass that evaluates a globally-gated routing graph must not poison the durable routing cache. After autocomplete resolves the graph without the line's '--env prod' applied, the committed 'gated' command (which supplies '--env prod') must still resolve, not fail as Unknown command.")]
+	public async Task When_CompletionEvaluatesGatedGraph_Then_CommittedCommandStillResolves()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("env"));
+		sut.MapModule(
+			new EnvGatedModule(),
+			context => string.Equals(
+				(context.ServiceProvider.GetService(typeof(IGlobalOptionsAccessor)) as IGlobalOptionsAccessor)?.GetValue<string>("env"),
+				"prod",
+				StringComparison.Ordinal));
+
+		// A completion pass evaluates the routing graph while "--env prod" is NOT applied,
+		// so the gated module is absent at that moment.
+		_ = await sut.Autocomplete.ResolveAutocompleteAsync(
+			new ConsoleLineReader.AutocompleteRequest("gated", 5, MenuRequested: true),
+			scopeTokens: [],
+			EmptyServiceProvider.Instance,
+			CancellationToken.None).ConfigureAwait(false);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--env", "prod", "gated", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("gated-ok",
+			because: "completion must not cache a module-absent graph that then defeats the committed command");
+	}
+
 	private static bool IsSignedIn(IReplSessionState sessionState)
 	{
 		return sessionState.TryGet<bool>("auth.signed_in", out var signedIn) && signedIn;
+	}
+
+	private sealed class EnvGatedModule : IReplModule
+	{
+		public void Map(IReplMap map) => map.Map("gated", static string () => "gated-ok");
+	}
+
+	private sealed class EmptyServiceProvider : IServiceProvider
+	{
+		public static readonly EmptyServiceProvider Instance = new();
+
+		public object? GetService(Type serviceType) => null;
 	}
 
 	private sealed class SignedOutExperienceModule : IReplModule

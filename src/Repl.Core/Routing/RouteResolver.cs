@@ -142,7 +142,7 @@ internal static class RouteResolver
 
 			if (segment is LiteralRouteSegment literal)
 			{
-				if (!IsLiteralMatch(route, literal, token, i, segments.Count))
+				if (!IsLiteralMatch(route, literal, token, i, segments.Count, StringComparison.OrdinalIgnoreCase))
 				{
 					return null;
 				}
@@ -187,7 +187,7 @@ internal static class RouteResolver
 
 			if (segment is LiteralRouteSegment literal)
 			{
-				if (!IsLiteralMatch(route, literal, token, i, segments.Count))
+				if (!IsLiteralMatch(route, literal, token, i, segments.Count, StringComparison.OrdinalIgnoreCase))
 				{
 					return null;
 				}
@@ -223,14 +223,18 @@ internal static class RouteResolver
 		return null;
 	}
 
-	private static bool IsLiteralMatch(
+	// Shared with the autocomplete engine so the alias rule cannot drift between routing
+	// and completion; the comparison is a parameter because autocomplete honors its own
+	// configurable case sensitivity.
+	internal static bool IsLiteralMatch(
 		RouteDefinition route,
 		LiteralRouteSegment segment,
 		string token,
 		int segmentIndex,
-		int segmentCount)
+		int segmentCount,
+		StringComparison comparison)
 	{
-		if (string.Equals(segment.Value, token, StringComparison.OrdinalIgnoreCase))
+		if (string.Equals(segment.Value, token, comparison))
 		{
 			return true;
 		}
@@ -242,6 +246,6 @@ internal static class RouteResolver
 		}
 
 		return route.Command.Aliases.Any(alias =>
-			string.Equals(alias, token, StringComparison.OrdinalIgnoreCase));
+			string.Equals(alias, token, comparison));
 	}
 }

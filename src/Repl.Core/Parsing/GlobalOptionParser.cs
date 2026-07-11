@@ -21,6 +21,7 @@ internal static class GlobalOptionParser
 			? StringComparer.OrdinalIgnoreCase
 			: StringComparer.Ordinal;
 		var remaining = new List<string>(args.Count);
+		var remainingIndices = new List<int>(args.Count);
 		var promptAnswers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 		var customGlobalValues = new Dictionary<string, List<string>>(tokenComparer);
 		var diagnostics = new List<ParseDiagnostic>();
@@ -100,6 +101,7 @@ internal static class GlobalOptionParser
 			}
 
 			remaining.Add(argument);
+			remainingIndices.Add(index);
 		}
 
 		var readonlyCustomGlobalValues = customGlobalValues.ToDictionary(
@@ -111,6 +113,7 @@ internal static class GlobalOptionParser
 			PromptAnswers = promptAnswers,
 			CustomGlobalNamedOptions = readonlyCustomGlobalValues,
 			Diagnostics = diagnostics,
+			RemainingTokenIndices = remainingIndices,
 		};
 	}
 
@@ -271,6 +274,27 @@ internal static class GlobalOptionParser
 	private static void AddResultFlowDiagnostic(List<ParseDiagnostic> diagnostics, string message) =>
 		diagnostics.Add(new ParseDiagnostic(ParseDiagnosticSeverity.Error, message));
 
+	// Resolves a custom-global token to the definition the parser would actually use — the
+	// LAST registered definition wins a token/alias collision (BuildCustomTokenMap overwrites),
+	// so callers must not scan definitions independently and pick a different one.
+	internal static bool TryResolveCustomGlobalDefinition(
+		string token,
+		ParsingOptions parsingOptions,
+		out GlobalOptionDefinition definition)
+	{
+		definition = null!;
+		var comparer = parsingOptions.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
+			? StringComparer.OrdinalIgnoreCase
+			: StringComparer.Ordinal;
+		var tokenMap = BuildCustomTokenMap(parsingOptions.GlobalOptions, comparer);
+		if (!TryResolveCustomGlobalName(token, tokenMap, out var optionName, out _))
+		{
+			return false;
+		}
+
+		return parsingOptions.GlobalOptions.TryGetValue(optionName, out definition!);
+	}
+
 	private static Dictionary<string, string> BuildCustomTokenMap(
 		IReadOnlyDictionary<string, GlobalOptionDefinition> definitions,
 		StringComparer comparer)
@@ -351,19 +375,8 @@ internal static class GlobalOptionParser
 		return true;
 	}
 
-	private static bool IsSignedNumericLiteral(string token)
-	{
-		if (token.Length < 2 || token[0] != '-')
-		{
-			return false;
-		}
-
-		return double.TryParse(
-			token,
-			System.Globalization.NumberStyles.Float,
-			System.Globalization.CultureInfo.InvariantCulture,
-			out _);
-	}
+	private static bool IsSignedNumericLiteral(string token) =>
+		InvocationOptionParser.IsSignedNumericLiteral(token);
 
 	private static bool TrySplitToken(
 		string token,

@@ -432,14 +432,24 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			: ReplRuntimeChannel.Cli;
 	}
 
-	internal ActiveRoutingGraph ResolveActiveRoutingGraph()
+	internal ActiveRoutingGraph ResolveActiveRoutingGraph() => ResolveActiveRoutingGraph(useDurableCache: true);
+
+	// Module presence can depend on mutable global state (a global option like --env gating a
+	// module) that is NOT part of the cache key. Execution applies the invocation's globals
+	// before resolving, so its graph is authoritative and may be cached. Completion evaluates
+	// the graph at a different moment (the line's globals are not applied), so it must NOT
+	// write its provisional graph into the durable cache — otherwise a committed, valid command
+	// could later read a completion-time module-absent graph and fail as "Unknown command".
+	// Completion passes useDurableCache: false: it neither reads nor writes the shared cache,
+	// computing a fresh graph scoped to this pass.
+	internal ActiveRoutingGraph ResolveActiveRoutingGraph(bool useDurableCache)
 	{
 		var runtime = _runtimeState.Value;
 		var serviceProvider = runtime?.ServiceProvider ?? _services;
 		var channel = ResolveCurrentRuntimeChannel();
 		var cacheVersion = Interlocked.Read(ref _routingCacheVersion);
 		var cacheBucket = _routingCacheByServiceProvider.GetOrCreateValue(serviceProvider);
-		if (cacheBucket.TryGet(channel, cacheVersion, out var cached))
+		if (useDurableCache && cacheBucket.TryGet(channel, cacheVersion, out var cached))
 		{
 			return cached;
 		}
@@ -449,7 +459,11 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		var routes = ResolveActiveRoutes(activeModuleIds);
 		var contexts = ResolveActiveContexts(activeModuleIds);
 		var computed = new ActiveRoutingGraph(routes, contexts, channel);
-		cacheBucket.Set(channel, cacheVersion, computed);
+		if (useDurableCache)
+		{
+			cacheBucket.Set(channel, cacheVersion, computed);
+		}
+
 		return computed;
 	}
 

@@ -213,7 +213,9 @@ internal static class InvocationOptionParser
 	private static bool LooksLikeOptionToken(string token) =>
 		token.Length >= 2 && token[0] == '-';
 
-	private static bool IsSignedNumericLiteral(string token)
+	// Shared with the completion engines: a signed numeric literal (-42) is a positional
+	// argument, never an option token.
+	internal static bool IsSignedNumericLiteral(string token)
 	{
 		if (token.Length < 2 || token[0] != '-')
 		{
