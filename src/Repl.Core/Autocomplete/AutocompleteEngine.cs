@@ -314,11 +314,18 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 	// The built-in --result: suboptions that take a separate value (page-size/cursor/pager);
 	// --result:all is a flag. An inline value (--result:page-size=8) is already satisfied.
-	private static bool IsPendingResultFlowOption(string token) =>
-		(string.Equals(token, ReplResultFlowOptionNames.PageSize, StringComparison.Ordinal)
-			|| string.Equals(token, ReplResultFlowOptionNames.Cursor, StringComparison.Ordinal)
-			|| string.Equals(token, ReplResultFlowOptionNames.Pager, StringComparison.Ordinal))
-		&& !token.Contains('=', StringComparison.Ordinal);
+	// The token match honors the configured option case sensitivity: under CaseInsensitive,
+	// GlobalOptionParser accepts "--RESULT:PAGE-SIZE" and consumes the next token as the value,
+	// so completion must recognize the same casing or it would offer a command that execution
+	// would swallow as the page-size value.
+	private bool IsPendingResultFlowOption(string token)
+	{
+		var comparison = app.OptionsSnapshot.Parsing.OptionCaseSensitivity.ToStringComparison();
+		return (string.Equals(token, ReplResultFlowOptionNames.PageSize, comparison)
+				|| string.Equals(token, ReplResultFlowOptionNames.Cursor, comparison)
+				|| string.Equals(token, ReplResultFlowOptionNames.Pager, comparison))
+			&& !token.Contains('=', StringComparison.Ordinal);
+	}
 
 	// Unique-prefix/alias expansion, bounded by the deepest template: beyond that depth no
 	// literal can match, and the per-index candidate derivation must not scale with the
@@ -367,6 +374,53 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		// A valued option awaiting its value: the current token is that value. Offer ONLY the
+		// pending option's own value provider (WithCompletion / enum values); command names and
+		// option names would misparse. The positional dynamic path below cannot be reused here —
+		// it runs the route's SOLE registered provider without checking which parameter it
+		// targets, so it would offer another parameter's values under this option.
+		if (pendingOptionValue)
+		{
+			var pendingCandidates = await CollectPendingOptionValueCandidatesAsync(
+					terminalRoute,
+					currentTokenPrefix,
+					serviceProvider,
+					cancellationToken)
+				.ConfigureAwait(false);
+			return DeduplicateSuggestions(pendingCandidates, comparer);
+		}
+
+		return await CollectStandardAutocompleteSuggestionsAsync(
+				matchingRoutes,
+				commandPrefix,
+				currentTokenPrefix,
+				terminalRoute,
+				optionsTerminated,
+				scopeTokenCount,
+				activeGraph,
+				prefixComparison,
+				comparer,
+				serviceProvider,
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	// The non-pending candidate assembly: command names, dynamic value providers, option names,
+	// child contexts, and ambient commands, merged and deduplicated. Split from the entry point
+	// so the pending-value short-circuit above stays legible.
+	private async ValueTask<ConsoleLineReader.AutocompleteSuggestion[]> CollectStandardAutocompleteSuggestionsAsync(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
+		string currentTokenPrefix,
+		RouteMatch? terminalRoute,
+		bool optionsTerminated,
+		int scopeTokenCount,
+		ActiveRoutingGraph activeGraph,
+		StringComparison prefixComparison,
+		StringComparer comparer,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
 		var dynamicCandidates = await CollectDynamicAutocompleteCandidatesAsync(
 				matchingRoutes,
 				commandPrefix,
@@ -377,14 +431,6 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				serviceProvider,
 				cancellationToken)
 			.ConfigureAwait(false);
-
-		// A valued option awaiting its value: the current token is that value. Keep the
-		// pending option's value provider (WithCompletion / enum values), but suppress
-		// command names and option names — offering either would misparse.
-		if (pendingOptionValue)
-		{
-			return DeduplicateSuggestions(dynamicCandidates, comparer);
-		}
 
 		// Once a terminal route has trailing option tokens, the command path is complete — no
 		// subcommand can follow (a later literal can't match past an option-occupied position,
@@ -401,7 +447,11 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			currentTokenPrefix,
 			terminalRoute,
 			optionsTerminated);
+		// Same option-region guard as command candidates: once the terminal route carries
+		// trailing option tokens, execution treats the next word as the route's option text,
+		// so a child context is unreachable there and must not be offered.
 		var contextCandidates = app.OptionsSnapshot.Interactive.Autocomplete.ShowContextAlternatives
+				&& terminalRoute is not { RemainingTokens.Count: > 0 }
 			? CollectContextAutocompleteCandidates(commandPrefix, currentTokenPrefix, prefixComparison, activeGraph.Contexts)
 			: [];
 		var ambientCandidates = commandPrefix.Length == scopeTokenCount
@@ -1107,6 +1157,46 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				item,
 				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
 			.ToArray();
+	}
+
+	// Completes the VALUE of a pending route option by invoking ONLY that option's own provider.
+	// The pending token is the terminal route's last trailing option (e.g. "--channel"); its
+	// OptionSchema entry names the target parameter, and the command's completion for exactly
+	// that parameter is run. A pending GLOBAL option carries no per-command provider, so nothing
+	// is offered (terminalRoute is null or has no trailing tokens).
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> CollectPendingOptionValueCandidatesAsync(
+		RouteMatch? terminalRoute,
+		string currentTokenPrefix,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		if (terminalRoute is not { RemainingTokens.Count: > 0 } match)
+		{
+			return [];
+		}
+
+		var pendingOptionToken = match.RemainingTokens[^1];
+		var entries = match.Route.OptionSchema.ResolveToken(
+			pendingOptionToken, app.OptionsSnapshot.Parsing.OptionCaseSensitivity);
+		foreach (var entry in entries)
+		{
+			if (!match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
+			{
+				continue;
+			}
+
+			var completionContext = new CompletionContext(serviceProvider);
+			var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
+				.ConfigureAwait(false);
+			return provided
+				.Where(static item => !string.IsNullOrWhiteSpace(item))
+				.Select(static item => new ConsoleLineReader.AutocompleteSuggestion(
+					item,
+					Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+				.ToArray();
+		}
+
+		return [];
 	}
 
 	private static ConsoleLineReader.AutocompleteSuggestion[] DeduplicateSuggestions(

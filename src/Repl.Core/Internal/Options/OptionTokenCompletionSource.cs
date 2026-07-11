@@ -29,6 +29,9 @@ internal static class OptionTokenCompletionSource
 		"--no-interactive",
 		"--no-logo",
 		"--output:",
+		// GlobalOptionParser accepts "--answer:<name>[=value]" to prefill interactive prompts;
+		// surface the prefix so it completes like the other built-in globals.
+		"--answer:",
 		ReplResultFlowOptionNames.All,
 		ReplResultFlowOptionNames.PageSize,
 		ReplResultFlowOptionNames.Cursor,

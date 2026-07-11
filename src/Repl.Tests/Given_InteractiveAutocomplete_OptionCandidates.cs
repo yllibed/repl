@@ -793,6 +793,80 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			because: "an option already occupies the position; 'parent --force child' would not invoke the child route");
 	}
 
+	[TestMethod]
+	[Description("Result-flow pending honors option case sensitivity: under CaseInsensitive parsing, GlobalOptionParser accepts '--RESULT:PAGE-SIZE' and consumes the next token as its page-size value, so completion must treat the following partial token as that value and NOT offer a command ('install').")]
+	public async Task When_ResultFlowOptionAwaitsValueDifferentlyCased_Then_NoCommandIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive);
+		sut.Map("install {skillName}", static string (string skillName) => skillName).WithDescription("Install.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--RESULT:PAGE-SIZE ins").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("install",
+			because: "under case-insensitive parsing the token after '--RESULT:PAGE-SIZE' is its value, not a command");
+	}
+
+	[TestMethod]
+	[Description("The built-in '--answer:' prefill is offered in completion: GlobalOptionParser accepts '--answer:<name>[=value]' as a global flag (documented), so typing '--ans' must surface '--answer:' like the other static globals.")]
+	public async Task When_AnswerPrefixIsTyped_Then_AnswerOptionIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("show", static string () => "ok").WithDescription("Show.");
+
+		var result = await ResolveAutocompleteAsync(sut, "show --ans").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("--answer:",
+			because: "'--answer:' is a documented built-in global flag and must be completable");
+	}
+
+	[TestMethod]
+	[Description("No context is offered once a route option has been typed: with a 'parent' route ([ReplOption] bool force) and a 'parent child' context, 'parent --force c' must not suggest the 'child' context — the option region is active, so execution treats 'c' as the route's trailing option text, not a context entry.")]
+	public async Task When_OptionPrecedesContextPosition_Then_ContextIsNotSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("parent", static string ([ReplOption] bool force) => force.ToString()).WithDescription("Parent.");
+		sut.Context("parent", parent => parent.Context("child", child => child.Map("go", static string () => "ok").WithDescription("Go.")));
+
+		var result = await ResolveAutocompleteAsync(sut, "parent --force c").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("child",
+			because: "an option already occupies the position; execution treats 'c' as the route's trailing option text, not a context entry");
+	}
+
+	[TestMethod]
+	[Description("A pending option value invokes ONLY that option's provider, not the route's other providers: for 'run {target}' with a provider on 'target' AND a [ReplOption] string channel with its own provider, 'run app --channel ' offers channel's values (beta) and NOT target's (zo-profile) — reusing the route's sole/first provider would bind the wrong parameter's values.")]
+	public async Task When_PendingOptionHasOwnProvider_Then_OnlyThatProviderCompletes()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {target}", static string (string target, [ReplOption] string? channel) => target)
+			.WithCompletion("target", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["zo-profile"]))
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["alpha", "beta"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run app --channel ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("beta", because: "the pending option's own value provider must run");
+		values.Should().NotContain("zo-profile",
+			because: "the target positional's provider must not leak into the channel value menu");
+	}
+
+	[TestMethod]
+	[Description("A pending option with no provider offers nothing — it does not fall back to the route's single registered provider: for 'run {target}' with a provider on 'target' only and a [ReplOption] string channel, 'run app --channel ' must NOT offer target's values as channel values.")]
+	public async Task When_PendingOptionHasNoProvider_Then_OtherProviderDoesNotLeak()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {target}", static string (string target, [ReplOption] string? channel) => target)
+			.WithCompletion("target", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["zo-profile"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run app --channel ").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("zo-profile",
+			because: "channel has no provider; the target positional's provider must not be invoked for it");
+	}
+
 private enum ProbeMode
 	{
 		Debug,
