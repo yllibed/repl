@@ -915,17 +915,59 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			because: "a dash-prefixed candidate is parsed as the next option, so it cannot fill --channel");
 	}
 
+	[TestMethod]
+	[Description("A pending enum option completes its member names on the interactive path too (parity with shell): for '[ReplOption] ProbeMode mode', 'run --mode D' offers 'Debug'. The pending path resolves the option's parameter and, when it is an enum, adds member names with the parameter's effective case sensitivity.")]
+	public async Task When_PendingEnumOptionAwaitsValue_Then_EnumMembersAreOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] ProbeMode mode) => mode.ToString()).WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --mode D").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("Debug",
+			because: "a pending enum option must complete its member names like shell completion does");
+	}
+
+	[TestMethod]
+	[Description("Ambient commands follow the same option-region guard as commands and contexts: in a 'parent' scope whose route carries '[ReplOption] bool force', '--force h' must not offer the ambient 'help' — accepting it produces routed option text, not an ambient invocation.")]
+	public async Task When_OptionPrecedesAmbientPosition_Then_AmbientIsNotSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("parent", static string ([ReplOption] bool force) => force.ToString()).WithDescription("Parent.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--force h", scopeTokens: ["parent"]).ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("help",
+			because: "an option already occupies the position; 'parent --force help' is routed option text, not an ambient command");
+	}
+
+	[TestMethod]
+	[Description("A pending option value with no provider is not flagged invalid in the live hint: 'run --channel alpha' (a valued string option, no completion provider) accepts 'alpha' at execution, so the hint must not read 'Invalid: alpha'.")]
+	public async Task When_PendingOptionValueHasNoProvider_Then_HintIsNotInvalid()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none").WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel alpha").ConfigureAwait(false);
+
+		(result.HintLine ?? string.Empty).Should().NotContain("Invalid",
+			because: "the pending value is a free-form option value the parser accepts, not an invalid token");
+	}
+
 private enum ProbeMode
 	{
 		Debug,
 		Release,
 	}
 
-	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(CoreReplApp app, string input)
+	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(
+		CoreReplApp app,
+		string input,
+		IReadOnlyList<string>? scopeTokens = null)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(
 			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true),
-			scopeTokens: [],
+			scopeTokens ?? [],
 			EmptyServiceProvider.Instance,
 			CancellationToken.None)
 			.ConfigureAwait(false);

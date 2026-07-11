@@ -261,10 +261,11 @@ Shell completion and the interactive REPL autocomplete draw option-name candidat
 same source, normalize prior tokens through the same parser profile (option values consumed,
 POSIX `--` honored, response files never expanded), and use the same option-prefix gate — a
 single dash already surfaces short aliases such as `-f`, while signed numeric literals
-(`-42`) stay positional. Two deliberate differences remain:
+(`-42`) stay positional. Both also complete **enum values** for a pending option (its member
+names, under the parameter's effective case sensitivity), and the interactive menu
+additionally runs a pending option's `WithCompletion` value provider. One deliberate
+difference remains:
 
 - On an **empty** token after a complete command, shell completion lists option names (a
   dump-style list is cheap there), while the interactive menu shows parameter placeholders —
   options appear from the first typed `-`.
-- Shell completion also completes **enum values** for a pending option; the interactive menu
-  does not yet.

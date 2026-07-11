@@ -121,6 +121,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				candidates,
 				state.CommandPrefix,
 				state.CurrentTokenPrefix,
+				state.PendingOptionValue,
 				app.OptionsSnapshot.Interactive.Autocomplete.LiveHintMaxAlternatives)
 			: null;
 		var tokenClassifications = BuildTokenClassifications(
@@ -459,16 +460,22 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				&& terminalRoute is not { RemainingTokens.Count: > 0 }
 			? CollectContextAutocompleteCandidates(commandPrefix, currentTokenPrefix, prefixComparison, activeGraph.Contexts)
 			: [];
-		var ambientCandidates = commandPrefix.Length == scopeTokenCount
+		// Ambient commands (help/exit/…) share the option-region guard: once the terminal route
+		// carries trailing option tokens, "--force exit" is routed option text, not an ambient
+		// invocation, so no ambient candidate may be offered at this position.
+		var inOptionRegion = terminalRoute is { RemainingTokens.Count: > 0 };
+		var ambientCandidates = commandPrefix.Length == scopeTokenCount && !inOptionRegion
 			? CollectAmbientAutocompleteCandidates(currentTokenPrefix, prefixComparison)
 			: [];
-		var ambientContinuationCandidates = CollectAmbientContinuationAutocompleteCandidates(
-			commandPrefix,
-			currentTokenPrefix,
-			scopeTokenCount,
-			prefixComparison,
-			activeGraph.Routes,
-			activeGraph.Contexts);
+		var ambientContinuationCandidates = inOptionRegion
+			? []
+			: CollectAmbientContinuationAutocompleteCandidates(
+				commandPrefix,
+				currentTokenPrefix,
+				scopeTokenCount,
+				prefixComparison,
+				activeGraph.Routes,
+				activeGraph.Contexts);
 
 		var candidates = DeduplicateSuggestions(
 			commandCandidates
@@ -992,6 +999,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion> suggestions,
 		string[] commandPrefix,
 		string currentTokenPrefix,
+		bool pendingOptionValue,
 		int maxAlternatives)
 	{
 		var selectable = suggestions.Where(static suggestion => suggestion.IsSelectable).ToArray();
@@ -1006,6 +1014,13 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			.ToArray();
 		if (selectable.Length == 0)
 		{
+			// A pending option value with no candidates (a free-form value, or one whose provider
+			// returned nothing) is a value the parser accepts — do not flag it "Invalid".
+			if (pendingOptionValue)
+			{
+				return null;
+			}
+
 			return BuildDynamicHint(matchingRoutes, commandPrefix.Length, maxAlternatives)
 				?? (string.IsNullOrWhiteSpace(currentTokenPrefix) ? null : $"Invalid: {currentTokenPrefix}");
 		}
@@ -1025,20 +1040,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 		if (selectable.Length == 1)
 		{
-			var suggestion = selectable[0];
-			if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Command)
-			{
-				return string.IsNullOrWhiteSpace(suggestion.Description)
-					? $"Command: {suggestion.DisplayText}"
-					: $"Command: {suggestion.DisplayText} - {suggestion.Description}";
-			}
-
-			if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Context)
-			{
-				return $"Context: {suggestion.DisplayText}";
-			}
-
-			return suggestion.DisplayText;
+			return FormatSingleSelectionHint(selectable[0]);
 		}
 
 		maxAlternatives = Math.Max(1, maxAlternatives);
@@ -1050,6 +1052,23 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			? $" (+{hintAlternatives.Length - shown.Length})"
 			: string.Empty;
 		return $"Matches: {string.Join(", ", shown)}{suffix}";
+	}
+
+	private static string FormatSingleSelectionHint(ConsoleLineReader.AutocompleteSuggestion suggestion)
+	{
+		if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Command)
+		{
+			return string.IsNullOrWhiteSpace(suggestion.Description)
+				? $"Command: {suggestion.DisplayText}"
+				: $"Command: {suggestion.DisplayText} - {suggestion.Description}";
+		}
+
+		if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Context)
+		{
+			return $"Context: {suggestion.DisplayText}";
+		}
+
+		return suggestion.DisplayText;
 	}
 
 	private static string? BuildDynamicHint(
@@ -1191,28 +1210,66 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			pendingOptionToken, app.OptionsSnapshot.Parsing.OptionCaseSensitivity);
 		foreach (var entry in entries)
 		{
-			if (!match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
+			if (match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
 			{
-				continue;
+				var completionContext = new CompletionContext(serviceProvider);
+				var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
+					.ConfigureAwait(false);
+				// Only surface values the invocation parser would consume as this option's
+				// separate value: a dash-prefixed candidate is read as the next option (accepting
+				// it would leave the option unset), while a signed numeric literal (-42) is bound
+				// as a value. Reuse the parser's own rule so completion and execution cannot drift.
+				return provided
+					.Where(static item => !string.IsNullOrWhiteSpace(item)
+						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item))
+					.Select(static item => new ConsoleLineReader.AutocompleteSuggestion(
+						item,
+						Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+					.ToArray();
 			}
 
-			var completionContext = new CompletionContext(serviceProvider);
-			var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
-				.ConfigureAwait(false);
-			// Only surface values the invocation parser would consume as this option's separate
-			// value: a dash-prefixed candidate is read as the next option (accepting it would
-			// leave the option unset), while a signed numeric literal (-42) is bound as a value.
-			// Reuse the parser's own rule so completion and execution cannot drift.
-			return provided
-				.Where(static item => !string.IsNullOrWhiteSpace(item)
-					&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item))
-				.Select(static item => new ConsoleLineReader.AutocompleteSuggestion(
-					item,
-					Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
-				.ToArray();
+			// No explicit provider: complete enum member names when the target is an enum,
+			// matching shell completion (which already offers them for a pending option).
+			if (TryCollectEnumValueSuggestions(
+					match.Route.OptionSchema, entry.ParameterName, currentTokenPrefix, out var enumSuggestions))
+			{
+				return enumSuggestions;
+			}
 		}
 
 		return [];
+	}
+
+	// Offers the member names of an enum-typed option parameter as value suggestions, filtered
+	// by the current prefix under the parameter's effective case sensitivity. Mirrors the shell
+	// engine's TryAddRouteEnumValueCandidates so both surfaces complete enum values identically.
+	private bool TryCollectEnumValueSuggestions(
+		OptionSchema schema,
+		string parameterName,
+		string currentTokenPrefix,
+		out ConsoleLineReader.AutocompleteSuggestion[] suggestions)
+	{
+		suggestions = [];
+		if (!schema.TryGetParameter(parameterName, out var parameter))
+		{
+			return false;
+		}
+
+		var enumType = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
+		if (!enumType.IsEnum)
+		{
+			return false;
+		}
+
+		var comparison = (parameter.CaseSensitivity ?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
+			.ToStringComparison();
+		suggestions = Enum.GetNames(enumType)
+			.Where(name => name.StartsWith(currentTokenPrefix, comparison))
+			.Select(static name => new ConsoleLineReader.AutocompleteSuggestion(
+				name,
+				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+			.ToArray();
+		return suggestions.Length > 0;
 	}
 
 	private static ConsoleLineReader.AutocompleteSuggestion[] DeduplicateSuggestions(
