@@ -954,6 +954,35 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			because: "the pending value is a free-form option value the parser accepts, not an invalid token");
 	}
 
+	[TestMethod]
+	[Description("A pending option value that the parser will NOT consume is still flagged invalid in the hint: 'run --channel --prod' leaves --channel unfilled (a dash-prefixed token is read as the next option, not the value), so the hint reads 'Invalid: --prod' rather than being suppressed like a consumable free-form value.")]
+	public async Task When_PendingOptionValueIsOptionLike_Then_HintIsInvalid()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none").WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel --prod").ConfigureAwait(false);
+
+		(result.HintLine ?? string.Empty).Should().Contain("Invalid",
+			because: "a dash-prefixed token is not consumed as the option value, so it is invalid there");
+	}
+
+	[TestMethod]
+	[Description("Pending option value completion preserves case-distinct provider values: a string option's value is case-significant at execution, so a provider returning 'Prod' and 'prod' offers both — they must not collapse under the UI's case-insensitive dedupe.")]
+	public async Task When_PendingProviderReturnsCaseDistinctValues_Then_BothAreOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["Prod", "prod"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("Prod").And.Contain("prod",
+			because: "a string option value is case-significant, so both distinct values must survive dedupe");
+	}
+
 private enum ProbeMode
 	{
 		Debug,

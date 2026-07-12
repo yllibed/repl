@@ -393,7 +393,10 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
-			return DeduplicateSuggestions(pendingCandidates, comparer);
+			// Dedupe option VALUES case-sensitively: a string option value is case-significant at
+			// execution, so provider results that differ only by case ("Prod"/"prod") must both
+			// survive — the UI's (possibly case-insensitive) comparer would collapse them.
+			return DeduplicateSuggestions(pendingCandidates, StringComparer.Ordinal);
 		}
 
 		return await CollectStandardAutocompleteSuggestionsAsync(
@@ -1014,9 +1017,14 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			.ToArray();
 		if (selectable.Length == 0)
 		{
-			// A pending option value with no candidates (a free-form value, or one whose provider
-			// returned nothing) is a value the parser accepts — do not flag it "Invalid".
-			if (pendingOptionValue)
+			// A pending option value with no candidates is only "not invalid" when the parser
+			// would actually consume the current token as the option's value: an empty position
+			// or a consumable token (plain value, or a signed numeric literal like -42). An
+			// option-like token such as "--prod" is read as the NEXT option and leaves the option
+			// unset, so it must keep its "Invalid" feedback.
+			if (pendingOptionValue
+				&& (string.IsNullOrEmpty(currentTokenPrefix)
+					|| InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(currentTokenPrefix)))
 			{
 				return null;
 			}
