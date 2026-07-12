@@ -115,13 +115,17 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				serviceProvider,
 				cancellationToken)
 			.ConfigureAwait(false);
+		// Suppress the "Invalid" hint only for a pending value the parser would actually consume
+		// as the option's value — the rule is option-kind-specific (see the helper).
+		var suppressInvalidPendingHint = state.PendingOptionValue
+			&& IsCurrentTokenConsumableAsPendingValue(state.PendingOptionToken, state.CurrentTokenPrefix);
 		var liveHint = app.OptionsSnapshot.Interactive.Autocomplete.LiveHintEnabled
 			? BuildLiveHint(
 				matchingRoutes,
 				candidates,
 				state.CommandPrefix,
 				state.CurrentTokenPrefix,
-				state.PendingOptionValue,
+				suppressInvalidPendingHint,
 				app.OptionsSnapshot.Interactive.Autocomplete.LiveHintMaxAlternatives)
 			: null;
 		var tokenClassifications = BuildTokenClassifications(
@@ -321,6 +325,25 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	// GlobalOptionParser accepts "--RESULT:PAGE-SIZE" and consumes the next token as the value,
 	// so completion must recognize the same casing or it would offer a command that execution
 	// would swallow as the page-size value.
+	// Whether the parser would consume the current token as the pending option's value. The rule
+	// is option-kind-specific: result-flow suboptions (GlobalOptionParser.TryParseResultFlowOption)
+	// reject ANY dash-prefixed token — even a signed numeric like "-1" — while route and custom
+	// global options bind a signed numeric literal as a value (ShouldConsumeFollowingTokenAsValue).
+	private bool IsCurrentTokenConsumableAsPendingValue(string? pendingOptionToken, string currentTokenPrefix)
+	{
+		if (string.IsNullOrEmpty(currentTokenPrefix))
+		{
+			return true;
+		}
+
+		if (pendingOptionToken is not null && IsPendingResultFlowOption(pendingOptionToken))
+		{
+			return !currentTokenPrefix.StartsWith('-');
+		}
+
+		return InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(currentTokenPrefix);
+	}
+
 	private bool IsPendingResultFlowOption(string token)
 	{
 		var comparison = app.OptionsSnapshot.Parsing.OptionCaseSensitivity.ToStringComparison();
@@ -1002,7 +1025,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion> suggestions,
 		string[] commandPrefix,
 		string currentTokenPrefix,
-		bool pendingOptionValue,
+		bool suppressInvalidPendingHint,
 		int maxAlternatives)
 	{
 		var selectable = suggestions.Where(static suggestion => suggestion.IsSelectable).ToArray();
@@ -1017,14 +1040,10 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			.ToArray();
 		if (selectable.Length == 0)
 		{
-			// A pending option value with no candidates is only "not invalid" when the parser
-			// would actually consume the current token as the option's value: an empty position
-			// or a consumable token (plain value, or a signed numeric literal like -42). An
-			// option-like token such as "--prod" is read as the NEXT option and leaves the option
-			// unset, so it must keep its "Invalid" feedback.
-			if (pendingOptionValue
-				&& (string.IsNullOrEmpty(currentTokenPrefix)
-					|| InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(currentTokenPrefix)))
+			// A pending option value the parser would accept is not "Invalid" (the caller decides
+			// consumability per option kind — result-flow rejects any dash-prefixed token, others
+			// accept a signed numeric literal).
+			if (suppressInvalidPendingHint)
 			{
 				return null;
 			}
@@ -1271,8 +1290,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 		var comparison = (parameter.CaseSensitivity ?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
 			.ToStringComparison();
+		// Dedupe by the enum's EFFECTIVE case sensitivity, not the UI comparer: C# enums may have
+		// case-distinct members (e.g. Prod/prod), but under case-insensitive parsing execution
+		// maps both spellings to the first member — so only one candidate is offered (as shell does).
+		var seen = new HashSet<string>(StringComparer.FromComparison(comparison));
 		suggestions = Enum.GetNames(enumType)
-			.Where(name => name.StartsWith(currentTokenPrefix, comparison))
+			.Where(name => name.StartsWith(currentTokenPrefix, comparison) && seen.Add(name))
 			.Select(static name => new ConsoleLineReader.AutocompleteSuggestion(
 				name,
 				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))

@@ -983,6 +983,40 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			because: "a string option value is case-significant, so both distinct values must survive dedupe");
 	}
 
+	[TestMethod]
+	[Description("A pending result-flow option keeps its Invalid hint for a signed-numeric token: GlobalOptionParser consumes a result-flow value only when it does NOT start with '-' (even '-1' is rejected), unlike the general option parser which binds '-42'. So '--result:page-size -1' must still read 'Invalid: -1' rather than being suppressed.")]
+	public async Task When_PendingResultFlowOptionValueIsSignedNumeric_Then_HintIsInvalid()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("show", static string () => "ok").WithDescription("Show.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--result:page-size -1").ConfigureAwait(false);
+
+		(result.HintLine ?? string.Empty).Should().Contain("Invalid",
+			because: "result-flow options do not consume a dash-prefixed token (even -1) as their value, so it is invalid there");
+	}
+
+	[TestMethod]
+	[Description("Pending enum value completion dedupes by the enum's effective case sensitivity, not the UI comparer: for a case-distinct enum under case-insensitive parsing, execution maps both spellings to the first member, so 'run --mode p' offers a single candidate (matching shell) rather than both 'Prod' and 'prod'.")]
+	public async Task When_PendingEnumHasCaseDistinctMembers_Then_EffectiveSensitivityDedupes()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive);
+		sut.Map("run", static string ([ReplOption] CaseVariantMode mode) => mode.ToString()).WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --mode p").ConfigureAwait(false);
+
+		result.Suggestions
+			.Count(static s => string.Equals(s.Value, "Prod", StringComparison.OrdinalIgnoreCase))
+			.Should().Be(1, because: "under case-insensitive parsing both spellings map to the same member, so only one is offered");
+	}
+
+private enum CaseVariantMode
+	{
+		Prod,
+		prod,
+	}
+
 private enum ProbeMode
 	{
 		Debug,
