@@ -271,6 +271,58 @@ public sealed class Given_InteractiveAutocomplete_Menu
 		}
 	}
 
+	[TestMethod]
+	[Description("The FIRST Tab at an empty value position surfaces provider candidates: pressing Tab once on 'deploy ' (Hybrid presentation, where the first Tab does not yet open the menu) must still invoke the WithCompletion provider and render its candidates — a Tab is always an explicit completion request even when it does not open the menu.")]
+	public void When_FirstTabAtEmptyValue_Then_ProviderCandidatesAreOffered()
+	{
+		// A single candidate makes the first Tab inline-complete the whole value, so its
+		// appearance in the output proves the provider was invoked on that first Tab.
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion("target", static (_, _, _) =>
+				ValueTask.FromResult<IReadOnlyList<string>>(["zulu-target"]))
+			.WithDescription("Deploy.");
+
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		var keyReader = new FakeKeyReader(
+		[
+			Key(ConsoleKey.D, 'd'),
+			Key(ConsoleKey.E, 'e'),
+			Key(ConsoleKey.P, 'p'),
+			Key(ConsoleKey.L, 'l'),
+			Key(ConsoleKey.O, 'o'),
+			Key(ConsoleKey.Y, 'y'),
+			Key(ConsoleKey.Spacebar, ' '),
+			Key(ConsoleKey.Tab, '\t'),
+			Key(ConsoleKey.Enter, '\r'),
+			Key(ConsoleKey.E, 'e'),
+			Key(ConsoleKey.X, 'x'),
+			Key(ConsoleKey.I, 'i'),
+			Key(ConsoleKey.T, 't'),
+			Key(ConsoleKey.Enter, '\r'),
+		]);
+
+		var previousReader = ReplSessionIO.KeyReader;
+		using var scope = ReplSessionIO.SetSession(harness.Writer, TextReader.Null);
+		try
+		{
+			ReplSessionIO.KeyReader = keyReader;
+			ReplSessionIO.WindowSize = (80, 12);
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.VtInput;
+
+			var exitCode = sut.Run([]);
+
+			exitCode.Should().Be(0);
+			harness.RawOutput.Should().Contain("zulu-target",
+				because: "the first Tab is an explicit completion request even when it does not open the menu");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
 	private static ConsoleKeyInfo Key(ConsoleKey key, char ch = '\0') =>
 		new(ch, key, shift: false, alt: false, control: false);
 }

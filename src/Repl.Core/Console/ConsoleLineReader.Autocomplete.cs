@@ -22,7 +22,14 @@ internal static partial class ConsoleLineReader
 		}
 
 		var assist = await editor.Resolver(
-				new AutocompleteRequest(buffer.ToString(), cursor, MenuRequested: editor.IsMenuOpen),
+				new AutocompleteRequest(
+					buffer.ToString(),
+					cursor,
+					MenuRequested: editor.IsMenuOpen,
+					// A live-hint refresh is an explicit completion only while the menu is
+					// open; otherwise it is a per-keystroke refresh that must stay
+					// provider-free.
+					ExplicitCompletion: editor.IsMenuOpen),
 				ct)
 			.ConfigureAwait(false);
 		ApplyAssistResult(editor, assist);
@@ -102,7 +109,13 @@ internal static partial class ConsoleLineReader
 		StringBuilder echo,
 		CancellationToken ct)
 	{
-		var request = new AutocompleteRequest(buffer.ToString(), cursor, MenuRequested: ShouldOpenMenu(editor));
+		// A Tab press is always an explicit completion request — even the first Tab that does
+		// not yet open the menu (Hybrid/Classic) must invoke value providers.
+		var request = new AutocompleteRequest(
+			buffer.ToString(),
+			cursor,
+			MenuRequested: ShouldOpenMenu(editor),
+			ExplicitCompletion: true);
 		var assist = await editor.Resolver!(request, ct).ConfigureAwait(false);
 		ApplyAssistResult(editor, assist);
 		if (editor.LastResult is not { } result || result.Suggestions.Count == 0)

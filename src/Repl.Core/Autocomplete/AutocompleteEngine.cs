@@ -108,7 +108,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				state.OptionsTerminated,
 				state.PendingOptionValue,
 				state.PendingOptionToken,
-				request.MenuRequested,
+				request.ExplicitCompletion,
 				scopeTokens.Count,
 				activeGraph,
 				prefixComparison,

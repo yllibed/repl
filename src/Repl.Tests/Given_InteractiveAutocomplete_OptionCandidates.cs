@@ -1038,7 +1038,7 @@ private enum ProbeMode
 		IReadOnlyList<string>? scopeTokens = null)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(
-			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true),
+			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true, ExplicitCompletion: true),
 			scopeTokens ?? [],
 			EmptyServiceProvider.Instance,
 			CancellationToken.None)

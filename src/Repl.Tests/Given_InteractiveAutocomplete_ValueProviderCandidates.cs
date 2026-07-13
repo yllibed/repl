@@ -561,7 +561,7 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 		bool menuRequested = true)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(
-			new ConsoleLineReader.AutocompleteRequest(input, input.Length, menuRequested),
+			new ConsoleLineReader.AutocompleteRequest(input, input.Length, menuRequested, ExplicitCompletion: menuRequested),
 			scopeTokens ?? [],
 			EmptyServiceProvider.Instance,
 			CancellationToken.None)
