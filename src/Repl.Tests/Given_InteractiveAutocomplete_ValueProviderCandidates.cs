@@ -200,13 +200,52 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 				CancellationToken.None)
 			.ConfigureAwait(false);
 
+	[TestMethod]
+	[Description("A live-hint refresh (MenuRequested: false, issued after every keystroke) must NOT await value providers: a slow provider would otherwise freeze typing once per edit. Providers only run for an explicit completion request (Tab/menu).")]
+	public async Task When_LiveHintRefreshesWhileTypingValue_Then_ProviderIsNotInvoked()
+	{
+		var invocationCount = 0;
+		var sut = CoreReplApp.Create();
+		sut.Map("contact inspect {clientId}", static string (string clientId) => clientId)
+			.WithCompletion("clientId", (_, _, _) =>
+			{
+				invocationCount++;
+				return ValueTask.FromResult<IReadOnlyList<string>>(["zo-ga"]);
+			})
+			.WithDescription("Inspect a contact.");
+
+		await ResolveAutocompleteAsync(sut, "contact inspect ab", menuRequested: false).ConfigureAwait(false);
+
+		invocationCount.Should().Be(0, because: "live-hint refreshes happen per keystroke and must stay provider-free");
+	}
+
+	[TestMethod]
+	[Description("The pending option value path obeys the same rule: a live-hint refresh (MenuRequested: false) after 'run --channel ' must not await the option's provider — only an explicit Tab/menu request may.")]
+	public async Task When_LiveHintRefreshesOnPendingOptionValue_Then_ProviderIsNotInvoked()
+	{
+		var invocationCount = 0;
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion("channel", (_, _, _) =>
+			{
+				invocationCount++;
+				return ValueTask.FromResult<IReadOnlyList<string>>(["alpha"]);
+			})
+			.WithDescription("Run.");
+
+		await ResolveAutocompleteAsync(sut, "run --channel ", menuRequested: false).ConfigureAwait(false);
+
+		invocationCount.Should().Be(0, because: "live-hint refreshes happen per keystroke and must stay provider-free");
+	}
+
 	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(
 		CoreReplApp app,
 		string input,
-		IReadOnlyList<string>? scopeTokens = null)
+		IReadOnlyList<string>? scopeTokens = null,
+		bool menuRequested = true)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(
-			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true),
+			new ConsoleLineReader.AutocompleteRequest(input, input.Length, menuRequested),
 			scopeTokens ?? [],
 			EmptyServiceProvider.Instance,
 			CancellationToken.None)

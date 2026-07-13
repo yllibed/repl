@@ -108,6 +108,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				state.OptionsTerminated,
 				state.PendingOptionValue,
 				state.PendingOptionToken,
+				request.MenuRequested,
 				scopeTokens.Count,
 				activeGraph,
 				prefixComparison,
@@ -394,6 +395,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		bool optionsTerminated,
 		bool pendingOptionValue,
 		string? pendingOptionToken,
+		bool providersAllowed,
 		int scopeTokenCount,
 		ActiveRoutingGraph activeGraph,
 		StringComparison prefixComparison,
@@ -413,6 +415,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 					pendingOptionToken,
 					optionsTerminated,
 					currentTokenPrefix,
+					providersAllowed,
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
@@ -428,6 +431,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				currentTokenPrefix,
 				terminalRoute,
 				optionsTerminated,
+				providersAllowed,
 				scopeTokenCount,
 				activeGraph,
 				prefixComparison,
@@ -446,6 +450,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		string currentTokenPrefix,
 		RouteMatch? terminalRoute,
 		bool optionsTerminated,
+		bool providersAllowed,
 		int scopeTokenCount,
 		ActiveRoutingGraph activeGraph,
 		StringComparison prefixComparison,
@@ -454,14 +459,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var dynamicCandidates = await CollectDynamicAutocompleteCandidatesAsync(
-				matchingRoutes,
-				commandPrefix,
-				currentTokenPrefix,
-				terminalRoute,
-				prefixComparison,
-				app.OptionsSnapshot.Parsing,
-				serviceProvider,
-				cancellationToken)
+				matchingRoutes, commandPrefix, currentTokenPrefix, terminalRoute, providersAllowed,
+				prefixComparison, app.OptionsSnapshot.Parsing, serviceProvider, cancellationToken)
 			.ConfigureAwait(false);
 
 		// Once a terminal route has trailing option tokens, the command path is complete — no
@@ -1172,11 +1171,20 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		string[] commandPrefix,
 		string currentTokenPrefix,
 		RouteMatch? terminalRoute,
+		bool providersAllowed,
 		StringComparison prefixComparison,
 		ParsingOptions parsingOptions,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		// Live-hint refreshes run after EVERY keystroke (MenuRequested: false): awaiting a
+		// user provider there would freeze typing behind a slow lookup, so providers only run
+		// for an explicit completion request (Tab/menu).
+		if (!providersAllowed)
+		{
+			return [];
+		}
+
 		// Route resolution binds segments strictly positionally, so once the terminal route
 		// carries trailing option tokens the positional slots of every longer route are
 		// occupied by those tokens — no provider value typed here could ever bind at
@@ -1252,6 +1260,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		string? pendingOptionToken,
 		bool optionsTerminated,
 		string currentTokenPrefix,
+		bool providersAllowed,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
@@ -1267,7 +1276,10 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			pendingOptionToken, app.OptionsSnapshot.Parsing.OptionCaseSensitivity);
 		foreach (var entry in entries)
 		{
-			if (match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
+			// Same keystroke rule as the positional path: providers only run for an explicit
+			// completion request; live-hint refreshes fall through to the static enum fallback.
+			if (providersAllowed
+				&& match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
 			{
 				var completionContext = new CompletionContext(serviceProvider);
 				var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
