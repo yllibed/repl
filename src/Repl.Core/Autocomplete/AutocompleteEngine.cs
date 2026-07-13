@@ -1205,7 +1205,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		var targets = ResolvePositionalCompletionTargets(
-			matchingRoutes, commandPrefix, currentTokenPrefix, prefixComparison, parsingOptions);
+			matchingRoutes, commandPrefix, prefixComparison, parsingOptions);
 		if (targets.Count == 0)
 		{
 			return [];
@@ -1220,11 +1220,11 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				.ConfigureAwait(false);
 			foreach (var item in provided)
 			{
-				// Values needing quotes are emitted pre-quoted (unrepresentable ones dropped)
-				// so acceptance round-trips through tokenization as one argument; values
-				// carrying terminal controls are rejected before any rendering.
+				// Parity per candidate (a constraint-rejected value can never bind), terminal
+				// controls rejected before rendering, quotes added for the round-trip.
 				if (!string.IsNullOrWhiteSpace(item)
 					&& IsControlFreeValue(item)
+					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
 					&& QuoteValueForInsertion(item) is { } insertion)
 				{
 					suggestions.Add(new ConsoleLineReader.AutocompleteSuggestion(
@@ -1242,34 +1242,31 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	// matched route instead would only fire once the value token is committed — one token
 	// too late, on a position that can no longer bind to the parameter (issue #45) — and a
 	// sole-registration lookup would run the wrong provider on multi-parameter commands.
-	// Overloaded routes contribute only while their segment CONSTRAINT still accepts the
-	// typed value ('show a' must not run {id:int}'s provider — execution would reject it);
-	// every still-viable route's provider is merged, since a partial token cannot predict
-	// which overload the final value selects. Shared with the shell completion bridge so
-	// both surfaces resolve the same targets.
-	internal static IReadOnlyList<(RouteDefinition Route, string TargetName, CompletionDelegate Provider)> ResolvePositionalCompletionTargets(
+	// Every matching route's provider participates: the PARTIAL typed token deliberately
+	// plays no role here ('lookup 550e' is not yet a Guid, yet the provider's complete
+	// candidates are exactly what the user needs) — suggestion/execution parity is enforced
+	// per CANDIDATE against the returned segment's constraint instead. Shared with the shell
+	// completion bridge so both surfaces resolve the same targets.
+	internal static IReadOnlyList<(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider)> ResolvePositionalCompletionTargets(
 		IReadOnlyList<RouteDefinition> matchingRoutes,
 		string[] commandPrefix,
-		string currentTokenPrefix,
 		StringComparison prefixComparison,
 		ParsingOptions parsingOptions)
 	{
 		var segmentIndex = commandPrefix.Length;
-		List<(RouteDefinition, string, CompletionDelegate)>? targets = null;
+		List<(RouteDefinition, DynamicRouteSegment, CompletionDelegate)>? targets = null;
 		foreach (var route in matchingRoutes)
 		{
 			if (segmentIndex < route.Template.Segments.Count
 				&& route.Template.Segments[segmentIndex] is DynamicRouteSegment dynamicSegment
-				&& (currentTokenPrefix.Length == 0
-					|| RouteConstraintEvaluator.IsMatch(dynamicSegment, currentTokenPrefix, parsingOptions))
 				&& MatchesRoutePrefix(route, commandPrefix, prefixComparison, parsingOptions)
 				&& route.Command.Completions.TryGetValue(dynamicSegment.Name, out var completion))
 			{
-				(targets ??= []).Add((route, dynamicSegment.Name, completion));
+				(targets ??= []).Add((route, dynamicSegment, completion));
 			}
 		}
 
-		return targets ?? (IReadOnlyList<(RouteDefinition, string, CompletionDelegate)>)[];
+		return targets ?? (IReadOnlyList<(RouteDefinition, DynamicRouteSegment, CompletionDelegate)>)[];
 	}
 
 	// Decodes the raw lexical slice of the CURRENT token up to the cursor into its semantic

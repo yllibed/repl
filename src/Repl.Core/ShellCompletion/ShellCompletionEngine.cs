@@ -135,7 +135,6 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		var targets = AutocompleteEngine.ResolvePositionalCompletionTargets(
 			matchingRoutes,
 			resolution.CommandPrefix,
-			currentTokenPrefix,
 			StringComparison.OrdinalIgnoreCase,
 			app.OptionsSnapshot.Parsing);
 		// Provider VALUES dedupe case-sensitively (a positional binds verbatim at execution,
@@ -144,7 +143,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		var valueDedupe = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var target in targets)
 		{
-			if (!target.Route.Command.IsCompletionShellScoped(target.TargetName))
+			if (!target.Route.Command.IsCompletionShellScoped(target.Segment.Name))
 			{
 				continue;
 			}
@@ -154,10 +153,12 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 				.ConfigureAwait(false);
 			foreach (var value in provided ?? [])
 			{
-				// Values are encoded as literal data in the TARGET shell's syntax (see
-				// QuoteValueForShell); values the shell cannot represent are dropped.
+				// Parity per candidate (a value the segment's constraint rejects can never
+				// bind); values are then encoded as literal data in the TARGET shell's
+				// syntax (see QuoteValueForShell) or dropped when unrepresentable.
 				if (!string.IsNullOrWhiteSpace(value)
 					&& IsShellSafeCandidate(value)
+					&& RouteConstraintEvaluator.IsMatch(target.Segment, value, app.OptionsSnapshot.Parsing)
 					&& QuoteValueForShell(value, shell) is { } insertion
 					&& valueDedupe.Add(insertion))
 				{

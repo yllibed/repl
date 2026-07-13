@@ -105,66 +105,104 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 	}
 
 	[TestMethod]
-	[Description("With overloaded dynamic routes, providers resolve against routes whose constraint still accepts the typed value: for 'show {id:int}' registered before 'show {name}', typing 'show a' offers the string route's values only — execution rejects 'a' on the int route, so its provider must not answer.")]
+	[Description("With overloaded dynamic routes, every route's provider participates and each CANDIDATE is checked against its own segment constraint: for 'show {id:int}' + 'show {name}' with prefix-filtering providers, 'show a' offers only the string route's match — nothing from the int route can start with 'a'.")]
 	public async Task When_TypedValueViolatesOverloadConstraint_Then_OnlyViableProviderCompletes()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("show {id:int}", static string (int id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture))
-			.WithCompletion("id", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["int-provider"]))
+			.WithCompletion("id", static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+				[.. s_intIds.Where(id => id.StartsWith(input, StringComparison.Ordinal))]))
 			.WithDescription("Show by id.");
 		sut.Map("show {name}", static string (string name) => name)
-			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["string-provider"]))
+			.WithCompletion("name", static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+				[.. s_names.Where(name => name.StartsWith(input, StringComparison.Ordinal))]))
 			.WithDescription("Show by name.");
 
 		var result = await ResolveAutocompleteAsync(sut, "show a").ConfigureAwait(false);
 
 		var values = result.Suggestions.Select(static s => s.Value).ToArray();
-		values.Should().Contain("string-provider", because: "'a' satisfies the {name} route, which stays viable");
-		values.Should().NotContain("int-provider", because: "'a' can never bind the {id:int} route at execution");
+		values.Should().Contain("alice", because: "the {name} overload can still complete 'a'");
+		values.Should().NotContain("42").And.NotContain("77");
 	}
 
 	[TestMethod]
-	[Description("When the typed value satisfies SEVERAL overloads ('show 4' is a valid int prefix and a valid string), the providers of all still-viable routes are merged — completion cannot know which overload the final token will select.")]
+	[Description("When the typed value could still select SEVERAL overloads, each provider answers for its own route: 'show 4' offers the int route's '42' — a partial token does not lock completion to one overload.")]
 	public async Task When_TypedValueSatisfiesSeveralOverloads_Then_ViableProvidersAreMerged()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("show {id:int}", static string (int id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture))
-			.WithCompletion("id", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["int-provider"]))
+			.WithCompletion("id", static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+				[.. s_intIds.Where(id => id.StartsWith(input, StringComparison.Ordinal))]))
 			.WithDescription("Show by id.");
 		sut.Map("show {name}", static string (string name) => name)
-			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["string-provider"]))
+			.WithCompletion("name", static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+				[.. s_names.Where(name => name.StartsWith(input, StringComparison.Ordinal))]))
 			.WithDescription("Show by name.");
 
 		var result = await ResolveAutocompleteAsync(sut, "show 4").ConfigureAwait(false);
 
-		var values = result.Suggestions.Select(static s => s.Value).ToArray();
-		values.Should().Contain("int-provider", because: "'4' still satisfies the int overload");
-		values.Should().Contain("string-provider", because: "'4' also satisfies the string overload");
+		result.Suggestions.Select(static s => s.Value).Should().Contain("42",
+			because: "'4' still satisfies the int overload, whose provider stays active");
 	}
 
 	[TestMethod]
-	[Description("Shell parity for overload viability: 'app show a' must offer the string route's shell-scoped provider values only, never the int route's — the same constraint rule as the interactive menu.")]
+	[Description("A PARTIAL typed value must not silence a constrained route's provider: on 'lookup {id:guid}', 'lookup 550e' is not yet a complete Guid, but the provider is still invoked and its complete-Guid candidates are offered — accepting one replaces the partial token with a valid value.")]
+	public async Task When_TypingPartialConstrainedValue_Then_ProviderStillCompletes()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("lookup {id:guid}", static string (Guid id) => id.ToString())
+			.WithCompletion("id", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+				["550e8400-e29b-41d4-a716-446655440000"]))
+			.WithDescription("Lookup.");
+
+		var result = await ResolveAutocompleteAsync(sut, "lookup 550e").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("550e8400-e29b-41d4-a716-446655440000",
+			because: "the partial prefix will become the accepted complete value; it must not gate the provider");
+	}
+
+	[TestMethod]
+	[Description("Suggestion/execution parity is enforced on the CANDIDATE, not the prefix: a provider value that violates its segment's constraint ('not-a-number' for {id:int}) is never offered, because accepting it could not bind at execution.")]
+	public async Task When_ProviderReturnsCandidateViolatingConstraint_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("show {id:int}", static string (int id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture))
+			.WithCompletion("id", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+				["42", "not-a-number"]))
+			.WithDescription("Show by id.");
+
+		var result = await ResolveAutocompleteAsync(sut, "show 4").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("42");
+		values.Should().NotContain("not-a-number", because: "a candidate the segment constraint rejects can never bind at execution");
+	}
+
+	[TestMethod]
+	[Description("Shell parity for overload viability by candidate: 'app show a' offers the string route's shell-scoped match only — the int route's provider has nothing starting with 'a', and its candidates would be constraint-checked anyway.")]
 	public async Task When_TypedValueViolatesOverloadConstraint_Then_ShellOffersOnlyViableProvider()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("show {id:int}", static string (int id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture))
 			.WithCompletion(
 				"id",
-				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["int-provider"]),
+				static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+					[.. s_intIds.Where(id => id.StartsWith(input, StringComparison.Ordinal))]),
 				CompletionProviderScope.InteractiveAndShell)
 			.WithDescription("Show by id.");
 		sut.Map("show {name}", static string (string name) => name)
 			.WithCompletion(
 				"name",
-				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["string-provider"]),
+				static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+					[.. s_names.Where(name => name.StartsWith(input, StringComparison.Ordinal))]),
 				CompletionProviderScope.InteractiveAndShell)
 			.WithDescription("Show by name.");
 		var shellEngine = new ShellCompletionEngine(sut);
 
 		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app show a").ConfigureAwait(false);
 
-		candidates.Should().Contain("string-provider");
-		candidates.Should().NotContain("int-provider");
+		candidates.Should().Contain("alice");
+		candidates.Should().NotContain("42").And.NotContain("77");
 	}
 
 	[TestMethod]
@@ -429,6 +467,9 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 
 		candidates.Should().Contain("'O''Brien Co'");
 	}
+
+	private static readonly string[] s_intIds = ["42", "77"];
+	private static readonly string[] s_names = ["alice", "bob"];
 
 	private static async Task<string[]> ResolveShellCandidatesAsync(
 		ShellCompletionEngine engine,
