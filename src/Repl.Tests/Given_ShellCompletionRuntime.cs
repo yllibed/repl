@@ -11,9 +11,9 @@ public sealed class Given_ShellCompletionRuntime
 	public async Task When_BridgeReturnsCandidates_Then_CandidatesAreJoinedWithLf()
 	{
 		var runtime = CreateRuntime(
-			resolveCandidates: static (_, _, _) => ValueTask.FromResult<string[]>(["alpha", "beta"]));
+			resolveCandidates: static (_, _, _, _) => ValueTask.FromResult<string[]>(["alpha", "beta"]));
 
-		var result = await runtime.HandleBridgeRouteAsync(shell: "bash", line: "app a", cursor: "5", CancellationToken.None)
+		var result = await runtime.HandleBridgeRouteAsync(shell: "bash", line: "app a", cursor: "5", EmptyServiceProvider.Instance, CancellationToken.None)
 			.ConfigureAwait(false);
 
 		result.Should().BeOfType<string>();
@@ -209,17 +209,23 @@ public sealed class Given_ShellCompletionRuntime
 
 	private static ShellCompletionRuntime CreateRuntime(
 		ReplOptions? options = null,
-		Func<string, int, CancellationToken, ValueTask<string[]>>? resolveCandidates = null,
+		Func<string, int, IServiceProvider, CancellationToken, ValueTask<string[]>>? resolveCandidates = null,
 		Func<string, string?>? tryReadProfileContent = null)
 	{
 		options ??= new ReplOptions();
-		resolveCandidates ??= static (_, _, _) => ValueTask.FromResult<string[]>([]);
+		resolveCandidates ??= static (_, _, _, _) => ValueTask.FromResult<string[]>([]);
 		return new ShellCompletionRuntime(
 			options,
 			resolveEntryAssemblyName: static () => Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? string.Empty,
 			resolveCommandName: static () => "app",
 			resolveCandidates: resolveCandidates,
 			tryReadProfileContent: tryReadProfileContent);
+	}
+
+	private sealed class EmptyServiceProvider : IServiceProvider
+	{
+		public static readonly EmptyServiceProvider Instance = new();
+		public object? GetService(Type serviceType) => null;
 	}
 
 	private static bool ReadObjectBool(object value, string name)

@@ -6,6 +6,7 @@ internal interface IShellCompletionRuntime
 		string? shell,
 		string? line,
 		string? cursor,
+		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken);
 
 	object HandleStatusRoute();

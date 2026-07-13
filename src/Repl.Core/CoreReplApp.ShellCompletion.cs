@@ -5,8 +5,12 @@ public sealed partial class CoreReplApp
 	private ShellCompletionEngine? _shellCompletionEngine;
 	private ShellCompletionEngine ShellCompletionEng => _shellCompletionEngine ??= new(this);
 
-	private ValueTask<string[]> ResolveShellCompletionCandidatesAsync(string line, int cursor, CancellationToken cancellationToken) =>
-		ShellCompletionEng.ResolveShellCompletionCandidatesAsync(line, cursor, _services, cancellationToken);
+	private ValueTask<string[]> ResolveShellCompletionCandidatesAsync(
+		string line,
+		int cursor,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken) =>
+		ShellCompletionEng.ResolveShellCompletionCandidatesAsync(line, cursor, serviceProvider, cancellationToken);
 
 	private string ResolveShellCompletionCommandName() =>
 		ShellCompletionEng.ResolveShellCompletionCommandName();
