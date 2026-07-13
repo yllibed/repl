@@ -457,7 +457,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				matchingRoutes,
 				commandPrefix,
 				currentTokenPrefix,
-				optionsTerminated,
+				terminalRoute,
 				prefixComparison,
 				app.OptionsSnapshot.Parsing,
 				serviceProvider,
@@ -1171,34 +1171,56 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		IReadOnlyList<RouteDefinition> matchingRoutes,
 		string[] commandPrefix,
 		string currentTokenPrefix,
-		bool optionsTerminated,
+		RouteMatch? terminalRoute,
 		StringComparison prefixComparison,
 		ParsingOptions parsingOptions,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		// Route resolution binds segments strictly positionally, so once the terminal route
+		// carries trailing option tokens the positional slots of every longer route are
+		// occupied by those tokens — no provider value typed here could ever bind at
+		// execution (same region rule as command candidates). This also covers the POSIX
+		// "--" separator: a "--" that did not bind to a segment IS a trailing token.
+		if (terminalRoute is { RemainingTokens.Count: > 0 })
+		{
+			return [];
+		}
+
 		// Providers complete parameter VALUES; an option-prefix token is asking for option
-		// names, and provider output would only pollute that menu. After the POSIX "--"
-		// separator a dash-prefixed token is a positional argument again, so the provider
-		// must run for it.
-		if (!optionsTerminated && IsOptionPrefixToken(currentTokenPrefix))
+		// names, and provider output would only pollute that menu. (A dash value can only
+		// reach a segment as a signed numeric literal or behind an already-bound "--" — both
+		// resolve as positionals before this guard, mirroring the invocation parser.)
+		if (IsOptionPrefixToken(currentTokenPrefix))
 		{
 			return [];
 		}
 
-		var exactRoute = matchingRoutes.FirstOrDefault(route =>
-			route.Template.Segments.Count == commandPrefix.Length
-			&& MatchesRoutePrefix(
-				route,
-				commandPrefix,
-				prefixComparison,
-				parsingOptions));
-		if (exactRoute is null || exactRoute.Command.Completions.Count != 1)
+		// The token being typed occupies the segment at the index right AFTER the committed
+		// prefix, so the provider is resolved by THAT dynamic segment's name. Gating on a fully
+		// matched route instead would only fire once the value token is committed — one token
+		// too late, on a position that can no longer bind to the parameter (issue #45) — and a
+		// sole-registration lookup would run the wrong provider on multi-parameter commands.
+		var segmentIndex = commandPrefix.Length;
+		CompletionDelegate? completion = null;
+		foreach (var route in matchingRoutes)
+		{
+			if (segmentIndex < route.Template.Segments.Count
+				&& route.Template.Segments[segmentIndex] is DynamicRouteSegment dynamicSegment
+				&& MatchesRoutePrefix(route, commandPrefix, prefixComparison, parsingOptions)
+				&& route.Command.Completions.TryGetValue(dynamicSegment.Name, out completion))
+			{
+				break;
+			}
+
+			completion = null;
+		}
+
+		if (completion is null)
 		{
 			return [];
 		}
 
-		var completion = exactRoute.Command.Completions.Values.Single();
 		var completionContext = new CompletionContext(serviceProvider);
 		var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
 			.ConfigureAwait(false);

@@ -219,8 +219,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 	}
 
 	[TestMethod]
-	[Description("Tokens after the end-of-options separator are positional even when they look like flags: in 'deploy -- -f ' the '-f' fills the {target} segment, so the exact-route completion provider must fire — dropping it would desync the segment count.")]
-	public async Task When_DashTokenFollowsSeparator_Then_ItCountsAsPositional()
+	[Description("Suggestion/execution parity (issue #45): route resolution binds segments positionally, so in 'deploy -- -f ' the '--' itself fills {target} and '-f' lands in the option region — no provider value typed there could bind at execution, so the provider must NOT fire.")]
+	public async Task When_TokenFollowsSeparatorBoundPositional_Then_ProviderDoesNotFire()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target) => target)
@@ -230,7 +230,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var result = await ResolveAutocompleteAsync(sut, "deploy -- -f ").ConfigureAwait(false);
 
 		var values = result.Suggestions.Select(static suggestion => suggestion.Value).ToArray();
-		values.Should().Contain("zo-profile", because: "'-f' after '--' is a positional filling {target}, making the route exact for the provider");
+		values.Should().NotContain("zo-profile", because: "'--' already fills {target}; a value on the trailing region cannot bind to the parameter");
 	}
 
 	[TestMethod]
@@ -323,8 +323,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 	}
 
 	[TestMethod]
-	[Description("After the POSIX '--' separator a dash-prefixed current token is positional, so a value-completion provider must still run instead of being suppressed as an option prefix: 'deploy x -- -' asks the provider rather than treating '-' as an option name.")]
-	public async Task When_DashCurrentTokenFollowsSeparator_Then_ProviderStillRuns()
+	[Description("Suggestion/execution parity (issue #45): in 'deploy x -- -' the value 'x' already binds {target} and '--' sits in the option region, so the provider must NOT fire for the trailing '-' — accepting a candidate would add a positional that execution rejects.")]
+	public async Task When_DashCurrentTokenFollowsSeparatorPastBoundValue_Then_ProviderDoesNotFire()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target) => target)
@@ -334,7 +334,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var result = await ResolveAutocompleteAsync(sut, "deploy x -- -").ConfigureAwait(false);
 
 		var values = result.Suggestions.Select(static suggestion => suggestion.Value).ToArray();
-		values.Should().Contain("zo-profile", because: "after '--' the '-' token is positional, so the provider still runs");
+		values.Should().NotContain("zo-profile", because: "{target} is bound to 'x'; nothing typed past '--' can bind to it");
 	}
 
 	[TestMethod]
@@ -704,8 +704,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 	}
 
 	[TestMethod]
-	[Description("A pending valued route option that sits BEFORE a POSIX '--' does not suppress positional completion after the separator: 'deploy x -- -' completes the target value, because tokens after '--' are positional, not options awaiting a value.")]
-	public async Task When_SeparatorFollowsPendingLikeToken_Then_PositionalProviderStillRuns()
+	[Description("A '--' on a route that also declares a valued option is not a pending value position, and it does not reopen positional completion either: for 'deploy x -- -' the {target} value is bound, so neither channel's pending path nor target's provider may offer values (issue #45 parity).")]
+	public async Task When_SeparatorFollowsPendingLikeToken_Then_ProviderDoesNotFireOnOptionRegion()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target, [ReplOption] string? channel) => target)
@@ -714,8 +714,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 
 		var result = await ResolveAutocompleteAsync(sut, "deploy x -- -").ConfigureAwait(false);
 
-		result.Suggestions.Select(static s => s.Value).Should().Contain("zo-profile",
-			because: "after '--' the token is positional; no route option is pending a value");
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("zo-profile",
+			because: "{target} is bound and '--' opened the option region; no positional value can bind past it");
 	}
 
 	[TestMethod]
