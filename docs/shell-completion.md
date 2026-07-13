@@ -123,7 +123,7 @@ If signals are conflicting or weak, result is `unknown` (no auto-install in `Aut
 
 - Command literals from the mapped graph.
 - Static command options from handler parameters (resolved terminal routes).
-- Static global options (`--help`, `--interactive`, `--no-interactive`, `--no-logo`, output aliases, `--output:<format>`).
+- Static global options (`--help`, `--interactive`, `--no-interactive`, `--no-logo`, output aliases, `--output:<format>`, `--answer:<name>`, and the result-flow flags `--result:page-size`, `--result:cursor`, `--result:pager`, `--result:all`).
 
 Not included:
 
@@ -261,10 +261,11 @@ Shell completion and the interactive REPL autocomplete draw option-name candidat
 same source, normalize prior tokens through the same parser profile (option values consumed,
 POSIX `--` honored, response files never expanded), and use the same option-prefix gate — a
 single dash already surfaces short aliases such as `-f`, while signed numeric literals
-(`-42`) stay positional. Two deliberate differences remain:
+(`-42`) stay positional. Both also complete **enum values** for a pending option (its member
+names, under the parameter's effective case sensitivity), and the interactive menu
+additionally runs a pending option's `WithCompletion` value provider. One deliberate
+difference remains:
 
 - On an **empty** token after a complete command, shell completion lists option names (a
   dump-style list is cheap there), while the interactive menu shows parameter placeholders —
   options appear from the first typed `-`.
-- Shell completion also completes **enum values** for a pending option; the interactive menu
-  does not yet.

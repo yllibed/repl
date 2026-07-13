@@ -308,7 +308,9 @@ internal static class InvocationOptionParser
 			? token[2..]
 			: token[1..];
 
-	private static bool ShouldConsumeFollowingTokenAsValue(string token)
+	// Also consulted by autocomplete: a completed option value must be one the parser would
+	// actually bind as the option's separate value, or completion and execution drift.
+	internal static bool ShouldConsumeFollowingTokenAsValue(string token)
 	{
 		if (string.Equals(token, "--", StringComparison.Ordinal))
 		{

@@ -107,6 +107,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				state.TerminalRoute,
 				state.OptionsTerminated,
 				state.PendingOptionValue,
+				state.PendingOptionToken,
 				scopeTokens.Count,
 				activeGraph,
 				prefixComparison,
@@ -114,12 +115,17 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				serviceProvider,
 				cancellationToken)
 			.ConfigureAwait(false);
+		// Suppress the "Invalid" hint only for a pending value the parser would actually consume
+		// as the option's value — the rule is option-kind-specific (see the helper).
+		var suppressInvalidPendingHint = state.PendingOptionValue
+			&& IsCurrentTokenConsumableAsPendingValue(state.PendingOptionToken, state.CurrentTokenPrefix);
 		var liveHint = app.OptionsSnapshot.Interactive.Autocomplete.LiveHintEnabled
 			? BuildLiveHint(
 				matchingRoutes,
 				candidates,
 				state.CommandPrefix,
 				state.CurrentTokenPrefix,
+				suppressInvalidPendingHint,
 				app.OptionsSnapshot.Interactive.Autocomplete.LiveHintMaxAlternatives)
 			: null;
 		var tokenClassifications = BuildTokenClassifications(
@@ -168,6 +174,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				resolution.OptionsTerminated)
 			{
 				PendingOptionValue = true,
+				PendingOptionToken = committed[^1],
 			};
 		}
 
@@ -314,11 +321,37 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 	// The built-in --result: suboptions that take a separate value (page-size/cursor/pager);
 	// --result:all is a flag. An inline value (--result:page-size=8) is already satisfied.
-	private static bool IsPendingResultFlowOption(string token) =>
-		(string.Equals(token, ReplResultFlowOptionNames.PageSize, StringComparison.Ordinal)
-			|| string.Equals(token, ReplResultFlowOptionNames.Cursor, StringComparison.Ordinal)
-			|| string.Equals(token, ReplResultFlowOptionNames.Pager, StringComparison.Ordinal))
-		&& !token.Contains('=', StringComparison.Ordinal);
+	// The token match honors the configured option case sensitivity: under CaseInsensitive,
+	// GlobalOptionParser accepts "--RESULT:PAGE-SIZE" and consumes the next token as the value,
+	// so completion must recognize the same casing or it would offer a command that execution
+	// would swallow as the page-size value.
+	// Whether the parser would consume the current token as the pending option's value. The rule
+	// is option-kind-specific: result-flow suboptions (GlobalOptionParser.TryParseResultFlowOption)
+	// reject ANY dash-prefixed token — even a signed numeric like "-1" — while route and custom
+	// global options bind a signed numeric literal as a value (ShouldConsumeFollowingTokenAsValue).
+	private bool IsCurrentTokenConsumableAsPendingValue(string? pendingOptionToken, string currentTokenPrefix)
+	{
+		if (string.IsNullOrEmpty(currentTokenPrefix))
+		{
+			return true;
+		}
+
+		if (pendingOptionToken is not null && IsPendingResultFlowOption(pendingOptionToken))
+		{
+			return !currentTokenPrefix.StartsWith('-');
+		}
+
+		return InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(currentTokenPrefix);
+	}
+
+	private bool IsPendingResultFlowOption(string token)
+	{
+		var comparison = app.OptionsSnapshot.Parsing.OptionCaseSensitivity.ToStringComparison();
+		return (string.Equals(token, ReplResultFlowOptionNames.PageSize, comparison)
+				|| string.Equals(token, ReplResultFlowOptionNames.Cursor, comparison)
+				|| string.Equals(token, ReplResultFlowOptionNames.Pager, comparison))
+			&& !token.Contains('=', StringComparison.Ordinal);
+	}
 
 	// Unique-prefix/alias expansion, bounded by the deepest template: beyond that depth no
 	// literal can match, and the per-index candidate derivation must not scale with the
@@ -360,6 +393,59 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		RouteMatch? terminalRoute,
 		bool optionsTerminated,
 		bool pendingOptionValue,
+		string? pendingOptionToken,
+		int scopeTokenCount,
+		ActiveRoutingGraph activeGraph,
+		StringComparison prefixComparison,
+		StringComparer comparer,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		// A valued option awaiting its value: the current token is that value. Offer ONLY the
+		// pending option's own value provider (WithCompletion / enum values); command names and
+		// option names would misparse. The positional dynamic path below cannot be reused here —
+		// it runs the route's SOLE registered provider without checking which parameter it
+		// targets, so it would offer another parameter's values under this option.
+		if (pendingOptionValue)
+		{
+			var pendingCandidates = await CollectPendingOptionValueCandidatesAsync(
+					terminalRoute,
+					pendingOptionToken,
+					optionsTerminated,
+					currentTokenPrefix,
+					serviceProvider,
+					cancellationToken)
+				.ConfigureAwait(false);
+			// Dedupe option VALUES case-sensitively: a string option value is case-significant at
+			// execution, so provider results that differ only by case ("Prod"/"prod") must both
+			// survive — the UI's (possibly case-insensitive) comparer would collapse them.
+			return DeduplicateSuggestions(pendingCandidates, StringComparer.Ordinal);
+		}
+
+		return await CollectStandardAutocompleteSuggestionsAsync(
+				matchingRoutes,
+				commandPrefix,
+				currentTokenPrefix,
+				terminalRoute,
+				optionsTerminated,
+				scopeTokenCount,
+				activeGraph,
+				prefixComparison,
+				comparer,
+				serviceProvider,
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	// The non-pending candidate assembly: command names, dynamic value providers, option names,
+	// child contexts, and ambient commands, merged and deduplicated. Split from the entry point
+	// so the pending-value short-circuit above stays legible.
+	private async ValueTask<ConsoleLineReader.AutocompleteSuggestion[]> CollectStandardAutocompleteSuggestionsAsync(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
+		string currentTokenPrefix,
+		RouteMatch? terminalRoute,
+		bool optionsTerminated,
 		int scopeTokenCount,
 		ActiveRoutingGraph activeGraph,
 		StringComparison prefixComparison,
@@ -378,14 +464,6 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				cancellationToken)
 			.ConfigureAwait(false);
 
-		// A valued option awaiting its value: the current token is that value. Keep the
-		// pending option's value provider (WithCompletion / enum values), but suppress
-		// command names and option names — offering either would misparse.
-		if (pendingOptionValue)
-		{
-			return DeduplicateSuggestions(dynamicCandidates, comparer);
-		}
-
 		// Once a terminal route has trailing option tokens, the command path is complete — no
 		// subcommand can follow (a later literal can't match past an option-occupied position,
 		// and a bool flag's zero-or-one arity would otherwise swallow the suggested word).
@@ -401,19 +479,29 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			currentTokenPrefix,
 			terminalRoute,
 			optionsTerminated);
+		// Same option-region guard as command candidates: once the terminal route carries
+		// trailing option tokens, execution treats the next word as the route's option text,
+		// so a child context is unreachable there and must not be offered.
 		var contextCandidates = app.OptionsSnapshot.Interactive.Autocomplete.ShowContextAlternatives
+				&& terminalRoute is not { RemainingTokens.Count: > 0 }
 			? CollectContextAutocompleteCandidates(commandPrefix, currentTokenPrefix, prefixComparison, activeGraph.Contexts)
 			: [];
-		var ambientCandidates = commandPrefix.Length == scopeTokenCount
+		// Ambient commands (help/exit/…) share the option-region guard: once the terminal route
+		// carries trailing option tokens, "--force exit" is routed option text, not an ambient
+		// invocation, so no ambient candidate may be offered at this position.
+		var inOptionRegion = terminalRoute is { RemainingTokens.Count: > 0 };
+		var ambientCandidates = commandPrefix.Length == scopeTokenCount && !inOptionRegion
 			? CollectAmbientAutocompleteCandidates(currentTokenPrefix, prefixComparison)
 			: [];
-		var ambientContinuationCandidates = CollectAmbientContinuationAutocompleteCandidates(
-			commandPrefix,
-			currentTokenPrefix,
-			scopeTokenCount,
-			prefixComparison,
-			activeGraph.Routes,
-			activeGraph.Contexts);
+		var ambientContinuationCandidates = inOptionRegion
+			? []
+			: CollectAmbientContinuationAutocompleteCandidates(
+				commandPrefix,
+				currentTokenPrefix,
+				scopeTokenCount,
+				prefixComparison,
+				activeGraph.Routes,
+				activeGraph.Contexts);
 
 		var candidates = DeduplicateSuggestions(
 			commandCandidates
@@ -937,6 +1025,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion> suggestions,
 		string[] commandPrefix,
 		string currentTokenPrefix,
+		bool suppressInvalidPendingHint,
 		int maxAlternatives)
 	{
 		var selectable = suggestions.Where(static suggestion => suggestion.IsSelectable).ToArray();
@@ -951,6 +1040,14 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			.ToArray();
 		if (selectable.Length == 0)
 		{
+			// A pending option value the parser would accept is not "Invalid" (the caller decides
+			// consumability per option kind — result-flow rejects any dash-prefixed token, others
+			// accept a signed numeric literal).
+			if (suppressInvalidPendingHint)
+			{
+				return null;
+			}
+
 			return BuildDynamicHint(matchingRoutes, commandPrefix.Length, maxAlternatives)
 				?? (string.IsNullOrWhiteSpace(currentTokenPrefix) ? null : $"Invalid: {currentTokenPrefix}");
 		}
@@ -970,20 +1067,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 		if (selectable.Length == 1)
 		{
-			var suggestion = selectable[0];
-			if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Command)
-			{
-				return string.IsNullOrWhiteSpace(suggestion.Description)
-					? $"Command: {suggestion.DisplayText}"
-					: $"Command: {suggestion.DisplayText} - {suggestion.Description}";
-			}
-
-			if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Context)
-			{
-				return $"Context: {suggestion.DisplayText}";
-			}
-
-			return suggestion.DisplayText;
+			return FormatSingleSelectionHint(selectable[0]);
 		}
 
 		maxAlternatives = Math.Max(1, maxAlternatives);
@@ -995,6 +1079,23 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			? $" (+{hintAlternatives.Length - shown.Length})"
 			: string.Empty;
 		return $"Matches: {string.Join(", ", shown)}{suffix}";
+	}
+
+	private static string FormatSingleSelectionHint(ConsoleLineReader.AutocompleteSuggestion suggestion)
+	{
+		if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Command)
+		{
+			return string.IsNullOrWhiteSpace(suggestion.Description)
+				? $"Command: {suggestion.DisplayText}"
+				: $"Command: {suggestion.DisplayText} - {suggestion.Description}";
+		}
+
+		if (suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Context)
+		{
+			return $"Context: {suggestion.DisplayText}";
+		}
+
+		return suggestion.DisplayText;
 	}
 
 	private static string? BuildDynamicHint(
@@ -1107,6 +1208,99 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				item,
 				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
 			.ToArray();
+	}
+
+	// Completes the VALUE of a pending route option by invoking ONLY that option's own provider.
+	// It keys off the ACTUAL pending token (the last committed token), never the route match's
+	// trailing token: ResolveCommitted strips globals before route resolution, so for
+	// "run app --channel --tenant " the route's trailing token is still "--channel" while the
+	// pending value belongs to the global "--tenant" — which carries no per-command provider,
+	// so nothing is offered. Only a pending ROUTE option (same route-value condition the pending
+	// detector uses) resolves a target parameter and runs its completion.
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> CollectPendingOptionValueCandidatesAsync(
+		RouteMatch? terminalRoute,
+		string? pendingOptionToken,
+		bool optionsTerminated,
+		string currentTokenPrefix,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		if (optionsTerminated
+			|| pendingOptionToken is null
+			|| terminalRoute is not { } match
+			|| !IsPendingRouteOptionValue(pendingOptionToken, terminalRoute))
+		{
+			return [];
+		}
+
+		var entries = match.Route.OptionSchema.ResolveToken(
+			pendingOptionToken, app.OptionsSnapshot.Parsing.OptionCaseSensitivity);
+		foreach (var entry in entries)
+		{
+			if (match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
+			{
+				var completionContext = new CompletionContext(serviceProvider);
+				var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
+					.ConfigureAwait(false);
+				// Only surface values the invocation parser would consume as this option's
+				// separate value: a dash-prefixed candidate is read as the next option (accepting
+				// it would leave the option unset), while a signed numeric literal (-42) is bound
+				// as a value. Reuse the parser's own rule so completion and execution cannot drift.
+				return provided
+					.Where(static item => !string.IsNullOrWhiteSpace(item)
+						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item))
+					.Select(static item => new ConsoleLineReader.AutocompleteSuggestion(
+						item,
+						Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+					.ToArray();
+			}
+
+			// No explicit provider: complete enum member names when the target is an enum,
+			// matching shell completion (which already offers them for a pending option).
+			if (TryCollectEnumValueSuggestions(
+					match.Route.OptionSchema, entry.ParameterName, currentTokenPrefix, out var enumSuggestions))
+			{
+				return enumSuggestions;
+			}
+		}
+
+		return [];
+	}
+
+	// Offers the member names of an enum-typed option parameter as value suggestions, filtered
+	// by the current prefix under the parameter's effective case sensitivity. Mirrors the shell
+	// engine's TryAddRouteEnumValueCandidates so both surfaces complete enum values identically.
+	private bool TryCollectEnumValueSuggestions(
+		OptionSchema schema,
+		string parameterName,
+		string currentTokenPrefix,
+		out ConsoleLineReader.AutocompleteSuggestion[] suggestions)
+	{
+		suggestions = [];
+		if (!schema.TryGetParameter(parameterName, out var parameter))
+		{
+			return false;
+		}
+
+		var enumType = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
+		if (!enumType.IsEnum)
+		{
+			return false;
+		}
+
+		var comparison = (parameter.CaseSensitivity ?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
+			.ToStringComparison();
+		// Dedupe by the enum's EFFECTIVE case sensitivity, not the UI comparer: C# enums may have
+		// case-distinct members (e.g. Prod/prod), but under case-insensitive parsing execution
+		// maps both spellings to the first member — so only one candidate is offered (as shell does).
+		var seen = new HashSet<string>(StringComparer.FromComparison(comparison));
+		suggestions = Enum.GetNames(enumType)
+			.Where(name => name.StartsWith(currentTokenPrefix, comparison) && seen.Add(name))
+			.Select(static name => new ConsoleLineReader.AutocompleteSuggestion(
+				name,
+				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+			.ToArray();
+		return suggestions.Length > 0;
 	}
 
 	private static ConsoleLineReader.AutocompleteSuggestion[] DeduplicateSuggestions(
@@ -1671,6 +1865,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		// True when the current token is the value of a valued option still awaiting one:
 		// no command or option-name suggestions may be offered for this position.
 		public bool PendingOptionValue { get; init; }
+
+		// The actual option token awaiting a value (the last committed token) when
+		// PendingOptionValue is set — a route option or a global. The pending-value provider
+		// path keys off this, not the route match's trailing token, so a global pending after
+		// an earlier route option does not run that route option's provider.
+		public string? PendingOptionToken { get; init; }
 	}
 
 	internal readonly record struct TokenSpan(string Value, int Start, int End);

@@ -793,17 +793,244 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 			because: "an option already occupies the position; 'parent --force child' would not invoke the child route");
 	}
 
+	[TestMethod]
+	[Description("Result-flow pending honors option case sensitivity: under CaseInsensitive parsing, GlobalOptionParser accepts '--RESULT:PAGE-SIZE' and consumes the next token as its page-size value, so completion must treat the following partial token as that value and NOT offer a command ('install').")]
+	public async Task When_ResultFlowOptionAwaitsValueDifferentlyCased_Then_NoCommandIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive);
+		sut.Map("install {skillName}", static string (string skillName) => skillName).WithDescription("Install.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--RESULT:PAGE-SIZE ins").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("install",
+			because: "under case-insensitive parsing the token after '--RESULT:PAGE-SIZE' is its value, not a command");
+	}
+
+	[TestMethod]
+	[Description("The built-in '--answer:' prefill is offered in completion: GlobalOptionParser accepts '--answer:<name>[=value]' as a global flag (documented), so typing '--ans' must surface '--answer:' like the other static globals.")]
+	public async Task When_AnswerPrefixIsTyped_Then_AnswerOptionIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("show", static string () => "ok").WithDescription("Show.");
+
+		var result = await ResolveAutocompleteAsync(sut, "show --ans").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("--answer:",
+			because: "'--answer:' is a documented built-in global flag and must be completable");
+	}
+
+	[TestMethod]
+	[Description("No context is offered once a route option has been typed: with a 'parent' route ([ReplOption] bool force) and a 'parent child' context, 'parent --force c' must not suggest the 'child' context — the option region is active, so execution treats 'c' as the route's trailing option text, not a context entry.")]
+	public async Task When_OptionPrecedesContextPosition_Then_ContextIsNotSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("parent", static string ([ReplOption] bool force) => force.ToString()).WithDescription("Parent.");
+		sut.Context("parent", parent => parent.Context("child", child => child.Map("go", static string () => "ok").WithDescription("Go.")));
+
+		var result = await ResolveAutocompleteAsync(sut, "parent --force c").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("child",
+			because: "an option already occupies the position; execution treats 'c' as the route's trailing option text, not a context entry");
+	}
+
+	[TestMethod]
+	[Description("A pending option value invokes ONLY that option's provider, not the route's other providers: for 'run {target}' with a provider on 'target' AND a [ReplOption] string channel with its own provider, 'run app --channel ' offers channel's values (beta) and NOT target's (zo-profile) — reusing the route's sole/first provider would bind the wrong parameter's values.")]
+	public async Task When_PendingOptionHasOwnProvider_Then_OnlyThatProviderCompletes()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {target}", static string (string target, [ReplOption] string? channel) => target)
+			.WithCompletion("target", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["zo-profile"]))
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["alpha", "beta"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run app --channel ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("beta", because: "the pending option's own value provider must run");
+		values.Should().NotContain("zo-profile",
+			because: "the target positional's provider must not leak into the channel value menu");
+	}
+
+	[TestMethod]
+	[Description("A pending option with no provider offers nothing — it does not fall back to the route's single registered provider: for 'run {target}' with a provider on 'target' only and a [ReplOption] string channel, 'run app --channel ' must NOT offer target's values as channel values.")]
+	public async Task When_PendingOptionHasNoProvider_Then_OtherProviderDoesNotLeak()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {target}", static string (string target, [ReplOption] string? channel) => target)
+			.WithCompletion("target", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["zo-profile"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run app --channel ").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("zo-profile",
+			because: "channel has no provider; the target positional's provider must not be invoked for it");
+	}
+
+	[TestMethod]
+	[Description("A pending GLOBAL value after a route option must not invoke the route option's provider: ResolveCommitted strips the global before route resolution, so terminalRoute.RemainingTokens can still end with an earlier route option ('--channel'). For 'run app --channel --tenant ' the pending value is the global tenant's, so channel's provider must NOT run.")]
+	public async Task When_PendingGlobalFollowsRouteOption_Then_RouteProviderIsNotInvoked()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("tenant"));
+		sut.Map("run {target}", static string (string target, [ReplOption] string? channel) => target)
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["alpha", "beta"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run app --channel --tenant ").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("alpha").And.NotContain("beta",
+			because: "the pending value is the global tenant's, not channel's — channel's provider must not run");
+	}
+
+	[TestMethod]
+	[Description("The '--answer:' prefill matches case-insensitively regardless of OptionCaseSensitivity: GlobalOptionParser.TryParsePromptAnswer accepts '--ANSWER:name' via OrdinalIgnoreCase even under CaseSensitive options, so 'show --ANS' must still surface '--answer:'.")]
+	public async Task When_AnswerPrefixIsUpperCasedUnderCaseSensitive_Then_AnswerOptionIsSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseSensitive);
+		sut.Map("show", static string () => "ok").WithDescription("Show.");
+
+		var result = await ResolveAutocompleteAsync(sut, "show --ANS").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("--answer:",
+			because: "TryParsePromptAnswer matches '--answer:' case-insensitively, so completion must too");
+	}
+
+	[TestMethod]
+	[Description("A pending option value completion drops values the invocation parser would not consume as a separate value: a dash-prefixed candidate ('--prod') is treated as the next option, so accepting it would leave the option unset. 'run --channel ' with a provider returning '--prod', 'alpha', '-42' offers 'alpha' and the signed numeric '-42' (the parser binds it as a value) but not '--prod'.")]
+	public async Task When_PendingOptionProviderReturnsDashValue_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["--prod", "alpha", "-42"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("alpha").And.Contain("-42",
+			because: "plain values and signed numeric literals are consumable as the option's separate value");
+		values.Should().NotContain("--prod",
+			because: "a dash-prefixed candidate is parsed as the next option, so it cannot fill --channel");
+	}
+
+	[TestMethod]
+	[Description("A pending enum option completes its member names on the interactive path too (parity with shell): for '[ReplOption] ProbeMode mode', 'run --mode D' offers 'Debug'. The pending path resolves the option's parameter and, when it is an enum, adds member names with the parameter's effective case sensitivity.")]
+	public async Task When_PendingEnumOptionAwaitsValue_Then_EnumMembersAreOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] ProbeMode mode) => mode.ToString()).WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --mode D").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("Debug",
+			because: "a pending enum option must complete its member names like shell completion does");
+	}
+
+	[TestMethod]
+	[Description("Ambient commands follow the same option-region guard as commands and contexts: in a 'parent' scope whose route carries '[ReplOption] bool force', '--force h' must not offer the ambient 'help' — accepting it produces routed option text, not an ambient invocation.")]
+	public async Task When_OptionPrecedesAmbientPosition_Then_AmbientIsNotSuggested()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("parent", static string ([ReplOption] bool force) => force.ToString()).WithDescription("Parent.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--force h", scopeTokens: ["parent"]).ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("help",
+			because: "an option already occupies the position; 'parent --force help' is routed option text, not an ambient command");
+	}
+
+	[TestMethod]
+	[Description("A pending option value with no provider is not flagged invalid in the live hint: 'run --channel alpha' (a valued string option, no completion provider) accepts 'alpha' at execution, so the hint must not read 'Invalid: alpha'.")]
+	public async Task When_PendingOptionValueHasNoProvider_Then_HintIsNotInvalid()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none").WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel alpha").ConfigureAwait(false);
+
+		(result.HintLine ?? string.Empty).Should().NotContain("Invalid",
+			because: "the pending value is a free-form option value the parser accepts, not an invalid token");
+	}
+
+	[TestMethod]
+	[Description("A pending option value that the parser will NOT consume is still flagged invalid in the hint: 'run --channel --prod' leaves --channel unfilled (a dash-prefixed token is read as the next option, not the value), so the hint reads 'Invalid: --prod' rather than being suppressed like a consumable free-form value.")]
+	public async Task When_PendingOptionValueIsOptionLike_Then_HintIsInvalid()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none").WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel --prod").ConfigureAwait(false);
+
+		(result.HintLine ?? string.Empty).Should().Contain("Invalid",
+			because: "a dash-prefixed token is not consumed as the option value, so it is invalid there");
+	}
+
+	[TestMethod]
+	[Description("Pending option value completion preserves case-distinct provider values: a string option's value is case-significant at execution, so a provider returning 'Prod' and 'prod' offers both — they must not collapse under the UI's case-insensitive dedupe.")]
+	public async Task When_PendingProviderReturnsCaseDistinctValues_Then_BothAreOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["Prod", "prod"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --channel ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("Prod").And.Contain("prod",
+			because: "a string option value is case-significant, so both distinct values must survive dedupe");
+	}
+
+	[TestMethod]
+	[Description("A pending result-flow option keeps its Invalid hint for a signed-numeric token: GlobalOptionParser consumes a result-flow value only when it does NOT start with '-' (even '-1' is rejected), unlike the general option parser which binds '-42'. So '--result:page-size -1' must still read 'Invalid: -1' rather than being suppressed.")]
+	public async Task When_PendingResultFlowOptionValueIsSignedNumeric_Then_HintIsInvalid()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("show", static string () => "ok").WithDescription("Show.");
+
+		var result = await ResolveAutocompleteAsync(sut, "--result:page-size -1").ConfigureAwait(false);
+
+		(result.HintLine ?? string.Empty).Should().Contain("Invalid",
+			because: "result-flow options do not consume a dash-prefixed token (even -1) as their value, so it is invalid there");
+	}
+
+	[TestMethod]
+	[Description("Pending enum value completion dedupes by the enum's effective case sensitivity, not the UI comparer: for a case-distinct enum under case-insensitive parsing, execution maps both spellings to the first member, so 'run --mode p' offers a single candidate (matching shell) rather than both 'Prod' and 'prod'.")]
+	public async Task When_PendingEnumHasCaseDistinctMembers_Then_EffectiveSensitivityDedupes()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive);
+		sut.Map("run", static string ([ReplOption] CaseVariantMode mode) => mode.ToString()).WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --mode p").ConfigureAwait(false);
+
+		result.Suggestions
+			.Count(static s => string.Equals(s.Value, "Prod", StringComparison.OrdinalIgnoreCase))
+			.Should().Be(1, because: "under case-insensitive parsing both spellings map to the same member, so only one is offered");
+	}
+
+private enum CaseVariantMode
+	{
+		Prod,
+		prod,
+	}
+
 private enum ProbeMode
 	{
 		Debug,
 		Release,
 	}
 
-	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(CoreReplApp app, string input)
+	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(
+		CoreReplApp app,
+		string input,
+		IReadOnlyList<string>? scopeTokens = null)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(
 			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true),
-			scopeTokens: [],
+			scopeTokens ?? [],
 			EmptyServiceProvider.Instance,
 			CancellationToken.None)
 			.ConfigureAwait(false);
