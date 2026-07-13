@@ -35,6 +35,47 @@ public sealed class Given_ShellCompletionBridge_Providers
 		output.ExitCode.Should().Be(0);
 	}
 
+	[TestMethod]
+	[Description("The bridge protocol is line-delimited: a provider value with an embedded newline would forge an extra completion record, and ANSI/OSC control sequences would reach the user's completion UI. Such candidates are rejected whole at the bridge boundary; clean values still flow.")]
+	public void When_ProviderReturnsControlCharacters_Then_BridgeRejectsThoseCandidates()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+					["safe\nforged", "\u001b[31mansi-red", "\u009dosc-c1", "clean"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+
+		var output = RunBridge(sut, "app deploy ");
+
+		output.Text.Should().Contain("clean", because: "well-formed values still flow through the protocol");
+		output.Text.Should().NotContain("forged", because: "an embedded LF must not forge an extra completion record");
+		output.Text.Should().NotContain("\u001b", because: "terminal control sequences must not reach the shell's completion UI");
+		output.Text.Should().NotContain("\u009d", because: "C1 controls (OSC introducer) are as dangerous as ESC sequences");
+		output.ExitCode.Should().Be(0);
+	}
+
+	[TestMethod]
+	[Description("The same rejection applies to a pending option's provider values: 'app run --channel ' with a provider returning a newline-embedded value must not leak the forged record through the bridge.")]
+	public void When_PendingOptionProviderReturnsControlCharacters_Then_BridgeRejectsThoseCandidates()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion(
+				"channel",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["alpha\nforged", "beta"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+
+		var output = RunBridge(sut, "app run --channel ");
+
+		output.Text.Should().Contain("beta");
+		output.Text.Should().NotContain("forged");
+		output.ExitCode.Should().Be(0);
+	}
+
 	private static (int ExitCode, string Text) RunBridge(ReplApp app, string line) =>
 		ConsoleCaptureHelper.Capture(() => app.Run(
 		[

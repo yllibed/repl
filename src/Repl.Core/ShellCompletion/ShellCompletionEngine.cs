@@ -149,7 +149,9 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 				.ConfigureAwait(false);
 			foreach (var value in provided)
 			{
-				if (!string.IsNullOrWhiteSpace(value) && valueDedupe.Add(value))
+				if (!string.IsNullOrWhiteSpace(value)
+					&& IsShellSafeCandidate(value)
+					&& valueDedupe.Add(value))
 				{
 					candidates.Add(value);
 					dedupe.Add(value);
@@ -157,6 +159,16 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			}
 		}
 	}
+
+	// The bridge protocol is line-delimited plain text: an embedded CR/LF forges an extra
+	// completion record, and terminal control characters (C0, DEL, C1 — including the ESC
+	// and OSC introducers) would reach the user's completion UI unfiltered. Provider values
+	// reflect external data (filenames, database labels), so an unsafe candidate is rejected
+	// WHOLE — the protocol has no escaping that could represent it. Both range scans are
+	// SIMD-accelerated (MemoryExtensions.ContainsAnyInRange).
+	private static bool IsShellSafeCandidate(string value) =>
+		!value.AsSpan().ContainsAnyInRange('\u0000', '\u001F')
+		&& !value.AsSpan().ContainsAnyInRange('\u007F', '\u009F');
 
 	// Runs the pending route option's value provider when it opted into the shell bridge.
 	// Returns true when the provider ran (its answer is final, even when empty), so an enum
@@ -186,6 +198,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		foreach (var value in provided)
 		{
 			if (!string.IsNullOrWhiteSpace(value)
+				&& IsShellSafeCandidate(value)
 				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(value)
 				&& valueDedupe.Add(value))
 			{
