@@ -1221,8 +1221,10 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			foreach (var item in provided)
 			{
 				// Values needing quotes are emitted pre-quoted (unrepresentable ones dropped)
-				// so acceptance round-trips through tokenization as one argument.
+				// so acceptance round-trips through tokenization as one argument; values
+				// carrying terminal controls are rejected before any rendering.
 				if (!string.IsNullOrWhiteSpace(item)
+					&& IsControlFreeValue(item)
 					&& QuoteValueForInsertion(item) is { } insertion)
 				{
 					suggestions.Add(new ConsoleLineReader.AutocompleteSuggestion(
@@ -1303,6 +1305,15 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 		return builder.ToString();
 	}
+
+	// Provider values reflect external data (filenames, database labels): a value carrying
+	// terminal control characters (C0 including ESC/BEL, DEL, C1 including the OSC/CSI
+	// introducers) could retitle or corrupt the user's terminal when rendered in the menu or
+	// inserted into the buffer, so it is rejected whole on every surface. Both range scans
+	// are SIMD-accelerated (MemoryExtensions.ContainsAnyInRange).
+	internal static bool IsControlFreeValue(string value) =>
+		!value.AsSpan().ContainsAnyInRange('\u0000', '\u001F')
+		&& !value.AsSpan().ContainsAnyInRange('\u007F', '\u009F');
 
 	// A provider VALUE is semantic data while the suggestion list carries command-line
 	// SYNTAX: a value containing whitespace or a quote is emitted pre-quoted so acceptance
@@ -1387,6 +1398,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				// token), then values needing quotes are emitted pre-quoted for insertion.
 				return provided
 					.Where(static item => !string.IsNullOrWhiteSpace(item)
+						&& IsControlFreeValue(item)
 						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item))
 					.Select(static item => QuoteValueForInsertion(item))
 					.OfType<string>()

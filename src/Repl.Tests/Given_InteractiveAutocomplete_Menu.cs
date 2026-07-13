@@ -216,6 +216,61 @@ public sealed class Given_InteractiveAutocomplete_Menu
 		}
 	}
 
+	[TestMethod]
+	[Description("Provider values carrying terminal control sequences (OSC/CSI/BEL, C1) are rejected on the INTERACTIVE surface too: a value embedding an OSC title change must never reach the rendered output — the same control-character rule as the shell bridge.")]
+	public void When_ProviderValueCarriesTerminalControls_Then_MenuNeverRendersThem()
+	{
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion("target", static (_, _, _) =>
+				ValueTask.FromResult<IReadOnlyList<string>>(["\u001b]0;forged-title\u0007safe", "clean"]))
+			.WithDescription("Deploy.");
+
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		var keyReader = new FakeKeyReader(
+		[
+			Key(ConsoleKey.D, 'd'),
+			Key(ConsoleKey.E, 'e'),
+			Key(ConsoleKey.P, 'p'),
+			Key(ConsoleKey.L, 'l'),
+			Key(ConsoleKey.O, 'o'),
+			Key(ConsoleKey.Y, 'y'),
+			Key(ConsoleKey.Spacebar, ' '),
+			Key(ConsoleKey.C, 'c'),
+			Key(ConsoleKey.Tab, '\t'),
+			Key(ConsoleKey.Tab, '\t'),
+			Key(ConsoleKey.Tab, '\t'),
+			Key(ConsoleKey.Escape),
+			Key(ConsoleKey.Escape),
+			Key(ConsoleKey.E, 'e'),
+			Key(ConsoleKey.X, 'x'),
+			Key(ConsoleKey.I, 'i'),
+			Key(ConsoleKey.T, 't'),
+			Key(ConsoleKey.Enter, '\r'),
+		]);
+
+		var previousReader = ReplSessionIO.KeyReader;
+		using var scope = ReplSessionIO.SetSession(harness.Writer, TextReader.Null);
+		try
+		{
+			ReplSessionIO.KeyReader = keyReader;
+			ReplSessionIO.WindowSize = (80, 12);
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.VtInput;
+
+			var exitCode = sut.Run([]);
+
+			exitCode.Should().Be(0);
+			harness.RawOutput.Should().NotContain("forged-title",
+				because: "an OSC sequence in a provider value must never reach the user's terminal");
+			harness.RawOutput.Should().Contain("clean", because: "well-formed values are still offered");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
 	private static ConsoleKeyInfo Key(ConsoleKey key, char ch = '\0') =>
 		new(ch, key, shift: false, alt: false, control: false);
 }

@@ -175,8 +175,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	// WHOLE — the protocol has no escaping that could represent it. Both range scans are
 	// SIMD-accelerated (MemoryExtensions.ContainsAnyInRange).
 	private static bool IsShellSafeCandidate(string value) =>
-		!value.AsSpan().ContainsAnyInRange('\u0000', '\u001F')
-		&& !value.AsSpan().ContainsAnyInRange('\u007F', '\u009F');
+		AutocompleteEngine.IsControlFreeValue(value);
 
 	// Characters that never need shell quoting — a conservative ASCII identifier-ish set.
 	// Anything else (whitespace, $, `, quotes, globs, redirects, non-ASCII, ...) routes the
