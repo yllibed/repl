@@ -124,11 +124,32 @@ If signals are conflicting or weak, result is `unknown` (no auto-install in `Aut
 - Command literals from the mapped graph.
 - Static command options from handler parameters (resolved terminal routes).
 - Static global options (`--help`, `--interactive`, `--no-interactive`, `--no-logo`, output aliases, `--output:<format>`, `--answer:<name>`, and the result-flow flags `--result:page-size`, `--result:cursor`, `--result:pager`, `--result:all`).
+- Enum member names for a pending enum-typed route option.
+- `WithCompletion(...)` provider values — **opt-in per provider** (see below).
 
 Not included:
 
-- Dynamic data values (contexts/arguments).
-- `WithCompletion(...)` providers through shell completion.
+- Dynamic data values for contexts.
+
+### Value providers are opt-in
+
+Every shell Tab spawns a new process and blocks the user's shell until the bridge answers,
+so a slow completion provider (network, database) must never run there implicitly. A
+provider only serves shell completion when its registration opts in:
+
+```csharp
+app.Map("contact inspect {clientId}", (string clientId) => Inspect(clientId))
+   .WithCompletion(
+       "clientId",
+       (ctx, input, ct) => LookupClientIdsAsync(input, ct),
+       CompletionProviderScope.InteractiveAndShell);
+```
+
+The default scope (`CompletionProviderScope.Interactive`) keeps the provider on in-process
+surfaces only: the interactive Tab menu and the `complete` ambient command. Opt in only
+when the provider is fast enough for a blocking shell Tab, such as in-memory or local
+lookups. Opted-in providers complete both the positional value being typed and a pending
+route option's value, with the same binding rules as the interactive menu.
 
 ## Managed profile blocks
 
@@ -262,10 +283,15 @@ same source, normalize prior tokens through the same parser profile (option valu
 POSIX `--` honored, response files never expanded), and use the same option-prefix gate — a
 single dash already surfaces short aliases such as `-f`, while signed numeric literals
 (`-42`) stay positional. Both also complete **enum values** for a pending option (its member
-names, under the parameter's effective case sensitivity), and the interactive menu
-additionally runs a pending option's `WithCompletion` value provider. One deliberate
-difference remains:
+names, under the parameter's effective case sensitivity), and both run `WithCompletion`
+value providers — **while the value is being typed** for a positional parameter, and for a
+pending option's value (provider first, enum fallback second). Both stop offering provider
+values once the position can no longer bind at execution (a bound value, or the route's
+trailing option region). Two deliberate differences remain:
 
 - On an **empty** token after a complete command, shell completion lists option names (a
   dump-style list is cheap there), while the interactive menu shows parameter placeholders —
   options appear from the first typed `-`.
+- The interactive menu runs **every** registered provider; the shell bridge only runs
+  providers registered with `CompletionProviderScope.InteractiveAndShell`, because each
+  shell Tab spawns a blocking process.
