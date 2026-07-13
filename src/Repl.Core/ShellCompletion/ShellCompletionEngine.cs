@@ -8,7 +8,11 @@ namespace Repl;
 internal sealed class ShellCompletionEngine(CoreReplApp app)
 {
 
-	public string[] ResolveShellCompletionCandidates(string line, int cursor)
+	public async ValueTask<string[]> ResolveShellCompletionCandidatesAsync(
+		string line,
+		int cursor,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
 	{
 		// Completion must not poison the durable routing cache (see the interactive path).
 		var activeGraph = app.ResolveActiveRoutingGraph(useDurableCache: false);
@@ -19,6 +23,17 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		}
 
 		var resolution = ResolveShellCommitted(state.PriorTokens, activeGraph);
+		return await CollectShellCandidatesAsync(state, resolution, activeGraph, serviceProvider, cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	private async ValueTask<string[]> CollectShellCandidatesAsync(
+		ShellCompletionInputState state,
+		ShellResolution resolution,
+		ActiveRoutingGraph activeGraph,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
 		var commandPrefix = resolution.CommandPrefix;
 		var optionsTerminated = resolution.OptionsTerminated;
 		var routeMatch = resolution.Match;
@@ -47,28 +62,125 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			&& !optionsTerminated
 			&& hasTerminalRoute
 			&& routeOptionIsLastCommitted
-			&& TryAddRouteEnumValueCandidates(
-				routeMatch!,
-				currentTokenPrefix,
-				dedupe,
-				candidates))
+			&& await TryAddPendingOptionValueCandidatesAsync(
+					routeMatch!, currentTokenPrefix, serviceProvider, dedupe, candidates, cancellationToken)
+				.ConfigureAwait(false))
 		{
 			candidates.Sort(StringComparer.OrdinalIgnoreCase);
 			return [.. candidates];
 		}
 
-		// A valued option still awaiting its value (and not an enum, which the block above
-		// would have completed) makes the current token that value — offering a command or
-		// option name here would misparse.
+		// A valued option still awaiting its value (and not completed by the block above)
+		// makes the current token that value — offering a command or option name here would
+		// misparse.
 		if (app.Autocomplete.IsPendingOptionValue(afterExecutable, routeMatch, optionsTerminated, currentTokenPrefix))
 		{
 			return [];
 		}
 
+		await AddShellPositionalProviderCandidatesAsync(
+				resolution, activeGraph, currentTokenPrefix, currentTokenIsOption, serviceProvider, dedupe, candidates, cancellationToken)
+			.ConfigureAwait(false);
 		AddShellCommandAndOptionCandidates(
 			resolution, activeGraph, currentTokenPrefix, currentTokenIsOption, hasTerminalRoute, dedupe, candidates);
 		candidates.Sort(StringComparer.OrdinalIgnoreCase);
 		return [.. candidates];
+	}
+
+	// The pending option's own value source — an opted-in provider first, enum member names
+	// as the fallback — mirroring the interactive menu's precedence.
+	private async ValueTask<bool> TryAddPendingOptionValueCandidatesAsync(
+		RouteMatch match,
+		string currentTokenPrefix,
+		IServiceProvider serviceProvider,
+		HashSet<string> dedupe,
+		List<string> candidates,
+		CancellationToken cancellationToken) =>
+		await TryAddPendingOptionProviderCandidatesAsync(
+				match, currentTokenPrefix, serviceProvider, candidates, cancellationToken)
+			.ConfigureAwait(false)
+		|| TryAddRouteEnumValueCandidates(match, currentTokenPrefix, dedupe, candidates);
+
+	// Invokes the value provider targeting the positional segment the current token occupies,
+	// mirroring the interactive menu (shared target resolution, same option-region and
+	// option-prefix exclusions). Only providers registered with
+	// CompletionProviderScope.InteractiveAndShell run here: the bridge spawns a process per
+	// completion request and blocks the user's shell, so slow providers are opt-in.
+	private async ValueTask AddShellPositionalProviderCandidatesAsync(
+		ShellResolution resolution,
+		ActiveRoutingGraph activeGraph,
+		string currentTokenPrefix,
+		bool currentTokenIsOption,
+		IServiceProvider serviceProvider,
+		HashSet<string> dedupe,
+		List<string> candidates,
+		CancellationToken cancellationToken)
+	{
+		if (currentTokenIsOption || resolution.Match is { RemainingTokens.Count: > 0 })
+		{
+			return;
+		}
+
+		var matchingRoutes = app.Autocomplete.CollectVisibleMatchingRoutes(
+			resolution.CommandPrefix,
+			StringComparison.OrdinalIgnoreCase,
+			activeGraph.Routes,
+			activeGraph.Contexts);
+		if (AutocompleteEngine.ResolvePositionalCompletionTarget(
+				matchingRoutes,
+				resolution.CommandPrefix,
+				StringComparison.OrdinalIgnoreCase,
+				app.OptionsSnapshot.Parsing)
+			is not { } target
+			|| !target.Route.Command.IsCompletionShellScoped(target.TargetName))
+		{
+			return;
+		}
+
+		var provided = await target.Provider(new CompletionContext(serviceProvider), currentTokenPrefix, cancellationToken)
+			.ConfigureAwait(false);
+		foreach (var value in provided)
+		{
+			TryAddShellCompletionCandidate(value, dedupe, candidates);
+		}
+	}
+
+	// Runs the pending route option's value provider when it opted into the shell bridge.
+	// Returns true when the provider ran (its answer is final, even when empty), so an enum
+	// fallback never overrides an explicit provider — the interactive menu's precedence.
+	private async ValueTask<bool> TryAddPendingOptionProviderCandidatesAsync(
+		RouteMatch match,
+		string currentTokenPrefix,
+		IServiceProvider serviceProvider,
+		List<string> candidates,
+		CancellationToken cancellationToken)
+	{
+		if (!TryResolvePendingRouteOption(match, out var entry)
+			|| !match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion)
+			|| !match.Route.Command.IsCompletionShellScoped(entry.ParameterName))
+		{
+			return false;
+		}
+
+		var provided = await completion(new CompletionContext(serviceProvider), currentTokenPrefix, cancellationToken)
+			.ConfigureAwait(false);
+		// Option VALUES dedupe case-sensitively: a string option value is case-significant at
+		// execution, so provider results differing only by case must both survive (parity with
+		// the interactive pending path). The invocation parser consumes a following token as
+		// the option's value only when it is not option-like, so non-consumable candidates
+		// (accepting one would leave the option unset) are dropped by the parser's own rule.
+		var valueDedupe = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var value in provided)
+		{
+			if (!string.IsNullOrWhiteSpace(value)
+				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(value)
+				&& valueDedupe.Add(value))
+			{
+				candidates.Add(value);
+			}
+		}
+
+		return true;
 	}
 
 	private void AddShellCommandAndOptionCandidates(

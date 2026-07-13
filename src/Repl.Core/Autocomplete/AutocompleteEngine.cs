@@ -1196,33 +1196,14 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			return [];
 		}
 
-		// The token being typed occupies the segment at the index right AFTER the committed
-		// prefix, so the provider is resolved by THAT dynamic segment's name. Gating on a fully
-		// matched route instead would only fire once the value token is committed — one token
-		// too late, on a position that can no longer bind to the parameter (issue #45) — and a
-		// sole-registration lookup would run the wrong provider on multi-parameter commands.
-		var segmentIndex = commandPrefix.Length;
-		CompletionDelegate? completion = null;
-		foreach (var route in matchingRoutes)
-		{
-			if (segmentIndex < route.Template.Segments.Count
-				&& route.Template.Segments[segmentIndex] is DynamicRouteSegment dynamicSegment
-				&& MatchesRoutePrefix(route, commandPrefix, prefixComparison, parsingOptions)
-				&& route.Command.Completions.TryGetValue(dynamicSegment.Name, out completion))
-			{
-				break;
-			}
-
-			completion = null;
-		}
-
-		if (completion is null)
+		if (ResolvePositionalCompletionTarget(matchingRoutes, commandPrefix, prefixComparison, parsingOptions)
+			is not { } target)
 		{
 			return [];
 		}
 
 		var completionContext = new CompletionContext(serviceProvider);
-		var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
+		var provided = await target.Provider(completionContext, currentTokenPrefix, cancellationToken)
 			.ConfigureAwait(false);
 		return provided
 			.Where(static item => !string.IsNullOrWhiteSpace(item))
@@ -1230,6 +1211,33 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				item,
 				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
 			.ToArray();
+	}
+
+	// The token being typed occupies the segment at the index right AFTER the committed
+	// prefix, so the provider is resolved by THAT dynamic segment's name. Gating on a fully
+	// matched route instead would only fire once the value token is committed — one token
+	// too late, on a position that can no longer bind to the parameter (issue #45) — and a
+	// sole-registration lookup would run the wrong provider on multi-parameter commands.
+	// Shared with the shell completion bridge so both surfaces resolve the same target.
+	internal static (RouteDefinition Route, string TargetName, CompletionDelegate Provider)? ResolvePositionalCompletionTarget(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
+		StringComparison prefixComparison,
+		ParsingOptions parsingOptions)
+	{
+		var segmentIndex = commandPrefix.Length;
+		foreach (var route in matchingRoutes)
+		{
+			if (segmentIndex < route.Template.Segments.Count
+				&& route.Template.Segments[segmentIndex] is DynamicRouteSegment dynamicSegment
+				&& MatchesRoutePrefix(route, commandPrefix, prefixComparison, parsingOptions)
+				&& route.Command.Completions.TryGetValue(dynamicSegment.Name, out var completion))
+			{
+				return (route, dynamicSegment.Name, completion);
+			}
+		}
+
+		return null;
 	}
 
 	// Completes the VALUE of a pending route option by invoking ONLY that option's own provider.

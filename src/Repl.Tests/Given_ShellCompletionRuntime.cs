@@ -8,12 +8,13 @@ public sealed class Given_ShellCompletionRuntime
 {
 	[TestMethod]
 	[Description("Regression guard: verifies shell completion bridge joins candidates with LF so POSIX shells do not receive CR characters.")]
-	public void When_BridgeReturnsCandidates_Then_CandidatesAreJoinedWithLf()
+	public async Task When_BridgeReturnsCandidates_Then_CandidatesAreJoinedWithLf()
 	{
 		var runtime = CreateRuntime(
-			resolveCandidates: static (_, _) => ["alpha", "beta"]);
+			resolveCandidates: static (_, _, _) => ValueTask.FromResult<string[]>(["alpha", "beta"]));
 
-		var result = runtime.HandleBridgeRoute(shell: "bash", line: "app a", cursor: "5");
+		var result = await runtime.HandleBridgeRouteAsync(shell: "bash", line: "app a", cursor: "5", CancellationToken.None)
+			.ConfigureAwait(false);
 
 		result.Should().BeOfType<string>();
 		result.Should().Be("alpha\nbeta");
@@ -208,11 +209,11 @@ public sealed class Given_ShellCompletionRuntime
 
 	private static ShellCompletionRuntime CreateRuntime(
 		ReplOptions? options = null,
-		Func<string, int, string[]>? resolveCandidates = null,
+		Func<string, int, CancellationToken, ValueTask<string[]>>? resolveCandidates = null,
 		Func<string, string?>? tryReadProfileContent = null)
 	{
 		options ??= new ReplOptions();
-		resolveCandidates ??= static (_, _) => [];
+		resolveCandidates ??= static (_, _, _) => ValueTask.FromResult<string[]>([]);
 		return new ShellCompletionRuntime(
 			options,
 			resolveEntryAssemblyName: static () => Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? string.Empty,

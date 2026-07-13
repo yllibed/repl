@@ -2,7 +2,11 @@ namespace Repl.ShellCompletion;
 
 internal interface IShellCompletionRuntime
 {
-	object HandleBridgeRoute(string? shell, string? line, string? cursor);
+	ValueTask<object> HandleBridgeRouteAsync(
+		string? shell,
+		string? line,
+		string? cursor,
+		CancellationToken cancellationToken);
 
 	object HandleStatusRoute();
 

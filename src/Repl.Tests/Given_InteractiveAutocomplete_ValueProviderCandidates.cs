@@ -104,6 +104,102 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 			because: "'-4' is a signed numeric literal, so it is a positional value for the open {count} segment");
 	}
 
+	[TestMethod]
+	[Description("A provider registered with CompletionProviderScope.InteractiveAndShell is invoked by the shell completion bridge while the value is being typed: 'app contact inspect ab' offers the provider's candidates, matching the interactive menu.")]
+	public async Task When_ShellScopedProviderAndValueIsTyped_Then_ShellOffersProviderCandidates()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("contact inspect {clientId}", static string (string clientId) => clientId)
+			.WithCompletion(
+				"clientId",
+				static (_, input, _) => ValueTask.FromResult<IReadOnlyList<string>>([$"{input}001", $"{input}002"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Inspect a contact.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app contact inspect ab").ConfigureAwait(false);
+
+		candidates.Should().Contain("ab001", because: "the shell-scoped provider must run for the value being typed");
+		candidates.Should().Contain("ab002");
+	}
+
+	[TestMethod]
+	[Description("A provider with the default scope (Interactive) is NOT invoked by the shell bridge — each shell Tab spawns the process and blocks on it, so slow providers must be excluded unless the author opted in.")]
+	public async Task When_DefaultScopedProviderAndValueIsTyped_Then_ShellOffersNothing()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("contact inspect {clientId}", static string (string clientId) => clientId)
+			.WithCompletion("clientId", static (_, input, _) =>
+				ValueTask.FromResult<IReadOnlyList<string>>([$"{input}001", $"{input}002"]))
+			.WithDescription("Inspect a contact.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app contact inspect ab").ConfigureAwait(false);
+
+		candidates.Should().NotContain("ab001", because: "shell invocation is opt-in per provider");
+	}
+
+	[TestMethod]
+	[Description("A pending valued route option completes through its shell-scoped provider on the shell bridge ('app run --channel ' offers the provider's values), dropping candidates the invocation parser would not consume as the option's separate value: dash-prefixed values are the next option, signed numeric literals bind as values.")]
+	public async Task When_ShellScopedProviderOnPendingOption_Then_ShellOffersConsumableValues()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion(
+				"channel",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["alpha", "--prod", "-42"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run --channel ").ConfigureAwait(false);
+
+		candidates.Should().Contain("alpha", because: "the pending option's shell-scoped provider must run");
+		candidates.Should().Contain("-42", because: "a signed numeric literal is consumable as the option's separate value");
+		candidates.Should().NotContain("--prod", because: "a dash-prefixed candidate parses as the next option, leaving --channel unset");
+	}
+
+	[TestMethod]
+	[Description("A pending valued route option whose provider has the default scope offers nothing on the shell bridge — the opt-in rule applies to option-value providers exactly like positional ones.")]
+	public async Task When_DefaultScopedProviderOnPendingOption_Then_ShellOffersNothing()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion("channel", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["alpha"]))
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run --channel ").ConfigureAwait(false);
+
+		candidates.Should().NotContain("alpha", because: "shell invocation is opt-in per provider");
+	}
+
+	[TestMethod]
+	[Description("Shell parity with the interactive no-misfire rule: once the value is committed ('app deploy x '), even a shell-scoped provider must not fire — its candidates could no longer bind to the parameter at execution.")]
+	public async Task When_ShellScopedProviderAndValueIsCommitted_Then_ShellOffersNothing()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["zo-profile"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app deploy x ").ConfigureAwait(false);
+
+		candidates.Should().NotContain("zo-profile", because: "{target} is already bound; nothing typed here can bind to it");
+	}
+
+	private static async Task<string[]> ResolveShellCandidatesAsync(ShellCompletionEngine engine, string line) =>
+		await engine.ResolveShellCompletionCandidatesAsync(
+				line,
+				line.Length,
+				EmptyServiceProvider.Instance,
+				CancellationToken.None)
+			.ConfigureAwait(false);
+
 	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(
 		CoreReplApp app,
 		string input,

@@ -55,7 +55,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			_options,
 			ResolveEntryAssemblyName,
 			ResolveShellCompletionCommandName,
-			ResolveShellCompletionCandidates);
+			ResolveShellCompletionCandidatesAsync);
 		_moduleRegistrations.Add(new ModuleRegistration(ModuleId: 0, IsPresent: static _ => true));
 		_moduleMappingScope.Push(0);
 		MapModule(
