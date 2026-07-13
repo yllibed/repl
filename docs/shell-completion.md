@@ -151,6 +151,18 @@ when the provider is fast enough for a blocking shell Tab, such as in-memory or 
 lookups. Opted-in providers complete both the positional value being typed and a pending
 route option's value, with the same binding rules as the interactive menu.
 
+Bridge-side guarantees for provider values:
+
+- Each provider invocation is bounded by `ShellCompletionOptions.ProviderTimeout`
+  (default: 1 second) — a stalled provider is abandoned and completion degrades to the
+  static candidates instead of blocking the user's shell.
+- The bridge protocol is line-delimited plain text, so values containing control
+  characters (newlines, ANSI/OSC sequences) are rejected whole rather than forwarded to
+  the shell's completion UI.
+- Values containing whitespace or a quote are emitted pre-quoted (`New York` →
+  `"New York"`) so the accepted candidate parses back as a single argument; the provider
+  itself receives the decoded value prefix (typing `"Ne` invokes it with `Ne`).
+
 ## Managed profile blocks
 
 Install/uninstall is idempotent through namespaced markers:
