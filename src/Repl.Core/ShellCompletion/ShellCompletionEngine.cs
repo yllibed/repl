@@ -66,8 +66,9 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		if (!optionsTerminated
 			&& hasTerminalRoute
 			&& routeOptionIsLastCommitted
+			&& routeMatch is { } pendingMatch
 			&& await TryAddPendingOptionValueCandidatesAsync(
-					routeMatch!, currentTokenPrefix, shell, serviceProvider, dedupe, candidates, cancellationToken)
+					pendingMatch, currentTokenPrefix, shell, serviceProvider, dedupe, candidates, cancellationToken)
 				.ConfigureAwait(false))
 		{
 			candidates.Sort(StringComparer.OrdinalIgnoreCase);
@@ -427,10 +428,10 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		if (!resolution.OptionsTerminated
 			&& (currentTokenIsOption || (string.IsNullOrEmpty(currentTokenPrefix) && hasTerminalRoute)))
 		{
-			AddShellOptionCandidates(
-				hasTerminalRoute ? resolution.Match!.Route : null,
-				currentTokenPrefix,
-				candidates);
+			var optionRoute = hasTerminalRoute && resolution.Match is { } terminalMatch
+				? terminalMatch.Route
+				: null;
+			AddShellOptionCandidates(optionRoute, currentTokenPrefix, candidates);
 		}
 	}
 
