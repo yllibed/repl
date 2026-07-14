@@ -131,13 +131,12 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			return;
 		}
 
-		// A completion requested from inside an already-open shell quote (e.g. bash 'app
-		// contact "Ne') is unsafe for provider values: the shell keeps the opening quote, so
-		// our emitted token lands INSIDE it as literal characters and any interpolation the
-		// outer quote performs still runs on acceptance. We cannot reshape the user's opening
-		// quote from here, so provider values are dropped in that context (static command and
-		// option names, which are controlled identifiers, are unaffected).
-		if (HasUnterminatedQuote(currentTokenPrefix))
+		// A completion requested from inside (or after an escaped delimiter within) a shell
+		// quote is unsafe for provider values: the shell may keep an interpolating quote open,
+		// so our emitted token would land inside it and run on acceptance. The bridge cannot
+		// track per-shell escaping, so any quoted current token drops provider values (see
+		// PrefixHasQuoteContext).
+		if (PrefixHasQuoteContext(currentTokenPrefix))
 		{
 			return;
 		}
@@ -226,30 +225,16 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	private static readonly System.Buffers.SearchValues<char> s_powerShellPlainChars =
 		System.Buffers.SearchValues.Create("+-./0123456789:=ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
 
-	// True when the raw current-token prefix ends inside an unclosed quote (the tokenizer's
-	// quote state machine: a quote opens, the matching quote closes; the opening quote is
-	// part of the prefix because token spans start before it). Used to detect an open-quoted
-	// completion context the bridge cannot safely reshape.
-	internal static bool HasUnterminatedQuote(string prefix)
-	{
-		char? quote = null;
-		foreach (var ch in prefix)
-		{
-			if (quote is { } active)
-			{
-				if (ch == active)
-				{
-					quote = null;
-				}
-			}
-			else if (ch is '"' or '\'')
-			{
-				quote = ch;
-			}
-		}
-
-		return quote is not null;
-	}
+	// True when the raw current-token prefix carries ANY quote character. Provider values are
+	// dropped in that case because the bridge cannot reliably know the target shell's quote
+	// state: a naive "is a quote still open" scan is not enough — a shell-ESCAPED delimiter
+	// (bash `"a\"`, PowerShell `'a''`, etc.) keeps the shell inside an open, interpolating
+	// quote while a delimiter-counting scan would think it closed, re-opening the injection
+	// boundary. Rather than reimplement every shell's escaping rules here, we conservatively
+	// suppress provider output for any quoted current token (an unquoted prefix — the common
+	// case — is unaffected; static command/option names are controlled and still offered).
+	internal static bool PrefixHasQuoteContext(string prefix) =>
+		prefix.AsSpan().ContainsAny('"', '\'');
 
 	// Encodes one provider VALUE as LITERAL data for the target shell. The emitted candidate is
 	// inserted into the user's command line and re-parsed by that shell, so an interpolating
@@ -375,9 +360,9 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		List<string> candidates,
 		CancellationToken cancellationToken)
 	{
-		// An open-quoted value context is unsafe for provider output (see the positional
-		// path); skipping here lets the static enum fallback still run.
-		if (HasUnterminatedQuote(currentTokenPrefix)
+		// A quoted value context is unsafe for provider output (see the positional path);
+		// skipping here lets the static enum fallback still run.
+		if (PrefixHasQuoteContext(currentTokenPrefix)
 			|| !TryResolvePendingRouteOption(match, out var entry)
 			|| !match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion)
 			|| !match.Route.Command.IsCompletionShellScoped(entry.ParameterName))

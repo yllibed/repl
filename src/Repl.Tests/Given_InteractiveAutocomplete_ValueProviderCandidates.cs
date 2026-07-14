@@ -642,6 +642,29 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 	}
 
 	[TestMethod]
+	[Description("The shell quote-context guard suppresses provider values for ANY quoted current token, not just a naively-open one: a shell-ESCAPED delimiter (bash \"a\\\", PowerShell 'a'') or a balanced-looking pair keeps the target shell inside an interpolating quote, which a delimiter-counting scan would miss. PrefixHasQuoteContext returns true whenever a quote character is present, and false for plain prefixes.")]
+	[DataRow("\"a\\\"", DisplayName = "escaped double-quote delimiter (bash)")]
+	[DataRow("'a''", DisplayName = "doubled single-quote (PowerShell)")]
+	[DataRow("\"ab\"", DisplayName = "balanced-looking closed pair")]
+	[DataRow("\"Ne", DisplayName = "open double quote")]
+	public void When_PrefixCarriesAnyQuote_Then_GuardSuppresses(string prefix)
+	{
+		ShellCompletionEngine.PrefixHasQuoteContext(prefix).Should().BeTrue(
+			because: "a quoted current token cannot be reshaped without the shell's escaping rules");
+	}
+
+	[TestMethod]
+	[Description("The quote-context guard does not over-fire on ordinary unquoted prefixes: a plain value being typed still gets provider completion.")]
+	[DataRow("Ne")]
+	[DataRow("C:/tmp")]
+	[DataRow("-prod")]
+	[DataRow("")]
+	public void When_PrefixHasNoQuote_Then_GuardAllows(string prefix)
+	{
+		ShellCompletionEngine.PrefixHasQuoteContext(prefix).Should().BeFalse();
+	}
+
+	[TestMethod]
 	[Description("PowerShell treats '@' and ',' as syntax even bare, so those provider values are single-quoted as literal data: 'app deploy ' offers '@payload' and 'alpha,beta' each wrapped in single quotes, not emitted raw where pwsh would splat/list them.")]
 	public async Task When_PowerShellValueContainsMetacharacters_Then_ItIsSingleQuoted()
 	{
