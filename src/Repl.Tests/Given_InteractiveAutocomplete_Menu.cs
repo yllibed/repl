@@ -323,6 +323,58 @@ public sealed class Given_InteractiveAutocomplete_Menu
 		}
 	}
 
+	[TestMethod]
+	[Description("First-Tab common-prefix is case-sensitive for provider VALUES: with case-distinct candidates 'Prod'/'prod', typing 'case p' + Tab must NOT auto-insert 'Prod' (a case-folded common prefix) — both survive so the menu can render them for selection.")]
+	public void When_FirstTabOnCaseDistinctValues_Then_MenuOpensInsteadOfAutoInserting()
+	{
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.Map("case {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) =>
+				ValueTask.FromResult<IReadOnlyList<string>>(["Prod", "prod"]))
+			.WithDescription("Case.");
+
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		var keyReader = new FakeKeyReader(
+		[
+			Key(ConsoleKey.C, 'c'),
+			Key(ConsoleKey.A, 'a'),
+			Key(ConsoleKey.S, 's'),
+			Key(ConsoleKey.E, 'e'),
+			Key(ConsoleKey.Spacebar, ' '),
+			Key(ConsoleKey.P, 'p'),
+			Key(ConsoleKey.Tab, '\t'),
+			Key(ConsoleKey.Escape),
+			Key(ConsoleKey.Escape),
+			Key(ConsoleKey.E, 'e'),
+			Key(ConsoleKey.X, 'x'),
+			Key(ConsoleKey.I, 'i'),
+			Key(ConsoleKey.T, 't'),
+			Key(ConsoleKey.Enter, '\r'),
+		]);
+
+		var previousReader = ReplSessionIO.KeyReader;
+		using var scope = ReplSessionIO.SetSession(harness.Writer, TextReader.Null);
+		try
+		{
+			ReplSessionIO.KeyReader = keyReader;
+			ReplSessionIO.WindowSize = (80, 12);
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.VtInput;
+
+			var exitCode = sut.Run([]);
+
+			exitCode.Should().Be(0);
+			// Both case-distinct values must reach the rendered menu; a case-folded
+			// auto-insert would have replaced the token with 'Prod' and shown neither.
+			harness.RawOutput.Should().Contain("prod", because: "the lowercase value must remain selectable");
+			harness.RawOutput.Should().Contain("Prod");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
 	private static ConsoleKeyInfo Key(ConsoleKey key, char ch = '\0') =>
 		new(ch, key, shift: false, alt: false, control: false);
 }
