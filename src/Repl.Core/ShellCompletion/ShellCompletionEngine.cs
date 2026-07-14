@@ -217,14 +217,18 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	// Characters that never need shell quoting — a conservative ASCII identifier-ish set.
 	// Anything else (whitespace, $, `, quotes, globs, redirects, non-ASCII, ...) routes the
 	// value through the single-quote literal form below. Over-quoting is always safe.
+	// '=' is intentionally EXCLUDED: a leading '=' word triggers zsh EQUALS expansion
+	// (`=foo` → the path of command foo) on accept, so any '='-bearing value takes the
+	// single-quote literal form instead of being emitted bare.
 	private static readonly System.Buffers.SearchValues<char> s_shellPlainChars =
-		System.Buffers.SearchValues.Create("+,-./0123456789:=@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
+		System.Buffers.SearchValues.Create("+,-./0123456789:@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
 
 	// PowerShell treats '@' (splatting) and ',' (array operator) as syntax even in a bare
 	// argument — '@x' splats and 'a,b' becomes a two-element array — so they are NOT plain
-	// data there and force the single-quote literal form. Otherwise identical to the set above.
+	// data there and force the single-quote literal form. '=' is excluded here too (zsh parity
+	// / harmless in pwsh). Otherwise identical to the set above.
 	private static readonly System.Buffers.SearchValues<char> s_powerShellPlainChars =
-		System.Buffers.SearchValues.Create("+-./0123456789:=ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
+		System.Buffers.SearchValues.Create("+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
 
 	// True when the raw current-token prefix carries ANY quote character. Provider values are
 	// dropped in that case because the bridge cannot reliably know the target shell's quote

@@ -36,6 +36,44 @@ public sealed class Given_ShellCompletionBridge_Providers
 	}
 
 	[TestMethod]
+	[Description("The PR's core safety premise, guarded end-to-end: a DEFAULT-scope (2-arg WithCompletion) provider is NEVER invoked by the shell bridge — its values must not appear in 'completion __complete' output, so an interactive-only/slow provider can't block a shell Tab.")]
+	public void When_DefaultScopeProvider_Then_BridgeDoesNotInvokeIt()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			// 2-arg overload → default CompletionProviderScope.Interactive (interactive only).
+			.WithCompletion("target", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["interactive-only"]))
+			.WithDescription("Deploy.");
+
+		var output = RunBridge(sut, "app deploy ");
+
+		output.Text.Should().NotContain("interactive-only",
+			because: "a default-scope provider is interactive-only and must never run on the blocking shell bridge");
+		output.ExitCode.Should().Be(0);
+	}
+
+	[TestMethod]
+	[Description("A shell-scoped provider value that is a GLOBAL option (stripped by GlobalOptionParser before routing, so it never binds to the segment) is not offered as a positional value through the bridge — parity with execution.")]
+	public void When_ProviderValueIsGlobalOption_Then_BridgeDoesNotOfferItAsValue()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(static options => options.Parsing.AddGlobalOption<string>("tenant"));
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["--tenant", "prod-server"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+
+		var output = RunBridge(sut, "app deploy prod");
+
+		output.Text.Should().Contain("prod-server", because: "an ordinary value still binds and completes");
+		output.Text.Should().NotContain("--tenant",
+			because: "the global parser strips --tenant before routing, so it never binds to {target}");
+		output.ExitCode.Should().Be(0);
+	}
+
+	[TestMethod]
 	[Description("The bridge protocol is line-delimited: a provider value with an embedded newline would forge an extra completion record, and ANSI/OSC control sequences would reach the user's completion UI. Such candidates are rejected whole at the bridge boundary; clean values still flow.")]
 	public void When_ProviderReturnsControlCharacters_Then_BridgeRejectsThoseCandidates()
 	{
