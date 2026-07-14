@@ -47,7 +47,10 @@ internal sealed class ZshShellCompletionAdapter : IShellCompletionAdapter
 			    reply+=("$candidate")
 			  done < <({{commandName}} {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell zsh --line "$line" --cursor "$cursor" --no-interactive --no-logo)
 			  if (( ${#reply[@]} > 0 )); then
-			    compadd -- "${reply[@]}"
+			    # -Q suppresses zsh's own quoting: the bridge already emits shell-literal
+			    # syntax (e.g. 'New York'), so letting zsh re-quote would double it and the
+			    # handler would receive literal quote characters.
+			    compadd -Q -- "${reply[@]}"
 			  fi
 			}
 

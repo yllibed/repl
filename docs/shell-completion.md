@@ -161,9 +161,10 @@ Bridge-side guarantees for provider values:
   the shell's completion UI.
 - Values are emitted as literal shell data — a value needing quoting is single-quoted
   (`New York` → `'New York'`, `$(cmd)` → `'$(cmd)'`, never a form the shell would
-  interpolate). A value containing an apostrophe or backslash is dropped rather than
-  offered, because the shell-specific escape for those characters cannot be re-parsed by
-  the bridge on the following Tab. The provider itself receives the decoded value prefix.
+  interpolate). A value containing an apostrophe is dropped (no single-quote literal can
+  hold one without a shell-specific escape the bridge can't re-parse on the next Tab); a
+  backslash is fine except on fish, whose single quotes escape it. The provider itself
+  receives the decoded value prefix.
 - Completion requested from inside an already-open quote (e.g. `contact "Ne`) yields no
   provider values, since the bridge cannot safely reshape the user's opening quote.
 
@@ -175,6 +176,18 @@ Install/uninstall is idempotent through namespaced markers:
 - `# <<< repl completion [appId=<app-id>;shell=<bash|powershell|zsh|fish|nu>] <<<`
 
 Update/remove targets only the block matching the current app and shell.
+
+### Updating after an upgrade
+
+The installed profile block is a thin shim: it forwards the command line to
+`<app> completion __complete` and renders the result, so all completion *logic* lives in
+the app binary and is picked up automatically the next time you run the upgraded binary.
+The block itself changes only rarely (e.g. a shell adapter fix). When it does, re-run
+`completion install` — it idempotently rewrites the managed block between the markers.
+Auto/Prompt setup does not rewrite an already-installed block (it only checks for the
+markers, which carry no version), so a block-level fix requires this manual re-install.
+The bridge protocol and marker format are stable, so an old block keeps working with a
+new binary and vice versa.
 
 ## Manual setup snippets
 
@@ -242,7 +255,8 @@ _myapp_complete() {
     reply+=("$candidate")
   done < <(myapp completion __complete --shell zsh --line "$line" --cursor "$cursor" --no-interactive --no-logo)
   if (( ${#reply[@]} > 0 )); then
-    compadd -- "${reply[@]}"
+    # -Q suppresses zsh's own quoting: the bridge already returns shell-literal syntax.
+    compadd -Q -- "${reply[@]}"
   fi
 }
 

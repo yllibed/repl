@@ -269,7 +269,14 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			return value;
 		}
 
-		if (value.AsSpan().ContainsAny('\'', '\\'))
+		// An apostrophe can't live in a single-quoted literal without a shell-specific escape
+		// ('\'' , '' ) that the bridge tokenizer can't re-lex on the next Tab, so drop it in
+		// every shell. A backslash is ordinary literal data inside single quotes for bash, zsh,
+		// PowerShell and nu (and round-trips through the bridge tokenizer), so 'C:\Temp'-style
+		// values complete there — but fish's single quotes DO escape '\', so it's dropped only
+		// for fish.
+		if (value.Contains('\'', StringComparison.Ordinal)
+			|| (shell == ShellKind.Fish && value.Contains('\\', StringComparison.Ordinal)))
 		{
 			return null;
 		}
