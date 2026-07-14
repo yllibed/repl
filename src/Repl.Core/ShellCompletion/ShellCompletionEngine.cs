@@ -286,13 +286,16 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var timeout = app.OptionsSnapshot.ShellCompletion.ProviderTimeout;
+		// Resolve the app's TimeProvider so the deadline is driven by an injectable clock
+		// (deterministic under FakeTimeProvider) rather than hardcoding the system clock.
+		var timeProvider = serviceProvider.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 		var providerTask = Task.Run(
 			() => provider(new CompletionContext(serviceProvider), input, deadline.Token).AsTask(),
 			CancellationToken.None);
 		try
 		{
-			var result = await providerTask.WaitAsync(timeout, TimeProvider.System, cancellationToken).ConfigureAwait(false);
+			var result = await providerTask.WaitAsync(timeout, timeProvider, cancellationToken).ConfigureAwait(false);
 			deadline.Dispose();
 			return result;
 		}
