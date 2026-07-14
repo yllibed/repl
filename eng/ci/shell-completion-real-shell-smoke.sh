@@ -71,6 +71,14 @@ if printf "%s\n" "${COMPREPLY[@]}" | grep -F "PWNED" >/dev/null; then
   echo "provider value leaked into an open-quoted context" >&2
   exit 1
 fi
+
+# 4) An ESCAPED quote delimiter keeps the shell inside the open quote; a
+#    naive delimiter count would think it closed and re-offer values.
+complete_line "$REPL_CMD_NAME deploy \"a\\"
+if printf "%s\n" "${COMPREPLY[@]}" | grep -F "PWNED" >/dev/null; then
+  echo "provider value leaked past an escaped quote delimiter" >&2
+  exit 1
+fi
 '
 }
 
