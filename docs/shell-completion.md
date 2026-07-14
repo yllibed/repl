@@ -159,9 +159,13 @@ Bridge-side guarantees for provider values:
 - The bridge protocol is line-delimited plain text, so values containing control
   characters (newlines, ANSI/OSC sequences) are rejected whole rather than forwarded to
   the shell's completion UI.
-- Values containing whitespace or a quote are emitted pre-quoted (`New York` →
-  `"New York"`) so the accepted candidate parses back as a single argument; the provider
-  itself receives the decoded value prefix (typing `"Ne` invokes it with `Ne`).
+- Values are emitted as literal shell data — a value needing quoting is single-quoted
+  (`New York` → `'New York'`, `$(cmd)` → `'$(cmd)'`, never a form the shell would
+  interpolate). A value containing an apostrophe or backslash is dropped rather than
+  offered, because the shell-specific escape for those characters cannot be re-parsed by
+  the bridge on the following Tab. The provider itself receives the decoded value prefix.
+- Completion requested from inside an already-open quote (e.g. `contact "Ne`) yields no
+  provider values, since the bridge cannot safely reshape the user's opening quote.
 
 ## Managed profile blocks
 

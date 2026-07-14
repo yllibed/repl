@@ -451,21 +451,39 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 	}
 
 	[TestMethod]
-	[Description("PowerShell candidates escape an embedded single quote by doubling it ('O''Brien') — the only literal string form in PowerShell; a double-quoted form would interpolate $ and subexpressions.")]
-	public async Task When_ValueContainsSingleQuoteOnPowerShell_Then_CandidateDoublesIt()
+	[Description("A shell provider value containing an apostrophe is DROPPED, not escaped: the shell-specific escape ('\\'' , '' , \\' ) is not re-lexable by the bridge's own tokenizer on the next Tab, so emitting it would break subsequent completion. Values without an apostrophe still complete.")]
+	public async Task When_ShellValueContainsApostrophe_Then_ItIsDropped()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("contact {name}", static string (string name) => name)
 			.WithCompletion(
 				"name",
-				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["O'Brien Co"]),
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["O'Brien Co", "Acme Inc"]),
 				CompletionProviderScope.InteractiveAndShell)
 			.WithDescription("Contact.");
 		var shellEngine = new ShellCompletionEngine(sut);
 
-		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app contact O", ShellKind.PowerShell).ConfigureAwait(false);
+		var bash = await ResolveShellCandidatesAsync(shellEngine, "app contact A").ConfigureAwait(false);
+		var pwsh = await ResolveShellCandidatesAsync(shellEngine, "app contact O", ShellKind.PowerShell).ConfigureAwait(false);
 
-		candidates.Should().Contain("'O''Brien Co'");
+		bash.Should().Contain("'Acme Inc'", because: "an apostrophe-free value with a space round-trips as a single-quoted literal");
+		pwsh.Should().NotContain(static c => c.Contains("Brien", StringComparison.Ordinal),
+			because: "an apostrophe value cannot be re-lexed by the bridge on the next Tab, so it is dropped");
+	}
+
+	[TestMethod]
+	[Description("The apostrophe drop is shell-only: the interactive menu still offers O'Brien (quoted with the OTHER quote kind, which the reader's own tokenizer round-trips).")]
+	public async Task When_InteractiveValueContainsApostrophe_Then_ItIsStillOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("contact {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["O'Brien Co"]))
+			.WithDescription("Contact.");
+
+		var result = await ResolveAutocompleteAsync(sut, "contact O").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("\"O'Brien Co\"",
+			because: "the interactive path double-quotes an apostrophe value, which its own tokenizer round-trips");
 	}
 
 	[TestMethod]

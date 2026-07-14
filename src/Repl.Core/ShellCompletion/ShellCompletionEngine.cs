@@ -226,14 +226,6 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	private static readonly System.Buffers.SearchValues<char> s_powerShellPlainChars =
 		System.Buffers.SearchValues.Create("+-./0123456789:=ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
 
-	// Encodes one provider VALUE as LITERAL data in the target shell's syntax. The emitted
-	// candidate is inserted into the user's command line and re-parsed by that shell, so an
-	// interpolating form is a command-execution boundary for provider-reflected data — in
-	// POSIX shells "$(...)" runs the substitution on acceptance. Only single-quote literal
-	// forms are used, with each shell's own escape for an embedded quote; a value the target
-	// shell cannot represent literally is rejected (null) rather than emitted unsafely.
-	// This is deliberately SEPARATE from the interactive tokenizer quoting: those quotes are
-	// in-REPL syntax, these must survive a real shell's parser.
 	// True when the raw current-token prefix ends inside an unclosed quote (the tokenizer's
 	// quote state machine: a quote opens, the matching quote closes; the opening quote is
 	// part of the prefix because token spans start before it). Used to detect an open-quoted
@@ -259,6 +251,16 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		return quote is not null;
 	}
 
+	// Encodes one provider VALUE as LITERAL data for the target shell. The emitted candidate is
+	// inserted into the user's command line and re-parsed by that shell, so an interpolating
+	// form is a command-execution boundary for provider-reflected data — in POSIX shells
+	// "$(...)" runs the substitution on acceptance. A single-quoted literal is verbatim in
+	// every target shell (only the plain-char fast path skips the quotes). It must ALSO survive
+	// the bridge's own tokenizer on the NEXT Tab: a value containing an apostrophe or backslash
+	// forces a shell-specific escape ('\'' , '' , \' , \\ ) that TokenizeInputSpans cannot
+	// re-lex, so such values are rejected (null) rather than emitted in a form that would break
+	// subsequent completion. Deliberately SEPARATE from the interactive tokenizer quoting, which
+	// can use the other quote kind because the reader re-tokenizes with the same rules.
 	internal static string? QuoteValueForShell(string value, ShellKind shell)
 	{
 		var plainChars = shell == ShellKind.PowerShell ? s_powerShellPlainChars : s_shellPlainChars;
@@ -267,26 +269,12 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			return value;
 		}
 
-		return shell switch
+		if (value.AsSpan().ContainsAny('\'', '\\'))
 		{
-			// POSIX single quotes are fully literal; an embedded quote closes, escapes, and
-			// reopens the literal: ' becomes '\''.
-			ShellKind.Bash or ShellKind.Zsh =>
-				"'" + value.Replace("'", "'\\''", StringComparison.Ordinal) + "'",
-			// Fish single quotes recognize exactly two escapes: \' and \\.
-			ShellKind.Fish =>
-				"'" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("'", "\\'", StringComparison.Ordinal) + "'",
-			// PowerShell single-quoted strings are literal; an embedded quote is doubled.
-			ShellKind.PowerShell =>
-				"'" + value.Replace("'", "''", StringComparison.Ordinal) + "'",
-			// Nushell single quotes are literal but have no escape for an embedded quote;
-			// its double-quoted form supports backslash escapes and does NOT interpolate
-			// (interpolation requires $"...").
-			ShellKind.Nu => value.Contains('\'', StringComparison.Ordinal)
-				? "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\""
-				: "'" + value + "'",
-			_ => null,
-		};
+			return null;
+		}
+
+		return "'" + value + "'";
 	}
 
 	// Bounds one provider invocation to ShellCompletion.ProviderTimeout and isolates its
