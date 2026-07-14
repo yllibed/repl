@@ -162,7 +162,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (target.Route.Command.IsCompletionShellScoped(target.Segment.Name))
 			{
 				await EmitShellProviderValuesAsync(
-						matchingRoutes, resolution.CommandPrefix, target, valuePrefix, shell,
+						resolution.CommandPrefix, activeGraph, target, valuePrefix, shell,
 						serviceProvider, valueDedupe, dedupe, candidates, cancellationToken)
 					.ConfigureAwait(false);
 			}
@@ -170,8 +170,8 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	}
 
 	private async ValueTask EmitShellProviderValuesAsync(
-		IReadOnlyList<RouteDefinition> matchingRoutes,
 		string[] commandPrefix,
+		ActiveRoutingGraph activeGraph,
 		(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider) target,
 		string valuePrefix,
 		ShellKind shell,
@@ -187,13 +187,15 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		foreach (var value in provided ?? [])
 		{
 			// Parity per candidate: the segment constraint must accept it AND execution must
-			// route it to THIS segment (a higher-scoring literal would shadow it); values are
-			// then encoded as literal data in the TARGET shell's syntax (see QuoteValueForShell)
-			// or dropped when unrepresentable.
+			// route it to THIS segment (a higher-scoring or hidden literal would shadow it, a
+			// global-option value would be stripped — CandidateBindsToProviderRoute resolves
+			// against the full active graph after global parsing); values are then encoded as
+			// literal data in the TARGET shell's syntax (see QuoteValueForShell) or dropped
+			// when unrepresentable.
 			if (!string.IsNullOrWhiteSpace(value)
 				&& IsShellSafeCandidate(value)
 				&& RouteConstraintEvaluator.IsMatch(target.Segment, value, parsing)
-				&& AutocompleteEngine.CandidateBindsToProviderRoute(matchingRoutes, commandPrefix, value, target.Route, parsing)
+				&& app.Autocomplete.CandidateBindsToProviderRoute(commandPrefix, value, target.Route, activeGraph)
 				&& QuoteValueForShell(value, shell) is { } insertion
 				&& valueDedupe.Add(insertion))
 			{

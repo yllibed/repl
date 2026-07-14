@@ -663,6 +663,41 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 	}
 
 	[TestMethod]
+	[Description("Ownership is vetted against the FULL active graph, not the discovery-filtered set: a HIDDEN literal 'pick status' shadows the provider's 'status' at execution, so the value must not be offered (and a hidden command must not leak indirectly through completion).")]
+	public async Task When_ProviderValueRoutesToHiddenLiteral_Then_ProviderDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status", static string () => "literal").WithDescription("Pick status.").Hidden();
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["status", "alice"]))
+			.WithDescription("Pick by name.");
+
+		var result = await ResolveAutocompleteAsync(sut, "pick s").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("status",
+			because: "a hidden literal still wins at execution, so the value never binds to {name}");
+	}
+
+	[TestMethod]
+	[Description("Shell parity: a provider value shadowed by a hidden literal is dropped on the bridge too.")]
+	public async Task When_ProviderValueRoutesToHiddenLiteral_Then_ShellDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status", static string () => "literal").WithDescription("Pick status.").Hidden();
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion(
+				"name",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["status", "alice"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Pick by name.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app pick s").ConfigureAwait(false);
+
+		candidates.Should().NotContain("status");
+	}
+
+	[TestMethod]
 	[Description("The route-shadowing filter does not over-reject: a provider value that has no colliding literal ('alice') still binds to {name} and is offered.")]
 	public async Task When_ProviderValueHasNoLiteralCollision_Then_ItIsOffered()
 	{

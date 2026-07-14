@@ -460,7 +460,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	{
 		var dynamicCandidates = await CollectDynamicAutocompleteCandidatesAsync(
 				matchingRoutes, commandPrefix, currentTokenPrefix, terminalRoute, providersAllowed,
-				prefixComparison, app.OptionsSnapshot.Parsing, serviceProvider, cancellationToken)
+				prefixComparison, activeGraph, serviceProvider, cancellationToken)
 			.ConfigureAwait(false);
 
 		// Once a terminal route has trailing option tokens, the command path is complete — no
@@ -1166,17 +1166,18 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		return parameter?.GetCustomAttribute<DescriptionAttribute>()?.Description;
 	}
 
-	private static async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> CollectDynamicAutocompleteCandidatesAsync(
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> CollectDynamicAutocompleteCandidatesAsync(
 		IReadOnlyList<RouteDefinition> matchingRoutes,
 		string[] commandPrefix,
 		string currentTokenPrefix,
 		RouteMatch? terminalRoute,
 		bool providersAllowed,
 		StringComparison prefixComparison,
-		ParsingOptions parsingOptions,
+		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		var parsingOptions = app.OptionsSnapshot.Parsing;
 		// Live-hint refreshes run after EVERY keystroke (MenuRequested: false): awaiting a
 		// user provider there would freeze typing behind a slow lookup, so providers only run
 		// for an explicit completion request (Tab/menu).
@@ -1209,25 +1210,24 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		return await InvokePositionalProvidersAsync(
-				matchingRoutes,
 				commandPrefix,
 				targets,
 				DecodeTokenPrefix(currentTokenPrefix),
-				parsingOptions,
+				activeGraph,
 				serviceProvider,
 				cancellationToken)
 			.ConfigureAwait(false);
 	}
 
-	private static async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> InvokePositionalProvidersAsync(
-		IReadOnlyList<RouteDefinition> matchingRoutes,
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> InvokePositionalProvidersAsync(
 		string[] commandPrefix,
 		IReadOnlyList<(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider)> targets,
 		string valuePrefix,
-		ParsingOptions parsingOptions,
+		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		var parsingOptions = app.OptionsSnapshot.Parsing;
 		var completionContext = new CompletionContext(serviceProvider);
 		var suggestions = new List<ConsoleLineReader.AutocompleteSuggestion>();
 		foreach (var target in targets)
@@ -1244,7 +1244,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				if (!string.IsNullOrWhiteSpace(item)
 					&& IsControlFreeValue(item)
 					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
-					&& CandidateBindsToProviderRoute(matchingRoutes, commandPrefix, item, target.Route, parsingOptions)
+					&& CandidateBindsToProviderRoute(commandPrefix, item, target.Route, activeGraph)
 					&& QuoteValueForInsertion(item) is { } insertion)
 				{
 					suggestions.Add(new ConsoleLineReader.AutocompleteSuggestion(
@@ -1264,18 +1264,44 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	// the value never binds to {name}, and the literal is already offered as a command
 	// candidate. A null match means the candidate does not yet complete any route (a
 	// still-incomplete multi-segment route), which is fine — nothing else can claim it either.
-	// Shared with the shell bridge so both surfaces drop the same route-shadowed candidates.
-	internal static bool CandidateBindsToProviderRoute(
-		IReadOnlyList<RouteDefinition> matchingRoutes,
+	// A provider value only belongs in the menu if, once accepted, execution would route it
+	// to the SEGMENT it was offered for. This resolves the candidate exactly as execution
+	// does — ResolveCommitted strips global options first and matches against the FULL active
+	// route graph (including hidden routes), not the discovery-filtered visible set — so a
+	// value shadowed by a higher-scoring or hidden literal ('pick status'), or one the global
+	// parser would strip ('--no-logo'), is caught. A null terminal match means the candidate
+	// does not yet complete any route (a still-incomplete multi-segment route), which is
+	// fine — nothing else can claim it either. Shared with the shell bridge via app.Autocomplete.
+	internal bool CandidateBindsToProviderRoute(
 		string[] commandPrefix,
 		string candidate,
 		RouteDefinition providerRoute,
-		ParsingOptions parsingOptions)
+		ActiveRoutingGraph activeGraph)
 	{
 		var tokens = new string[commandPrefix.Length + 1];
 		commandPrefix.CopyTo(tokens, 0);
 		tokens[^1] = candidate;
-		var match = RouteResolver.Resolve(matchingRoutes, tokens, parsingOptions);
+
+		// Mirror execution's first step: strip global options. A candidate the global parser
+		// consumes ('--no-logo', '--result:...') never reaches the segment, so it must not be
+		// offered as a positional value — it would vanish rather than bind.
+		var stripped = GlobalOptionParser
+			.Parse(tokens, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing)
+			.RemainingTokens;
+		var remaining = stripped as string[] ?? [.. stripped];
+		if (remaining.Length <= commandPrefix.Length
+			|| !string.Equals(remaining[commandPrefix.Length], candidate, StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		// Then resolve against the FULL active route graph (including hidden routes) the way
+		// execution does. A different winning route — a higher-scoring or hidden literal like
+		// 'pick status' — shadows the value, so it would never bind to the provider's segment
+		// (and a hidden command must not be surfaced indirectly). A null match means the
+		// candidate does not yet complete any route (a still-incomplete multi-segment route),
+		// which is fine — nothing else claims it either.
+		var match = app.Resolve(remaining, activeGraph.Routes);
 		return match is null || ReferenceEquals(match.Route, providerRoute);
 	}
 
