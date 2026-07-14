@@ -851,6 +851,51 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 	}
 
 	[TestMethod]
+	[Description("fish/nu quote completion values themselves, so the bash/zsh bare-insertion concerns ('=' → zsh EQUALS, globbing, non-ASCII) do not apply: a value that is a single token with no whitespace, no quote, and no shell metacharacter ('env=prod', 'café') is offered VERBATIM — it round-trips through the bridge tokenizer as one bare token — where the shared plain set (tuned for bare bash/zsh) needlessly dropped it. A spaced value is still dropped (fish/nu escape the space, breaking round-trip).")]
+	[DataRow(ShellKind.Fish)]
+	[DataRow(ShellKind.Nu)]
+	public async Task When_FishOrNuValueIsBareSafe_Then_ItIsOffered(ShellKind shell)
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["env=prod", "café", "New York"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app deploy ", shell).ConfigureAwait(false);
+
+		candidates.Should().Contain("env=prod", because: "'=' is not a bare-insertion hazard for fish/nu and round-trips as one token");
+		candidates.Should().Contain("café", because: "a non-ASCII letter is ordinary data for fish/nu and the bridge tokenizer never splits on it");
+		candidates.Should().NotContain(static c => c.Contains("New York", StringComparison.Ordinal),
+			because: "a spaced value is escaped by fish/nu and cannot round-trip through the whitespace-splitting bridge tokenizer");
+	}
+
+	[TestMethod]
+	[Description("The fish/nu bare-safe relaxation stays SAFE: a value carrying a shell metacharacter fish/nu would escape ('$(printf PWNED)') still cannot round-trip (the escaped form re-lexes differently) and is dropped, so no interpolating token is emitted.")]
+	[DataRow(ShellKind.Fish)]
+	[DataRow(ShellKind.Nu)]
+	public async Task When_FishOrNuValueHasMetacharacter_Then_ItIsStillDropped(ShellKind shell)
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["$(printf PWNED)", "safeval"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app deploy ", shell).ConfigureAwait(false);
+
+		candidates.Should().Contain("safeval");
+		candidates.Should().NotContain(static c => c.Contains("PWNED", StringComparison.Ordinal),
+			because: "a command-substitution value cannot be represented as a bare fish/nu token that round-trips");
+	}
+
+	[TestMethod]
 	[Description("A bool route option is not a pending value position: 'app run --force ' must fall through to normal option/command completion rather than entering the provider/enum pending path (which would suppress it). The bool option's own provider values are not offered as if awaiting a value.")]
 	public async Task When_PendingTokenIsBoolFlag_Then_NotTreatedAsPendingValue()
 	{
@@ -955,6 +1000,86 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 			.Select(static s => s.Value)
 			.ToArray();
 		providerValues.Should().NotContain("st", because: "'st' is an ambiguous prefix; execution errors before binding {name}");
+	}
+
+	[TestMethod]
+	[Description("Under case-SENSITIVE parsing, a POSITIONAL enum segment's provider value that differs only by case from a member ('prod' vs 'Prod') is dropped: execution binds the route value with the effective enum casing (HandlerArgumentBinder.ResolveEnumIgnoreCase), which for a pure segment follows the parsing default — ignoreCase:false here — so the lowercase spelling would fail to bind.")]
+	public async Task When_PositionalEnumValueViolatesCase_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(static o => o.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseSensitive);
+		sut.Map("run {mode}", static string (ProbeMode mode) => mode.ToString())
+			.WithCompletion("mode", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["prod", "Prod"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("Prod", because: "the exact-case member binds to the enum positional");
+		values.Should().NotContain("prod", because: "case-sensitive parsing rejects the lowercase spelling at execution");
+	}
+
+	[TestMethod]
+	[Description("Shell parity: under case-sensitive parsing, a shell-scoped positional enum provider value differing only by case ('prod') is dropped on the bridge too, while the exact-case member ('Prod') is offered.")]
+	public async Task When_PositionalEnumValueViolatesCase_Then_ShellDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(static o => o.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseSensitive);
+		sut.Map("run {mode}", static string (ProbeMode mode) => mode.ToString())
+			.WithCompletion(
+				"mode",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["prod", "Prod"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run ").ConfigureAwait(false);
+
+		candidates.Should().Contain("Prod", because: "the exact-case member binds to the enum positional");
+		candidates.Should().NotContain("prod", because: "case-sensitive parsing rejects the lowercase spelling at execution");
+	}
+
+	[TestMethod]
+	[Description("A provider value whose token is REWRITTEN by unique-prefix expansion at the provider position is dropped even when the provider's own route stays the winner: with 'pick {name}' (provider returns 'sta') and an INCOMPLETE sibling 'pick status {id}', execution expands 'sta' to the literal 'status' before routing, then binds 'pick {name}' with 'status' — NOT the 'sta' the provider offered. Offering it would silently change the accepted value.")]
+	public async Task When_ProviderValueRewrittenByPrefixExpansion_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status {id}", static string (string id) => id).WithDescription("Pick status by id.");
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["sta", "alice"]))
+			.WithDescription("Pick by name.");
+
+		var result = await ResolveAutocompleteAsync(sut, "pick s").ConfigureAwait(false);
+
+		var providerValues = result.Suggestions
+			.Where(static s => s.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Parameter)
+			.Select(static s => s.Value)
+			.ToArray();
+		providerValues.Should().NotContain("sta",
+			because: "prefix expansion rewrites 'sta' to 'status', so accepting it binds a different value than offered");
+		providerValues.Should().Contain("alice",
+			because: "an un-rewritten value that binds to {name} is still offered");
+	}
+
+	[TestMethod]
+	[Description("Shell parity: a provider value rewritten by unique-prefix expansion at the provider position is dropped on the bridge too — 'app pick s' with provider 'sta' and incomplete sibling 'pick status {id}' does not offer 'sta'.")]
+	public async Task When_ProviderValueRewrittenByPrefixExpansion_Then_ShellDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status {id}", static string (string id) => id).WithDescription("Pick status by id.");
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion(
+				"name",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["sta", "alice"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Pick by name.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app pick s").ConfigureAwait(false);
+
+		candidates.Should().NotContain("sta",
+			because: "prefix expansion rewrites 'sta' to 'status', so accepting it binds a different value than offered");
+		candidates.Should().Contain("alice");
 	}
 
 	private enum ProbeMode

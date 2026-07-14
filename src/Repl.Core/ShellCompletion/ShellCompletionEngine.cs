@@ -197,7 +197,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (!string.IsNullOrWhiteSpace(value)
 				&& IsShellSafeCandidate(value)
 				&& RouteConstraintEvaluator.IsMatch(target.Segment, value, parsing)
-				&& AutocompleteEngine.CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, value, numericFormatProvider)
+				&& AutocompleteEngine.CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, value, numericFormatProvider, parsing.OptionCaseSensitivity)
 				&& app.Autocomplete.CandidateBindsToProviderRoute(commandPrefix, value, target.Route, activeGraph)
 				&& QuoteValueForShell(value, shell) is { } insertion
 				&& valueDedupe.Add(insertion))
@@ -233,6 +233,15 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	private static readonly System.Buffers.SearchValues<char> s_powerShellPlainChars =
 		System.Buffers.SearchValues.Create("+-./0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
 
+	// fish/nu quote inserted values themselves, so the bash/zsh bare-insertion hazards the shared
+	// set guards against don't apply — notably '=' (no zsh EQUALS expansion here). It is added to
+	// the plain set so a single-token value like 'env=prod' is emitted verbatim instead of dropped;
+	// non-ASCII letters/digits ('café') are handled separately in IsFishNuBareSafe since they can't
+	// be enumerated in a whitelist. Anything a shell would still interpret ('$', backtick, glob) or
+	// that breaks the whitespace/quote-splitting bridge tokenizer stays excluded.
+	private static readonly System.Buffers.SearchValues<char> s_fishNuPlainChars =
+		System.Buffers.SearchValues.Create("+,-./0123456789:=@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz");
+
 	// True when the raw current-token prefix carries ANY quote character. Provider values are
 	// dropped in that case because the bridge cannot reliably know the target shell's quote
 	// state: a naive "is a quote still open" scan is not enough — a shell-ESCAPED delimiter
@@ -266,11 +275,13 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		// fish (`complete -a "(...)"`) and nushell (external-completer records) treat each
 		// returned line as the completion VALUE and quote/insert it themselves; the nu spans
 		// dispatcher also re-joins by spaces. Emitting our own shell syntax there would be
-		// double-quoted or break span grouping, so a value that needs any quoting is dropped
-		// for those shells rather than mis-encoded.
+		// double-quoted or break span grouping. A value that is a single BARE token for those
+		// shells (no whitespace, no quote, no metacharacter they'd escape) round-trips through the
+		// bridge tokenizer unchanged and is offered verbatim; anything else is dropped rather than
+		// mis-encoded (fish/nu would escape it, and the escaped form re-lexes differently).
 		if (shell is ShellKind.Fish or ShellKind.Nu)
 		{
-			return null;
+			return IsFishNuBareSafe(value) ? value : null;
 		}
 
 		// bash/zsh (compadd -Q)/PowerShell insert the completion text VERBATIM, so we emit a
@@ -285,6 +296,26 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		}
 
 		return "'" + value + "'";
+	}
+
+	// A fish/nu value is bare-safe when every character is either in the fish/nu plain set or a
+	// non-ASCII letter/digit. Those never require escaping by fish/nu and are never split by the
+	// bridge tokenizer (which breaks only on ASCII whitespace and quotes), so the value round-trips
+	// as a single bare token. Reached only for values with at least one non-plain character (the
+	// plain fast-path in QuoteValueForShell handled the rest), so the loop cost is incurred rarely.
+	private static bool IsFishNuBareSafe(string value)
+	{
+		foreach (var c in value)
+		{
+			// Non-ASCII letters/digits (accents, CJK, ...) can't live in a whitelist SearchValues
+			// but are ordinary bare data for fish/nu; everything else must be in the plain set.
+			if (!s_fishNuPlainChars.Contains(c) && !(c > 127 && char.IsLetterOrDigit(c)))
+			{
+				return false;
+			}
+		}
+
+		return true;
 	}
 
 	// Bounds one provider invocation to ShellCompletion.ProviderTimeout and isolates its

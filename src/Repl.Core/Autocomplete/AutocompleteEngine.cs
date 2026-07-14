@@ -1247,7 +1247,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				if (!string.IsNullOrWhiteSpace(item)
 					&& IsControlFreeValue(item)
 					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
-					&& CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, item, numericFormatProvider)
+					&& CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, item, numericFormatProvider, parsingOptions.OptionCaseSensitivity)
 					&& CandidateBindsToProviderRoute(commandPrefix, item, target.Route, activeGraph)
 					&& QuoteValueForInsertion(item) is { } insertion)
 				{
@@ -1284,13 +1284,31 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		RouteDefinition route,
 		string segmentName,
 		string candidate,
-		IFormatProvider numericFormatProvider)
+		IFormatProvider numericFormatProvider,
+		ReplCaseSensitivity optionCaseSensitivity)
 	{
 		var parameter = Array.Find(
 			route.Command.Handler.Method.GetParameters(),
 			p => string.Equals(p.Name, segmentName, StringComparison.OrdinalIgnoreCase));
-		return parameter is null
-			|| ParameterValueConverter.CanConvert(candidate, parameter.ParameterType, numericFormatProvider);
+		if (parameter is null)
+		{
+			return true;
+		}
+
+		// Mirror HandlerArgumentBinder.ResolveEnumIgnoreCase so a case-sensitive route does not
+		// offer 'prod' for enum member 'Prod' (which execution would reject): a segment that is
+		// ALSO an option honors that option's explicit case sensitivity; a pure positional segment
+		// falls back to the parsing default. Passing enumIgnoreCase:true unconditionally broke
+		// candidate-to-execution parity for enum values under case-sensitive parsing.
+		var effectiveCaseSensitivity =
+			(route.OptionSchema.TryGetParameter(segmentName, out var schemaParameter)
+				? schemaParameter.CaseSensitivity
+				: null)
+			?? optionCaseSensitivity;
+		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
+
+		return ParameterValueConverter.CanConvert(
+			candidate, parameter.ParameterType, numericFormatProvider, enumIgnoreCase);
 	}
 
 	internal bool CandidateBindsToProviderRoute(
@@ -1329,14 +1347,35 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 		var expanded = prefixResolution.Tokens;
 
-		// Then resolve against the FULL active route graph (including hidden routes) the way
-		// execution does, using the diagnostics so an INCOMPLETE route is judged too. A
-		// different winning route — a higher-scoring or hidden literal ('pick status'), even
-		// while still missing later arguments ('pick status {id}' outscoring 'pick {name}
-		// {id}') — shadows the value, so it would never bind to the provider's segment (and a
-		// hidden command must not be surfaced indirectly). Only when neither a terminal match
-		// nor a missing-argument winner claims the tokens is the value genuinely unclaimed and
-		// safe to keep.
+		// Unique-prefix expansion rewrites a token IN PLACE before routing: a provider value that
+		// is itself a unique prefix of a literal sibling ('sta' for literal 'status') is expanded
+		// to that literal, so execution binds 'status' — NOT the 'sta' the provider offered — even
+		// when the winning route is still the provider's own (e.g. an INCOMPLETE 'pick status {id}'
+		// sibling loses to the terminal 'pick {name}', yet the token was already rewritten).
+		// Offering it would silently change the accepted value, so drop any candidate whose token
+		// at the provider position was rewritten. (A candidate that expands to a literal owned by a
+		// DIFFERENT winning route is already dropped by the route-identity check below.)
+		if (expanded.Length <= commandPrefix.Length
+			|| !string.Equals(expanded[commandPrefix.Length], candidate, StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		return ResolvesToProviderRoute(expanded, providerRoute, activeGraph);
+	}
+
+	// Resolve against the FULL active route graph (including hidden routes) the way execution
+	// does, using the diagnostics so an INCOMPLETE route is judged too. A different winning
+	// route — a higher-scoring or hidden literal ('pick status'), even while still missing later
+	// arguments ('pick status {id}' outscoring 'pick {name} {id}') — shadows the value, so it
+	// would never bind to the provider's segment (and a hidden command must not be surfaced
+	// indirectly). Only when neither a terminal match nor a missing-argument winner claims the
+	// tokens is the value genuinely unclaimed and safe to keep.
+	private bool ResolvesToProviderRoute(
+		string[] expanded,
+		RouteDefinition providerRoute,
+		ActiveRoutingGraph activeGraph)
+	{
 		var diagnostics = app.ResolveWithDiagnostics(expanded, activeGraph.Routes);
 		if (diagnostics.Match is { } terminal)
 		{
