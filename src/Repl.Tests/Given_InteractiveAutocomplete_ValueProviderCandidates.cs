@@ -1082,6 +1082,75 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 		candidates.Should().Contain("alice");
 	}
 
+	[TestMethod]
+	[Description("Parity with the shell bridge: when an enum-typed pending option's provider FAULTS during an explicit Tab, the interactive path falls through to the static enum members instead of returning nothing — a transient provider failure must not hide the always-valid enum values ('run --mode ' still offers Debug/Prod).")]
+	public async Task When_PendingEnumOptionProviderFaults_Then_EnumFallbackIsOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] ProbeMode mode) => mode.ToString())
+			.WithCompletion("mode", static (_, _, _) => throw new InvalidOperationException("probe"))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --mode ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("Debug").And.Contain("Prod",
+			because: "a faulting provider must fall through to the enum fallback, like the shell bridge");
+	}
+
+	[TestMethod]
+	[Description("Shell parity guard for the same scenario: a faulting shell-scoped provider on an enum pending option still yields the enum members through the bridge (the deadline/fault wrapper returns no result, so the enum fallback runs).")]
+	public async Task When_PendingEnumOptionProviderFaults_Then_ShellOffersEnumFallback()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] ProbeMode mode) => mode.ToString())
+			.WithCompletion(
+				"mode",
+				static (_, _, _) => throw new InvalidOperationException("probe"),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run --mode ").ConfigureAwait(false);
+
+		candidates.Should().Contain("Debug").And.Contain("Prod",
+			because: "a faulting provider must not suppress the enum fallback on the bridge");
+	}
+
+	[TestMethod]
+	[Description("A dynamic route segment bound to a COLLECTION handler parameter never binds a single value at execution: HandlerArgumentBinder takes route values via ConvertSingle(routeValue, IReadOnlyList<int>), which throws for a collection target, so no single candidate can bind. The provider path must suppress such candidates rather than validate them against the unwrapped element type.")]
+	public async Task When_PositionalProviderTargetsCollectionParam_Then_ValueIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {ids}", static string (IReadOnlyList<int> ids) => string.Join(',', ids))
+			.WithCompletion("ids", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["42"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run ").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("42",
+			because: "a single route value cannot bind to a collection parameter, so the candidate can never execute");
+	}
+
+	[TestMethod]
+	[Description("Shell parity: a collection-typed route segment suppresses provider candidates on the bridge too, since the shared handler-type check binds route values with ConvertSingle against the whole (collection) type.")]
+	public async Task When_PositionalProviderTargetsCollectionParam_Then_ShellDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {ids}", static string (IReadOnlyList<int> ids) => string.Join(',', ids))
+			.WithCompletion(
+				"ids",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["42"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run ").ConfigureAwait(false);
+
+		candidates.Should().NotContain("42",
+			because: "a single route value cannot bind to a collection parameter at execution");
+	}
+
 	private enum ProbeMode
 	{
 		Debug,

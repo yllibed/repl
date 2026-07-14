@@ -33,15 +33,27 @@ internal static class ParameterValueConverter
 	}
 
 	// Non-throwing convertibility check for completion: filters provider values that could
-	// never bind to the target option/argument (e.g. "abc" for an int option). For a
-	// collection parameter a single candidate is one ELEMENT, so the check runs against the
-	// element type. Mirrors ConvertSingle's rules so completion and binding cannot disagree.
-	public static bool CanConvert(string value, Type parameterType, IFormatProvider numericFormatProvider, bool enumIgnoreCase = true)
+	// never bind to the target option/argument (e.g. "abc" for an int option). Mirrors
+	// ConvertSingle's rules so completion and binding cannot disagree.
+	//
+	// unwrapCollections distinguishes the two binding shapes: for an OPTION or a repeated
+	// positional a single candidate is one ELEMENT of the collection (checked against the
+	// element type), but a dynamic ROUTE SEGMENT binds its single value through
+	// ConvertSingle(routeValue, parameterType) against the WHOLE type — which throws for a
+	// collection target — so element unwrapping there would wrongly accept a value that can
+	// never bind. Route-segment callers pass false.
+	public static bool CanConvert(
+		string value,
+		Type parameterType,
+		IFormatProvider numericFormatProvider,
+		bool enumIgnoreCase = true,
+		bool unwrapCollections = true)
 	{
 		ArgumentNullException.ThrowIfNull(parameterType);
 		ArgumentNullException.ThrowIfNull(numericFormatProvider);
 
-		var targetType = HandlerArgumentBinder.TryGetCollectionElementType(parameterType, out var elementType)
+		var targetType = unwrapCollections
+			&& HandlerArgumentBinder.TryGetCollectionElementType(parameterType, out var elementType)
 			? elementType
 			: parameterType;
 		try

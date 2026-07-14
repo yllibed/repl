@@ -1307,8 +1307,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			?? optionCaseSensitivity;
 		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 
+		// A route segment binds its single value via ConvertSingle against the WHOLE parameter
+		// type (see HandlerArgumentBinder.BindParameter's RouteValues branch), so a collection
+		// target must NOT be element-unwrapped here — a single value can never bind to it, and
+		// element unwrapping would wrongly offer a candidate that fails at execution.
 		return ParameterValueConverter.CanConvert(
-			candidate, parameter.ParameterType, numericFormatProvider, enumIgnoreCase);
+			candidate, parameter.ParameterType, numericFormatProvider, enumIgnoreCase, unwrapCollections: false);
 	}
 
 	internal bool CandidateBindsToProviderRoute(
@@ -1562,9 +1566,19 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			if (providersAllowed
 				&& match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
 			{
-				return await InvokePendingOptionProviderAsync(
+				var providerSuggestions = await InvokePendingOptionProviderAsync(
 						match, entry, completion, currentTokenPrefix, serviceProvider, cancellationToken)
 					.ConfigureAwait(false);
+
+				// A null result means the provider FAULTED: mirror the shell bridge (which treats a
+				// fault/timeout as "no provider answer") and fall through to the static enum
+				// fallback below, so a transient provider failure does not hide the always-valid
+				// enum members. A non-null result — even empty — is the provider's final answer and
+				// deliberately suppresses the enum fallback, matching the shell's precedence.
+				if (providerSuggestions is not null)
+				{
+					return providerSuggestions;
+				}
 			}
 
 			// No explicit provider: complete enum member names when the target is an enum,
@@ -1582,8 +1596,10 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	// Runs a pending route option's value provider and filters its candidates the way execution
 	// binds them: consumable as the option's separate value (parser rule), convertible to the
 	// option parameter's type under its effective enum case sensitivity, control-free, then
-	// quoted for insertion (unrepresentable values dropped).
-	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> InvokePendingOptionProviderAsync(
+	// quoted for insertion (unrepresentable values dropped). Returns null when the provider
+	// FAULTED, so the caller can fall through to the static enum fallback (shell-bridge parity);
+	// a non-null (possibly empty) list is the provider's final answer.
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>?> InvokePendingOptionProviderAsync(
 		RouteMatch match,
 		OptionSchemaEntry entry,
 		CompletionDelegate completion,
@@ -1592,9 +1608,23 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var completionContext = new CompletionContext(serviceProvider);
-		var provided = await InvokeProviderSafelyAsync(
-				completion, completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
-			.ConfigureAwait(false);
+		IReadOnlyList<string> provided;
+		try
+		{
+			provided = await completion(completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch
+		{
+			// Provider faulted — signal the caller to use the enum fallback instead of returning
+			// an empty list that would suppress it (the shell bridge behaves the same way).
+			return null;
+		}
+
 		var hasParameter = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter);
 		var optionType = hasParameter ? optionParameter.ParameterType : typeof(string);
 		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture;
