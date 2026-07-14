@@ -1233,7 +1233,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		var suggestions = new List<ConsoleLineReader.AutocompleteSuggestion>();
 		foreach (var target in targets)
 		{
-			var provided = await target.Provider(completionContext, valuePrefix, cancellationToken)
+			var provided = await InvokeProviderSafelyAsync(
+					target.Provider, completionContext, valuePrefix, cancellationToken)
 				.ConfigureAwait(false);
 			foreach (var item in provided)
 			{
@@ -1252,6 +1253,31 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		return suggestions;
+	}
+
+	// Isolates an interactive completion provider's faults: a transient lookup provider
+	// (database/network) that throws or returns a faulted task must drop only its own
+	// suggestions, never abort the interactive session (the fault would otherwise escape
+	// through ConsoleLineReader.ReadLineAsync). Real cancellation of the line read still
+	// propagates so the reader unwinds cleanly.
+	private static async ValueTask<IReadOnlyList<string>> InvokeProviderSafelyAsync(
+		CompletionDelegate provider,
+		CompletionContext completionContext,
+		string input,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			return await provider(completionContext, input, cancellationToken).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch
+		{
+			return [];
+		}
 	}
 
 	// The token being typed occupies the segment at the index right AFTER the committed
@@ -1402,7 +1428,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				&& match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
 			{
 				var completionContext = new CompletionContext(serviceProvider);
-				var provided = await completion(completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
+				var provided = await InvokeProviderSafelyAsync(
+						completion, completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
 					.ConfigureAwait(false);
 				// Only surface values the invocation parser would consume as this option's
 				// separate value: a dash-prefixed candidate is read as the next option (accepting

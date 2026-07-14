@@ -502,6 +502,40 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 	}
 
 	[TestMethod]
+	[Description("An interactive positional provider that THROWS must not abort completion: its suggestions are dropped and the resolve still returns (the exception would otherwise escape through ReadLineAsync and kill the session).")]
+	public async Task When_InteractivePositionalProviderThrows_Then_ResolveDegradesGracefully()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion("target", static (_, _, _) =>
+				throw new InvalidOperationException("probe"))
+			.WithDescription("Deploy.");
+
+		var act = async () => await ResolveAutocompleteAsync(sut, "deploy z").ConfigureAwait(false);
+
+		var result = await act.Should().NotThrowAsync().ConfigureAwait(false);
+		result.Which.Suggestions.Select(static s => s.Value).Should().NotContain("probe");
+	}
+
+	[TestMethod]
+	[Description("An interactive pending-option provider that returns a FAULTED task must not abort completion either: the fault is isolated and the resolve returns without the provider's values.")]
+	public async Task When_InteractivePendingProviderThrows_Then_ResolveDegradesGracefully()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? channel) => channel ?? "none")
+			.WithCompletion("channel", static async (_, _, _) =>
+			{
+				await Task.Yield();
+				throw new InvalidOperationException("probe");
+			})
+			.WithDescription("Run.");
+
+		var act = async () => await ResolveAutocompleteAsync(sut, "run --channel ").ConfigureAwait(false);
+
+		await act.Should().NotThrowAsync().ConfigureAwait(false);
+	}
+
+	[TestMethod]
 	[Description("A dash-prefixed NON-numeric value is a valid positional bind (routing binds before option parsing, so target == '-prod'): on 'deploy {target}' the provider's '-prod' is offered at 'deploy -', not just signed numerics — eligibility is whether the segment constraint accepts the candidate.")]
 	public async Task When_TypingBareDashForStringPositional_Then_ProviderValueIsOffered()
 	{
