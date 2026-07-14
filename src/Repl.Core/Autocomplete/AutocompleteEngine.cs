@@ -1209,6 +1209,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		return await InvokePositionalProvidersAsync(
+				matchingRoutes,
+				commandPrefix,
 				targets,
 				DecodeTokenPrefix(currentTokenPrefix),
 				parsingOptions,
@@ -1218,6 +1220,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	}
 
 	private static async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> InvokePositionalProvidersAsync(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
 		IReadOnlyList<(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider)> targets,
 		string valuePrefix,
 		ParsingOptions parsingOptions,
@@ -1233,11 +1237,14 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				.ConfigureAwait(false);
 			foreach (var item in provided)
 			{
-				// Parity per candidate (a constraint-rejected value can never bind), terminal
-				// controls rejected before rendering, quotes added for the round-trip.
+				// Parity per candidate (a constraint-rejected value can never bind, and a value
+				// that resolves to a DIFFERENT route — e.g. a higher-scoring literal — would
+				// never bind to this segment), terminal controls rejected before rendering,
+				// quotes added for the round-trip.
 				if (!string.IsNullOrWhiteSpace(item)
 					&& IsControlFreeValue(item)
 					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
+					&& CandidateBindsToProviderRoute(matchingRoutes, commandPrefix, item, target.Route, parsingOptions)
 					&& QuoteValueForInsertion(item) is { } insertion)
 				{
 					suggestions.Add(new ConsoleLineReader.AutocompleteSuggestion(
@@ -1248,6 +1255,28 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		return suggestions;
+	}
+
+	// A provider value only belongs in the menu if, once accepted, execution would route it
+	// to the SEGMENT it was offered for. Resolving the full command with the candidate catches
+	// the case where a higher-scoring literal wins (e.g. 'pick {name}' provider offers
+	// 'status' while a literal 'pick status' route exists): accepting it would run the literal,
+	// the value never binds to {name}, and the literal is already offered as a command
+	// candidate. A null match means the candidate does not yet complete any route (a
+	// still-incomplete multi-segment route), which is fine — nothing else can claim it either.
+	// Shared with the shell bridge so both surfaces drop the same route-shadowed candidates.
+	internal static bool CandidateBindsToProviderRoute(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
+		string candidate,
+		RouteDefinition providerRoute,
+		ParsingOptions parsingOptions)
+	{
+		var tokens = new string[commandPrefix.Length + 1];
+		commandPrefix.CopyTo(tokens, 0);
+		tokens[^1] = candidate;
+		var match = RouteResolver.Resolve(matchingRoutes, tokens, parsingOptions);
+		return match is null || ReferenceEquals(match.Route, providerRoute);
 	}
 
 	// Isolates an interactive completion provider's faults: a transient lookup provider

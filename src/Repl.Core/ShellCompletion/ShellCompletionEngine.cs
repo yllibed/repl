@@ -162,13 +162,16 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (target.Route.Command.IsCompletionShellScoped(target.Segment.Name))
 			{
 				await EmitShellProviderValuesAsync(
-						target, valuePrefix, shell, serviceProvider, valueDedupe, dedupe, candidates, cancellationToken)
+						matchingRoutes, resolution.CommandPrefix, target, valuePrefix, shell,
+						serviceProvider, valueDedupe, dedupe, candidates, cancellationToken)
 					.ConfigureAwait(false);
 			}
 		}
 	}
 
 	private async ValueTask EmitShellProviderValuesAsync(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
 		(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider) target,
 		string valuePrefix,
 		ShellKind shell,
@@ -180,14 +183,17 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	{
 		var provided = await InvokeProviderWithDeadlineAsync(target.Provider, serviceProvider, valuePrefix, cancellationToken)
 			.ConfigureAwait(false);
+		var parsing = app.OptionsSnapshot.Parsing;
 		foreach (var value in provided ?? [])
 		{
-			// Parity per candidate (a value the segment's constraint rejects can never bind);
-			// values are then encoded as literal data in the TARGET shell's syntax (see
-			// QuoteValueForShell) or dropped when unrepresentable.
+			// Parity per candidate: the segment constraint must accept it AND execution must
+			// route it to THIS segment (a higher-scoring literal would shadow it); values are
+			// then encoded as literal data in the TARGET shell's syntax (see QuoteValueForShell)
+			// or dropped when unrepresentable.
 			if (!string.IsNullOrWhiteSpace(value)
 				&& IsShellSafeCandidate(value)
-				&& RouteConstraintEvaluator.IsMatch(target.Segment, value, app.OptionsSnapshot.Parsing)
+				&& RouteConstraintEvaluator.IsMatch(target.Segment, value, parsing)
+				&& AutocompleteEngine.CandidateBindsToProviderRoute(matchingRoutes, commandPrefix, value, target.Route, parsing)
 				&& QuoteValueForShell(value, shell) is { } insertion
 				&& valueDedupe.Add(insertion))
 			{

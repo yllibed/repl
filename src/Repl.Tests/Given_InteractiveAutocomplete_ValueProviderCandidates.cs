@@ -642,6 +642,42 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 		candidates.Should().NotContain("@payload").And.NotContain("alpha,beta");
 	}
 
+	[TestMethod]
+	[Description("A provider value that execution would route to a DIFFERENT (higher-scoring literal) route is not offered by the provider path: for 'pick {name}' (provider returns 'status') alongside a literal 'pick status', accepting 'status' runs the literal — the value never binds to {name} — and the literal is already a command candidate, so the provider must not also offer it.")]
+	public async Task When_ProviderValueRoutesToLiteral_Then_ProviderDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status", static string () => "literal").WithDescription("Pick status.");
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["status", "alice"]))
+			.WithDescription("Pick by name.");
+
+		var result = await ResolveAutocompleteAsync(sut, "pick s").ConfigureAwait(false);
+
+		var parameterValues = result.Suggestions
+			.Where(static s => s.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Parameter)
+			.Select(static s => s.Value)
+			.ToArray();
+		parameterValues.Should().NotContain("status",
+			because: "'pick status' routes to the literal, so the value never binds to {name}");
+	}
+
+	[TestMethod]
+	[Description("The route-shadowing filter does not over-reject: a provider value that has no colliding literal ('alice') still binds to {name} and is offered.")]
+	public async Task When_ProviderValueHasNoLiteralCollision_Then_ItIsOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status", static string () => "literal").WithDescription("Pick status.");
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["status", "alice"]))
+			.WithDescription("Pick by name.");
+
+		var result = await ResolveAutocompleteAsync(sut, "pick a").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("alice",
+			because: "'alice' binds to {name}; only literal-shadowed values are dropped");
+	}
+
 	private static readonly string[] s_dashTargets = ["-prod", "-staging"];
 	private static readonly string[] s_intIds = ["42", "77"];
 	private static readonly string[] s_names = ["alice", "bob"];
