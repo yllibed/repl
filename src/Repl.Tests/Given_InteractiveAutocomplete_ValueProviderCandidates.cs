@@ -904,6 +904,65 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 		candidates.Should().NotContain("abc");
 	}
 
+	[TestMethod]
+	[Description("A positional segment left unconstrained but bound to a narrower HANDLER type is validated against that type: 'run {count}' with handler (int count) and a provider returning 'abc'/'42' offers only '42', because 'abc' would fail int binding at execution even though the String segment constraint accepts it.")]
+	public async Task When_PositionalValueViolatesHandlerType_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run {count}", static string (int count) => count.ToString(System.Globalization.CultureInfo.InvariantCulture))
+			.WithCompletion("count", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["abc", "42"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("42");
+		values.Should().NotContain("abc", because: "'abc' cannot bind to the int handler parameter");
+	}
+
+	[TestMethod]
+	[Description("Under case-SENSITIVE option parsing, a pending enum option's provider value that differs only by case from a member ('prod' vs 'Prod') is dropped, because execution parses the enum with ignoreCase:false and would fail to bind it.")]
+	public async Task When_PendingEnumOptionValueViolatesCase_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(static o => o.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseSensitive);
+		sut.Map("run", static string ([ReplOption] ProbeMode mode) => mode.ToString())
+			.WithCompletion("mode", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["prod", "Prod"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --mode ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("Prod", because: "the exact-case member binds");
+		values.Should().NotContain("prod", because: "case-sensitive parsing would reject the lowercase spelling");
+	}
+
+	[TestMethod]
+	[Description("A provider value that is an AMBIGUOUS command prefix is dropped: with 'pick {name}' and literal siblings 'pick status'/'pick staging', a provider value 'st' matches both literals, so execution stops at the ambiguous-prefix error before {name} is bound — it must not be offered.")]
+	public async Task When_ProviderValueIsAmbiguousPrefix_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("pick status", static string () => "status").WithDescription("Pick status.");
+		sut.Map("pick staging", static string () => "staging").WithDescription("Pick staging.");
+		sut.Map("pick {name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["st", "alice"]))
+			.WithDescription("Pick by name.");
+
+		var result = await ResolveAutocompleteAsync(sut, "pick s").ConfigureAwait(false);
+
+		var providerValues = result.Suggestions
+			.Where(static s => s.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Parameter)
+			.Select(static s => s.Value)
+			.ToArray();
+		providerValues.Should().NotContain("st", because: "'st' is an ambiguous prefix; execution errors before binding {name}");
+	}
+
+	private enum ProbeMode
+	{
+		Debug,
+		Prod,
+	}
+
 	private static readonly string[] s_dashTargets = ["-prod", "-staging"];
 	private static readonly string[] s_intIds = ["42", "77"];
 	private static readonly string[] s_names = ["alice", "bob"];

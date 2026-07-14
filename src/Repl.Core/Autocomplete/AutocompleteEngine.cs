@@ -1229,6 +1229,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var parsingOptions = app.OptionsSnapshot.Parsing;
+		var numericFormatProvider = parsingOptions.NumericFormatProvider ?? CultureInfo.InvariantCulture;
 		var completionContext = new CompletionContext(serviceProvider);
 		var suggestions = new List<ConsoleLineReader.AutocompleteSuggestion>();
 		foreach (var target in targets)
@@ -1238,13 +1239,15 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				.ConfigureAwait(false);
 			foreach (var item in provided)
 			{
-				// Parity per candidate (a constraint-rejected value can never bind, and a value
-				// that resolves to a DIFFERENT route — e.g. a higher-scoring literal — would
-				// never bind to this segment), terminal controls rejected before rendering,
-				// quotes added for the round-trip.
+				// Parity per candidate: the segment constraint AND the handler parameter type
+				// must both accept it (an unconstrained {count} whose handler takes int would
+				// otherwise offer "abc"), and it must resolve to THIS route — a value that a
+				// higher-scoring literal or an ambiguous prefix would claim never binds here.
+				// Terminal controls are rejected before rendering; quotes added for the round-trip.
 				if (!string.IsNullOrWhiteSpace(item)
 					&& IsControlFreeValue(item)
 					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
+					&& CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, item, numericFormatProvider)
 					&& CandidateBindsToProviderRoute(commandPrefix, item, target.Route, activeGraph)
 					&& QuoteValueForInsertion(item) is { } insertion)
 				{
@@ -1273,6 +1276,23 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 	// parser would strip ('--no-logo'), is caught. A null terminal match means the candidate
 	// does not yet complete any route (a still-incomplete multi-segment route), which is
 	// fine — nothing else can claim it either. Shared with the shell bridge via app.Autocomplete.
+	// A route segment's constraint can be LOOSER than the handler parameter it feeds: an
+	// unconstrained {count} whose handler takes int leaves the segment as String, so the
+	// constraint check alone would offer "abc". Validate the candidate against the handler
+	// parameter's type too (matched by segment name). Shared by both surfaces.
+	internal static bool CandidateBindsToHandlerParameter(
+		RouteDefinition route,
+		string segmentName,
+		string candidate,
+		IFormatProvider numericFormatProvider)
+	{
+		var parameter = Array.Find(
+			route.Command.Handler.Method.GetParameters(),
+			p => string.Equals(p.Name, segmentName, StringComparison.OrdinalIgnoreCase));
+		return parameter is null
+			|| ParameterValueConverter.CanConvert(candidate, parameter.ParameterType, numericFormatProvider);
+	}
+
 	internal bool CandidateBindsToProviderRoute(
 		string[] commandPrefix,
 		string candidate,
@@ -1298,8 +1318,16 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 		// Expand unique command prefixes exactly as execution does BEFORE routing: a value that
 		// is a unique prefix of a literal sibling ('sta' for a literal 'status') expands to that
-		// literal at execution, so it must be vetted expanded, not raw.
-		var expanded = ExpandUniquePrefixes(remaining, activeGraph);
+		// literal at execution, so it must be vetted expanded, not raw. An AMBIGUOUS prefix
+		// ('st' matching both 'status' and 'staging') makes execution stop at the ambiguity
+		// error before the segment is ever bound, so such a value can never bind — drop it.
+		var prefixResolution = app.ResolveUniquePrefixes(remaining, activeGraph);
+		if (prefixResolution.IsAmbiguous)
+		{
+			return false;
+		}
+
+		var expanded = prefixResolution.Tokens;
 
 		// Then resolve against the FULL active route graph (including hidden routes) the way
 		// execution does, using the diagnostics so an INCOMPLETE route is judged too. A
@@ -1495,34 +1523,9 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			if (providersAllowed
 				&& match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
 			{
-				var completionContext = new CompletionContext(serviceProvider);
-				var provided = await InvokeProviderSafelyAsync(
-						completion, completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
+				return await InvokePendingOptionProviderAsync(
+						match, entry, completion, currentTokenPrefix, serviceProvider, cancellationToken)
 					.ConfigureAwait(false);
-				// Only surface values the invocation parser would consume as this option's
-				// separate value: a dash-prefixed candidate is read as the next option (accepting
-				// it would leave the option unset), while a signed numeric literal (-42) is bound
-				// as a value. Reuse the parser's own rule so completion and execution cannot drift.
-				// Consumability is judged on the SEMANTIC value (the parser sees the decoded
-				// token), then values needing quotes are emitted pre-quoted for insertion.
-				// The option parameter's type is the parity check: a value that cannot convert to it
-				// (e.g. "abc" for an int option) would fail binding at execution, so it must not be
-				// offered — the positional path gets this guarantee from the segment constraint.
-				var optionType = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter)
-					? optionParameter.ParameterType
-					: typeof(string);
-				var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture;
-				return provided
-					.Where(item => !string.IsNullOrWhiteSpace(item)
-						&& IsControlFreeValue(item)
-						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item)
-						&& ParameterValueConverter.CanConvert(item, optionType, numericFormatProvider))
-					.Select(static item => QuoteValueForInsertion(item))
-					.OfType<string>()
-					.Select(static insertion => new ConsoleLineReader.AutocompleteSuggestion(
-						insertion,
-						Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
-					.ToArray();
 			}
 
 			// No explicit provider: complete enum member names when the target is an enum,
@@ -1535,6 +1538,41 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		return [];
+	}
+
+	// Runs a pending route option's value provider and filters its candidates the way execution
+	// binds them: consumable as the option's separate value (parser rule), convertible to the
+	// option parameter's type under its effective enum case sensitivity, control-free, then
+	// quoted for insertion (unrepresentable values dropped).
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> InvokePendingOptionProviderAsync(
+		RouteMatch match,
+		OptionSchemaEntry entry,
+		CompletionDelegate completion,
+		string currentTokenPrefix,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		var completionContext = new CompletionContext(serviceProvider);
+		var provided = await InvokeProviderSafelyAsync(
+				completion, completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
+			.ConfigureAwait(false);
+		var hasParameter = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter);
+		var optionType = hasParameter ? optionParameter.ParameterType : typeof(string);
+		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture;
+		var effectiveCaseSensitivity = (hasParameter ? optionParameter.CaseSensitivity : null)
+			?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
+		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
+		return provided
+			.Where(item => !string.IsNullOrWhiteSpace(item)
+				&& IsControlFreeValue(item)
+				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item)
+				&& ParameterValueConverter.CanConvert(item, optionType, numericFormatProvider, enumIgnoreCase))
+			.Select(static item => QuoteValueForInsertion(item))
+			.OfType<string>()
+			.Select(static insertion => new ConsoleLineReader.AutocompleteSuggestion(
+				insertion,
+				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+			.ToArray();
 	}
 
 	// Offers the member names of an enum-typed option parameter as value suggestions, filtered

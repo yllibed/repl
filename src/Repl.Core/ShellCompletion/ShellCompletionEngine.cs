@@ -184,17 +184,20 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		var provided = await InvokeProviderWithDeadlineAsync(target.Provider, serviceProvider, valuePrefix, cancellationToken)
 			.ConfigureAwait(false);
 		var parsing = app.OptionsSnapshot.Parsing;
+		var numericFormatProvider = parsing.NumericFormatProvider ?? System.Globalization.CultureInfo.InvariantCulture;
 		foreach (var value in provided ?? [])
 		{
-			// Parity per candidate: the segment constraint must accept it AND execution must
-			// route it to THIS segment (a higher-scoring or hidden literal would shadow it, a
-			// global-option value would be stripped — CandidateBindsToProviderRoute resolves
-			// against the full active graph after global parsing); values are then encoded as
-			// literal data in the TARGET shell's syntax (see QuoteValueForShell) or dropped
-			// when unrepresentable.
+			// Parity per candidate: the segment constraint AND the handler parameter type must
+			// accept it (an unconstrained {count} whose handler takes int would otherwise offer
+			// "abc"), AND execution must route it to THIS segment (a higher-scoring/hidden
+			// literal or an ambiguous prefix would shadow it, a global-option value would be
+			// stripped — CandidateBindsToProviderRoute resolves against the full active graph
+			// after global parsing); values are then encoded as literal data in the TARGET
+			// shell's syntax (see QuoteValueForShell) or dropped when unrepresentable.
 			if (!string.IsNullOrWhiteSpace(value)
 				&& IsShellSafeCandidate(value)
 				&& RouteConstraintEvaluator.IsMatch(target.Segment, value, parsing)
+				&& AutocompleteEngine.CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, value, numericFormatProvider)
 				&& app.Autocomplete.CandidateBindsToProviderRoute(commandPrefix, value, target.Route, activeGraph)
 				&& QuoteValueForShell(value, shell) is { } insertion
 				&& valueDedupe.Add(insertion))
@@ -402,10 +405,14 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 
 		// The option parameter's type is the parity check (see the interactive pending path):
 		// a value that cannot convert to it would fail binding at execution.
-		var optionType = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter)
-			? optionParameter.ParameterType
-			: typeof(string);
+		var hasParameter = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter);
+		var optionType = hasParameter ? optionParameter.ParameterType : typeof(string);
 		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? System.Globalization.CultureInfo.InvariantCulture;
+		// Honor the option's effective case sensitivity so an enum value the parser would reject
+		// ('prod' for member 'Prod' under case-sensitive parsing) is not offered.
+		var effectiveCaseSensitivity = (hasParameter ? optionParameter.CaseSensitivity : null)
+			?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
+		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 
 		// Option VALUES dedupe case-sensitively: a string option value is case-significant at
 		// execution, so provider results differing only by case must both survive (parity with
@@ -420,7 +427,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (!string.IsNullOrWhiteSpace(value)
 				&& IsShellSafeCandidate(value)
 				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(value)
-				&& ParameterValueConverter.CanConvert(value, optionType, numericFormatProvider)
+				&& ParameterValueConverter.CanConvert(value, optionType, numericFormatProvider, enumIgnoreCase)
 				&& QuoteValueForShell(value, shell) is { } insertion
 				&& valueDedupe.Add(insertion))
 			{
