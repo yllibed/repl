@@ -828,6 +828,82 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 			because: "'alice' binds to {name}; only literal-shadowed values are dropped");
 	}
 
+	[TestMethod]
+	[Description("fish and nushell insert the completion line as a VALUE and quote it themselves, so the bridge must not pre-quote: a value needing quoting (a space) is dropped for fish/nu (whereas bash single-quotes it), while a plain value still completes.")]
+	[DataRow(ShellKind.Fish)]
+	[DataRow(ShellKind.Nu)]
+	public async Task When_FishOrNuValueNeedsQuoting_Then_ItIsDropped(ShellKind shell)
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["New York", "plainval"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app deploy ", shell).ConfigureAwait(false);
+
+		candidates.Should().Contain("plainval", because: "a plain value is inserted verbatim by fish/nu");
+		candidates.Should().NotContain(static c => c.Contains("New York", StringComparison.Ordinal),
+			because: "fish/nu quote the value themselves; a pre-quoted or spaced value can't round-trip");
+	}
+
+	[TestMethod]
+	[Description("A bool route option is not a pending value position: 'app run --force ' must fall through to normal option/command completion rather than entering the provider/enum pending path (which would suppress it). The bool option's own provider values are not offered as if awaiting a value.")]
+	public async Task When_PendingTokenIsBoolFlag_Then_NotTreatedAsPendingValue()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] bool force, [ReplOption] string? channel) => force ? "on" : (channel ?? "off"))
+			.WithCompletion(
+				"force",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["bogus-bool-value"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run --force ").ConfigureAwait(false);
+
+		candidates.Should().NotContain("bogus-bool-value", because: "a bool flag takes no value, so its provider must not run as pending");
+		candidates.Should().Contain("--channel", because: "normal option completion must still follow a set bool flag");
+	}
+
+	[TestMethod]
+	[Description("A pending option's provider value that cannot convert to the option parameter's type is filtered, matching the positional path's constraint check: for '[ReplOption] int count', a provider returning 'abc' and '42' offers only '42' (interactive).")]
+	public async Task When_PendingOptionProviderValueViolatesType_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] int count) => count.ToString(System.Globalization.CultureInfo.InvariantCulture))
+			.WithCompletion("count", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["abc", "42"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --count ").ConfigureAwait(false);
+
+		var values = result.Suggestions.Select(static s => s.Value).ToArray();
+		values.Should().Contain("42", because: "42 converts to int");
+		values.Should().NotContain("abc", because: "'abc' cannot bind to an int option, so it must not be offered");
+	}
+
+	[TestMethod]
+	[Description("Shell parity: a pending option provider value violating the option type is filtered on the bridge too ('app run --count ' with int count offers only 42).")]
+	public async Task When_PendingOptionProviderValueViolatesType_Then_ShellDoesNotOfferIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] int count) => count.ToString(System.Globalization.CultureInfo.InvariantCulture))
+			.WithCompletion(
+				"count",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["abc", "42"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run --count ").ConfigureAwait(false);
+
+		candidates.Should().Contain("42");
+		candidates.Should().NotContain("abc");
+	}
+
 	private static readonly string[] s_dashTargets = ["-prod", "-staging"];
 	private static readonly string[] s_intIds = ["42", "77"];
 	private static readonly string[] s_names = ["alice", "bob"];

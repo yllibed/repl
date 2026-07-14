@@ -244,29 +244,39 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	// Encodes one provider VALUE as LITERAL data for the target shell. The emitted candidate is
 	// inserted into the user's command line and re-parsed by that shell, so an interpolating
 	// form is a command-execution boundary for provider-reflected data — in POSIX shells
-	// "$(...)" runs the substitution on acceptance. A single-quoted literal is verbatim in
-	// every target shell (only the plain-char fast path skips the quotes). It must ALSO survive
-	// the bridge's own tokenizer on the NEXT Tab: a value containing an apostrophe or backslash
-	// forces a shell-specific escape ('\'' , '' , \' , \\ ) that TokenizeInputSpans cannot
-	// re-lex, so such values are rejected (null) rather than emitted in a form that would break
-	// subsequent completion. Deliberately SEPARATE from the interactive tokenizer quoting, which
-	// can use the other quote kind because the reader re-tokenizes with the same rules.
+	// "$(...)" runs the substitution on acceptance. How a value must be encoded depends on how
+	// each shell's completion mechanism inserts it (verbatim vs. self-quoted), so this is
+	// per-shell (see the branches). Returns null when the target shell cannot represent the
+	// value safely AND round-trip it through the bridge tokenizer on the next Tab. Deliberately
+	// SEPARATE from the interactive tokenizer quoting, which can use the other quote kind
+	// because the reader re-tokenizes with the same rules.
 	internal static string? QuoteValueForShell(string value, ShellKind shell)
 	{
 		var plainChars = shell == ShellKind.PowerShell ? s_powerShellPlainChars : s_shellPlainChars;
 		if (!value.AsSpan().ContainsAnyExcept(plainChars))
 		{
+			// Plain (identifier-ish) value: inserted verbatim by every shell's completion
+			// mechanism and re-lexes cleanly — safe with or without quotes.
 			return value;
 		}
 
-		// An apostrophe can't live in a single-quoted literal without a shell-specific escape
-		// ('\'' , '' ) that the bridge tokenizer can't re-lex on the next Tab, so drop it in
-		// every shell. A backslash is ordinary literal data inside single quotes for bash, zsh,
-		// PowerShell and nu (and round-trips through the bridge tokenizer), so 'C:\Temp'-style
-		// values complete there — but fish's single quotes DO escape '\', so it's dropped only
-		// for fish.
-		if (value.Contains('\'', StringComparison.Ordinal)
-			|| (shell == ShellKind.Fish && value.Contains('\\', StringComparison.Ordinal)))
+		// fish (`complete -a "(...)"`) and nushell (external-completer records) treat each
+		// returned line as the completion VALUE and quote/insert it themselves; the nu spans
+		// dispatcher also re-joins by spaces. Emitting our own shell syntax there would be
+		// double-quoted or break span grouping, so a value that needs any quoting is dropped
+		// for those shells rather than mis-encoded.
+		if (shell is ShellKind.Fish or ShellKind.Nu)
+		{
+			return null;
+		}
+
+		// bash/zsh (compadd -Q)/PowerShell insert the completion text VERBATIM, so we emit a
+		// single-quote literal (neutralizing $(...), backticks, spaces, globs). An apostrophe
+		// can't live in that literal without a shell-specific escape ('\'' , '') the bridge
+		// tokenizer can't re-lex on the next Tab, so such values are dropped; a backslash is
+		// ordinary data inside these shells' single quotes (and round-trips), so 'C:\Temp'
+		// still completes.
+		if (value.Contains('\'', StringComparison.Ordinal))
 		{
 			return null;
 		}
@@ -390,6 +400,13 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			return false;
 		}
 
+		// The option parameter's type is the parity check (see the interactive pending path):
+		// a value that cannot convert to it would fail binding at execution.
+		var optionType = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter)
+			? optionParameter.ParameterType
+			: typeof(string);
+		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? System.Globalization.CultureInfo.InvariantCulture;
+
 		// Option VALUES dedupe case-sensitively: a string option value is case-significant at
 		// execution, so provider results differing only by case must both survive (parity with
 		// the interactive pending path). The invocation parser consumes a following token as
@@ -403,6 +420,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (!string.IsNullOrWhiteSpace(value)
 				&& IsShellSafeCandidate(value)
 				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(value)
+				&& ParameterValueConverter.CanConvert(value, optionType, numericFormatProvider)
 				&& QuoteValueForShell(value, shell) is { } insertion
 				&& valueDedupe.Add(insertion))
 			{
@@ -589,7 +607,10 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			return false;
 		}
 
-		if (distinct[0].TokenKind is not (OptionSchemaTokenKind.NamedOption or OptionSchemaTokenKind.BoolFlag))
+		// Only a VALUED named option awaits a value. A bool flag takes none, so treating it as
+		// pending would suppress the normal option/command completion that should follow it
+		// (parity with the interactive pending detector, which ignores bool flags).
+		if (distinct[0].TokenKind is not OptionSchemaTokenKind.NamedOption)
 		{
 			return false;
 		}

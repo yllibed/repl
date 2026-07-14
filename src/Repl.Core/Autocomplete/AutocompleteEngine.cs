@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using Repl.Internal.Options;
 
@@ -1504,10 +1505,18 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				// as a value. Reuse the parser's own rule so completion and execution cannot drift.
 				// Consumability is judged on the SEMANTIC value (the parser sees the decoded
 				// token), then values needing quotes are emitted pre-quoted for insertion.
+				// The option parameter's type is the parity check: a value that cannot convert to it
+				// (e.g. "abc" for an int option) would fail binding at execution, so it must not be
+				// offered — the positional path gets this guarantee from the segment constraint.
+				var optionType = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter)
+					? optionParameter.ParameterType
+					: typeof(string);
+				var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture;
 				return provided
-					.Where(static item => !string.IsNullOrWhiteSpace(item)
+					.Where(item => !string.IsNullOrWhiteSpace(item)
 						&& IsControlFreeValue(item)
-						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item))
+						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item)
+						&& ParameterValueConverter.CanConvert(item, optionType, numericFormatProvider))
 					.Select(static item => QuoteValueForInsertion(item))
 					.OfType<string>()
 					.Select(static insertion => new ConsoleLineReader.AutocompleteSuggestion(

@@ -32,6 +32,29 @@ internal static class ParameterValueConverter
 		return Convert.ChangeType(value, nonNullableType, numericFormatProvider);
 	}
 
+	// Non-throwing convertibility check for completion: filters provider values that could
+	// never bind to the target option/argument (e.g. "abc" for an int option). For a
+	// collection parameter a single candidate is one ELEMENT, so the check runs against the
+	// element type. Mirrors ConvertSingle's rules so completion and binding cannot disagree.
+	public static bool CanConvert(string value, Type parameterType, IFormatProvider numericFormatProvider, bool enumIgnoreCase = true)
+	{
+		ArgumentNullException.ThrowIfNull(parameterType);
+		ArgumentNullException.ThrowIfNull(numericFormatProvider);
+
+		var targetType = HandlerArgumentBinder.TryGetCollectionElementType(parameterType, out var elementType)
+			? elementType
+			: parameterType;
+		try
+		{
+			_ = ConvertSingle(value, targetType, numericFormatProvider, enumIgnoreCase);
+			return true;
+		}
+		catch (Exception ex) when (ex is FormatException or OverflowException or InvalidCastException or ArgumentException)
+		{
+			return false;
+		}
+	}
+
 	private static bool TryConvertWellKnown(
 		string value,
 		Type nonNullableType,
