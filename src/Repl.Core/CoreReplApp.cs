@@ -774,6 +774,16 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		public object? GetService(Type serviceType)
 		{
 			ArgumentNullException.ThrowIfNull(serviceType);
+
+			// Resolve IServiceProvider to the provider itself: framework-injected parameters
+			// (e.g. the completion bridge handler) request it, and a null here would silently
+			// disable shell-scoped WithCompletion providers for CoreReplApp-only apps. MS DI
+			// self-registers it; the built-in provider must match that contract.
+			if (serviceType == typeof(IServiceProvider))
+			{
+				return this;
+			}
+
 			return services.TryGetValue(serviceType, out var service) ? service : null;
 		}
 	}

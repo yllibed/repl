@@ -228,8 +228,29 @@ public sealed class Given_ShellCompletionBridge_Providers
 			because: "the deadline must cancel the provider token, not just abandon the task");
 	}
 
+	[TestMethod]
+	[Description("A CoreReplApp-only app (no external DI container) still gets a non-null CompletionContext.Services through the bridge: the built-in provider resolves IServiceProvider to itself, so shell-scoped providers run instead of silently degrading to nothing.")]
+	public void When_CoreReplAppRunsBridge_Then_ProviderGetsServiceProvider()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (context, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+					[context.Services is null ? "ctx-null" : "ctx-ok"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy.");
+
+		var output = ConsoleCaptureHelper.Capture(() => RunBridgeArgs(args => sut.Run(args), "app deploy "));
+
+		output.Text.Should().Contain("ctx-ok", because: "the built-in provider must supply itself as IServiceProvider to the bridge");
+	}
+
 	private static (int ExitCode, string Text) RunBridge(ReplApp app, string line) =>
-		ConsoleCaptureHelper.Capture(() => app.Run(
+		ConsoleCaptureHelper.Capture(() => RunBridgeArgs(args => app.Run(args), line));
+
+	private static int RunBridgeArgs(Func<string[], int> run, string line) =>
+		run(
 		[
 			"completion",
 			"__complete",
@@ -241,7 +262,7 @@ public sealed class Given_ShellCompletionBridge_Providers
 			line.Length.ToString(System.Globalization.CultureInfo.InvariantCulture),
 			"--no-interactive",
 			"--no-logo",
-		]));
+		]);
 
 	private interface IClientDirectory
 	{
