@@ -13,8 +13,8 @@ git status --short
 nbgv prepare-release
 ```
 
-Run `nbgv prepare-release` from `main` only. Do not run it from a feature branch or a
-pull request branch.
+For stable release preparation, run `nbgv prepare-release` from a clean `main` only. Do
+not run it from a feature branch or a pull request branch.
 
 The command uses the `release` settings in `version.json` to:
 
@@ -24,7 +24,8 @@ The command uses the `release` settings in `version.json` to:
 - merge the release branch back into `main` so the `version.json` changes are resolved.
 
 Push the resulting `main` and `release/<version>` branches when the release is ready.
-CI is responsible for build, test, pack, GitHub Release creation, and NuGet publishing.
+CI is responsible for build, test, pack, symbol packages, GitHub Release creation, and
+NuGet publication.
 
 ## What triggers publishing artifacts
 
@@ -32,7 +33,8 @@ CI is responsible for build, test, pack, GitHub Release creation, and NuGet publ
   - `pull_request`
   - `push` on `main`
   - `push` on `release/**`
-- GitHub Release job runs only on pushes to `main` or `release/**`.
+- On pushes to `main` or `release/**`, the GitHub Release job runs after build, test,
+  pack, and documentation lint succeed.
 
 ## Branch strategy
 
@@ -69,7 +71,9 @@ CI is responsible for build, test, pack, GitHub Release creation, and NuGet publ
 
 ## NuGet publish status
 
-- Package build + symbols (`.snupkg`) are produced by CI.
-- NuGet push step exists in workflow but is currently disabled:
-  - `.github/workflows/ci.yml` -> `Publish to NuGet` has `if: false`.
-- To actually publish to NuGet.org, enable that step and ensure `NUGET_API_KEY` is configured.
+- Package and symbol packages (`.snupkg`) are produced by `Build, Test, Pack` and published
+  by the release job.
+- `Publish to NuGet` runs after GitHub Release creation when the preceding step succeeds
+  (`if: success()`).
+- The `NUGET_API_KEY` repository secret must remain configured. Do not expose its value or
+  attempt to validate it locally.
