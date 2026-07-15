@@ -300,6 +300,18 @@ internal static class InvocationOptionParser
 			value = effectiveTokens[index];
 		}
 
+		// A casing-mismatched token naming a KNOWN parameter whose effective sensitivity is
+		// CaseSensitive must stay an inert unknown: storing it would let the namedOptions
+		// comparer (global) rebind it to a parameter whose schema entries explicitly rejected
+		// this casing. Unconstrained parameters keep the documented permissive
+		// bind-by-name behavior. The value token stays consumed either way.
+		if (schema.TryGetParameter(optionName, out var knownParameter)
+			&& !string.Equals(knownParameter.Name, optionName, StringComparison.Ordinal)
+			&& (knownParameter.CaseSensitivity ?? options.OptionCaseSensitivity) == ReplCaseSensitivity.CaseSensitive)
+		{
+			return;
+		}
+
 		AddNamedValue(namedOptions, optionName, value ?? "true");
 	}
 

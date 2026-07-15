@@ -50,6 +50,13 @@ public sealed class Given_OptionAttributeOverrides
 		public string[] Patches { get; set; } = [];
 	}
 
+	[ReplOptionsGroup]
+	public sealed class SinglePatchOptions
+	{
+		[ReplOption(Mode = ReplParameterMode.OptionAndPositional, Arity = ReplArity.ZeroOrOne)]
+		public string[] Patches { get; set; } = [];
+	}
+
 	[TestMethod]
 	[Description("Regression guard for issue #57: [ReplOption(CaseSensitivity = ...)] must be a legal attribute argument (a nullable enum triggers CS0655, making the override dead code) and the per-option override must accept casing variants while the global default stays case-sensitive.")]
 	public void When_OptionCaseSensitivityOverriddenViaAttribute_Then_CasingVariantIsAccepted()
@@ -397,5 +404,81 @@ public sealed class Given_OptionAttributeOverrides
 			(DenimOutfitOptions options, [ReplOption] string fabric = "denim") => fabric);
 
 		act.Should().Throw<InvalidOperationException>().WithMessage("*Duplicate*");
+	}
+
+	[TestMethod]
+	[Description("Guards named/positional parity for explicit upper bounds: a ZeroOrOne collection rejects a repeated named option, so two positional values feeding the same collection must be rejected too — otherwise the override is enforceable on one input path and bypassable on the other.")]
+	public void When_ZeroOrOneCollectionReceivesTwoPositionals_Then_BindingFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("echo", ([ReplOption(Arity = ReplArity.ZeroOrOne)] string[] items) => string.Join(',', items));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "ga", "bu", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("accepts at most one value");
+	}
+
+	[TestMethod]
+	[Description("Guards named/positional parity for the ExactlyOne upper bound on the positional path: two positional values must be rejected with the exactly-one diagnostic, mirroring the named-option validator.")]
+	public void When_ExactlyOneCollectionReceivesTwoPositionals_Then_BindingFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("echo", ([ReplOption(Arity = ReplArity.ExactlyOne)] string[] items) => string.Join(',', items));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "ga", "bu", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("requires exactly one value");
+	}
+
+	[TestMethod]
+	[Description("Guards named/positional parity for explicit upper bounds on the options-group property path: a positional ZeroOrOne collection property must reject two positional values the same way repeated named values are rejected.")]
+	public void When_GroupZeroOrOneCollectionReceivesTwoPositionals_Then_BindingFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("wear", (SinglePatchOptions options) => string.Join(',', options.Patches));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["wear", "ga", "bu", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("accepts at most one value");
+	}
+
+	[TestMethod]
+	[Description("Guards the CaseSensitive override against the permissive unknown-option fallback: with AllowUnknownOptions and a global CaseInsensitive default, a casing-mismatched token must stay an inert unknown instead of rebinding by parameter name to an option that explicitly rejected that casing.")]
+	public void When_PermissiveUnknownTokenCaseMismatchesCaseSensitiveOption_Then_ValueIsNotBound()
+	{
+		var sut = ReplApp.Create()
+			.Options(options =>
+			{
+				options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive;
+				options.Parsing.AllowUnknownOptions = true;
+			});
+		sut.Map("run", ([ReplOption(CaseSensitivity = ReplCaseSensitivity.CaseSensitive)] string mode = "ga") => mode);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--Mode", "zo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("ga");
+		output.Text.Should().NotContain("zo");
+	}
+
+	[TestMethod]
+	[Description("Boundary for the permissive-fallback guard: without a per-option override, permissive mode keeps binding unknown casing variants by parameter name under the global CaseInsensitive comparer — the documented migration behavior must survive the fix.")]
+	public void When_PermissiveUnknownTokenCaseMismatchesUnconstrainedOption_Then_ValueStillBinds()
+	{
+		var sut = ReplApp.Create()
+			.Options(options =>
+			{
+				options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive;
+				options.Parsing.AllowUnknownOptions = true;
+			});
+		sut.Map("run", ([ReplOption] string mode = "ga") => mode);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--MoDe", "zo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("zo");
 	}
 }
