@@ -68,6 +68,22 @@ public sealed class Given_OptionAttributeOverrides
 	}
 
 	[TestMethod]
+	[Description("Guards the ambiguity edge unlocked by issue #57: a typed token matching both a case-insensitive alias and another option's case-sensitive canonical token must be rejected as ambiguous at parse time, never silently bound to either parameter.")]
+	public void When_TokenMatchesCaseInsensitiveAliasAndAnotherOption_Then_AmbiguityIsRejected()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+			"probe",
+			([ReplOption(Aliases = ["--Mode"], CaseSensitivity = ReplCaseSensitivity.CaseInsensitive)] string first = "ga",
+			 [ReplOption(Name = "mode")] string second = "bu") => $"first={first};second={second}");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["probe", "--mode", "zo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Ambiguous option '--mode'");
+	}
+
+	[TestMethod]
 	[Description("Guards the override boundary: a sibling enum-flag alias without a case-sensitivity override must keep the global case-sensitive default, so per-member overrides stay scoped to their own aliases.")]
 	public void When_EnumFlagWithoutOverrideAndCasingDiffers_Then_TokenIsRejected()
 	{
