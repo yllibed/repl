@@ -119,7 +119,7 @@ internal static class OptionSchemaBuilder
 			parameter.Name!,
 			parameter.ParameterType,
 			mode,
-			CaseSensitivity: optionAttribute?.CaseSensitivity);
+			CaseSensitivity: optionAttribute?.CaseSensitivityOverride);
 		if (mode == ReplParameterMode.ArgumentOnly)
 		{
 			return;
@@ -133,7 +133,7 @@ internal static class OptionSchemaBuilder
 			parameter.Name!,
 			tokenKind,
 			arity,
-			CaseSensitivity: optionAttribute?.CaseSensitivity));
+			CaseSensitivity: optionAttribute?.CaseSensitivityOverride));
 		AppendOptionAliases(parameter, tokenKind, arity, optionAttribute, entries);
 		AppendReverseAliases(parameter, optionAttribute, entries);
 		AppendValueAliases(parameter, optionAttribute, entries);
@@ -168,7 +168,7 @@ internal static class OptionSchemaBuilder
 				parameter.Name!,
 				tokenKind,
 				arity,
-				CaseSensitivity: optionAttribute?.CaseSensitivity));
+				CaseSensitivity: optionAttribute?.CaseSensitivityOverride));
 		}
 	}
 
@@ -185,7 +185,7 @@ internal static class OptionSchemaBuilder
 				parameter.Name!,
 				OptionSchemaTokenKind.ReverseFlag,
 				ReplArity.ZeroOrOne,
-				CaseSensitivity: optionAttribute?.CaseSensitivity,
+				CaseSensitivity: optionAttribute?.CaseSensitivityOverride,
 				InjectedValue: "false"));
 		}
 	}
@@ -203,14 +203,14 @@ internal static class OptionSchemaBuilder
 				parameter.Name!,
 				OptionSchemaTokenKind.ValueAlias,
 				ReplArity.ZeroOrOne,
-				CaseSensitivity: valueAlias.CaseSensitivity ?? optionAttribute?.CaseSensitivity,
+				CaseSensitivity: valueAlias.CaseSensitivityOverride ?? optionAttribute?.CaseSensitivityOverride,
 				InjectedValue: valueAlias.Value));
 		}
 	}
 
 	private static ReplArity ResolveArity(ParameterInfo parameter, ReplOptionAttribute? optionAttribute)
 	{
-		if (optionAttribute?.Arity is { } explicitArity)
+		if (optionAttribute?.ArityOverride is { } explicitArity)
 		{
 			return explicitArity;
 		}
@@ -293,7 +293,7 @@ internal static class OptionSchemaBuilder
 					parameter.Name!,
 					OptionSchemaTokenKind.EnumAlias,
 					ReplArity.ZeroOrOne,
-					CaseSensitivity: enumFlag.CaseSensitivity ?? optionAttribute?.CaseSensitivity,
+					CaseSensitivity: enumFlag.CaseSensitivityOverride ?? optionAttribute?.CaseSensitivityOverride,
 					InjectedValue: field.Name));
 			}
 		}
@@ -412,7 +412,7 @@ internal static class OptionSchemaBuilder
 			property.Name,
 			property.PropertyType,
 			mode,
-			CaseSensitivity: optionAttribute?.CaseSensitivity);
+			CaseSensitivity: optionAttribute?.CaseSensitivityOverride);
 		if (mode != ReplParameterMode.OptionOnly)
 		{
 			positionalPropertyNames.Add(property.Name);
@@ -430,7 +430,7 @@ internal static class OptionSchemaBuilder
 			property.Name,
 			tokenKind,
 			arity,
-			CaseSensitivity: optionAttribute?.CaseSensitivity));
+			CaseSensitivity: optionAttribute?.CaseSensitivityOverride));
 		AppendPropertyOptionAliases(property.Name, tokenKind, arity, optionAttribute, entries);
 		AppendPropertyReverseAliases(property.Name, optionAttribute, entries);
 		AppendPropertyValueAliases(property, optionAttribute, entries);
@@ -439,7 +439,7 @@ internal static class OptionSchemaBuilder
 
 	private static ReplArity ResolvePropertyArity(Type propertyType, ReplOptionAttribute? optionAttribute)
 	{
-		if (optionAttribute?.Arity is { } explicitArity)
+		if (optionAttribute?.ArityOverride is { } explicitArity)
 		{
 			return explicitArity;
 		}
@@ -472,7 +472,7 @@ internal static class OptionSchemaBuilder
 				propertyName,
 				tokenKind,
 				arity,
-				CaseSensitivity: optionAttribute?.CaseSensitivity));
+				CaseSensitivity: optionAttribute?.CaseSensitivityOverride));
 		}
 	}
 
@@ -489,7 +489,7 @@ internal static class OptionSchemaBuilder
 				propertyName,
 				OptionSchemaTokenKind.ReverseFlag,
 				ReplArity.ZeroOrOne,
-				CaseSensitivity: optionAttribute?.CaseSensitivity,
+				CaseSensitivity: optionAttribute?.CaseSensitivityOverride,
 				InjectedValue: "false"));
 		}
 	}
@@ -507,7 +507,7 @@ internal static class OptionSchemaBuilder
 				property.Name,
 				OptionSchemaTokenKind.ValueAlias,
 				ReplArity.ZeroOrOne,
-				CaseSensitivity: valueAlias.CaseSensitivity ?? optionAttribute?.CaseSensitivity,
+				CaseSensitivity: valueAlias.CaseSensitivityOverride ?? optionAttribute?.CaseSensitivityOverride,
 				InjectedValue: valueAlias.Value));
 		}
 	}
@@ -541,7 +541,7 @@ internal static class OptionSchemaBuilder
 					property.Name,
 					OptionSchemaTokenKind.EnumAlias,
 					ReplArity.ZeroOrOne,
-					CaseSensitivity: enumFlag.CaseSensitivity ?? optionAttribute?.CaseSensitivity,
+					CaseSensitivity: enumFlag.CaseSensitivityOverride ?? optionAttribute?.CaseSensitivityOverride,
 					InjectedValue: field.Name));
 			}
 		}
