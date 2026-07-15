@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using Repl.Internal.Options;
 
@@ -108,6 +109,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				state.OptionsTerminated,
 				state.PendingOptionValue,
 				state.PendingOptionToken,
+				request.ExplicitCompletion,
 				scopeTokens.Count,
 				activeGraph,
 				prefixComparison,
@@ -394,6 +396,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		bool optionsTerminated,
 		bool pendingOptionValue,
 		string? pendingOptionToken,
+		bool providersAllowed,
 		int scopeTokenCount,
 		ActiveRoutingGraph activeGraph,
 		StringComparison prefixComparison,
@@ -413,6 +416,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 					pendingOptionToken,
 					optionsTerminated,
 					currentTokenPrefix,
+					providersAllowed,
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
@@ -428,6 +432,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				currentTokenPrefix,
 				terminalRoute,
 				optionsTerminated,
+				providersAllowed,
 				scopeTokenCount,
 				activeGraph,
 				prefixComparison,
@@ -446,6 +451,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		string currentTokenPrefix,
 		RouteMatch? terminalRoute,
 		bool optionsTerminated,
+		bool providersAllowed,
 		int scopeTokenCount,
 		ActiveRoutingGraph activeGraph,
 		StringComparison prefixComparison,
@@ -454,14 +460,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var dynamicCandidates = await CollectDynamicAutocompleteCandidatesAsync(
-				matchingRoutes,
-				commandPrefix,
-				currentTokenPrefix,
-				optionsTerminated,
-				prefixComparison,
-				app.OptionsSnapshot.Parsing,
-				serviceProvider,
-				cancellationToken)
+				matchingRoutes, commandPrefix, currentTokenPrefix, terminalRoute, providersAllowed,
+				prefixComparison, activeGraph, serviceProvider, cancellationToken)
 			.ConfigureAwait(false);
 
 		// Once a terminal route has trailing option tokens, the command path is complete — no
@@ -1167,47 +1167,401 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		return parameter?.GetCustomAttribute<DescriptionAttribute>()?.Description;
 	}
 
-	private static async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> CollectDynamicAutocompleteCandidatesAsync(
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> CollectDynamicAutocompleteCandidatesAsync(
 		IReadOnlyList<RouteDefinition> matchingRoutes,
 		string[] commandPrefix,
 		string currentTokenPrefix,
-		bool optionsTerminated,
+		RouteMatch? terminalRoute,
+		bool providersAllowed,
 		StringComparison prefixComparison,
-		ParsingOptions parsingOptions,
+		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		// Providers complete parameter VALUES; an option-prefix token is asking for option
-		// names, and provider output would only pollute that menu. After the POSIX "--"
-		// separator a dash-prefixed token is a positional argument again, so the provider
-		// must run for it.
-		if (!optionsTerminated && IsOptionPrefixToken(currentTokenPrefix))
+		var parsingOptions = app.OptionsSnapshot.Parsing;
+		// Live-hint refreshes run after EVERY keystroke (MenuRequested: false): awaiting a
+		// user provider there would freeze typing behind a slow lookup, so providers only run
+		// for an explicit completion request (Tab/menu).
+		if (!providersAllowed)
 		{
 			return [];
 		}
 
-		var exactRoute = matchingRoutes.FirstOrDefault(route =>
-			route.Template.Segments.Count == commandPrefix.Length
-			&& MatchesRoutePrefix(
-				route,
+		// Route resolution binds segments strictly positionally, so once the terminal route
+		// carries trailing option tokens the positional slots of every longer route are
+		// occupied by those tokens — no provider value typed here could ever bind at
+		// execution (same region rule as command candidates). This also covers the POSIX
+		// "--" separator: a "--" that did not bind to a segment IS a trailing token.
+		if (terminalRoute is { RemainingTokens.Count: > 0 })
+		{
+			return [];
+		}
+
+		// A dash-prefixed token is NOT excluded here: route resolution binds a dash-prefixed
+		// token to an unfilled positional ('deploy -prod' → target == "-prod"), so as long as
+		// a positional target is open at this index the provider stays eligible — for the bare
+		// '-', a partial '-pr', or a full '-prod'. Target resolution (only routes with a
+		// dynamic segment here) and the per-candidate constraint check are the filters; option
+		// NAMES keep their own separate menu, so the position's ambiguity surfaces both.
+		var targets = ResolvePositionalCompletionTargets(
+			matchingRoutes, commandPrefix, prefixComparison, parsingOptions);
+		if (targets.Count == 0)
+		{
+			return [];
+		}
+
+		return await InvokePositionalProvidersAsync(
 				commandPrefix,
-				prefixComparison,
-				parsingOptions));
-		if (exactRoute is null || exactRoute.Command.Completions.Count != 1)
+				targets,
+				DecodeTokenPrefix(currentTokenPrefix),
+				activeGraph,
+				serviceProvider,
+				cancellationToken)
+			.ConfigureAwait(false);
+	}
+
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>> InvokePositionalProvidersAsync(
+		string[] commandPrefix,
+		IReadOnlyList<(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider)> targets,
+		string valuePrefix,
+		ActiveRoutingGraph activeGraph,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		var parsingOptions = app.OptionsSnapshot.Parsing;
+		var numericFormatProvider = parsingOptions.NumericFormatProvider ?? CultureInfo.InvariantCulture;
+		var completionContext = new CompletionContext(serviceProvider);
+		var suggestions = new List<ConsoleLineReader.AutocompleteSuggestion>();
+		// A value typed at the FIRST token position is dispatched as an ambient command (help,
+		// exit, a custom ambient, ...) BEFORE routing, so it could never bind to a route value.
+		// This is interactive-only: the CLI/shell dispatch path handles ambients differently, so
+		// the shared CandidateBindsToProviderRoute deliberately does not encode it.
+		var atFirstToken = commandPrefix.Length == 0;
+		var ambientCommands = app.OptionsSnapshot.AmbientCommands;
+		foreach (var target in targets)
+		{
+			var provided = await InvokeProviderSafelyAsync(
+					target.Provider, completionContext, valuePrefix, cancellationToken)
+				.ConfigureAwait(false);
+			foreach (var item in provided)
+			{
+				// Parity per candidate: the segment constraint AND the handler parameter type
+				// must both accept it (an unconstrained {count} whose handler takes int would
+				// otherwise offer "abc"), and it must resolve to THIS route — a value that a
+				// higher-scoring literal or an ambiguous prefix would claim never binds here.
+				// Terminal controls are rejected before rendering; quotes added for the round-trip.
+				if (!string.IsNullOrWhiteSpace(item)
+					&& !(atFirstToken && InteractiveSession.IsAmbientFirstToken(item, ambientCommands))
+					&& IsControlFreeValue(item)
+					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
+					&& CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, item, numericFormatProvider, parsingOptions.OptionCaseSensitivity)
+					&& CandidateBindsToProviderRoute(commandPrefix, item, target.Route, activeGraph)
+					&& QuoteValueForInsertion(item) is { } insertion)
+				{
+					suggestions.Add(new ConsoleLineReader.AutocompleteSuggestion(
+						insertion,
+						Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter));
+				}
+			}
+		}
+
+		return suggestions;
+	}
+
+	// A provider value only belongs in the menu if, once accepted, execution would route it
+	// to the SEGMENT it was offered for. Resolving the full command with the candidate catches
+	// the case where a higher-scoring literal wins (e.g. 'pick {name}' provider offers
+	// 'status' while a literal 'pick status' route exists): accepting it would run the literal,
+	// the value never binds to {name}, and the literal is already offered as a command
+	// candidate. A null match means the candidate does not yet complete any route (a
+	// still-incomplete multi-segment route), which is fine — nothing else can claim it either.
+	// A provider value only belongs in the menu if, once accepted, execution would route it
+	// to the SEGMENT it was offered for. This resolves the candidate exactly as execution
+	// does — ResolveCommitted strips global options first and matches against the FULL active
+	// route graph (including hidden routes), not the discovery-filtered visible set — so a
+	// value shadowed by a higher-scoring or hidden literal ('pick status'), or one the global
+	// parser would strip ('--no-logo'), is caught. A null terminal match means the candidate
+	// does not yet complete any route (a still-incomplete multi-segment route), which is
+	// fine — nothing else can claim it either. Shared with the shell bridge via app.Autocomplete.
+	// A route segment's constraint can be LOOSER than the handler parameter it feeds: an
+	// unconstrained {count} whose handler takes int leaves the segment as String, so the
+	// constraint check alone would offer "abc". Validate the candidate against the handler
+	// parameter's type too (matched by segment name). Shared by both surfaces.
+	internal bool CandidateBindsToHandlerParameter(
+		RouteDefinition route,
+		string segmentName,
+		string candidate,
+		IFormatProvider numericFormatProvider,
+		ReplCaseSensitivity optionCaseSensitivity)
+	{
+		var parameter = Array.Find(
+			route.Command.Handler.Method.GetParameters(),
+			p => string.Equals(p.Name, segmentName, StringComparison.OrdinalIgnoreCase));
+		if (parameter is null || BindsBeforeRouteValues(parameter))
+		{
+			return true;
+		}
+
+		// Mirror HandlerArgumentBinder.ResolveEnumIgnoreCase so a case-sensitive route does not
+		// offer 'prod' for enum member 'Prod' (which execution would reject): a segment that is
+		// ALSO an option honors that option's explicit case sensitivity; a pure positional segment
+		// falls back to the parsing default. Passing enumIgnoreCase:true unconditionally broke
+		// candidate-to-execution parity for enum values under case-sensitive parsing.
+		var effectiveCaseSensitivity =
+			(route.OptionSchema.TryGetParameter(segmentName, out var schemaParameter)
+				? schemaParameter.CaseSensitivity
+				: null)
+			?? optionCaseSensitivity;
+		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
+
+		// A route segment binds its single value via ConvertSingle against the WHOLE parameter
+		// type (see HandlerArgumentBinder.BindParameter's RouteValues branch), so a collection
+		// target must NOT be element-unwrapped here — a single value can never bind to it, and
+		// element unwrapping would wrongly offer a candidate that fails at execution.
+		return ParameterValueConverter.CanConvert(
+			candidate, parameter.ParameterType, numericFormatProvider, enumIgnoreCase, unwrapCollections: false);
+	}
+
+	// True when HandlerArgumentBinder.BindParameter would bind this parameter BEFORE consulting
+	// context.RouteValues, so the route value is never used for it and its type must not gate the
+	// candidate. Mirrors that method's pre-route precedence exactly: CancellationToken, an explicit
+	// binding direction ([FromContext]/[FromServices]), a typed global-options parameter
+	// (UseGlobalOptions<T>), and a [ReplOptionsGroup] parameter. Framework-injected services
+	// (IServiceProvider, ICoreReplApp, ...) are deliberately NOT here — the binder consults route
+	// values BEFORE them, so a segment homonym does bind (and fail) exactly as completion predicts.
+	private bool BindsBeforeRouteValues(System.Reflection.ParameterInfo parameter) =>
+		parameter.ParameterType == typeof(CancellationToken)
+		|| parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
+		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0
+		|| app.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)
+		|| Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true);
+
+	internal bool CandidateBindsToProviderRoute(
+		string[] commandPrefix,
+		string candidate,
+		RouteDefinition providerRoute,
+		ActiveRoutingGraph activeGraph)
+	{
+		var tokens = new string[commandPrefix.Length + 1];
+		commandPrefix.CopyTo(tokens, 0);
+		tokens[^1] = candidate;
+
+		// Mirror execution's first step: strip global options. A candidate the global parser
+		// consumes ('--no-logo', '--result:...') never reaches the segment, so it must not be
+		// offered as a positional value — it would vanish rather than bind.
+		var stripped = GlobalOptionParser
+			.Parse(tokens, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing)
+			.RemainingTokens;
+		var remaining = stripped as string[] ?? [.. stripped];
+		if (remaining.Length <= commandPrefix.Length
+			|| !string.Equals(remaining[commandPrefix.Length], candidate, StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		// Expand unique command prefixes exactly as execution does BEFORE routing: a value that
+		// is a unique prefix of a literal sibling ('sta' for a literal 'status') expands to that
+		// literal at execution, so it must be vetted expanded, not raw. An AMBIGUOUS prefix
+		// ('st' matching both 'status' and 'staging') makes execution stop at the ambiguity
+		// error before the segment is ever bound, so such a value can never bind — drop it.
+		var prefixResolution = app.ResolveUniquePrefixes(remaining, activeGraph);
+		if (prefixResolution.IsAmbiguous)
+		{
+			return false;
+		}
+
+		var expanded = prefixResolution.Tokens;
+
+		// Unique-prefix expansion rewrites a token IN PLACE before routing: a provider value that
+		// is itself a unique prefix of a literal sibling ('sta' for literal 'status') is expanded
+		// to that literal, so execution binds 'status' — NOT the 'sta' the provider offered — even
+		// when the winning route is still the provider's own (e.g. an INCOMPLETE 'pick status {id}'
+		// sibling loses to the terminal 'pick {name}', yet the token was already rewritten).
+		// Offering it would silently change the accepted value, so drop any candidate whose token
+		// at the provider position was rewritten. (A candidate that expands to a literal owned by a
+		// DIFFERENT winning route is already dropped by the route-identity check below.)
+		if (expanded.Length <= commandPrefix.Length
+			|| !string.Equals(expanded[commandPrefix.Length], candidate, StringComparison.Ordinal))
+		{
+			return false;
+		}
+
+		return ResolvesToProviderRoute(expanded, providerRoute, activeGraph);
+	}
+
+	// Resolve against the FULL active route graph (including hidden routes) the way execution
+	// does, using the diagnostics so an INCOMPLETE route is judged too. A different winning
+	// route — a higher-scoring or hidden literal ('pick status'), even while still missing later
+	// arguments ('pick status {id}' outscoring 'pick {name} {id}') — shadows the value, so it
+	// would never bind to the provider's segment (and a hidden command must not be surfaced
+	// indirectly). Only when neither a terminal match nor a missing-argument winner claims the
+	// tokens is the value genuinely unclaimed and safe to keep.
+	private bool ResolvesToProviderRoute(
+		string[] expanded,
+		RouteDefinition providerRoute,
+		ActiveRoutingGraph activeGraph)
+	{
+		var diagnostics = app.ResolveWithDiagnostics(expanded, activeGraph.Routes);
+		if (diagnostics.Match is { } terminal)
+		{
+			return ReferenceEquals(terminal.Route, providerRoute);
+		}
+
+		// No terminal route match: dispatch next tries an EXACT context (deeplink). A candidate
+		// whose expanded tokens exactly match a context navigates/renders that context instead of
+		// binding to the provider's segment — even when the provider route is the missing-argument
+		// winner ('pick {name} {id}' with a context 'pick status' shadows the value 'status') — so
+		// it must not be offered.
+		if (ContextResolver.ResolveExact(activeGraph.Contexts, expanded, app.OptionsSnapshot.Parsing) is not null)
+		{
+			return false;
+		}
+
+		if (diagnostics.MissingArgumentsFailure is { } incomplete)
+		{
+			return ReferenceEquals(incomplete.Route, providerRoute);
+		}
+
+		return true;
+	}
+
+	// Isolates an interactive completion provider's faults: a transient lookup provider
+	// (database/network) that throws or returns a faulted task must drop only its own
+	// suggestions, never abort the interactive session (the fault would otherwise escape
+	// through ConsoleLineReader.ReadLineAsync). Real cancellation of the line read still
+	// propagates so the reader unwinds cleanly.
+	private static async ValueTask<IReadOnlyList<string>> InvokeProviderSafelyAsync(
+		CompletionDelegate provider,
+		CompletionContext completionContext,
+		string input,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			return await provider(completionContext, input, cancellationToken).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch
 		{
 			return [];
 		}
+	}
 
-		var completion = exactRoute.Command.Completions.Values.Single();
-		var completionContext = new CompletionContext(serviceProvider);
-		var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
-			.ConfigureAwait(false);
-		return provided
-			.Where(static item => !string.IsNullOrWhiteSpace(item))
-			.Select(static item => new ConsoleLineReader.AutocompleteSuggestion(
-				item,
-				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
-			.ToArray();
+	// The token being typed occupies the segment at the index right AFTER the committed
+	// prefix, so providers are resolved by THAT dynamic segment's name. Gating on a fully
+	// matched route instead would only fire once the value token is committed — one token
+	// too late, on a position that can no longer bind to the parameter (issue #45) — and a
+	// sole-registration lookup would run the wrong provider on multi-parameter commands.
+	// Every matching route's provider participates: the PARTIAL typed token deliberately
+	// plays no role here ('lookup 550e' is not yet a Guid, yet the provider's complete
+	// candidates are exactly what the user needs) — suggestion/execution parity is enforced
+	// per CANDIDATE against the returned segment's constraint instead. Shared with the shell
+	// completion bridge so both surfaces resolve the same targets.
+	internal static IReadOnlyList<(RouteDefinition Route, DynamicRouteSegment Segment, CompletionDelegate Provider)> ResolvePositionalCompletionTargets(
+		IReadOnlyList<RouteDefinition> matchingRoutes,
+		string[] commandPrefix,
+		StringComparison prefixComparison,
+		ParsingOptions parsingOptions)
+	{
+		var segmentIndex = commandPrefix.Length;
+		List<(RouteDefinition, DynamicRouteSegment, CompletionDelegate)>? targets = null;
+		foreach (var route in matchingRoutes)
+		{
+			if (segmentIndex < route.Template.Segments.Count
+				&& route.Template.Segments[segmentIndex] is DynamicRouteSegment dynamicSegment
+				&& MatchesRoutePrefix(route, commandPrefix, prefixComparison, parsingOptions)
+				&& route.Command.Completions.TryGetValue(dynamicSegment.Name, out var completion))
+			{
+				(targets ??= []).Add((route, dynamicSegment, completion));
+			}
+		}
+
+		return targets ?? (IReadOnlyList<(RouteDefinition, DynamicRouteSegment, CompletionDelegate)>)[];
+	}
+
+	// Decodes the raw lexical slice of the CURRENT token up to the cursor into its semantic
+	// value prefix — the same quote state machine as TokenizeInputSpans, so '"Ne' decodes to
+	// 'Ne' and a mid-token quote toggle is honored. Providers match against VALUES; feeding
+	// them the raw quoted slice would miss ordinary prefix lookups. The quote-free fast path
+	// returns the original string without allocating.
+	internal static string DecodeTokenPrefix(string rawPrefix)
+	{
+		if (rawPrefix.AsSpan().IndexOfAny('"', '\'') < 0)
+		{
+			return rawPrefix;
+		}
+
+		var builder = new System.Text.StringBuilder(rawPrefix.Length);
+		char? quote = null;
+		foreach (var ch in rawPrefix)
+		{
+			if (quote is { } active && ch == active)
+			{
+				quote = null;
+				continue;
+			}
+
+			if (quote is null && ch is '"' or '\'')
+			{
+				quote = ch;
+				continue;
+			}
+
+			builder.Append(ch);
+		}
+
+		return builder.ToString();
+	}
+
+	// Provider values reflect external data (filenames, database labels): a value carrying
+	// terminal control characters (C0 including ESC/BEL, DEL, C1 including the OSC/CSI
+	// introducers) could retitle or corrupt the user's terminal when rendered in the menu or
+	// inserted into the buffer, so it is rejected whole on every surface. Both range scans
+	// are SIMD-accelerated (MemoryExtensions.ContainsAnyInRange).
+	internal static bool IsControlFreeValue(string value) =>
+		!value.AsSpan().ContainsAnyInRange('\u0000', '\u001F')
+		&& !value.AsSpan().ContainsAnyInRange('\u007F', '\u009F');
+
+	// A provider VALUE is semantic data while the suggestion list carries command-line
+	// SYNTAX: a value containing whitespace or a quote is emitted pre-quoted so acceptance
+	// round-trips through tokenization as ONE argument ('New York' -> "New York"). The
+	// tokenizer has no escape sequences, so a value containing BOTH quote kinds cannot be
+	// represented at all and yields null (the caller drops it).
+	internal static string? QuoteValueForInsertion(string value)
+	{
+		var needsQuoting = false;
+		var hasDoubleQuote = false;
+		var hasSingleQuote = false;
+		foreach (var ch in value)
+		{
+			if (char.IsWhiteSpace(ch))
+			{
+				needsQuoting = true;
+			}
+			else if (ch == '"')
+			{
+				hasDoubleQuote = true;
+			}
+			else if (ch == '\'')
+			{
+				hasSingleQuote = true;
+			}
+		}
+
+		if (!needsQuoting && !hasDoubleQuote && !hasSingleQuote)
+		{
+			return value;
+		}
+
+		if (hasDoubleQuote && hasSingleQuote)
+		{
+			return null;
+		}
+
+		return hasDoubleQuote ? $"'{value}'" : $"\"{value}\"";
 	}
 
 	// Completes the VALUE of a pending route option by invoking ONLY that option's own provider.
@@ -1222,6 +1576,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		string? pendingOptionToken,
 		bool optionsTerminated,
 		string currentTokenPrefix,
+		bool providersAllowed,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
@@ -1237,22 +1592,24 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			pendingOptionToken, app.OptionsSnapshot.Parsing.OptionCaseSensitivity);
 		foreach (var entry in entries)
 		{
-			if (match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
+			// Same keystroke rule as the positional path: providers only run for an explicit
+			// completion request; live-hint refreshes fall through to the static enum fallback.
+			if (providersAllowed
+				&& match.Route.Command.Completions.TryGetValue(entry.ParameterName, out var completion))
 			{
-				var completionContext = new CompletionContext(serviceProvider);
-				var provided = await completion(completionContext, currentTokenPrefix, cancellationToken)
+				var providerSuggestions = await InvokePendingOptionProviderAsync(
+						match, entry, completion, currentTokenPrefix, serviceProvider, cancellationToken)
 					.ConfigureAwait(false);
-				// Only surface values the invocation parser would consume as this option's
-				// separate value: a dash-prefixed candidate is read as the next option (accepting
-				// it would leave the option unset), while a signed numeric literal (-42) is bound
-				// as a value. Reuse the parser's own rule so completion and execution cannot drift.
-				return provided
-					.Where(static item => !string.IsNullOrWhiteSpace(item)
-						&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item))
-					.Select(static item => new ConsoleLineReader.AutocompleteSuggestion(
-						item,
-						Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
-					.ToArray();
+
+				// A null result means the provider FAULTED: mirror the shell bridge (which treats a
+				// fault/timeout as "no provider answer") and fall through to the static enum
+				// fallback below, so a transient provider failure does not hide the always-valid
+				// enum members. A non-null result — even empty — is the provider's final answer and
+				// deliberately suppresses the enum fallback, matching the shell's precedence.
+				if (providerSuggestions is not null)
+				{
+					return providerSuggestions;
+				}
 			}
 
 			// No explicit provider: complete enum member names when the target is an enum,
@@ -1265,6 +1622,57 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		}
 
 		return [];
+	}
+
+	// Runs a pending route option's value provider and filters its candidates the way execution
+	// binds them: consumable as the option's separate value (parser rule), convertible to the
+	// option parameter's type under its effective enum case sensitivity, control-free, then
+	// quoted for insertion (unrepresentable values dropped). Returns null when the provider
+	// FAULTED, so the caller can fall through to the static enum fallback (shell-bridge parity);
+	// a non-null (possibly empty) list is the provider's final answer.
+	private async ValueTask<IReadOnlyList<ConsoleLineReader.AutocompleteSuggestion>?> InvokePendingOptionProviderAsync(
+		RouteMatch match,
+		OptionSchemaEntry entry,
+		CompletionDelegate completion,
+		string currentTokenPrefix,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		var completionContext = new CompletionContext(serviceProvider);
+		IReadOnlyList<string> provided;
+		try
+		{
+			provided = await completion(completionContext, DecodeTokenPrefix(currentTokenPrefix), cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch
+		{
+			// Provider faulted — signal the caller to use the enum fallback instead of returning
+			// an empty list that would suppress it (the shell bridge behaves the same way).
+			return null;
+		}
+
+		var hasParameter = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter);
+		var optionType = hasParameter ? optionParameter.ParameterType : typeof(string);
+		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture;
+		var effectiveCaseSensitivity = (hasParameter ? optionParameter.CaseSensitivity : null)
+			?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
+		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
+		return provided
+			.Where(item => !string.IsNullOrWhiteSpace(item)
+				&& IsControlFreeValue(item)
+				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(item)
+				&& ParameterValueConverter.CanConvert(item, optionType, numericFormatProvider, enumIgnoreCase))
+			.Select(static item => QuoteValueForInsertion(item))
+			.OfType<string>()
+			.Select(static insertion => new ConsoleLineReader.AutocompleteSuggestion(
+				insertion,
+				Kind: ConsoleLineReader.AutocompleteSuggestionKind.Parameter))
+			.ToArray();
 	}
 
 	// Offers the member names of an enum-typed option parameter as value suggestions, filtered
@@ -1308,10 +1716,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		StringComparer comparer)
 	{
 		var seen = new HashSet<string>(comparer);
-		// Option tokens dedupe case-sensitively so that, under case-sensitive option parsing,
-		// distinct executable aliases like "-m" and "-M" both survive the UI-level dedupe
-		// (which otherwise uses the case-insensitive autocomplete comparer).
-		var seenOptions = new HashSet<string>(StringComparer.Ordinal);
+		// Option tokens and parameter VALUES dedupe case-sensitively: under case-sensitive
+		// option parsing, distinct executable aliases like "-m" and "-M" both survive, and a
+		// positional/option value is bound verbatim at execution, so provider results that
+		// differ only by case ("Prod"/"prod") are distinct values — the UI-level comparer
+		// (case-insensitive by default) must not collapse either group.
+		var seenOrdinal = new HashSet<string>(StringComparer.Ordinal);
 		var distinct = new List<ConsoleLineReader.AutocompleteSuggestion>();
 		foreach (var suggestion in suggestions)
 		{
@@ -1320,9 +1730,10 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				continue;
 			}
 
-			var isOptionToken = IsOptionPrefixToken(suggestion.DisplayText);
-			if (isOptionToken
-				? !seenOptions.Add(suggestion.DisplayText)
+			var dedupesOrdinally = suggestion.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Parameter
+				|| IsOptionPrefixToken(suggestion.DisplayText);
+			if (dedupesOrdinally
+				? !seenOrdinal.Add(suggestion.DisplayText)
 				: !seen.Add(suggestion.DisplayText))
 			{
 				continue;

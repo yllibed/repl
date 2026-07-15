@@ -37,11 +37,48 @@ set -euo pipefail
 source "$REPL_BASH_PROFILE"
 fn="$(complete -p "$REPL_CMD_NAME" | sed -E "s/.*-F ([^ ]+).*/\1/")"
 [[ -n "$fn" ]]
-COMP_LINE="$REPL_CMD_NAME c"
-COMP_POINT=${#COMP_LINE}
-COMPREPLY=()
-"$fn"
+
+complete_line() {
+  COMP_LINE="$1"
+  COMP_POINT=${#COMP_LINE}
+  COMPREPLY=()
+  "$fn"
+}
+
+complete_line "$REPL_CMD_NAME c"
 printf "%s\n" "${COMPREPLY[@]}" | grep -Fx "contact" >/dev/null
+
+# Shell-scoped value provider: the candidates must be safe SHELL SYNTAX.
+complete_line "$REPL_CMD_NAME deploy "
+
+# 1) A command-substitution value is offered single-quoted, and parsing the
+#    accepted candidate the way the shell would binds it LITERALLY — the
+#    substitution must not run (regression for the quoting-injection report).
+inj="$(printf "%s\n" "${COMPREPLY[@]}" | grep -F "PWNED")"
+[[ "$inj" == "'"'"'\$(printf PWNED)'"'"'" ]]
+eval "set -- $inj"
+[[ $# -eq 1 && "$1" == "\$(printf PWNED)" ]]
+
+# 2) A value with whitespace round-trips as ONE argument.
+ny="$(printf "%s\n" "${COMPREPLY[@]}" | grep -F "New York")"
+eval "set -- $ny"
+[[ $# -eq 1 && "$1" == "New York" ]]
+
+# 3) A completion requested from inside an OPEN double quote yields no
+#    provider value (the bridge cannot safely reshape the open quote).
+complete_line "$REPL_CMD_NAME deploy \"Ne"
+if printf "%s\n" "${COMPREPLY[@]}" | grep -F "PWNED" >/dev/null; then
+  echo "provider value leaked into an open-quoted context" >&2
+  exit 1
+fi
+
+# 4) An ESCAPED quote delimiter keeps the shell inside the open quote; a
+#    naive delimiter count would think it closed and re-offer values.
+complete_line "$REPL_CMD_NAME deploy \"a\\"
+if printf "%s\n" "${COMPREPLY[@]}" | grep -F "PWNED" >/dev/null; then
+  echo "provider value leaked past an escaped quote delimiter" >&2
+  exit 1
+fi
 '
 }
 
@@ -111,10 +148,35 @@ run_powershell_smoke() {
 
   cat > "$check_script_path" <<'PWSH'
 . $env:REPL_PWSH_PROFILE
-$line = "$env:REPL_CMD_NAME c"
+$cmd = $env:REPL_CMD_NAME
+
+$line = "$cmd c"
 $result = TabExpansion2 -InputScript $line -CursorColumn $line.Length
 if (-not ($result.CompletionMatches | Where-Object { $_.CompletionText -eq 'contact' })) {
   throw 'PowerShell completion did not return expected candidate.'
+}
+
+# Shell-scoped value provider: candidates must be literal PowerShell data.
+$line = "$cmd deploy "
+$result = TabExpansion2 -InputScript $line -CursorColumn $line.Length
+$texts = $result.CompletionMatches | ForEach-Object { $_.CompletionText }
+
+# A subexpression value is single-quoted (literal in PowerShell) and, when the
+# accepted candidate is parsed and run, binds verbatim — it must not evaluate.
+$inj = $texts | Where-Object { $_ -like '*PWNED*' }
+if ($inj -ne "'`$(printf PWNED)'") {
+  throw "PowerShell candidate was not single-quoted literal data: $inj"
+}
+$out = Invoke-Expression "$cmd deploy $inj --no-logo"
+if ($out -ne '$(printf PWNED)') {
+  throw "PowerShell accept-to-argv did not bind the literal value: $out"
+}
+
+# A value with whitespace round-trips as one argument.
+$ny = $texts | Where-Object { $_ -like '*New York*' }
+$out = Invoke-Expression "$cmd deploy $ny --no-logo"
+if ($out -ne 'New York') {
+  throw "PowerShell accept-to-argv split a spaced value: $out"
 }
 PWSH
   REPL_PWSH_PROFILE="$profile_path" pwsh -NoLogo -NoProfile -File "$check_script_path"

@@ -124,11 +124,49 @@ If signals are conflicting or weak, result is `unknown` (no auto-install in `Aut
 - Command literals from the mapped graph.
 - Static command options from handler parameters (resolved terminal routes).
 - Static global options (`--help`, `--interactive`, `--no-interactive`, `--no-logo`, output aliases, `--output:<format>`, `--answer:<name>`, and the result-flow flags `--result:page-size`, `--result:cursor`, `--result:pager`, `--result:all`).
+- Enum member names for a pending enum-typed route option.
+- `WithCompletion(...)` provider values — **opt-in per provider** (see below).
 
 Not included:
 
-- Dynamic data values (contexts/arguments).
-- `WithCompletion(...)` providers through shell completion.
+- Dynamic data values for contexts.
+
+### Value providers are opt-in
+
+Every shell Tab spawns a new process and blocks the user's shell until the bridge answers,
+so a slow completion provider (network, database) must never run there implicitly. A
+provider only serves shell completion when its registration opts in:
+
+```csharp
+app.Map("contact inspect {clientId}", (string clientId) => Inspect(clientId))
+   .WithCompletion(
+       "clientId",
+       (ctx, input, ct) => LookupClientIdsAsync(input, ct),
+       CompletionProviderScope.InteractiveAndShell);
+```
+
+The default scope (`CompletionProviderScope.Interactive`) keeps the provider on in-process
+surfaces only: the interactive Tab menu and the `complete` ambient command. Opt in only
+when the provider is fast enough for a blocking shell Tab, such as in-memory or local
+lookups. Opted-in providers complete both the positional value being typed and a pending
+route option's value, with the same binding rules as the interactive menu.
+
+Bridge-side guarantees for provider values:
+
+- Each provider invocation is bounded by `ShellCompletionOptions.ProviderTimeout`
+  (default: 1 second) — a stalled provider is abandoned and completion degrades to the
+  static candidates instead of blocking the user's shell.
+- The bridge protocol is line-delimited plain text, so values containing control
+  characters (newlines, ANSI/OSC sequences) are rejected whole rather than forwarded to
+  the shell's completion UI.
+- Values are emitted as literal shell data — a value needing quoting is single-quoted
+  (`New York` → `'New York'`, `$(cmd)` → `'$(cmd)'`, never a form the shell would
+  interpolate). A value containing an apostrophe is dropped (no single-quote literal can
+  hold one without a shell-specific escape the bridge can't re-parse on the next Tab); a
+  backslash is fine except on fish, whose single quotes escape it. The provider itself
+  receives the decoded value prefix.
+- Completion requested from inside an already-open quote (e.g. `contact "Ne`) yields no
+  provider values, since the bridge cannot safely reshape the user's opening quote.
 
 ## Managed profile blocks
 
@@ -138,6 +176,18 @@ Install/uninstall is idempotent through namespaced markers:
 - `# <<< repl completion [appId=<app-id>;shell=<bash|powershell|zsh|fish|nu>] <<<`
 
 Update/remove targets only the block matching the current app and shell.
+
+### Updating after an upgrade
+
+The installed profile block is a thin shim: it forwards the command line to
+`<app> completion __complete` and renders the result, so all completion *logic* lives in
+the app binary and is picked up automatically the next time you run the upgraded binary.
+The block itself changes only rarely (e.g. a shell adapter fix). When it does, re-run
+`completion install` — it idempotently rewrites the managed block between the markers.
+Auto/Prompt setup does not rewrite an already-installed block (it only checks for the
+markers, which carry no version), so a block-level fix requires this manual re-install.
+The bridge protocol and marker format are stable, so an old block keeps working with a
+new binary and vice versa.
 
 ## Manual setup snippets
 
@@ -171,7 +221,15 @@ $__replCompleter = {
         'myapp'
     }
 
-    & $invokedCommand completion __complete --shell powershell --line $commandAst.ToString() --cursor $cursorPosition --no-interactive --no-logo |
+    # Rebuild the line and pad it to the cursor: $commandAst drops trailing
+    # whitespace, so an empty value position ('myapp deploy ') would otherwise be
+    # analyzed as the previous token.
+    $replLine = $commandAst.Extent.Text
+    $replCursor = $cursorPosition - $commandAst.Extent.StartOffset
+    if ($replCursor -lt 0) { $replCursor = 0 }
+    if ($replLine.Length -lt $replCursor) { $replLine = $replLine.PadRight($replCursor) }
+
+    & $invokedCommand completion __complete --shell powershell --line $replLine --cursor $replCursor --no-interactive --no-logo |
         ForEach-Object {
             [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
         }
@@ -197,7 +255,8 @@ _myapp_complete() {
     reply+=("$candidate")
   done < <(myapp completion __complete --shell zsh --line "$line" --cursor "$cursor" --no-interactive --no-logo)
   if (( ${#reply[@]} > 0 )); then
-    compadd -- "${reply[@]}"
+    # -Q suppresses zsh's own quoting: the bridge already returns shell-literal syntax.
+    compadd -Q -- "${reply[@]}"
   fi
 }
 
@@ -262,10 +321,15 @@ same source, normalize prior tokens through the same parser profile (option valu
 POSIX `--` honored, response files never expanded), and use the same option-prefix gate — a
 single dash already surfaces short aliases such as `-f`, while signed numeric literals
 (`-42`) stay positional. Both also complete **enum values** for a pending option (its member
-names, under the parameter's effective case sensitivity), and the interactive menu
-additionally runs a pending option's `WithCompletion` value provider. One deliberate
-difference remains:
+names, under the parameter's effective case sensitivity), and both run `WithCompletion`
+value providers — **while the value is being typed** for a positional parameter, and for a
+pending option's value (provider first, enum fallback second). Both stop offering provider
+values once the position can no longer bind at execution (a bound value, or the route's
+trailing option region). Two deliberate differences remain:
 
 - On an **empty** token after a complete command, shell completion lists option names (a
   dump-style list is cheap there), while the interactive menu shows parameter placeholders —
   options appear from the first typed `-`.
+- The interactive menu runs **every** registered provider; the shell bridge only runs
+  providers registered with `CompletionProviderScope.InteractiveAndShell`, because each
+  shell Tab spawns a blocking process.

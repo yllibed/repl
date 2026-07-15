@@ -219,8 +219,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 	}
 
 	[TestMethod]
-	[Description("Tokens after the end-of-options separator are positional even when they look like flags: in 'deploy -- -f ' the '-f' fills the {target} segment, so the exact-route completion provider must fire — dropping it would desync the segment count.")]
-	public async Task When_DashTokenFollowsSeparator_Then_ItCountsAsPositional()
+	[Description("Suggestion/execution parity (issue #45): route resolution binds segments positionally, so in 'deploy -- -f ' the '--' itself fills {target} and '-f' lands in the option region — no provider value typed there could bind at execution, so the provider must NOT fire.")]
+	public async Task When_TokenFollowsSeparatorBoundPositional_Then_ProviderDoesNotFire()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target) => target)
@@ -230,7 +230,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var result = await ResolveAutocompleteAsync(sut, "deploy -- -f ").ConfigureAwait(false);
 
 		var values = result.Suggestions.Select(static suggestion => suggestion.Value).ToArray();
-		values.Should().Contain("zo-profile", because: "'-f' after '--' is a positional filling {target}, making the route exact for the provider");
+		values.Should().NotContain("zo-profile", because: "'--' already fills {target}; a value on the trailing region cannot bind to the parameter");
 	}
 
 	[TestMethod]
@@ -245,7 +245,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		const string shellLine = "app install bib-overalls --";
 
 		var interactive = await ResolveAutocompleteAsync(sut, "install bib-overalls --").ConfigureAwait(false);
-		var shell = shellEngine.ResolveShellCompletionCandidates(shellLine, shellLine.Length);
+		var shell = await ResolveShellCandidatesAsync(shellEngine, shellLine).ConfigureAwait(false);
 
 		var interactiveOptions = interactive.Suggestions
 			.Where(static suggestion => suggestion.IsSelectable)
@@ -267,7 +267,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		const string shellLine = "app install bib-overalls -";
 
 		var interactive = await ResolveAutocompleteAsync(sut, "install bib-overalls -").ConfigureAwait(false);
-		var shell = shellEngine.ResolveShellCompletionCandidates(shellLine, shellLine.Length);
+		var shell = await ResolveShellCandidatesAsync(shellEngine, shellLine).ConfigureAwait(false);
 
 		var interactiveOptions = interactive.Suggestions
 			.Where(static suggestion => suggestion.IsSelectable)
@@ -323,8 +323,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 	}
 
 	[TestMethod]
-	[Description("After the POSIX '--' separator a dash-prefixed current token is positional, so a value-completion provider must still run instead of being suppressed as an option prefix: 'deploy x -- -' asks the provider rather than treating '-' as an option name.")]
-	public async Task When_DashCurrentTokenFollowsSeparator_Then_ProviderStillRuns()
+	[Description("Suggestion/execution parity (issue #45): in 'deploy x -- -' the value 'x' already binds {target} and '--' sits in the option region, so the provider must NOT fire for the trailing '-' — accepting a candidate would add a positional that execution rejects.")]
+	public async Task When_DashCurrentTokenFollowsSeparatorPastBoundValue_Then_ProviderDoesNotFire()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target) => target)
@@ -334,12 +334,12 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var result = await ResolveAutocompleteAsync(sut, "deploy x -- -").ConfigureAwait(false);
 
 		var values = result.Suggestions.Select(static suggestion => suggestion.Value).ToArray();
-		values.Should().Contain("zo-profile", because: "after '--' the '-' token is positional, so the provider still runs");
+		values.Should().NotContain("zo-profile", because: "{target} is bound to 'x'; nothing typed past '--' can bind to it");
 	}
 
 	[TestMethod]
 	[Description("Shell parity for a valued short alias: after 'app install pkg -f ' shell completion still offers the install route's options, matching what execution parses ('-f' is a route option, not a stray positional).")]
-	public void When_ShellCompletesAfterValuedShortAlias_Then_RouteOptionsAreStillOffered()
+	public async Task When_ShellCompletesAfterValuedShortAlias_Then_RouteOptionsAreStillOffered()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("install {name}", static string (string name, [ReplOption(Aliases = ["-f"])] bool force) => name)
@@ -347,14 +347,14 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app install pkg -f --";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().Contain("--force", because: "'-f' is a route option; the install route stays terminal in shell completion too");
 	}
 
 	[TestMethod]
 	[Description("Shell parity for the POSIX separator: after 'app install pkg -- ' everything is positional, so shell completion offers no option names past '--'.")]
-	public void When_ShellCompletesAfterSeparator_Then_NoOptionIsOffered()
+	public async Task When_ShellCompletesAfterSeparator_Then_NoOptionIsOffered()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("install {name}", static string (string name, [ReplOption] bool force) => name)
@@ -362,7 +362,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app install pkg -- --";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().NotContain("--force", because: "tokens after '--' are positional");
 		candidates.Should().NotContain("--help");
@@ -426,7 +426,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 
 	[TestMethod]
 	[Description("Shell enum-value completion recognizes short option aliases: after 'app run -m ' (where -m is a short alias for an enum option) the enum values are offered, matching what the parser accepts for '-m Debug'.")]
-	public void When_ShellCompletesEnumValueAfterShortAlias_Then_EnumNamesAreOffered()
+	public async Task When_ShellCompletesEnumValueAfterShortAlias_Then_EnumNamesAreOffered()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("run", static string ([ReplOption(Aliases = ["-m"])] ProbeMode mode) => mode.ToString())
@@ -434,7 +434,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app run -m ";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().Contain("Debug", because: "'-m' is a short alias for the enum option; its values must complete like '--mode' does");
 	}
@@ -503,7 +503,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 
 	[TestMethod]
 	[Description("Shell completion expands unique command prefixes before resolving, like execution: 'app i pkg --' (where 'i' uniquely prefixes 'install') resolves the install route and offers its options.")]
-	public void When_ShellCompletesAfterUniquePrefix_Then_RouteOptionsAreOffered()
+	public async Task When_ShellCompletesAfterUniquePrefix_Then_RouteOptionsAreOffered()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("install {name}", static string (string name, [ReplOption] bool force) => name)
@@ -511,14 +511,14 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app i pkg --";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().Contain("--force", because: "'i' uniquely prefixes 'install', so its route options must be offered");
 	}
 
 	[TestMethod]
 	[Description("Shell enum completion must not fire for a dash token that routing consumed as a positional: 'app deploy -m ' binds '-m' to {target}, so no enum values are offered (accepting one would leave it as stray positional text).")]
-	public void When_DashTokenWasBoundAsPositional_Then_ShellOffersNoEnumValues()
+	public async Task When_DashTokenWasBoundAsPositional_Then_ShellOffersNoEnumValues()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target, [ReplOption(Aliases = ["-m"])] ProbeMode mode) => target)
@@ -526,7 +526,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app deploy -m ";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().NotContain("Debug", because: "'-m' was bound to {target} by routing, so it is not a pending option here");
 	}
@@ -582,7 +582,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 
 	[TestMethod]
 	[Description("Shell completion preserves case-distinct executable option aliases under case-sensitive option parsing: a route with '-m' and '-M' bound to different parameters offers BOTH, rather than collapsing them with a case-insensitive dedupe.")]
-	public void When_OptionsAreCaseSensitive_Then_ShellKeepsBothCaseDistinctAliases()
+	public async Task When_OptionsAreCaseSensitive_Then_ShellKeepsBothCaseDistinctAliases()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseSensitive);
@@ -593,7 +593,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app run -";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().Contain("-m").And.Contain("-M",
 			because: "case-sensitive parsing binds -m and -M to different parameters; both are executable");
@@ -704,8 +704,8 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 	}
 
 	[TestMethod]
-	[Description("A pending valued route option that sits BEFORE a POSIX '--' does not suppress positional completion after the separator: 'deploy x -- -' completes the target value, because tokens after '--' are positional, not options awaiting a value.")]
-	public async Task When_SeparatorFollowsPendingLikeToken_Then_PositionalProviderStillRuns()
+	[Description("A '--' on a route that also declares a valued option is not a pending value position, and it does not reopen positional completion either: for 'deploy x -- -' the {target} value is bound, so neither channel's pending path nor target's provider may offer values (issue #45 parity).")]
+	public async Task When_SeparatorFollowsPendingLikeToken_Then_ProviderDoesNotFireOnOptionRegion()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("deploy {target}", static string (string target, [ReplOption] string? channel) => target)
@@ -714,13 +714,13 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 
 		var result = await ResolveAutocompleteAsync(sut, "deploy x -- -").ConfigureAwait(false);
 
-		result.Suggestions.Select(static s => s.Value).Should().Contain("zo-profile",
-			because: "after '--' the token is positional; no route option is pending a value");
+		result.Suggestions.Select(static s => s.Value).Should().NotContain("zo-profile",
+			because: "{target} is bound and '--' opened the option region; no positional value can bind past it");
 	}
 
 	[TestMethod]
 	[Description("Shell parity: a pending valued route option suppresses option-name candidates in shell completion too — 'app run --channel -' must not offer '-f' (which would leave --channel without a value).")]
-	public void When_ShellRouteOptionAwaitsValue_Then_NoOptionNameIsOffered()
+	public async Task When_ShellRouteOptionAwaitsValue_Then_NoOptionNameIsOffered()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Map("run", static string ([ReplOption(Aliases = ["-f"])] bool force, [ReplOption] string? channel) => channel ?? "none")
@@ -728,14 +728,14 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app run --channel -";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().NotContain("-f", because: "--channel awaits a value; offering another option would misparse");
 	}
 
 	[TestMethod]
 	[Description("Shell parity: a pending valued global suppresses candidates in shell completion too — after 'app run --mode --tenant ' no enum value for --mode is offered (it would be consumed as the tenant value).")]
-	public void When_ShellGlobalAwaitsValue_Then_NoStaleEnumIsOffered()
+	public async Task When_ShellGlobalAwaitsValue_Then_NoStaleEnumIsOffered()
 	{
 		var sut = CoreReplApp.Create();
 		sut.Options(options => options.Parsing.AddGlobalOption<string>("tenant"));
@@ -744,7 +744,7 @@ public sealed class Given_InteractiveAutocomplete_OptionCandidates
 		var shellEngine = new ShellCompletionEngine(sut);
 		const string line = "app run --mode --tenant ";
 
-		var candidates = shellEngine.ResolveShellCompletionCandidates(line, line.Length);
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, line).ConfigureAwait(false);
 
 		candidates.Should().NotContain("Debug", because: "--tenant awaits its value; --mode's enum values must not leak here");
 	}
@@ -1023,13 +1023,22 @@ private enum ProbeMode
 		Release,
 	}
 
+	private static async Task<string[]> ResolveShellCandidatesAsync(ShellCompletionEngine engine, string line) =>
+		await engine.ResolveShellCompletionCandidatesAsync(
+				line,
+				line.Length,
+				ShellKind.Bash,
+				EmptyServiceProvider.Instance,
+				CancellationToken.None)
+			.ConfigureAwait(false);
+
 	private static async Task<ConsoleLineReader.AutocompleteResult> ResolveAutocompleteAsync(
 		CoreReplApp app,
 		string input,
 		IReadOnlyList<string>? scopeTokens = null)
 	{
 		var result = await app.Autocomplete.ResolveAutocompleteAsync(
-			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true),
+			new ConsoleLineReader.AutocompleteRequest(input, input.Length, MenuRequested: true, ExplicitCompletion: true),
 			scopeTokens ?? [],
 			EmptyServiceProvider.Instance,
 			CancellationToken.None)

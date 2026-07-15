@@ -53,6 +53,18 @@ internal static class Program
 				static (_, input, _) =>
 					ValueTask.FromResult<IReadOnlyList<string>>([$"{input}A", $"{input}B"]));
 
+		// A shell-scoped positional provider whose values exercise the bridge's shell
+		// encoding: a command-substitution string (must stay literal on acceptance) and a
+		// value containing whitespace (must round-trip as ONE argument). The handler echoes
+		// the bound value verbatim so the real-shell smoke can assert accept-to-argv.
+		app.Map("deploy {target}", static string (string target) => target)
+			.WithCompletion(
+				"target",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(
+					["$(printf PWNED)", "New York"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Deploy a target.");
+
 		app.Map("config set", () => "ok");
 		app.Map(
 			"render",

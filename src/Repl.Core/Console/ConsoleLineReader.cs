@@ -15,7 +15,16 @@ internal static partial class ConsoleLineReader
 
 	internal readonly record struct ReadResult(string? Line, bool Escaped);
 
-	internal readonly record struct AutocompleteRequest(string Input, int Cursor, bool MenuRequested);
+	// MenuRequested drives whether the popup opens; ExplicitCompletion marks an intentional
+	// completion request (any Tab press, or an already-open menu) as opposed to a per-keystroke
+	// live-hint refresh — value providers run only for the former, so a slow provider never
+	// blocks ordinary typing. A first Tab does not open the menu (Hybrid/Classic) yet must
+	// still invoke providers, so the two flags are distinct.
+	internal readonly record struct AutocompleteRequest(
+		string Input,
+		int Cursor,
+		bool MenuRequested,
+		bool ExplicitCompletion = false);
 
 	internal readonly record struct AutocompleteSuggestion(
 		string Value,

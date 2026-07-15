@@ -76,6 +76,10 @@ jobs:
 
       - name: Install shell dependencies
         shell: bash
+        env:
+          # Authenticate the nushell release lookup: anonymous api.github.com calls from
+          # Actions runners share a low IP rate limit and intermittently return 403.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -85,8 +89,25 @@ jobs:
             sudo apt-get install -y powershell
           fi
 
+          gh_api() {
+            local url="$1"
+            local attempt
+            for attempt in 1 2 3; do
+              if curl -fsSL \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "$url"; then
+                return 0
+              fi
+              echo "GitHub API request failed (attempt $attempt), retrying..." >&2
+              sleep $((attempt * 3))
+            done
+            return 1
+          }
+
           if ! command -v nu >/dev/null 2>&1; then
-            release_json="$(curl -fsSL https://api.github.com/repos/nushell/nushell/releases/latest)"
+            release_json="$(gh_api https://api.github.com/repos/nushell/nushell/releases/latest)"
             nu_url="$(printf '%s' "$release_json" | jq -r '.assets[] | select(.name | endswith("x86_64-unknown-linux-gnu.tar.gz")) | .browser_download_url' | head -n 1)"
             if [[ -z "$nu_url" || "$nu_url" == "null" ]]; then
               echo "Failed to resolve a Nushell Linux release asset URL." >&2
@@ -174,7 +195,7 @@ jobs:
 
       - name: Test report
         if: always()
-        uses: dorny/test-reporter@v1
+        uses: dorny/test-reporter@31a54ee7ebcacc03a09ea97a7e5465a47b84aea5 # v1.9.1
         with:
           name: Test Results
           path: 'TestResults/**/*.trx'

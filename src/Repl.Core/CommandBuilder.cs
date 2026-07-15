@@ -8,6 +8,9 @@ public sealed class CommandBuilder
 	private readonly Dictionary<string, CompletionDelegate> _completions =
 		new(StringComparer.OrdinalIgnoreCase);
 
+	private readonly Dictionary<string, CompletionProviderScope> _completionScopes =
+		new(StringComparer.OrdinalIgnoreCase);
+
 	/// <summary>
 	/// Initializes a new instance of the <see cref="CommandBuilder"/> class.
 	/// </summary>
@@ -137,12 +140,26 @@ public sealed class CommandBuilder
 	}
 
 	/// <summary>
-	/// Adds a completion provider for a target parameter.
+	/// Adds a completion provider for a target parameter, invoked by in-process surfaces only
+	/// (the interactive Tab menu and the <c>complete</c> ambient command).
 	/// </summary>
 	/// <param name="targetName">Route or option target name.</param>
 	/// <param name="provider">Completion delegate.</param>
 	/// <returns>The same builder instance.</returns>
-	public CommandBuilder WithCompletion(string targetName, CompletionDelegate provider)
+	public CommandBuilder WithCompletion(string targetName, CompletionDelegate provider) =>
+		WithCompletion(targetName, provider, CompletionProviderScope.Interactive);
+
+	/// <summary>
+	/// Adds a completion provider for a target parameter with an explicit surface scope.
+	/// Use <see cref="CompletionProviderScope.InteractiveAndShell"/> to also serve the shell
+	/// completion bridge — only for providers fast enough for a blocking shell Tab, since the
+	/// bridge spawns a new process per completion request.
+	/// </summary>
+	/// <param name="targetName">Route or option target name.</param>
+	/// <param name="provider">Completion delegate.</param>
+	/// <param name="scope">Surfaces allowed to invoke the provider.</param>
+	/// <returns>The same builder instance.</returns>
+	public CommandBuilder WithCompletion(string targetName, CompletionDelegate provider, CompletionProviderScope scope)
 	{
 		targetName = string.IsNullOrWhiteSpace(targetName)
 			? throw new ArgumentException("Target name cannot be empty.", nameof(targetName))
@@ -150,8 +167,16 @@ public sealed class CommandBuilder
 		ArgumentNullException.ThrowIfNull(provider);
 
 		_completions[targetName] = provider;
+		_completionScopes[targetName] = scope;
 		return this;
 	}
+
+	/// <summary>
+	/// True when the target's completion provider opted into the shell completion bridge.
+	/// </summary>
+	internal bool IsCompletionShellScoped(string targetName) =>
+		_completionScopes.TryGetValue(targetName, out var scope)
+		&& scope == CompletionProviderScope.InteractiveAndShell;
 
 	/// <summary>
 	/// Registers a banner delegate displayed before command execution.

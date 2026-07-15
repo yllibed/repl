@@ -30,7 +30,7 @@ When [terminal shell integration](terminal-shell-integration.md) is enabled, the
 
 ## Prompt and Autocompletion
 
-The prompt displays the current scope path. As the user types, the autocompletion system suggests available commands, contexts, and option names visible from the current scope. Tab completion resolves candidates from the command graph relative to `scopeTokens`.
+The prompt displays the current scope path. As the user types, the autocompletion system suggests available commands, contexts, and option names visible from the current scope, plus parameter **values** while a value is being typed — supplied by the command's `WithCompletion(...)` providers (for both positional segments and pending option values) and by enum member names for enum-typed options. Tab completion resolves candidates from the command graph relative to `scopeTokens`.
 
 ## Input Tokenization
 

@@ -479,7 +479,7 @@ internal static class HandlerArgumentBinder
 		return effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 	}
 
-	private static bool TryGetCollectionElementType(Type parameterType, out Type elementType)
+	internal static bool TryGetCollectionElementType(Type parameterType, out Type elementType)
 	{
 		if (parameterType.IsArray)
 		{

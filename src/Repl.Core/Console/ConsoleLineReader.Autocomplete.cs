@@ -22,7 +22,14 @@ internal static partial class ConsoleLineReader
 		}
 
 		var assist = await editor.Resolver(
-				new AutocompleteRequest(buffer.ToString(), cursor, MenuRequested: editor.IsMenuOpen),
+				new AutocompleteRequest(
+					buffer.ToString(),
+					cursor,
+					MenuRequested: editor.IsMenuOpen,
+					// A live-hint refresh is an explicit completion only while the menu is
+					// open; otherwise it is a per-keystroke refresh that must stay
+					// provider-free.
+					ExplicitCompletion: editor.IsMenuOpen),
 				ct)
 			.ConfigureAwait(false);
 		ApplyAssistResult(editor, assist);
@@ -102,7 +109,13 @@ internal static partial class ConsoleLineReader
 		StringBuilder echo,
 		CancellationToken ct)
 	{
-		var request = new AutocompleteRequest(buffer.ToString(), cursor, MenuRequested: ShouldOpenMenu(editor));
+		// A Tab press is always an explicit completion request — even the first Tab that does
+		// not yet open the menu (Hybrid/Classic) must invoke value providers.
+		var request = new AutocompleteRequest(
+			buffer.ToString(),
+			cursor,
+			MenuRequested: ShouldOpenMenu(editor),
+			ExplicitCompletion: true);
 		var assist = await editor.Resolver!(request, ct).ConfigureAwait(false);
 		ApplyAssistResult(editor, assist);
 		if (editor.LastResult is not { } result || result.Suggestions.Count == 0)
@@ -227,7 +240,15 @@ internal static partial class ConsoleLineReader
 			return false;
 		}
 
-		var common = LongestCommonPrefix(selectableSuggestions.Select(static suggestion => suggestion.Value));
+		// Parameter (provider/enum value) suggestions are case-significant: folding case when
+		// finding the common prefix would auto-insert one spelling of case-distinct values
+		// (e.g. 'Prod' for the prefix 'p' when 'prod' also exists) instead of opening the menu.
+		// Compute the common prefix ordinally when any selectable suggestion is a value.
+		var caseSensitive = selectableSuggestions.Any(
+			static suggestion => suggestion.Kind == AutocompleteSuggestionKind.Parameter);
+		var common = LongestCommonPrefix(
+			selectableSuggestions.Select(static suggestion => suggestion.Value),
+			caseSensitive);
 		if (string.IsNullOrEmpty(common))
 		{
 			return false;
@@ -780,7 +801,7 @@ internal static partial class ConsoleLineReader
 		return string.Concat(text.AsSpan(0, maxWidth - 3), "...");
 	}
 
-	private static string LongestCommonPrefix(IEnumerable<string> values)
+	private static string LongestCommonPrefix(IEnumerable<string> values, bool caseSensitive = false)
 	{
 		using var enumerator = values.GetEnumerator();
 		if (!enumerator.MoveNext())
@@ -795,7 +816,9 @@ internal static partial class ConsoleLineReader
 			var length = 0;
 			while (length < prefix.Length
 				&& length < current.Length
-				&& char.ToLowerInvariant(prefix[length]) == char.ToLowerInvariant(current[length]))
+				&& (caseSensitive
+					? prefix[length] == current[length]
+					: char.ToLowerInvariant(prefix[length]) == char.ToLowerInvariant(current[length])))
 			{
 				length++;
 			}

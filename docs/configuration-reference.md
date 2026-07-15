@@ -170,6 +170,7 @@ Accessed via `ReplOptions.ShellCompletion`. See [Shell Completion](shell-complet
 - `SetupMode` (`ShellCompletionSetupMode`, default: `Manual`) — Completion setup mode.
 - `PreferredShell` (`ShellKind?`, default: `null`) — Preferred shell for completion. `null` uses automatic detection.
 - `PromptOnce` (`bool`, default: `true`) — Only prompt the user once for completion setup.
+- `ProviderTimeout` (`TimeSpan`, default: 1 second) — Deadline applied to each opted-in `WithCompletion` provider on the completion bridge; a stalled provider is abandoned and completion degrades to static candidates.
 - `StateFilePath` (`string?`, default: `null`) — Path to the completion state file.
 - `BashProfilePath` (`string?`, default: `null`) — Custom path for the Bash profile.
 - `PowerShellProfilePath` (`string?`, default: `null`) — Custom path for the PowerShell profile.

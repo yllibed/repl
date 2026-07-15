@@ -73,7 +73,17 @@ internal sealed class PowerShellShellCompletionAdapter : IShellCompletionAdapter
 			        return
 			    }
 
-			    & $invokedCommand {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell powershell --line $commandAst.ToString() --cursor $cursorPosition --no-interactive --no-logo |
+			    # $commandAst drops trailing whitespace while $cursorPosition still counts it,
+			    # so a line ending right after a token (an EMPTY value position, e.g. 'app deploy ')
+			    # would otherwise be analyzed as the previous token. Rebuild the line relative to
+			    # the command's start and pad it back out to the cursor so the empty position
+			    # survives to the bridge.
+			    $replLine = $commandAst.Extent.Text
+			    $replCursor = $cursorPosition - $commandAst.Extent.StartOffset
+			    if ($replCursor -lt 0) { $replCursor = 0 }
+			    if ($replLine.Length -lt $replCursor) { $replLine = $replLine.PadRight($replCursor) }
+
+			    & $invokedCommand {{ShellCompletionConstants.SetupCommandName}} {{ShellCompletionConstants.ProtocolSubcommandName}} --shell powershell --line $replLine --cursor $replCursor --no-interactive --no-logo |
 			        ForEach-Object {
 			            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
 			        }

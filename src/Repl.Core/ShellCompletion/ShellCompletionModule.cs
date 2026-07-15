@@ -14,9 +14,19 @@ internal sealed class ShellCompletionModule(IShellCompletionRuntime runtime) : I
 		{
 			completion.Map(
 				ShellCompletionConstants.ProtocolSubcommandName,
-				async (string? shell, string? line, string? cursor, IReplIoContext io) =>
+				async (
+					string? shell,
+					string? line,
+					string? cursor,
+					IReplIoContext io,
+					IServiceProvider services,
+					CancellationToken cancellationToken) =>
 				{
-					var result = runtime.HandleBridgeRoute(shell, line, cursor);
+					// The execution's service provider (run/session DI) flows to the value
+					// providers — the core fallback provider would hide externally-registered
+					// services from CompletionContext.Services.
+					var result = await runtime.HandleBridgeRouteAsync(shell, line, cursor, services, cancellationToken)
+						.ConfigureAwait(false);
 					if (result is not string payload)
 					{
 						// Error/validation results are rendered by the framework (stderr in passthrough mode).

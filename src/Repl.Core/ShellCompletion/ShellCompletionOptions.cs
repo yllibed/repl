@@ -56,4 +56,13 @@ public sealed class ShellCompletionOptions
 	/// Gets or sets an optional custom nushell profile path.
 	/// </summary>
 	public string? NuProfilePath { get; set; }
+
+	/// <summary>
+	/// Gets or sets the deadline applied to each <see cref="CompletionDelegate"/> invocation
+	/// on the shell completion bridge. The invoking shell blocks until the bridge answers, so
+	/// a provider that hangs (or ignores its cancellation token) is abandoned after this delay
+	/// and completion degrades to the static candidates. The opt-in scope keeps slow providers
+	/// out by design; this bounds a normally-fast provider against a transient stall.
+	/// </summary>
+	public TimeSpan ProviderTimeout { get; set; } = TimeSpan.FromSeconds(1);
 }
