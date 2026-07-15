@@ -294,6 +294,13 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		return new ReplDocApp(name, version, description);
 	}
 
+	// An explicit OneOrMore/ExactlyOne arity now fails binding when the option is absent
+	// (HandlerArgumentBinder), so exported docs must report it as required regardless of the
+	// CLR parameter shape.
+	private static bool HasExplicitRequiredArity(OptionSchema schema, string parameterName) =>
+		schema.TryGetParameter(parameterName, out var schemaParameter)
+		&& schemaParameter.ExplicitArity is ReplArity.OneOrMore or ReplArity.ExactlyOne;
+
 	private static bool IsRequiredParameter(ParameterInfo parameter)
 	{
 		if (parameter.HasDefaultValue)
@@ -406,7 +413,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		return new ReplDocOption(
 			Name: aliases.Length > 0 ? aliases[0].TrimStart('-') : property.Name,
 			Type: GetFriendlyTypeName(property.PropertyType),
-			Required: false,
+			Required: HasExplicitRequiredArity(schema, property.Name),
 			Description: property.GetCustomAttribute<DescriptionAttribute>()?.Description,
 			Aliases: aliases,
 			ReverseAliases: reverseAliases,
@@ -446,7 +453,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		return new ReplDocOption(
 			Name: aliases.Length > 0 ? aliases[0].TrimStart('-') : parameter.Name!,
 			Type: GetFriendlyTypeName(parameter.ParameterType),
-			Required: IsRequiredParameter(parameter),
+			Required: IsRequiredParameter(parameter) || HasExplicitRequiredArity(schema, parameter.Name!),
 			Description: parameter.GetCustomAttribute<DescriptionAttribute>()?.Description,
 			Aliases: aliases,
 			ReverseAliases: reverseAliases,

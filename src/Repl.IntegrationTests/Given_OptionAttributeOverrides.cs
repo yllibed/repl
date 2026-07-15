@@ -481,4 +481,51 @@ public sealed class Given_OptionAttributeOverrides
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("zo");
 	}
+
+	[TestMethod]
+	[Description("Guards the permissive-fallback guard against the renamed-token edge: when [ReplOption(Name = ...)] differs from the CLR parameter name only by casing, a token rejected by the case-sensitive schema entry must not slip through the name-equality path of the fallback and bind anyway.")]
+	public void When_PermissiveTokenMatchesRenamedCaseSensitiveOption_Then_ValueIsNotBound()
+	{
+		var sut = ReplApp.Create()
+			.Options(options =>
+			{
+				options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseInsensitive;
+				options.Parsing.AllowUnknownOptions = true;
+			});
+		sut.Map("run", ([ReplOption(Name = "Mode", CaseSensitivity = ReplCaseSensitivity.CaseSensitive)] string mode = "ga") => mode);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--mode", "zo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("ga");
+		output.Text.Should().NotContain("zo");
+	}
+
+	[TestMethod]
+	[Description("Guards documentation fidelity for explicit lower bounds: an option that now fails when omitted (explicit OneOrMore) must be exported as required — otherwise generated docs tell users a runtime-required option is optional.")]
+	public void When_ExportingDocForExplicitOneOrMoreOption_Then_OptionIsRequired()
+	{
+		var sut = ReplApp.Create()
+			.UseDocumentationExport();
+		sut.Map("echo", ([ReplOption(Arity = ReplArity.OneOrMore)] string[] items) => string.Join(',', items));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["doc", "export", "--json", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("\"required\": true");
+	}
+
+	[TestMethod]
+	[Description("Guards documentation fidelity on the options-group path: group options were hard-coded as not required, so an explicit OneOrMore group property — which now fails binding when omitted — must be exported as required.")]
+	public void When_ExportingDocForExplicitOneOrMoreGroupProperty_Then_OptionIsRequired()
+	{
+		var sut = ReplApp.Create()
+			.UseDocumentationExport();
+		sut.Map("wear", (RequiredPatchesOptions options) => string.Join(',', options.Patches));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["doc", "export", "--json", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("\"required\": true");
+	}
 }

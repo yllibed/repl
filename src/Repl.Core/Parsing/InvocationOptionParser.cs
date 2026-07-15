@@ -300,16 +300,24 @@ internal static class InvocationOptionParser
 			value = effectiveTokens[index];
 		}
 
-		// A casing-mismatched token naming a KNOWN parameter whose effective sensitivity is
-		// CaseSensitive must stay an inert unknown: storing it would let the namedOptions
-		// comparer (global) rebind it to a parameter whose schema entries explicitly rejected
-		// this casing. Unconstrained parameters keep the documented permissive
-		// bind-by-name behavior. The value token stays consumed either way.
-		if (schema.TryGetParameter(optionName, out var knownParameter)
-			&& !string.Equals(knownParameter.Name, optionName, StringComparison.Ordinal)
-			&& (knownParameter.CaseSensitivity ?? options.OptionCaseSensitivity) == ReplCaseSensitivity.CaseSensitive)
+		// A token naming a KNOWN parameter must stay an inert unknown when its schema entries
+		// rejected it for case-sensitivity reasons: storing it would let the namedOptions
+		// comparer (global) rebind it to that parameter, bypassing the declared casing.
+		// Two shapes reach here: an EXPLICIT CaseSensitive override always wins (even when the
+		// rejected token ordinally equals the CLR parameter name — the renamed-token edge),
+		// and an effectively sensitive parameter drops casing VARIANTS (they were inert under
+		// a global-case-sensitive dictionary anyway). Unconstrained parameters keep the
+		// documented permissive bind-by-name behavior. The value token stays consumed.
+		if (schema.TryGetParameter(optionName, out var knownParameter))
 		{
-			return;
+			var explicitlySensitive = knownParameter.CaseSensitivity == ReplCaseSensitivity.CaseSensitive;
+			var effectivelySensitive =
+				(knownParameter.CaseSensitivity ?? options.OptionCaseSensitivity) == ReplCaseSensitivity.CaseSensitive;
+			var matchesClrName = string.Equals(knownParameter.Name, optionName, StringComparison.Ordinal);
+			if (explicitlySensitive || (effectivelySensitive && !matchesClrName))
+			{
+				return;
+			}
 		}
 
 		AddNamedValue(namedOptions, optionName, value ?? "true");
