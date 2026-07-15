@@ -27,24 +27,7 @@ public static class GlobalOptionsExtensions
 		var parsing = app.Core.OptionsSnapshot.Parsing;
 		var properties = GetOptionProperties<T>();
 
-		// Typed global options do not flow per-option CaseSensitivity/Arity overrides into
-		// AddGlobalOptionCore (the global-option pipeline has no per-option override concept
-		// yet). Fail fast instead of silently discarding a now-settable override.
-		foreach (var property in properties)
-		{
-			var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
-			if (optionAttr?.CaseSensitivityOverride is not null)
-			{
-				throw new NotSupportedException(
-					$"Global option property '{typeof(T).Name}.{property.Name}' declares a CaseSensitivity override, which is not supported for typed global options.");
-			}
-
-			if (optionAttr?.ArityOverride is not null)
-			{
-				throw new NotSupportedException(
-					$"Global option property '{typeof(T).Name}.{property.Name}' declares an Arity override, which is not supported for typed global options.");
-			}
-		}
+		ThrowIfUnsupportedOverrides(typeof(T), properties);
 
 		app.Options(options =>
 		{
@@ -73,6 +56,39 @@ public static class GlobalOptionsExtensions
 		});
 
 		return app;
+	}
+
+	// Typed global options do not flow per-option CaseSensitivity/Arity overrides into
+	// AddGlobalOptionCore (the global-option pipeline has no per-option override concept
+	// yet). Fail fast instead of silently discarding a now-settable override. Enum-flag
+	// overrides are declared on the enum TYPE's fields — which may be legitimately shared
+	// with route commands where they do work — so they are deliberately not rejected here.
+	private static void ThrowIfUnsupportedOverrides(Type optionsType, IReadOnlyList<PropertyInfo> properties)
+	{
+		foreach (var property in properties)
+		{
+			var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
+			if (optionAttr?.CaseSensitivityOverride is not null)
+			{
+				throw new NotSupportedException(
+					$"Global option property '{optionsType.Name}.{property.Name}' declares a CaseSensitivity override, which is not supported for typed global options. Remove the override or expose the option through a per-command options type.");
+			}
+
+			if (optionAttr?.ArityOverride is not null)
+			{
+				throw new NotSupportedException(
+					$"Global option property '{optionsType.Name}.{property.Name}' declares an Arity override, which is not supported for typed global options. Remove the override or expose the option through a per-command options type.");
+			}
+
+			foreach (var valueAlias in property.GetCustomAttributes<ReplValueAliasAttribute>())
+			{
+				if (valueAlias.CaseSensitivityOverride is not null)
+				{
+					throw new NotSupportedException(
+						$"Global option property '{optionsType.Name}.{property.Name}' declares a CaseSensitivity override on value alias '{valueAlias.Token}', which is not supported for typed global options. Remove the override or expose the option through a per-command options type.");
+				}
+			}
+		}
 	}
 
 	internal static T PopulateInstance<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)] T>(IGlobalOptionsAccessor accessor, IFormatProvider numericFormatProvider)

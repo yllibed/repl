@@ -7,11 +7,6 @@ namespace Repl.Parameters;
 public sealed class ReplArgumentAttribute : Attribute
 {
 	/// <summary>
-	/// Optional explicit position for positional binding.
-	/// </summary>
-	public int? Position { get; set; }
-
-	/// <summary>
 	/// Binding mode for the parameter.
 	/// </summary>
 	public ReplParameterMode Mode { get; set; } = ReplParameterMode.OptionAndPositional;

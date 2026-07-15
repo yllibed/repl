@@ -29,7 +29,6 @@ Application-facing parameter DSL:
   - optional per-parameter `CaseSensitivity`
   - optional `Arity`
 - `ReplArgumentAttribute`
-  - optional positional `Position`
   - `Mode`
 - `ReplValueAliasAttribute`
   - maps a token to an injected parameter value (for example `--json` -> `output=json`)

@@ -6,4 +6,5 @@ internal sealed record OptionSchemaParameter(
 	string Name,
 	Type ParameterType,
 	ReplParameterMode Mode,
-	ReplCaseSensitivity? CaseSensitivity = null);
+	ReplCaseSensitivity? CaseSensitivity = null,
+	ReplArity? ExplicitArity = null);

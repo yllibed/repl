@@ -155,7 +155,7 @@ public sealed class Given_OptionsGroupBinding
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies token collision between group and regular parameter fails at registration.")]
+	[Description("Regression guard: verifies a duplicate name between a group property and a regular parameter fails at registration with a duplicate-name diagnostic (not a token-collision one).")]
 	public void When_GroupPropertyCollidesWithParam_Then_MapFails()
 	{
 		var sut = ReplApp.Create();
@@ -163,7 +163,7 @@ public sealed class Given_OptionsGroupBinding
 		var act = () => sut.Map("list", (TestOutputOptions output, string format) => format);
 
 		act.Should().Throw<InvalidOperationException>()
-			.WithMessage("*collision*");
+			.WithMessage("*Duplicate parameter name*");
 	}
 
 	[TestMethod]

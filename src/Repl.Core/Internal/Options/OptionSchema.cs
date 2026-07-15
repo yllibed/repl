@@ -22,8 +22,11 @@ internal sealed class OptionSchema
 	// Benign race: concurrent first reads compute the same array.
 	private string[]? _knownTokens;
 
+	// Ordinal dedup: case-differing tokens can belong to DIFFERENT case-sensitive options
+	// (per-entry overrides), so collapsing them ignoring case would drop a real token and
+	// make "Did you mean" suggest the wrong casing.
 	public IReadOnlyCollection<string> KnownTokens =>
-		_knownTokens ??= [.. Entries.Select(entry => entry.Token).Distinct(StringComparer.OrdinalIgnoreCase)];
+		_knownTokens ??= [.. Entries.Select(entry => entry.Token).Distinct(StringComparer.Ordinal)];
 
 	public IReadOnlyList<OptionSchemaEntry> ResolveToken(string token, ReplCaseSensitivity globalCaseSensitivity)
 	{
@@ -55,11 +58,27 @@ internal sealed class OptionSchema
 	/// Effective arity of a parameter, resolved from its named-option/flag entry;
 	/// parameters without such an entry default to the permissive <see cref="ReplArity.ZeroOrMore"/>.
 	/// </summary>
-	public ReplArity ResolveParameterArity(string parameterName)
+	public ReplArity ResolveParameterArity(string parameterName) =>
+		FindNamedEntry(parameterName)?.Arity ?? ReplArity.ZeroOrMore;
+
+	/// <summary>
+	/// Canonical display token of a parameter's named-option/flag entry (with prefix),
+	/// or null for parameters without one (e.g. ArgumentOnly).
+	/// </summary>
+	public string? ResolveDisplayToken(string parameterName) =>
+		FindNamedEntry(parameterName)?.Token;
+
+	private OptionSchemaEntry? FindNamedEntry(string parameterName)
 	{
-		var entry = Entries.FirstOrDefault(candidate =>
-			string.Equals(candidate.ParameterName, parameterName, StringComparison.OrdinalIgnoreCase)
-			&& candidate.TokenKind is OptionSchemaTokenKind.NamedOption or OptionSchemaTokenKind.BoolFlag);
-		return entry?.Arity ?? ReplArity.ZeroOrMore;
+		foreach (var entry in Entries)
+		{
+			if (string.Equals(entry.ParameterName, parameterName, StringComparison.OrdinalIgnoreCase)
+				&& entry.TokenKind is OptionSchemaTokenKind.NamedOption or OptionSchemaTokenKind.BoolFlag)
+			{
+				return entry;
+			}
+		}
+
+		return null;
 	}
 }

@@ -31,6 +31,25 @@ public sealed class Given_OptionAttributeOverrides
 		public string Tenant { get; set; } = "ga";
 	}
 
+	public sealed class OverrideArityGlobals
+	{
+		[ReplOption(Name = "retries", Arity = ReplArity.ExactlyOne)]
+		public int Retries { get; set; } = 42;
+	}
+
+	public sealed class ValueAliasOverrideGlobals
+	{
+		[ReplValueAlias("--prod", "production", CaseSensitivity = ReplCaseSensitivity.CaseInsensitive)]
+		public string Environment { get; set; } = "dev";
+	}
+
+	[ReplOptionsGroup]
+	public sealed class RequiredPatchesOptions
+	{
+		[ReplOption(Arity = ReplArity.OneOrMore)]
+		public string[] Patches { get; set; } = [];
+	}
+
 	[TestMethod]
 	[Description("Regression guard for issue #57: [ReplOption(CaseSensitivity = ...)] must be a legal attribute argument (a nullable enum triggers CS0655, making the override dead code) and the per-option override must accept casing variants while the global default stays case-sensitive.")]
 	public void When_OptionCaseSensitivityOverriddenViaAttribute_Then_CasingVariantIsAccepted()
@@ -248,5 +267,135 @@ public sealed class Given_OptionAttributeOverrides
 
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("ga,bu");
+	}
+
+	[TestMethod]
+	[Description("Guards the OneOrMore lower bound on the options-group property path: an absent group property with an explicit OneOrMore arity must fail binding instead of silently keeping its default and invoking the handler.")]
+	public void When_GroupPropertyOneOrMoreArityIsAbsent_Then_BindingFailsWithoutInvokingHandler()
+	{
+		var invoked = false;
+		var sut = ReplApp.Create();
+		sut.Map("wear", (RequiredPatchesOptions options) =>
+		{
+			invoked = true;
+			return string.Join(',', options.Patches);
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["wear", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("requires at least one value");
+		invoked.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Guards the OneOrMore lower bound for ArgumentOnly parameters: they have no named-option schema entry, so the explicit arity must be carried at the parameter level — otherwise the declared override is silently dropped and the handler receives a missing value.")]
+	public void When_ArgumentOnlyOneOrMoreArityIsAbsent_Then_BindingFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("copy", ([ReplOption(Mode = ReplParameterMode.ArgumentOnly, Arity = ReplArity.OneOrMore)] string[] files) => string.Join(',', files));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["copy", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("requires at least one value");
+	}
+
+	[TestMethod]
+	[Description("Boundary for the ArgumentOnly OneOrMore bound: positional values satisfy the explicit arity, so the same registration invoked with positionals must bind and execute.")]
+	public void When_ArgumentOnlyOneOrMoreArityReceivesPositionals_Then_BindingSucceeds()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("copy", ([ReplOption(Mode = ReplParameterMode.ArgumentOnly, Arity = ReplArity.OneOrMore)] string[] files) => string.Join(',', files));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["copy", "ga", "bu", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("ga,bu");
+	}
+
+	[TestMethod]
+	[Description("Guards the explicit ExactlyOne lower bound: ReplArity.ExactlyOne is documented as 'must appear exactly one time', so an EXPLICIT override on an otherwise-optional parameter must reject absence — while inferred ExactlyOne (plain required scalars) keeps its existing binding behavior.")]
+	public void When_ExplicitExactlyOneArityOptionIsAbsent_Then_BindingFails()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("echo", ([ReplOption(Arity = ReplArity.ExactlyOne)] string? channel = null) => channel ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("requires exactly one value");
+	}
+
+	[TestMethod]
+	[Description("Guards diagnostic accuracy: the lower-bound failure message must name the canonical option token ([ReplOption(Name = ...)]), not the CLR parameter name — telling the user to supply a token the parser would reject is actively misleading.")]
+	public void When_RenamedOneOrMoreOptionIsAbsent_Then_MessageUsesCanonicalToken()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("echo", ([ReplOption(Name = "item", Arity = ReplArity.OneOrMore)] string[] items) => string.Join(',', items));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Option '--item' requires");
+	}
+
+	[TestMethod]
+	[Description("Guards the Arity branch of the typed-global-options fail-fast: reverting only that branch would silently discard the override while the CaseSensitivity twin keeps the suite green.")]
+	public void When_GlobalOptionsPropertyDeclaresArityOverride_Then_RegistrationFailsFast()
+	{
+		var act = () => ReplApp.Create().UseGlobalOptions<OverrideArityGlobals>();
+
+		act.Should().Throw<NotSupportedException>().WithMessage("*Arity*");
+	}
+
+	[TestMethod]
+	[Description("Guards the value-alias branch of the typed-global-options fail-fast: a [ReplValueAlias(..., CaseSensitivity = ...)] override on a global property is equally newly settable and must be rejected instead of silently discarded.")]
+	public void When_GlobalOptionsValueAliasDeclaresOverride_Then_RegistrationFailsFast()
+	{
+		var act = () => ReplApp.Create().UseGlobalOptions<ValueAliasOverrideGlobals>();
+
+		act.Should().Throw<NotSupportedException>().WithMessage("*CaseSensitivity*");
+	}
+
+	[TestMethod]
+	[Description("Guards suggestion fidelity for case-distinct tokens: KnownTokens must not dedupe tokens ignoring case, otherwise one of two case-sensitive twins vanishes and 'Did you mean' proposes the wrong casing.")]
+	public void When_CaseSensitiveTwinTokensRegistered_Then_SuggestionPreservesEachCasing()
+	{
+		var sut = ReplApp.Create();
+		sut.Map(
+			"cfg",
+			([ReplOption(Name = "mode")] string lower = "ga",
+			 [ReplOption(Name = "MODE")] string upper = "bu") => $"lower={lower};upper={upper}");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["cfg", "--MODEs", "zo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("Did you mean '--MODE'");
+	}
+
+	[TestMethod]
+	[Description("Guards diagnostic context: a token collision thrown at Map() time must name the command being registered, so an app with many registrations does not need a debugger to find the offending one.")]
+	public void When_TokenCollisionDetected_Then_MessageNamesTheCommand()
+	{
+		var sut = ReplApp.Create();
+		var act = () => sut.Map(
+			"cfg",
+			([ReplOption(Name = "mode")] string first = "ga",
+			 [ReplOption(Aliases = ["--mode"])] string second = "bu") => $"{first}{second}");
+
+		act.Should().Throw<InvalidOperationException>().WithMessage("*cfg*");
+	}
+
+	[TestMethod]
+	[Description("Guards diagnostic wording: a group property whose name collides with a handler parameter is a duplicate-name error, not a token collision — the old wording sent developers hunting for alias conflicts that do not exist.")]
+	public void When_GroupPropertyNameCollidesWithParameter_Then_MessageSaysDuplicateName()
+	{
+		var sut = ReplApp.Create();
+		var act = () => sut.Map(
+			"wear",
+			(DenimOutfitOptions options, [ReplOption] string fabric = "denim") => fabric);
+
+		act.Should().Throw<InvalidOperationException>().WithMessage("*Duplicate*");
 	}
 }

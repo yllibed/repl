@@ -53,7 +53,7 @@ internal static class OptionSchemaBuilder
 		}
 
 		ValidatePositionalBindingCompatibility(regularPositionalParameterNames, groupPositionalPropertyNames);
-		ValidateTokenCollisions(entries, parsingOptions);
+		ValidateTokenCollisions(entries, parsingOptions, template);
 		return new OptionSchema(entries, parameters);
 	}
 
@@ -112,14 +112,15 @@ internal static class OptionSchemaBuilder
 		if (parameters.ContainsKey(parameter.Name!))
 		{
 			throw new InvalidOperationException(
-				$"Option token collision detected for parameter name '{parameter.Name}'.");
+				$"Duplicate parameter name '{parameter.Name}' in the command signature.");
 		}
 
 		parameters[parameter.Name!] = new OptionSchemaParameter(
 			parameter.Name!,
 			parameter.ParameterType,
 			mode,
-			CaseSensitivity: optionAttribute?.CaseSensitivityOverride);
+			CaseSensitivity: optionAttribute?.CaseSensitivityOverride,
+			ExplicitArity: optionAttribute?.ArityOverride);
 		if (mode == ReplParameterMode.ArgumentOnly)
 		{
 			return;
@@ -405,14 +406,15 @@ internal static class OptionSchemaBuilder
 		if (parameters.ContainsKey(property.Name))
 		{
 			throw new InvalidOperationException(
-				$"Option token collision detected for parameter name '{property.Name}'.");
+				$"Duplicate parameter name '{property.Name}' between options group '{property.DeclaringType?.Name}' and the command signature.");
 		}
 
 		parameters[property.Name] = new OptionSchemaParameter(
 			property.Name,
 			property.PropertyType,
 			mode,
-			CaseSensitivity: optionAttribute?.CaseSensitivityOverride);
+			CaseSensitivity: optionAttribute?.CaseSensitivityOverride,
+			ExplicitArity: optionAttribute?.ArityOverride);
 		if (mode != ReplParameterMode.OptionOnly)
 		{
 			positionalPropertyNames.Add(property.Name);
@@ -549,7 +551,8 @@ internal static class OptionSchemaBuilder
 
 	private static void ValidateTokenCollisions(
 		IReadOnlyList<OptionSchemaEntry> entries,
-		ParsingOptions parsingOptions)
+		ParsingOptions parsingOptions,
+		RouteTemplate template)
 	{
 		// Collisions are decided per PAIR under each entry's effective case sensitivity, not
 		// under the global comparer alone: ordinal-equal tokens always collide, while tokens
@@ -587,7 +590,7 @@ internal static class OptionSchemaBuilder
 				}
 
 				throw new InvalidOperationException(
-					$"Option token collision detected for '{entry.Token}' between '{existing.ParameterName}' and '{entry.ParameterName}'.");
+					$"Option token collision detected for '{entry.Token}' between '{existing.ParameterName}' and '{entry.ParameterName}' while registering command '{template.Template}'.");
 			}
 
 			bucket.Add(entry);

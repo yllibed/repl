@@ -118,15 +118,10 @@ internal static class HandlerArgumentBinder
 			return positionalValue;
 		}
 
-		// The OneOrMore lower bound can only be enforced here, after BOTH the named and the
+		// Explicit lower bounds can only be enforced here, after BOTH the named and the
 		// positional binding attempts came up empty — option parsing alone cannot see values
 		// the parameter would have consumed positionally.
-		if (isUserOption
-			&& context.OptionSchema.ResolveParameterArity(parameterName) == ReplArity.OneOrMore)
-		{
-			throw new InvalidOperationException(
-				$"Option '--{parameterName}' requires at least one value.");
-		}
+		ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, parameterName);
 
 		if (parameter.HasDefaultValue)
 		{
@@ -141,6 +136,26 @@ internal static class HandlerArgumentBinder
 
 		throw new InvalidOperationException(
 			$"Unable to bind parameter '{parameter.Name}' ({parameter.ParameterType.Name}).");
+	}
+
+	// Only EXPLICIT arity overrides reject absence: inferred ExactlyOne (plain required
+	// scalars) keeps its historical binding behavior, and inferred arities never produce
+	// OneOrMore. ArgumentOnly parameters have no named entry, so the message falls back to
+	// the parameter name instead of a token the parser would not accept.
+	private static void ThrowIfExplicitLowerBoundUnsatisfied(OptionSchema schema, string parameterName)
+	{
+		if (!schema.TryGetParameter(parameterName, out var schemaParameter)
+			|| schemaParameter.ExplicitArity is not (ReplArity.OneOrMore or ReplArity.ExactlyOne))
+		{
+			return;
+		}
+
+		var token = schema.ResolveDisplayToken(parameterName);
+		var subject = token is null ? $"Parameter '{parameterName}'" : $"Option '{token}'";
+		var requirement = schemaParameter.ExplicitArity == ReplArity.OneOrMore
+			? "at least one value"
+			: "exactly one value";
+		throw new InvalidOperationException($"{subject} requires {requirement}.");
 	}
 
 	private static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
@@ -604,7 +619,13 @@ internal static class HandlerArgumentBinder
 					out var positionalValue))
 			{
 				property.SetValue(instance, positionalValue);
+				continue;
 			}
+
+			// Mirrors the handler-parameter path: an explicit lower bound rejects absence
+			// after both named and positional attempts, instead of silently keeping the
+			// property default.
+			ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, propertyName);
 		}
 
 		return instance;
