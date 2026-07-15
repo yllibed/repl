@@ -391,6 +391,26 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			static (session, invocation) => session.HandleCustomAmbientAsync(invocation)),
 	];
 
+	// Mirrors the FIRST-TOKEN triggers of the AmbientCommands table above, for the autocomplete
+	// engine: at a first-token position a candidate equal to an ambient command is dispatched as
+	// that ambient BEFORE routing (see CommittedInputResolver), so it can never bind to a route
+	// value. Kept adjacent to the table and reusing the same token constants + IsHelpToken so the
+	// two cannot drift; the table additionally guards on token COUNT (== 1 for up/exit), which is
+	// always satisfied at the single-first-token completion position this serves.
+	internal static bool IsAmbientFirstToken(string token, AmbientCommandOptions ambientCommands)
+	{
+		ArgumentNullException.ThrowIfNull(token);
+		ArgumentNullException.ThrowIfNull(ambientCommands);
+
+		return CoreReplApp.IsHelpToken(token)
+			|| string.Equals(token, UpAmbientToken, StringComparison.Ordinal)
+			|| string.Equals(token, ExitAmbientToken, StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(token, CompleteAmbientToken, StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(token, AutocompleteAmbientToken, StringComparison.OrdinalIgnoreCase)
+			|| string.Equals(token, HistoryAmbientToken, StringComparison.OrdinalIgnoreCase)
+			|| ambientCommands.CustomCommands.ContainsKey(token);
+	}
+
 	/// <summary>
 	/// Single authority for "is this input handled as an ambient command?", consulted by
 	/// both <see cref="CommittedInputResolver"/> (via the injected predicate) and

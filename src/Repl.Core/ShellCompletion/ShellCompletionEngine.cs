@@ -450,12 +450,19 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		// the interactive pending path). The invocation parser consumes a following token as
 		// the option's value only when it is not option-like, so non-consumable candidates
 		// (accepting one would leave the option unset) are dropped by the parser's own rule.
+		// The completed command runs NON-INTERACTIVELY, where response files are expanded (the
+		// default): InvocationOptionParser rewrites an '@file' option value into that file's tokens
+		// before binding, so a provider value like '@prod' would read a response file instead of
+		// binding literally. Drop such values here (a bare '@' is not expanded, matching the
+		// parser). The interactive path leaves them — it does not expand response files.
+		var expandsResponseFiles = app.OptionsSnapshot.Parsing.AllowResponseFiles;
 		var valueDedupe = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var value in provided)
 		{
 			// Consumability is judged on the SEMANTIC value (the parser sees the decoded
 			// token); the emitted candidate is pre-quoted when it needs quoting.
 			if (!string.IsNullOrWhiteSpace(value)
+				&& !(expandsResponseFiles && value.Length > 1 && value[0] == '@')
 				&& IsShellSafeCandidate(value)
 				&& InvocationOptionParser.ShouldConsumeFollowingTokenAsValue(value)
 				&& ParameterValueConverter.CanConvert(value, optionType, numericFormatProvider, enumIgnoreCase)

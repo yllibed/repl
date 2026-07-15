@@ -1151,6 +1151,121 @@ public sealed class Given_InteractiveAutocomplete_ValueProviderCandidates
 			because: "a single route value cannot bind to a collection parameter at execution");
 	}
 
+	[TestMethod]
+	[Description("A first-token provider value that collides with an ambient command ('help', a custom ambient) is not offered: CommittedInputResolver dispatches ambients BEFORE routing, so accepting it runs the ambient handler instead of binding to the route's first dynamic segment. Non-ambient values still bind and are offered.")]
+	public async Task When_ProviderValueShadowedByAmbient_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Options(static o => o.AmbientCommands.MapAmbient("teleport", static () => { }, "Teleport."));
+		sut.Map("{name}", static string (string name) => name)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["help", "teleport", "zebra"]))
+			.WithDescription("Name.");
+
+		var result = await ResolveAutocompleteAsync(sut, "z").ConfigureAwait(false);
+
+		var providerValues = result.Suggestions
+			.Where(static s => s.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Parameter)
+			.Select(static s => s.Value)
+			.ToArray();
+		providerValues.Should().NotContain("help", because: "'help' is an ambient command dispatched before routing");
+		providerValues.Should().NotContain("teleport", because: "a custom ambient is dispatched before routing");
+		providerValues.Should().Contain("zebra", because: "a non-ambient value still binds to the first dynamic segment");
+	}
+
+	[TestMethod]
+	[Description("An incomplete provider route's value that is shadowed by an EXACT context is not offered: with 'pick {name} {id}' and a context 'pick status', the value 'status' would navigate/render the context (dispatch checks exact contexts when no terminal route matches) instead of binding {name}. A value with no colliding context still binds.")]
+	public async Task When_ProviderValueShadowedByExactContext_Then_ItIsNotOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Context("pick status", static scope => scope.Map("info", static string () => "ok").WithDescription("Info."));
+		sut.Map("pick {name} {id}", static string (string name, string id) => name + id)
+			.WithCompletion("name", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["status", "alice"]))
+			.WithDescription("Pick by name and id.");
+
+		var result = await ResolveAutocompleteAsync(sut, "pick s").ConfigureAwait(false);
+
+		var providerValues = result.Suggestions
+			.Where(static s => s.Kind == ConsoleLineReader.AutocompleteSuggestionKind.Parameter)
+			.Select(static s => s.Value)
+			.ToArray();
+		providerValues.Should().NotContain("status", because: "'pick status' navigates the exact context, so the value never binds to {name}");
+		providerValues.Should().Contain("alice", because: "'alice' has no colliding context and binds to {name}");
+	}
+
+	[TestMethod]
+	[Description("On the shell bridge, a pending option's provider value starting with '@' is dropped when response files are enabled (the default for non-interactive execution): InvocationOptionParser expands an '@file' token before binding, so the completed command would read a response file instead of using the literal value.")]
+	public async Task When_ShellPendingOptionValueLooksLikeResponseFile_Then_ItIsDropped()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? file) => file ?? "none")
+			.WithCompletion(
+				"file",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["@prod", "normal"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Run.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app run --file ").ConfigureAwait(false);
+
+		candidates.Should().Contain("normal");
+		candidates.Should().NotContain(static c => c.Contains("prod", StringComparison.Ordinal),
+			because: "an '@'-prefixed option value would be expanded as a response file by the parser before binding");
+	}
+
+	[TestMethod]
+	[Description("Interactive parity is INVERTED here by design: the interactive session does not expand response files (AllowResponseFiles is off for interactive execution), so a pending option provider value '@prod' is a literal value and IS offered.")]
+	public async Task When_InteractivePendingOptionValueLooksLikeResponseFile_Then_ItIsOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("run", static string ([ReplOption] string? file) => file ?? "none")
+			.WithCompletion("file", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["@prod", "normal"]))
+			.WithDescription("Run.");
+
+		var result = await ResolveAutocompleteAsync(sut, "run --file ").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("@prod",
+			because: "interactive execution does not expand response files, so '@prod' binds as a literal value");
+	}
+
+	[TestMethod]
+	[Description("A dynamic segment sharing its name with a handler parameter that binds BEFORE route values ([FromServices]) must not have provider candidates validated against that unrelated type: 'use {id}' with ([FromServices] IRepo id) ignores the route value for the service parameter, so a normal string id is offered, not dropped for failing to convert to IRepo.")]
+	public async Task When_SegmentNameMatchesServiceBoundParam_Then_ValueIsStillOffered()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("use {id}", static string ([FromServices] IRepo id) => id.Marker)
+			.WithCompletion("id", static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["client-1"]))
+			.WithDescription("Use.");
+
+		var result = await ResolveAutocompleteAsync(sut, "use ").ConfigureAwait(false);
+
+		result.Suggestions.Select(static s => s.Value).Should().Contain("client-1",
+			because: "execution binds the [FromServices] parameter from DI and ignores the route value, so any string id is valid");
+	}
+
+	[TestMethod]
+	[Description("Shell parity: a service-bound segment parameter still offers normal provider values through the bridge (the shared handler-type check skips explicitly-bound parameters).")]
+	public async Task When_SegmentNameMatchesServiceBoundParam_Then_ShellStillOffersIt()
+	{
+		var sut = CoreReplApp.Create();
+		sut.Map("use {id}", static string ([FromServices] IRepo id) => id.Marker)
+			.WithCompletion(
+				"id",
+				static (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["client-1"]),
+				CompletionProviderScope.InteractiveAndShell)
+			.WithDescription("Use.");
+		var shellEngine = new ShellCompletionEngine(sut);
+
+		var candidates = await ResolveShellCandidatesAsync(shellEngine, "app use ").ConfigureAwait(false);
+
+		candidates.Should().Contain("client-1",
+			because: "the route value is ignored for the [FromServices] parameter, so the candidate binds");
+	}
+
+	private interface IRepo
+	{
+		string Marker { get; }
+	}
+
 	private enum ProbeMode
 	{
 		Debug,

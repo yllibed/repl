@@ -1232,6 +1232,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		var numericFormatProvider = parsingOptions.NumericFormatProvider ?? CultureInfo.InvariantCulture;
 		var completionContext = new CompletionContext(serviceProvider);
 		var suggestions = new List<ConsoleLineReader.AutocompleteSuggestion>();
+		// A value typed at the FIRST token position is dispatched as an ambient command (help,
+		// exit, a custom ambient, ...) BEFORE routing, so it could never bind to a route value.
+		// This is interactive-only: the CLI/shell dispatch path handles ambients differently, so
+		// the shared CandidateBindsToProviderRoute deliberately does not encode it.
+		var atFirstToken = commandPrefix.Length == 0;
+		var ambientCommands = app.OptionsSnapshot.AmbientCommands;
 		foreach (var target in targets)
 		{
 			var provided = await InvokeProviderSafelyAsync(
@@ -1245,6 +1251,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 				// higher-scoring literal or an ambiguous prefix would claim never binds here.
 				// Terminal controls are rejected before rendering; quotes added for the round-trip.
 				if (!string.IsNullOrWhiteSpace(item)
+					&& !(atFirstToken && InteractiveSession.IsAmbientFirstToken(item, ambientCommands))
 					&& IsControlFreeValue(item)
 					&& RouteConstraintEvaluator.IsMatch(target.Segment, item, parsingOptions)
 					&& CandidateBindsToHandlerParameter(target.Route, target.Segment.Name, item, numericFormatProvider, parsingOptions.OptionCaseSensitivity)
@@ -1291,6 +1298,19 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			route.Command.Handler.Method.GetParameters(),
 			p => string.Equals(p.Name, segmentName, StringComparison.OrdinalIgnoreCase));
 		if (parameter is null)
+		{
+			return true;
+		}
+
+		// A parameter that HandlerArgumentBinder binds BEFORE consulting route values never
+		// receives the route value, so its type must not gate the candidate: a CancellationToken
+		// or a parameter with an explicit binding direction ([FromContext]/[FromServices]) is
+		// bound from the token / context / DI regardless of the segment value (the value is simply
+		// unused). Validating a string id against, say, an injected service type would wrongly drop
+		// every candidate. Mirrors the binder's precedence.
+		if (parameter.ParameterType == typeof(CancellationToken)
+			|| parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
+			|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0)
 		{
 			return true;
 		}
@@ -1384,6 +1404,16 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		if (diagnostics.Match is { } terminal)
 		{
 			return ReferenceEquals(terminal.Route, providerRoute);
+		}
+
+		// No terminal route match: dispatch next tries an EXACT context (deeplink). A candidate
+		// whose expanded tokens exactly match a context navigates/renders that context instead of
+		// binding to the provider's segment — even when the provider route is the missing-argument
+		// winner ('pick {name} {id}' with a context 'pick status' shadows the value 'status') — so
+		// it must not be offered.
+		if (ContextResolver.ResolveExact(activeGraph.Contexts, expanded, app.OptionsSnapshot.Parsing) is not null)
+		{
+			return false;
 		}
 
 		if (diagnostics.MissingArgumentsFailure is { } incomplete)
