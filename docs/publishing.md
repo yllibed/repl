@@ -71,7 +71,8 @@ NuGet publication.
 
 ## NuGet publish status
 
-- Package and symbol packages (`.snupkg`) are produced and published by the release job.
+- Package and symbol packages (`.snupkg`) are produced by `Build, Test, Pack` and published
+  by the release job.
 - `Publish to NuGet` runs after GitHub Release creation when the preceding step succeeds
   (`if: success()`).
 - The `NUGET_API_KEY` repository secret must remain configured. Do not expose its value or
