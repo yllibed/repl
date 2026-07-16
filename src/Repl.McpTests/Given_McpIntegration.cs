@@ -1,10 +1,5 @@
 using Repl.Mcp;
 
-// These tests exercise Roots/Sampling/Logging, deprecated by MCP spec 2026-07-28
-// (SEP-2577, MCP9005) but still supported by Repl.Mcp until the SDK removes them.
-// Tracked in issue #51.
-#pragma warning disable MCP9005
-
 namespace Repl.McpTests;
 
 [TestClass]
@@ -79,7 +74,10 @@ public sealed class Given_McpIntegration
 
 		var options = app.BuildMcpServerOptions();
 
+		// Logging is deprecated (SEP-2577, MCP9005) but still supported by Repl.Mcp (#51).
+#pragma warning disable MCP9005
 		options.Capabilities!.Logging.Should().NotBeNull();
+#pragma warning restore MCP9005
 	}
 
 	[TestMethod]
@@ -120,6 +118,27 @@ public sealed class Given_McpIntegration
 		cmd.Annotations!.OpenWorld.Should().BeTrue();
 		cmd.Annotations!.LongRunning.Should().BeTrue();
 		cmd.Arguments.Should().ContainSingle(a => string.Equals(a.Name, "env", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("Locks the SDK-2.0 tools/list wire shape for .LongRunning() commands: annotations survive serialization, and no task/execution augmentation is emitted — Repl deliberately does not advertise MCP task support until the Tasks runtime is implemented end-to-end (issue #51).")]
+	public void When_SerializingLongRunningTool_Then_NoTaskAugmentationIsEmitted()
+	{
+		var app = ReplApp.Create();
+		app.Map("deploy", () => "deployed")
+			.WithDescription("Deploy application")
+			.LongRunning()
+			.OpenWorld();
+
+		var options = app.BuildMcpServerOptions();
+		var tool = options.ToolCollection!.Single(tool =>
+			string.Equals(tool.ProtocolTool.Name, "deploy", StringComparison.Ordinal));
+		var json = System.Text.Json.JsonSerializer.Serialize(
+			tool.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
+
+		json.Should().Contain("\"openWorldHint\"");
+		json.Should().NotContain("execution");
+		json.Should().NotContain("taskSupport");
 	}
 
 	[TestMethod]
