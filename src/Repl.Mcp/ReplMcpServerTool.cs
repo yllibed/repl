@@ -14,10 +14,11 @@ internal sealed class ReplMcpServerTool : McpServerTool
 	private readonly McpToolAdapter _adapter;
 	private readonly Tool _protocolTool;
 
-	// SDK 2.0 removed the experimental MCP Tasks tool-augmentation surface
-	// (Tool.Execution / ToolTaskSupport, MCPEXP001 in 1.x): the Tasks SEP was deferred out
-	// of the 2.0 protocol release. Repl keeps .LongRunning() in its own model (help/docs);
-	// advertising task support returns with the SDK's Tasks runtime (tracked in issue #51).
+	// SDK 2.0 extracted MCP Tasks into ModelContextProtocol.Extensions.Tasks (store, task
+	// results, client polling) and dropped the per-tool Tool.Execution / ToolTaskSupport
+	// augmentation from the protocol surface. Repl keeps .LongRunning() in its own model
+	// (help/docs) and deliberately does not advertise task support until the Tasks runtime
+	// (tasks/get|update|cancel) is implemented end-to-end — tracked in issue #51.
 	public ReplMcpServerTool(
 		ReplDocCommand command,
 		string toolName,

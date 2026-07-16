@@ -104,7 +104,7 @@ app.Map("debug reset", handler)
     .AutomationHidden();
 ```
 
-Unannotated tools force agents to assume the worst. Use `.ReadOnly()` for safe queries, `.Destructive()` for important mutations, `.OpenWorld()` for external systems, `.LongRunning()` for operations that should use call-now / poll-later patterns, and `.AutomationHidden()` for commands that should stay available to humans but invisible to MCP automation.
+Unannotated tools force agents to assume the worst. Use `.ReadOnly()` for safe queries, `.Destructive()` for important mutations, `.OpenWorld()` for external systems, `.LongRunning()` for slow operations (a documentation hint today — protocol-level MCP task advertisement returns with the SDK Tasks runtime), and `.AutomationHidden()` for commands that should stay available to humans but invisible to MCP automation.
 
 Prefer returning JSON-friendly objects instead of writing prose-only output. Structured results are easier for agents to inspect, retry, test, and summarize.
 

@@ -6,11 +6,6 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Documentation;
 
-// Roots, Sampling, and Logging are deprecated by MCP spec 2026-07-28 (SEP-2577, SDK
-// diagnostic MCP9005) with no replacement API; hosts still rely on them, so Repl keeps
-// supporting the features until the SDK removes them. Tracked in issue #51.
-#pragma warning disable MCP9005
-
 namespace Repl.Mcp;
 
 /// <summary>
@@ -464,6 +459,9 @@ internal sealed class McpServerHandler
 		}
 
 		var weakSelf = new WeakReference<McpServerHandler>(this);
+		// Roots is deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005) but hosts still send
+		// this notification; Repl keeps supporting it until the SDK removes the surface (#51).
+#pragma warning disable MCP9005
 		_ = server.RegisterNotificationHandler(
 			NotificationMethods.RootsListChangedNotification,
 			(_, _) =>
@@ -475,6 +473,7 @@ internal sealed class McpServerHandler
 
 				return ValueTask.CompletedTask;
 			});
+#pragma warning restore MCP9005
 	}
 
 	private void OnRoutingInvalidated()
@@ -542,6 +541,10 @@ internal sealed class McpServerHandler
 
 	private ServerCapabilities BuildCapabilities()
 	{
+		// Logging is deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005) but the feedback
+		// bridge still routes through logging notifications for current hosts; Repl keeps
+		// advertising it until the SDK removes the surface (#51).
+#pragma warning disable MCP9005
 		var capabilities = new ServerCapabilities
 		{
 			Logging = new LoggingCapability(),
@@ -549,6 +552,7 @@ internal sealed class McpServerHandler
 			Resources = new ResourcesCapability { ListChanged = true },
 			Prompts = new PromptsCapability { ListChanged = true },
 		};
+#pragma warning restore MCP9005
 
 		if (_options.EnableApps || HasMcpAppResources())
 		{
