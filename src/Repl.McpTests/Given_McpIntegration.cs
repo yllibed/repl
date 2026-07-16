@@ -1,5 +1,10 @@
 using Repl.Mcp;
 
+// These tests exercise Roots/Sampling/Logging, deprecated by MCP spec 2026-07-28
+// (SEP-2577, MCP9005) but still supported by Repl.Mcp until the SDK removes them.
+// Tracked in issue #51.
+#pragma warning disable MCP9005
+
 namespace Repl.McpTests;
 
 [TestClass]
