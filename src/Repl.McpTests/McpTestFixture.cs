@@ -113,6 +113,8 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		_cts.Dispose();
 	}
 
+	internal static IServiceProvider EmptyServices => EmptyServiceProvider.Instance;
+
 	private sealed class EmptyServiceProvider : IServiceProvider
 	{
 		public static readonly EmptyServiceProvider Instance = new();

@@ -25,6 +25,7 @@ internal sealed class McpServerHandler
 	private readonly IServiceProvider _services;
 	private readonly TimeProvider _timeProvider;
 	private readonly char _separator;
+	private readonly McpRequestServerAccessor _requestServers = new();
 	private readonly McpClientRootsService _roots;
 	private readonly McpSamplingService _sampling;
 	private readonly McpElicitationService _elicitation;
@@ -54,10 +55,10 @@ internal sealed class McpServerHandler
 		_services = services;
 		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		_separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
-		_roots = new McpClientRootsService(app);
-		_sampling = new McpSamplingService();
-		_elicitation = new McpElicitationService();
-		_feedback = new McpFeedbackService();
+		_roots = new McpClientRootsService(app, _requestServers);
+		_sampling = new McpSamplingService(_requestServers);
+		_elicitation = new McpElicitationService(_requestServers);
+		_feedback = new McpFeedbackService(_requestServers);
 		_sessionServices = new McpServiceProviderOverlay(
 			services,
 			new Dictionary<Type, object>
@@ -163,7 +164,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListToolsRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 
 		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim
@@ -190,7 +191,7 @@ internal sealed class McpServerHandler
 		RequestContext<CallToolRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 		IDictionary<string, JsonElement> arguments = request.Params.Arguments ?? EmptyArguments;
 		var toolName = request.Params.Name ?? string.Empty;
@@ -222,7 +223,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListResourcesRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 		return new ListResourcesResult
 		{
@@ -239,7 +240,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListResourceTemplatesRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 		return new ListResourceTemplatesResult
 		{
@@ -256,7 +257,7 @@ internal sealed class McpServerHandler
 		RequestContext<ReadResourceRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 		var uri = request.Params.Uri ?? string.Empty;
 		var resource = snapshot.Resources.FirstOrDefault(candidate => candidate.IsMatch(uri));
@@ -272,7 +273,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListPromptsRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 		return new ListPromptsResult
 		{
@@ -284,7 +285,7 @@ internal sealed class McpServerHandler
 		RequestContext<GetPromptRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(request.Server);
+		BindRequestServer(request.Server);
 		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
 		var promptName = request.Params.Name ?? string.Empty;
 		var prompt = snapshot.Prompts.FirstOrDefault(candidate =>
@@ -301,7 +302,7 @@ internal sealed class McpServerHandler
 		McpServer? server,
 		CancellationToken cancellationToken)
 	{
-		AttachServer(server);
+		BindRequestServer(server);
 
 		var snapshotVersion = Volatile.Read(ref _snapshotVersion);
 		if (Volatile.Read(ref _builtSnapshotVersion) == snapshotVersion
@@ -403,6 +404,29 @@ internal sealed class McpServerHandler
 		}
 	}
 
+	// Request-level binding: capability services resolve the flowing request's
+	// destination-bound server through the AsyncLocal accessor, so concurrent requests
+	// (SDK 2.0 creates one destination-bound McpServer per request) cannot cross-wire
+	// each other's client capabilities. Externally hosted servers (options built via
+	// BuildDynamicServerOptions and run by the host, without RunAsync's session attach)
+	// adopt the first observed server for session-level concerns.
+	private void BindRequestServer(McpServer? server)
+	{
+		if (server is null)
+		{
+			return;
+		}
+
+		_requestServers.BindRequest(server);
+		if (_server is null)
+		{
+			AttachServer(server);
+		}
+	}
+
+	// Session-level attach: routing-change notifications and the roots list-changed
+	// handler belong to the session server, registered once — never to the per-request
+	// destination wrappers.
 	private void AttachServer(McpServer? server)
 	{
 		if (server is null)
@@ -418,10 +442,7 @@ internal sealed class McpServerHandler
 			}
 
 			_server = server;
-			_roots.AttachServer(server);
-			_sampling.AttachServer(server);
-			_elicitation.AttachServer(server);
-			_feedback.AttachServer(server);
+			_requestServers.AttachSession(server);
 			EnsureRoutingSubscription();
 			EnsureRootsNotificationHandler(server);
 		}
