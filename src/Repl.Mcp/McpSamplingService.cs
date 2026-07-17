@@ -12,23 +12,23 @@ namespace Repl.Mcp;
 /// <summary>
 /// Internal implementation of <see cref="IMcpSampling"/> backed by a live <see cref="McpServer"/> session.
 /// </summary>
-internal sealed class McpSamplingService : IMcpSampling
+internal sealed class McpSamplingService(McpRequestServerAccessor servers) : IMcpSampling
 {
-	private McpServer? _server;
-
-	public bool IsSupported => _server?.ClientCapabilities?.Sampling is not null;
+	public bool IsSupported => servers.Effective?.ClientCapabilities?.Sampling is not null;
 
 	public async ValueTask<string?> SampleAsync(
 		string prompt,
 		int maxTokens = 1024,
 		CancellationToken cancellationToken = default)
 	{
-		if (!IsSupported)
+		// Single read: the effective server must not change between the support check and
+		// the call (a concurrent request re-binding the accessor must not be observed).
+		if (servers.Effective is not { ClientCapabilities.Sampling: not null } server)
 		{
 			return null;
 		}
 
-		var result = await _server!.SampleAsync(
+		var result = await server.SampleAsync(
 			new CreateMessageRequestParams
 			{
 				Messages =
@@ -46,5 +46,4 @@ internal sealed class McpSamplingService : IMcpSampling
 		return result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text;
 	}
 
-	internal void AttachServer(McpServer server) => _server = server;
 }

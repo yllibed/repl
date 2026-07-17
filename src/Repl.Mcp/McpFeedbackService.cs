@@ -16,19 +16,15 @@ namespace Repl.Mcp;
 /// <summary>
 /// Internal implementation of <see cref="IMcpFeedback"/> backed by a live <see cref="McpServer"/> session.
 /// </summary>
-internal sealed class McpFeedbackService : IMcpFeedback
+internal sealed class McpFeedbackService(McpRequestServerAccessor servers) : IMcpFeedback
 {
 	private const string LoggerName = "repl.interaction";
 
 	private readonly AsyncLocal<ProgressToken?> _progressToken = new();
-	// This service is created per McpServerHandler/session and overlaid into the
-	// per-connection service provider, so the attached server reference is not shared
-	// across concurrent MCP connections.
-	private McpServer? _server;
 
-	public bool IsProgressSupported => _server is not null && _progressToken.Value is not null;
+	public bool IsProgressSupported => servers.Effective is not null && _progressToken.Value is not null;
 
-	public bool IsLoggingSupported => _server is not null;
+	public bool IsLoggingSupported => servers.Effective is not null;
 
 	public async ValueTask ReportProgressAsync(
 		ReplProgressEvent progress,
@@ -36,13 +32,17 @@ internal sealed class McpFeedbackService : IMcpFeedback
 	{
 		ArgumentNullException.ThrowIfNull(progress);
 
-		if (!IsProgressSupported || progress.State == ReplProgressState.Clear || _progressToken.Value is not { } progressToken)
+		// Single read: the effective server must not change between the support check and
+		// the send (a concurrent request re-binding the accessor must not be observed).
+		if (servers.Effective is not { } server
+			|| progress.State == ReplProgressState.Clear
+			|| _progressToken.Value is not { } progressToken)
 		{
 			return;
 		}
 
 		var percent = progress.ResolvePercent();
-		await _server!.NotifyProgressAsync(
+		await server.NotifyProgressAsync(
 			progressToken,
 			new ProgressNotificationValue
 			{
@@ -58,12 +58,12 @@ internal sealed class McpFeedbackService : IMcpFeedback
 		object? data,
 		CancellationToken cancellationToken = default)
 	{
-		if (!IsLoggingSupported)
+		if (servers.Effective is not { } server)
 		{
 			return;
 		}
 
-		await _server!.SendNotificationAsync(
+		await server.SendNotificationAsync(
 			NotificationMethods.LoggingMessageNotification,
 			new LoggingMessageNotificationParams
 			{
@@ -74,7 +74,6 @@ internal sealed class McpFeedbackService : IMcpFeedback
 			cancellationToken: cancellationToken).ConfigureAwait(false);
 	}
 
-	internal void AttachServer(McpServer server) => _server = server;
 
 	internal IDisposable PushProgressToken(ProgressToken? progressToken) =>
 		new ProgressTokenScope(_progressToken, progressToken);

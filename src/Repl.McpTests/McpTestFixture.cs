@@ -151,6 +151,13 @@ internal sealed class McpTestFixture : IAsyncDisposable
 		_cts.Dispose();
 	}
 
+	internal static IServiceProvider EmptyServices => EmptyServiceProvider.Instance;
+
+	private sealed class EmptyServiceProvider : IServiceProvider
+	{
+		public static readonly EmptyServiceProvider Instance = new();
+		public object? GetService(Type serviceType) => null;
+	}
 
 	internal sealed class PipeIoContext(Stream inputStream, Stream outputStream) : IReplIoContext
 	{
