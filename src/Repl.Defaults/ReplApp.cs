@@ -252,18 +252,26 @@ public sealed class ReplApp : IReplApp
 		var runOptions = options ?? new ReplRunOptions();
 		if (runOptions.HostedServiceLifecycle is HostedServiceLifecycleMode.None or HostedServiceLifecycleMode.Guest)
 		{
-			return await _core.RunWithServicesAsync(args, services, cancellationToken).ConfigureAwait(false);
+			return await RunInSessionScopeAsync(
+				services,
+				(sessionServices, ct) => _core.RunWithServicesAsync(args, sessionServices, ct),
+				cancellationToken).ConfigureAwait(false);
 		}
 
 		var started = Array.Empty<Microsoft.Extensions.Hosting.IHostedService>();
 		var exitCode = 0;
 		try
 		{
+			// Hosted services are app-level, not session-level: they start from the
+			// unscoped provider so their lifetime is not tied to this session's scope.
 			started = [..
 				await HostedServiceLifecycleCoordinator.StartAsync(services, cancellationToken)
 					.ConfigureAwait(false),
 			];
-			exitCode = await _core.RunWithServicesAsync(args, services, cancellationToken).ConfigureAwait(false);
+			exitCode = await RunInSessionScopeAsync(
+				services,
+				(sessionServices, ct) => _core.RunWithServicesAsync(args, sessionServices, ct),
+				cancellationToken).ConfigureAwait(false);
 		}
 		catch (HostedServiceLifecycleException ex)
 		{
@@ -366,9 +374,35 @@ public sealed class ReplApp : IReplApp
 		using (ReplSessionIO.SetSession(host.Output, host.Input, runOptions.AnsiSupport, sessionHost?.SessionId))
 		{
 			ApplyTerminalOverrides(runOptions);
-			var sessionProvider = CreateSessionOverlay(services);
-			return await _core.RunWithServicesAsync(args, sessionProvider, cancellationToken)
-				.ConfigureAwait(false);
+			// The session overlay composes on top of the SESSION scope, so overlay lookups
+			// hitting the external provider observe the session's Scoped instances.
+			return await RunInSessionScopeAsync(
+				services,
+				(sessionServices, ct) => _core.RunWithServicesAsync(args, CreateSessionOverlay(sessionServices), ct),
+				cancellationToken).ConfigureAwait(false);
+		}
+	}
+
+	// One Run* call is one session: it owns a DI scope so Scoped services resolve per
+	// session (the documented lifetime) and scoped disposables are released when the
+	// session ends. Providers marked ISessionScopedServiceProvider already carry their
+	// owner's session scope (e.g. Repl.Testing runs each command of one logical session
+	// as a separate one-shot call) and providers without scope support run as before.
+	private static async ValueTask<int> RunInSessionScopeAsync(
+		IServiceProvider services,
+		Func<IServiceProvider, CancellationToken, ValueTask<int>> run,
+		CancellationToken cancellationToken)
+	{
+		if (services is ISessionScopedServiceProvider
+			|| services.GetService(typeof(IServiceScopeFactory)) is not IServiceScopeFactory scopeFactory)
+		{
+			return await run(services, cancellationToken).ConfigureAwait(false);
+		}
+
+		var scope = scopeFactory.CreateAsyncScope();
+		await using (scope.ConfigureAwait(false))
+		{
+			return await run(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
 		}
 	}
 
