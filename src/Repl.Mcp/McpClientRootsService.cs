@@ -9,32 +9,26 @@ using ModelContextProtocol.Server;
 
 namespace Repl.Mcp;
 
+// One instance PER SESSION (owned by McpSessionContext): hard roots, soft roots, and
+// their cache/version state are session state — one handler can serve several sessions,
+// and serving session A's roots to session B would expose A's workspace URIs and build
+// B's root-dependent snapshot from the wrong workspace. Outbound transport still goes
+// through the request-bound accessor (the destination is per request, finer than the
+// session).
 internal sealed class McpClientRootsService : IMcpClientRoots
 {
 	private readonly ICoreReplApp _app;
 	private readonly McpRequestServerAccessor _servers;
 	private readonly Lock _syncRoot = new();
-	// Hard roots are SESSION state: one handler can serve several root-capable sessions,
-	// and serving session A's cached roots to session B would expose A's workspace URIs
-	// and build B's root-dependent snapshot from the wrong workspace. Entries are keyed by
-	// the destination server (weak keys — they die with the session); a single global
-	// version stamp invalidates every entry on any roots-list change (coarse, but the
-	// event is rare and correctness beats granularity here).
-	private readonly System.Runtime.CompilerServices.ConditionalWeakTable<McpServer, SessionRoots> _sessionRoots = [];
+	private McpClientRoot[] _hardRoots = [];
 	private McpClientRoot[] _softRoots = [];
-	private long _rootsVersion;
+	private bool _hardRootsLoaded;
+	private long _hardRootsVersion;
 
 	public McpClientRootsService(ICoreReplApp app, McpRequestServerAccessor servers)
 	{
 		_app = app;
 		_servers = servers;
-	}
-
-	private sealed class SessionRoots
-	{
-		public McpClientRoot[] Roots = [];
-		public bool Loaded;
-		public long LoadedVersion;
 	}
 
 	public bool IsSupported => _servers.Effective?.ClientCapabilities?.Roots is not null;
@@ -54,16 +48,9 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	{
 		get
 		{
-			var server = _servers.Effective;
 			lock (_syncRoot)
 			{
-				if (server?.ClientCapabilities?.Roots is null)
-				{
-					return _softRoots;
-				}
-
-				var entry = _sessionRoots.GetOrCreateValue(server);
-				return entry.Loaded && entry.LoadedVersion == _rootsVersion ? entry.Roots : [];
+				return IsSupported ? _hardRoots : _softRoots;
 			}
 		}
 	}
@@ -78,18 +65,18 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 			return Current;
 		}
 
-		var entry = _sessionRoots.GetOrCreateValue(server);
 		long versionAtStart;
 		lock (_syncRoot)
 		{
-			versionAtStart = _rootsVersion;
-			if (entry.Loaded && entry.LoadedVersion == versionAtStart)
+			if (_hardRootsLoaded)
 			{
-				return entry.Roots;
+				return _hardRoots;
 			}
+
+			versionAtStart = _hardRootsVersion;
 		}
 
-		return await GetAndMaybeCacheRootsAsync(server, entry, versionAtStart, cancellationToken).ConfigureAwait(false);
+		return await GetAndMaybeCacheRootsAsync(server, versionAtStart, cancellationToken).ConfigureAwait(false);
 	}
 
 	public void SetSoftRoots(IEnumerable<McpClientRoot> roots)
@@ -135,7 +122,9 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	{
 		lock (_syncRoot)
 		{
-			_rootsVersion++;
+			_hardRoots = [];
+			_hardRootsLoaded = false;
+			_hardRootsVersion++;
 		}
 
 		_app.InvalidateRouting();
@@ -143,7 +132,6 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 
 	private async ValueTask<IReadOnlyList<McpClientRoot>> GetAndMaybeCacheRootsAsync(
 		McpServer server,
-		SessionRoots entry,
 		long versionAtStart,
 		CancellationToken cancellationToken)
 	{
@@ -153,12 +141,11 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 
 		lock (_syncRoot)
 		{
-			if (_rootsVersion == versionAtStart)
+			if (_hardRootsVersion == versionAtStart)
 			{
-				entry.Roots = mappedRoots;
-				entry.Loaded = true;
-				entry.LoadedVersion = versionAtStart;
-				return entry.Roots;
+				_hardRoots = mappedRoots;
+				_hardRootsLoaded = true;
+				return _hardRoots;
 			}
 
 			return mappedRoots;
