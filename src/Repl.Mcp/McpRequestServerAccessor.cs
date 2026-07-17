@@ -26,6 +26,6 @@ internal sealed class McpRequestServerAccessor
 	/// <summary>Binds the flowing async context to the request's destination server.</summary>
 	public void BindRequest(McpServer server) => _current.Value = server;
 
-	/// <summary>Records the session-level server used outside request flows.</summary>
-	public void AttachSession(McpServer server) => _session = server;
+	/// <summary>Records the session-level server used outside request flows (null when the last session ends).</summary>
+	public void AttachSession(McpServer? server) => _session = server;
 }
