@@ -163,6 +163,78 @@ public sealed class Given_McpConcurrentSessions
 		await ctsB.CancelAsync().ConfigureAwait(false);
 	}
 
+	[TestMethod]
+	[Description("Guards snapshot isolation across sessions sharing one handler: a tool graph gated on session capabilities (module presence on IMcpClientRoots.IsSupported) must be computed per session — a shared snapshot cache would serve the roots-capable session's tools to a session without roots.")]
+	public async Task When_ToolGraphIsSessionGated_Then_EachSessionSeesItsOwnTools()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("always", () => "ok");
+		app.MapModule(new RootsGatedModule(), (IMcpClientRoots roots) => roots.IsSupported);
+
+		var options = new ReplMcpServerOptions
+		{
+			TransportFactory = static (serverName, io) => new StreamServerTransport(
+				((McpTestFixture.PipeIoContext)io).InputStream,
+				((McpTestFixture.PipeIoContext)io).OutputStream,
+				serverName),
+		};
+		var handler = new McpServerHandler(app.Core, options, McpTestFixture.EmptyServices);
+		using var cts = new CancellationTokenSource();
+
+		var (clientWithRoots, _) = await StartSessionAsync(handler, BuildRootsClientOptions("file:///ga"), cts.Token).ConfigureAwait(false);
+		var (clientWithoutRoots, _) = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
+
+		var toolsWithRoots = await clientWithRoots.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		var toolsWithoutRoots = await clientWithoutRoots.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		toolsWithRoots.Should().Contain(tool => string.Equals(tool.Name, "gated", StringComparison.Ordinal));
+		toolsWithoutRoots.Should().Contain(tool => string.Equals(tool.Name, "always", StringComparison.Ordinal));
+		toolsWithoutRoots.Should().NotContain(tool => string.Equals(tool.Name, "gated", StringComparison.Ordinal));
+
+		await clientWithRoots.DisposeAsync().ConfigureAwait(false);
+		await clientWithoutRoots.DisposeAsync().ConfigureAwait(false);
+		await cts.CancelAsync().ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Guards the compatibility-shim intro across sessions: DiscoverAndCallShim serves the discover_tools/call_tool intro on each session's FIRST tools/list — a handler-global flag would give the intro only to whichever session listed first, leaving later sessions without the documented bootstrap.")]
+	public async Task When_ShimEnabledAndTwoSessionsList_Then_EachSessionGetsTheIntro()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("alpha", () => "a");
+
+		var options = new ReplMcpServerOptions
+		{
+			DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim,
+			TransportFactory = static (serverName, io) => new StreamServerTransport(
+				((McpTestFixture.PipeIoContext)io).InputStream,
+				((McpTestFixture.PipeIoContext)io).OutputStream,
+				serverName),
+		};
+		var handler = new McpServerHandler(app.Core, options, McpTestFixture.EmptyServices);
+		using var cts = new CancellationTokenSource();
+
+		var (clientA, _) = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
+		var (clientB, _) = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
+
+		var firstListA = await clientA.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		var firstListB = await clientB.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		firstListA.Select(static tool => tool.Name).Should().BeEquivalentTo(["discover_tools", "call_tool"]);
+		firstListB.Select(static tool => tool.Name).Should().BeEquivalentTo(["discover_tools", "call_tool"]);
+
+		await clientA.DisposeAsync().ConfigureAwait(false);
+		await clientB.DisposeAsync().ConfigureAwait(false);
+		await cts.CancelAsync().ConfigureAwait(false);
+	}
+
+	private sealed class RootsGatedModule : IReplModule
+	{
+		public void Map(IReplMap app) => app.Map("gated", () => "roots-only");
+	}
+
 	private static McpClientOptions BuildRootsClientOptions(string rootUri) => new()
 	{
 		Capabilities = new ClientCapabilities

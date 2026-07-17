@@ -28,25 +28,26 @@ internal sealed class McpServerHandler
 	private readonly TimeProvider _timeProvider;
 	private readonly char _separator;
 	private readonly McpRequestServerAccessor _requestServers = new();
-	private readonly McpClientRootsService _roots;
 	private readonly McpSamplingService _sampling;
 	private readonly McpElicitationService _elicitation;
 	private readonly McpFeedbackService _feedback;
-	private readonly IServiceProvider _sessionServices;
-	private readonly SemaphoreSlim _snapshotGate = new(initialCount: 1, maxCount: 1);
 	private readonly Lock _refreshLock = new();
 	private readonly Lock _attachLock = new();
 
-	private McpGeneratedSnapshot? _snapshot;
+	// Global routing version: bumped by InvalidateRouting for every session; each session's
+	// context caches the snapshot it built at a given version.
 	private SnapshotVersionState _snapshotState = new(Version: 1, LastVisibilityRetractionVersion: 0);
-	private long _builtSnapshotVersion;
-	// One handler can serve several concurrent sessions; session-scoped concerns (routing
-	// notifications, roots list-changed handler) track EVERY active session, not a single
-	// last- or first-attached server. Guarded by _attachLock.
-	private readonly List<McpServer> _sessions = [];
+	// One handler can serve several concurrent sessions; everything session-owned lives in
+	// McpSessionContext, and this list (guarded by _attachLock) tracks every ACTIVE session
+	// for server-initiated notifications and subscription lifetime.
+	private readonly List<McpSessionContext> _sessions = [];
+	// Lazy single context for externally hosted servers (options built via
+	// BuildDynamicServerOptions and run by the host without RunAsync): those servers carry
+	// the HOST's provider, so requests cannot recover a per-session context from it — they
+	// share one explicit fallback context instead of racing a last-attached field.
+	private McpSessionContext? _externalContext;
 	private EventHandler<RoutingInvalidatedEventArgs>? _routingChangedHandler;
 	private ITimer? _debounceTimer;
-	private int _compatibilityIntroServed;
 	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
 
 	// Notifications are fire-and-forget best-effort — a stuck stdio peer must not hang this
@@ -64,19 +65,61 @@ internal sealed class McpServerHandler
 		_services = services;
 		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		_separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
-		_roots = new McpClientRootsService(app, _requestServers);
+		// Sampling/elicitation/feedback are stateless (they resolve the request-bound server
+		// through the accessor) and safely shared; roots and everything else session-owned
+		// is created per session in CreateSessionContext.
 		_sampling = new McpSamplingService(_requestServers);
 		_elicitation = new McpElicitationService(_requestServers);
 		_feedback = new McpFeedbackService(_requestServers);
-		_sessionServices = new McpServiceProviderOverlay(
-			services,
-			new Dictionary<Type, object>
+	}
+
+	private McpSessionContext CreateSessionContext()
+	{
+		var roots = new McpClientRootsService(_app, _requestServers);
+		var overlayServices = new Dictionary<Type, object>
+		{
+			[typeof(IMcpClientRoots)] = roots,
+			[typeof(IMcpSampling)] = _sampling,
+			[typeof(IMcpElicitation)] = _elicitation,
+			[typeof(IMcpFeedback)] = _feedback,
+		};
+		var context = new McpSessionContext(roots, new McpServiceProviderOverlay(_services, overlayServices));
+		// The context rides in its own overlay so request handlers can recover their
+		// originating session through the server's provider (the dictionary is captured by
+		// reference, making this two-phase registration safe).
+		overlayServices[typeof(McpSessionContext)] = context;
+		return context;
+	}
+
+	// Requests recover their session through the provider handed to McpServer.Create —
+	// even a destination-bound per-request server exposes its session's services. Servers
+	// created by an external host (BuildDynamicServerOptions) carry the host's provider
+	// instead and share the explicit fallback context.
+	private McpSessionContext ResolveContext(McpServer? requestServer)
+	{
+		if (requestServer?.Services?.GetService(typeof(McpSessionContext)) is McpSessionContext context)
+		{
+			return context;
+		}
+
+		lock (_attachLock)
+		{
+			if (_externalContext is null)
 			{
-				[typeof(IMcpClientRoots)] = _roots,
-				[typeof(IMcpSampling)] = _sampling,
-				[typeof(IMcpElicitation)] = _elicitation,
-				[typeof(IMcpFeedback)] = _feedback,
-			});
+				_externalContext = CreateSessionContext();
+				_sessions.Add(_externalContext);
+				EnsureRoutingSubscription();
+			}
+
+			if (_externalContext.SessionServer is null && requestServer is not null)
+			{
+				_externalContext.SessionServer = requestServer;
+				_requestServers.AttachSession(requestServer);
+				EnsureRootsNotificationHandler(requestServer, _externalContext.Roots);
+			}
+
+			return _externalContext;
+		}
 	}
 
 	[UnconditionalSuppressMessage(
@@ -92,8 +135,10 @@ internal sealed class McpServerHandler
 			: new StdioServerTransport(serverName);
 		try
 		{
-			var server = McpServer.Create(transport, serverOptions, serviceProvider: _sessionServices);
-			AttachServer(server);
+			var context = CreateSessionContext();
+			var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
+			context.SessionServer = server;
+			AttachSession(context, server);
 
 			try
 			{
@@ -101,7 +146,7 @@ internal sealed class McpServerHandler
 			}
 			finally
 			{
-				DetachSession(server);
+				DetachSession(context);
 				await server.DisposeAsync().ConfigureAwait(false);
 			}
 		}
@@ -121,7 +166,7 @@ internal sealed class McpServerHandler
 		// then repeated for the same commands during the first discovery request.
 		if (_options.CommandFilter is null)
 		{
-			_ = CreateDocumentationModel();
+			_ = CreateDocumentationModel(CreateSessionContext().Services);
 		}
 
 		return new McpServerOptions
@@ -145,7 +190,7 @@ internal sealed class McpServerHandler
 	{
 		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
-		var snapshot = BuildSnapshotCore();
+		var snapshot = BuildSnapshotCore(CreateSessionContext());
 
 		return new McpServerOptions
 		{
@@ -157,10 +202,10 @@ internal sealed class McpServerHandler
 		};
 	}
 
-	internal McpGeneratedSnapshot BuildSnapshotForTests() => BuildSnapshotCore();
+	internal McpGeneratedSnapshot BuildSnapshotForTests() => BuildSnapshotCore(CreateSessionContext());
 
 	internal async Task<McpGeneratedSnapshot> BuildSnapshotForTestsAsync(CancellationToken cancellationToken = default) =>
-		await GetSnapshotAsync(server: null, cancellationToken).ConfigureAwait(false);
+		await GetSnapshotAsync(CreateSessionContext(), cancellationToken).ConfigureAwait(false);
 
 	private string? ResolveAppName()
 	{
@@ -174,10 +219,11 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 
 		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim
-			&& Interlocked.CompareExchange(ref _compatibilityIntroServed, 1, 0) == 0)
+			&& Interlocked.CompareExchange(ref context.CompatibilityIntroServed, 1, 0) == 0)
 		{
 			_ = SendNotificationSafeAsync(NotificationMethods.ToolListChangedNotification);
 			return new ListToolsResult
@@ -201,7 +247,8 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		IDictionary<string, JsonElement> arguments = request.Params.Arguments ?? EmptyArguments;
 		var toolName = request.Params.Name ?? string.Empty;
 		var progressToken = request.Params.ProgressToken;
@@ -233,7 +280,8 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		return new ListResourcesResult
 		{
 			Resources =
@@ -250,7 +298,8 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		return new ListResourceTemplatesResult
 		{
 			ResourceTemplates =
@@ -267,7 +316,8 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		var uri = request.Params.Uri ?? string.Empty;
 		var resource = snapshot.Resources.FirstOrDefault(candidate => candidate.IsMatch(uri));
 		if (resource is null)
@@ -283,7 +333,8 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		return new ListPromptsResult
 		{
 			Prompts = [.. snapshot.Prompts.Select(static prompt => prompt.ProtocolPrompt)],
@@ -295,7 +346,8 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		BindRequestServer(request.Server);
-		var snapshot = await GetSnapshotAsync(request.Server, cancellationToken).ConfigureAwait(false);
+		var context = ResolveContext(request.Server);
+		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		var promptName = request.Params.Name ?? string.Empty;
 		var prompt = snapshot.Prompts.FirstOrDefault(candidate =>
 			string.Equals(candidate.ProtocolPrompt.Name, promptName, StringComparison.OrdinalIgnoreCase));
@@ -307,33 +359,34 @@ internal sealed class McpServerHandler
 		return await prompt.GetAsync(request, cancellationToken).ConfigureAwait(false);
 	}
 
+	// The snapshot is SESSION state: the tool graph can be gated on session capabilities
+	// (roots, module presence predicates), so each context caches its own build against
+	// the handler-global routing version.
 	private async ValueTask<McpGeneratedSnapshot> GetSnapshotAsync(
-		McpServer? server,
+		McpSessionContext context,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(server);
-
 		var snapshotVersion = Volatile.Read(ref _snapshotState).Version;
-		if (Volatile.Read(ref _builtSnapshotVersion) == snapshotVersion
-			&& _snapshot is { } cached)
+		if (context.BuiltSnapshotVersion == snapshotVersion
+			&& context.Snapshot is { } cached)
 		{
 			return cached;
 		}
 
-		await _snapshotGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+		await context.SnapshotGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
 			snapshotVersion = Volatile.Read(ref _snapshotState).Version;
-			if (Volatile.Read(ref _builtSnapshotVersion) == snapshotVersion
-				&& _snapshot is { } refreshed)
+			if (context.BuiltSnapshotVersion == snapshotVersion
+				&& context.Snapshot is { } refreshed)
 			{
 				return refreshed;
 			}
 
-			var previousSnapshot = _snapshot;
+			var previousSnapshot = context.Snapshot;
 			try
 			{
-				return await BuildCurrentSnapshotAsync(snapshotVersion, cancellationToken).ConfigureAwait(false);
+				return await BuildCurrentSnapshotAsync(context, snapshotVersion, cancellationToken).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException)
 			{
@@ -347,17 +400,17 @@ internal sealed class McpServerHandler
 			catch (Exception) when (
 				previousSnapshot is not null
 				&& Volatile.Read(ref _snapshotState).LastVisibilityRetractionVersion
-					<= Volatile.Read(ref _builtSnapshotVersion))
+					<= context.BuiltSnapshotVersion)
 			{
 				// Preserve availability for transient projection failures, but leave the version dirty
 				// so the next request retries without requiring another routing mutation.
-				_snapshot = previousSnapshot;
+				context.Snapshot = previousSnapshot;
 				return previousSnapshot;
 			}
 		}
 		finally
 		{
-			_snapshotGate.Release();
+			context.SnapshotGate.Release();
 		}
 	}
 
@@ -380,14 +433,15 @@ internal sealed class McpServerHandler
 	}
 
 	private async ValueTask<McpGeneratedSnapshot> BuildCurrentSnapshotAsync(
+		McpSessionContext context,
 		long snapshotVersion,
 		CancellationToken cancellationToken)
 	{
 		while (true)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			await _roots.GetAsync(cancellationToken).ConfigureAwait(false);
-			var built = BuildSnapshotCore();
+			await context.Roots.GetAsync(cancellationToken).ConfigureAwait(false);
+			var built = BuildSnapshotCore(context);
 			var observedState = Volatile.Read(ref _snapshotState);
 
 			// Version and retraction watermark are one atomically published state. A reader can
@@ -399,32 +453,35 @@ internal sealed class McpServerHandler
 				continue;
 			}
 
-			_snapshot = built;
+			context.Snapshot = built;
 			if (observedState.Version == snapshotVersion)
 			{
-				Volatile.Write(ref _builtSnapshotVersion, snapshotVersion);
+				context.BuiltSnapshotVersion = snapshotVersion;
 			}
 			return built;
 		}
 	}
 
-	private McpGeneratedSnapshot BuildSnapshotCore()
+	private McpGeneratedSnapshot BuildSnapshotCore(McpSessionContext context)
 	{
 		// Project once here so tools/list, tools/call and prompts/list all read the same option list.
-		var model = McpAutomationProjection.Apply(CreateDocumentationModel());
-		var adapter = new McpToolAdapter(_app, _options, _sessionServices);
+		var model = McpAutomationProjection.Apply(CreateDocumentationModel(context.Services));
+		var adapter = new McpToolAdapter(_app, _options, context.Services);
 		var commandsByPath = model.Commands.ToDictionary(
 			command => command.Path,
 			command => command,
 			StringComparer.OrdinalIgnoreCase);
 		var tools = GenerateAllTools(model, adapter, _separator, commandsByPath);
 		ValidateCompatibilityToolNames(tools);
-		var resources = GenerateResources(model, adapter, _separator, commandsByPath);
+		var resources = GenerateResources(model, adapter, _separator, commandsByPath, context.Services);
 		var prompts = CollectPrompts(model, adapter, _separator);
 		return new McpGeneratedSnapshot(adapter, tools, resources, prompts);
 	}
 
-	private ReplDocumentationModel CreateDocumentationModel()
+	// The documentation model resolves module-presence predicates against the SESSION's
+	// services (e.g. IMcpClientRoots), so the model — and everything generated from it —
+	// reflects the capabilities of the session it is built for.
+	private ReplDocumentationModel CreateDocumentationModel(IServiceProvider sessionServices)
 	{
 		var coreApp = _app as CoreReplApp
 			?? throw new InvalidOperationException("MCP server handler requires CoreReplApp.");
@@ -433,7 +490,9 @@ internal sealed class McpServerHandler
 		ReplSessionIO.IsProgrammatic = true;
 		try
 		{
-			return coreApp.CreateDocumentationModel(CreateDiscoveryServices(), IsMcpCandidateBeforeValidation);
+			return coreApp.CreateDocumentationModel(
+				CreateDiscoveryServices(sessionServices),
+				IsMcpCandidateBeforeValidation);
 		}
 		finally
 		{
@@ -444,9 +503,9 @@ internal sealed class McpServerHandler
 	// Every MCP tool invocation overlays a concrete interaction channel before entering the
 	// binder. Discovery must expose that guaranteed fallback even when the caller did not supply
 	// a base provider (or supplied one without the channel).
-	private McpServiceProviderOverlay CreateDiscoveryServices() =>
+	private McpServiceProviderOverlay CreateDiscoveryServices(IServiceProvider sessionServices) =>
 		new(
-			_sessionServices,
+			sessionServices,
 			new Dictionary<Type, object>
 			{
 				[typeof(IReplInteractionChannel)] = new McpInteractionChannel(
@@ -476,9 +535,8 @@ internal sealed class McpServerHandler
 	// Request-level binding: capability services resolve the flowing request's
 	// destination-bound server through the AsyncLocal accessor, so concurrent requests
 	// (SDK 2.0 creates one destination-bound McpServer per request) cannot cross-wire
-	// each other's client capabilities. Externally hosted servers (options built via
-	// BuildDynamicServerOptions and run by the host, without RunAsync's session attach)
-	// adopt the first observed server for session-level concerns.
+	// each other's client capabilities. Session-level concerns are handled by
+	// AttachSession (RunAsync) or the external fallback context (ResolveContext).
 	private void BindRequestServer(McpServer? server)
 	{
 		if (server is null)
@@ -487,39 +545,19 @@ internal sealed class McpServerHandler
 		}
 
 		_requestServers.BindRequest(server);
-		bool needsSessionAttach;
-		lock (_attachLock)
-		{
-			needsSessionAttach = _sessions.Count == 0;
-		}
-
-		if (needsSessionAttach)
-		{
-			AttachServer(server);
-		}
 	}
 
 	// Session-level attach: routing-change notifications and the roots list-changed
 	// handler belong to the session servers, registered once per session — never to the
 	// per-request destination wrappers.
-	private void AttachServer(McpServer? server)
+	private void AttachSession(McpSessionContext context, McpServer server)
 	{
-		if (server is null)
-		{
-			return;
-		}
-
 		lock (_attachLock)
 		{
-			if (_sessions.Contains(server))
-			{
-				return;
-			}
-
-			_sessions.Add(server);
+			_sessions.Add(context);
 			_requestServers.AttachSession(server);
 			EnsureRoutingSubscription();
-			EnsureRootsNotificationHandler(server);
+			EnsureRootsNotificationHandler(server, context.Roots);
 		}
 	}
 
@@ -554,12 +592,12 @@ internal sealed class McpServerHandler
 	// Removes a closing session and repairs the shared state: the accessor's session
 	// fallback moves to a surviving session, and the routing subscription is dropped only
 	// when the LAST session ends — a first-session close must not silence the others.
-	private void DetachSession(McpServer server)
+	private void DetachSession(McpSessionContext context)
 	{
 		lock (_attachLock)
 		{
-			_sessions.Remove(server);
-			_requestServers.AttachSession(_sessions.Count > 0 ? _sessions[^1] : null);
+			_sessions.Remove(context);
+			_requestServers.AttachSession(_sessions.Count > 0 ? _sessions[^1].SessionServer : null);
 			if (_sessions.Count == 0)
 			{
 				UnsubscribeFromRoutingChanges();
@@ -567,9 +605,9 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	private void EnsureRootsNotificationHandler(McpServer server)
+	private static void EnsureRootsNotificationHandler(McpServer server, McpClientRootsService roots)
 	{
-		var weakSelf = new WeakReference<McpServerHandler>(this);
+		var weakSelf = new WeakReference<McpClientRootsService>(roots);
 		// Roots is deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005) but hosts still send
 		// this notification; Repl keeps supporting it until the SDK removes the surface (#51).
 #pragma warning disable MCP9005
@@ -579,7 +617,7 @@ internal sealed class McpServerHandler
 			{
 				if (weakSelf.TryGetTarget(out var target))
 				{
-					target._roots.HandleRootsListChanged();
+					target.HandleRootsListChanged();
 				}
 
 				return ValueTask.CompletedTask;
@@ -618,7 +656,14 @@ internal sealed class McpServerHandler
 
 		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim)
 		{
-			Interlocked.Exchange(ref _compatibilityIntroServed, 0);
+			// Every active session re-serves its compatibility intro after a routing change.
+			lock (_attachLock)
+			{
+				foreach (var session in _sessions)
+				{
+					Interlocked.Exchange(ref session.CompatibilityIntroServed, 0);
+				}
+			}
 		}
 
 		lock (_refreshLock)
@@ -644,7 +689,11 @@ internal sealed class McpServerHandler
 		McpServer[] sessions;
 		lock (_attachLock)
 		{
-			sessions = [.. _sessions];
+			sessions = [
+				.. _sessions
+					.Select(static session => session.SessionServer)
+					.OfType<McpServer>(),
+			];
 		}
 
 		foreach (var server in sessions)
@@ -727,8 +776,9 @@ internal sealed class McpServerHandler
 		ReplSessionIO.IsProgrammatic = true;
 		try
 		{
+			var sessionServices = CreateSessionContext().Services;
 			using var runtimeStateScope = coreApp.PushRuntimeState(
-				CreateDiscoveryServices(),
+				CreateDiscoveryServices(sessionServices),
 				isInteractiveSession: false);
 			var activeGraph = coreApp.ResolveActiveRoutingGraph();
 			var commands = coreApp.ResolveDiscoverableRoutes(
@@ -994,7 +1044,8 @@ internal sealed class McpServerHandler
 		ReplDocumentationModel model,
 		McpToolAdapter adapter,
 		char separator,
-		Dictionary<string, ReplDocCommand> commandsByPath)
+		Dictionary<string, ReplDocCommand> commandsByPath,
+		IServiceProvider sessionServices)
 	{
 		var resources = new List<McpServerResource>();
 		var resourceMimeType = adapter.ForcedOutputMimeType;
@@ -1047,7 +1098,7 @@ internal sealed class McpServerHandler
 
 		foreach (var uiResource in _options.UiResources)
 		{
-			resources.Add(new McpAppResource(uiResource, _sessionServices));
+			resources.Add(new McpAppResource(uiResource, sessionServices));
 		}
 
 		return resources;
