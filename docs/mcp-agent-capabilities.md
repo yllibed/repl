@@ -8,6 +8,14 @@
 
 See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working example that uses all three in a CSV import and feedback workflow.
 
+> **⚠️ Deprecation notice (SEP-2577):** the MCP specification (2026-07-28) deprecates the
+> Sampling and Logging features that `IMcpSampling` and `IMcpFeedback` build on, and the
+> SDK may remove them in a future version. Repl keeps supporting them **for existing hosts
+> and applications only** — new applications should not adopt these interfaces directly and
+> should prefer the portable `IReplInteractionChannel`, which degrades gracefully across
+> CLI, REPL, hosted sessions, and MCP. See
+> [mcp-reference.md](mcp-reference.md#sdk-and-protocol-versions) for the version posture.
+
 ## Overview
 
 Repl provides three MCP-oriented injectable interfaces:

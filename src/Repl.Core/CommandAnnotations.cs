@@ -31,8 +31,9 @@ public sealed record CommandAnnotations
 	public bool OpenWorld { get; init; }
 
 	/// <summary>
-	/// Indicates the command may take a long time to complete.
-	/// Enables task-based execution in programmatic clients.
+	/// Indicates the command may take a long time to complete, so programmatic clients
+	/// should expect a slow call. Protocol-level task-based execution (MCP Tasks) is not
+	/// advertised until Repl integrates the SDK's Tasks extension.
 	/// </summary>
 	public bool LongRunning { get; init; }
 
