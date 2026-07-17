@@ -47,6 +47,43 @@ public sealed class Given_SessionScopedServices
 	}
 
 	[TestMethod]
+	[Description("Guards the core per-run session scope on ONE shared app: two Run* calls against the same ReplApp (the exact shape of two hosted connections sharing one app) must resolve two distinct Scoped instances from the app's own root provider — this exercises the scope-creation branch itself, independently of Repl.Testing's session plumbing.")]
+	public void When_TwoRunsShareOneApp_Then_ScopedInstancesDiffer()
+	{
+		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+
+		var first = ConsoleCaptureHelper.Capture(() => sut.Run(["scoped", "--no-logo"]));
+		var second = ConsoleCaptureHelper.Capture(() => sut.Run(["scoped", "--no-logo"]));
+
+		first.ExitCode.Should().Be(0);
+		second.ExitCode.Should().Be(0);
+		first.Text.Trim().Should().NotBe(second.Text.Trim());
+	}
+
+	[TestMethod]
+	[Description("Guards the CallerOwned opt-out: a caller whose provider already represents the session scope (Blazor circuit, per-request scope, multi-run session owners) must keep its own Scoped instances across runs — the entry points must not open a nested sibling scope that would hide them.")]
+	public async Task When_CallerOwnsTheSessionScope_Then_RunsShareTheCallerScopedInstances()
+	{
+		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		var scopeFactory = (IServiceScopeFactory)sut.Services.GetService(typeof(IServiceScopeFactory))!;
+		var callerScope = scopeFactory.CreateAsyncScope();
+		await using (callerScope.ConfigureAwait(false))
+		{
+			var options = new ReplRunOptions { SessionScope = SessionScopeBehavior.CallerOwned };
+
+			var first = ConsoleCaptureHelper.Capture(
+				() => sut.Run(["scoped", "--no-logo"], callerScope.ServiceProvider, options));
+			var second = ConsoleCaptureHelper.Capture(
+				() => sut.Run(["scoped", "--no-logo"], callerScope.ServiceProvider, options));
+
+			first.ExitCode.Should().Be(0);
+			first.Text.Trim().Should().Be(second.Text.Trim());
+		}
+	}
+
+	[TestMethod]
 	[Description("Guards the documented Scoped lifetime for hosted sessions: two distinct hosted sessions must resolve two distinct Scoped instances — sharing one instance across sessions leaks per-user state (auth context, carts) between concurrent clients.")]
 	public async Task When_TwoHostedSessionsResolveScopedService_Then_InstancesDiffer()
 	{

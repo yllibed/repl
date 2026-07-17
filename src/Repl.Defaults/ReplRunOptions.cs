@@ -11,6 +11,11 @@ public sealed record ReplRunOptions
 	public HostedServiceLifecycleMode HostedServiceLifecycle { get; init; } = HostedServiceLifecycleMode.None;
 
 	/// <summary>
+	/// Gets or sets how this run manages the session's dependency-injection scope.
+	/// </summary>
+	public SessionScopeBehavior SessionScope { get; init; } = SessionScopeBehavior.PerRun;
+
+	/// <summary>
 	/// Gets or sets the ANSI support mode for the session.
 	/// </summary>
 	public AnsiMode AnsiSupport { get; init; } = AnsiMode.Auto;

@@ -150,6 +150,9 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		_disposed = true;
 		_owner.RemoveSession(SessionId);
 		ReplSessionIO.RemoveSession(SessionId);
+		// Take the command gate before disposing the session scope so an in-flight command
+		// (e.g. an orphaned timed-out run) cannot race scoped-service disposal.
+		await _commandGate.WaitAsync().ConfigureAwait(false);
 		switch (_services)
 		{
 			case IAsyncDisposable asyncDisposable:
@@ -180,7 +183,9 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		var sessionId = $"session-{Guid.NewGuid():N}";
 		ReplSessionIO.EnsureSession(sessionId);
 		var app = appFactory();
-		var runOptions = descriptor.BuildRunOptions(options);
+		// The handle owns the session's DI scope (each command is a separate one-shot run),
+		// so every run opts out of per-run scoping.
+		var runOptions = descriptor.BuildRunOptions(options) with { SessionScope = SessionScopeBehavior.CallerOwned };
 		var services = SessionScopedTestServices.Create(app);
 		var handle = new ReplSessionHandle(owner, app, options, services, runOptions, descriptor.Answers, sessionId);
 		return ValueTask.FromResult(handle);
@@ -189,9 +194,12 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 	// One logical test session spans several one-shot Run* calls, so the handle owns the
 	// session's DI scope itself: the provider is built over a scope of the APP's services
 	// (user registrations become visible to session commands, Scoped instances are shared
-	// across the session's commands) and marked ISessionScopedServiceProvider so the Run*
-	// entry points do not open a fresh scope — and fresh Scoped instances — per command.
-	private sealed class SessionScopedTestServices : ISessionScopedServiceProvider, IAsyncDisposable
+	// across the session's commands) and every run uses SessionScopeBehavior.CallerOwned so
+	// the Run* entry points do not open a fresh scope — and fresh Scoped instances — per
+	// command. Note: the IReplSessionState mask below only intercepts direct GetService
+	// lookups; a user service constructor-injecting IReplSessionState inside the scope gets
+	// the app-registered implementation instead (pre-existing test-host limitation).
+	private sealed class SessionScopedTestServices : IServiceProvider, IAsyncDisposable
 	{
 		private readonly AsyncServiceScope? _scope;
 		private readonly IServiceProvider _inner;

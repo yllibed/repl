@@ -17,8 +17,10 @@ public sealed class ReplApp : IReplApp
 	private readonly IServiceCollection _services;
 
 	// Lazily built provider shared between MapModule<T>() and Run().
-	// Ensures modules resolved via DI share the same service instances
-	// as handler parameters resolved at runtime.
+	// Singleton services resolved by modules are the same instances handler parameters
+	// see at runtime; Scoped services intentionally differ — handlers resolve them from
+	// the per-session scope opened by Run* (see RunInSessionScopeAsync), while module
+	// resolution at registration time happens outside any session.
 	private ServiceProvider? _sharedProvider;
 
 	// Extension packages (e.g. Repl.Spectre) park per-app configuration here so it stays
@@ -254,6 +256,7 @@ public sealed class ReplApp : IReplApp
 		{
 			return await RunInSessionScopeAsync(
 				services,
+				runOptions.SessionScope,
 				(sessionServices, ct) => _core.RunWithServicesAsync(args, sessionServices, ct),
 				cancellationToken).ConfigureAwait(false);
 		}
@@ -270,6 +273,7 @@ public sealed class ReplApp : IReplApp
 			];
 			exitCode = await RunInSessionScopeAsync(
 				services,
+				runOptions.SessionScope,
 				(sessionServices, ct) => _core.RunWithServicesAsync(args, sessionServices, ct),
 				cancellationToken).ConfigureAwait(false);
 		}
@@ -378,6 +382,7 @@ public sealed class ReplApp : IReplApp
 			// hitting the external provider observe the session's Scoped instances.
 			return await RunInSessionScopeAsync(
 				services,
+				runOptions.SessionScope,
 				(sessionServices, ct) => _core.RunWithServicesAsync(args, CreateSessionOverlay(sessionServices), ct),
 				cancellationToken).ConfigureAwait(false);
 		}
@@ -385,15 +390,17 @@ public sealed class ReplApp : IReplApp
 
 	// One Run* call is one session: it owns a DI scope so Scoped services resolve per
 	// session (the documented lifetime) and scoped disposables are released when the
-	// session ends. Providers marked ISessionScopedServiceProvider already carry their
-	// owner's session scope (e.g. Repl.Testing runs each command of one logical session
-	// as a separate one-shot call) and providers without scope support run as before.
+	// session ends. SessionScopeBehavior.CallerOwned opts out for providers that already
+	// represent the session's scope (e.g. a Blazor circuit scope, or Repl.Testing which
+	// runs each command of one logical session as a separate one-shot call); providers
+	// without scope support run unscoped as before.
 	private static async ValueTask<int> RunInSessionScopeAsync(
 		IServiceProvider services,
+		SessionScopeBehavior sessionScope,
 		Func<IServiceProvider, CancellationToken, ValueTask<int>> run,
 		CancellationToken cancellationToken)
 	{
-		if (services is ISessionScopedServiceProvider
+		if (sessionScope == SessionScopeBehavior.CallerOwned
 			|| services.GetService(typeof(IServiceScopeFactory)) is not IServiceScopeFactory scopeFactory)
 		{
 			return await run(services, cancellationToken).ConfigureAwait(false);
