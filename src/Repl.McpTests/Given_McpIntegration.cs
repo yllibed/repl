@@ -1,3 +1,5 @@
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using Repl.Mcp;
 
 namespace Repl.McpTests;
@@ -118,6 +120,34 @@ public sealed class Given_McpIntegration
 		cmd.Annotations!.OpenWorld.Should().BeTrue();
 		cmd.Annotations!.LongRunning.Should().BeTrue();
 		cmd.Arguments.Should().ContainSingle(a => string.Equals(a.Name, "env", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("Locks the legacy initialize handshake under SDK 2.0: a client pinning an initialize-era protocol revision still negotiates that exact version and can list and call tools — the fixture's default client otherwise negotiates the 2026-07-28 path and never exercises the fallback.")]
+	public async Task When_ClientPinsLegacyProtocolVersion_Then_InitializeHandshakeAndToolsWork()
+	{
+		// 2025-11-25 is the last initialize-era protocol revision (the SDK's
+		// McpProtocolVersions constants are internal, so the literal is pinned here).
+		const string legacyProtocolVersion = "2025-11-25";
+		var clientOptions = new McpClientOptions
+		{
+			ProtocolVersion = legacyProtocolVersion,
+		};
+
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app => app.Map("ping", () => "pong"),
+			configureOptions: null,
+			clientOptions: clientOptions);
+
+		fixture.Client.NegotiatedProtocolVersion.Should().Be(legacyProtocolVersion);
+
+		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		tools.Should().ContainSingle(tool => string.Equals(tool.Name, "ping", StringComparison.Ordinal));
+
+		var result = await fixture.Client.CallToolAsync(
+			toolName: "ping",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+		result.Content.OfType<TextContentBlock>().First().Text.Should().Contain("pong");
 	}
 
 	[TestMethod]

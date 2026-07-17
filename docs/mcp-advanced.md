@@ -20,6 +20,13 @@ If your tool list is static, stay with the default setup from [mcp-overview.md](
 
 ## Client roots
 
+> **⚠️ Deprecation notice (SEP-2577):** the MCP specification (2026-07-28) deprecates the
+> Roots feature, and the SDK may remove it in a future version. Repl keeps supporting it
+> **for existing hosts and applications only** — new applications should not build on
+> native MCP roots and can use [soft roots](#soft-roots-fallback) or explicit command
+> parameters instead. See
+> [mcp-reference.md](mcp-reference.md#sdk-and-protocol-versions) for the version posture.
+
 A **root** is a URI the client declares as being in scope for the session — typically an opened project folder, a working directory, or a boundary for what the agent should inspect or modify.
 
 Roots give the server session-specific workspace context without inventing a custom protocol. When the client supports native MCP roots, `Repl.Mcp` exposes them through `IMcpClientRoots`.

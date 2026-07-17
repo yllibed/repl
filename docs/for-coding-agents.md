@@ -142,7 +142,7 @@ Use these annotations to help agents make safer decisions:
 | `.Destructive()` | May delete or mutate important state; ask for confirmation. |
 | `.Idempotent()` | Safe to retry. |
 | `.OpenWorld()` | Talks to external systems; expect latency and failures. |
-| `.LongRunning()` | May take time. Documentation hint for now — no protocol-level task advertisement until the MCP Tasks runtime lands. |
+| `.LongRunning()` | May take time. Documentation hint for now — no protocol-level task advertisement until Repl integrates the SDK Tasks extension. |
 | `.AutomationHidden()` | Do not expose this command to MCP automation. |
 
 Unannotated tools force agents to assume the worst. Annotate every command that will be visible through MCP.

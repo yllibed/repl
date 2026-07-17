@@ -17,8 +17,8 @@ internal sealed class ReplMcpServerTool : McpServerTool
 	// SDK 2.0 extracted MCP Tasks into ModelContextProtocol.Extensions.Tasks (store, task
 	// results, client polling) and dropped the per-tool Tool.Execution / ToolTaskSupport
 	// augmentation from the protocol surface. Repl keeps .LongRunning() in its own model
-	// (help/docs) and deliberately does not advertise task support until the Tasks runtime
-	// (tasks/get|update|cancel) is implemented end-to-end — tracked in issue #51.
+	// (help/docs) and deliberately does not advertise task support until Repl integrates
+	// the Tasks extension end-to-end (tasks/get|update|cancel) — tracked in issue #72.
 	public ReplMcpServerTool(
 		ReplDocCommand command,
 		string toolName,
