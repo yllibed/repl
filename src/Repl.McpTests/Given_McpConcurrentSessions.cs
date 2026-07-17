@@ -69,6 +69,115 @@ public sealed class Given_McpConcurrentSessions
 		_ = serverTaskB;
 	}
 
+	[TestMethod]
+	[Description("Guards root isolation across sessions sharing one handler: the hard-roots cache must be keyed by session, otherwise the second root-capable client silently receives the FIRST client's workspace roots — a cross-session data exposure — instead of its own roots/list round-trip.")]
+	public async Task When_TwoRootCapableClientsShareHandler_Then_EachSeesOwnRoots()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("roots", async (IMcpClientRoots roots, CancellationToken ct) =>
+			string.Join(',', (await roots.GetAsync(ct).ConfigureAwait(false)).Select(root => root.Uri.ToString())));
+
+		var options = new ReplMcpServerOptions
+		{
+			TransportFactory = static (serverName, io) => new StreamServerTransport(
+				((McpTestFixture.PipeIoContext)io).InputStream,
+				((McpTestFixture.PipeIoContext)io).OutputStream,
+				serverName),
+		};
+		var handler = new McpServerHandler(app.Core, options, McpTestFixture.EmptyServices);
+		using var cts = new CancellationTokenSource();
+
+		var (clientA, _) = await StartSessionAsync(handler, BuildRootsClientOptions("file:///ga"), cts.Token).ConfigureAwait(false);
+		var (clientB, _) = await StartSessionAsync(handler, BuildRootsClientOptions("file:///bu"), cts.Token).ConfigureAwait(false);
+
+		var resultA = await clientA.CallToolAsync(
+			toolName: "roots",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
+			cancellationToken: cts.Token).ConfigureAwait(false);
+		var resultB = await clientB.CallToolAsync(
+			toolName: "roots",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
+			cancellationToken: cts.Token).ConfigureAwait(false);
+
+		resultA.Content.OfType<TextContentBlock>().First().Text.Should().Contain("file:///ga");
+		var textB = resultB.Content.OfType<TextContentBlock>().First().Text;
+		textB.Should().Contain("file:///bu");
+		textB.Should().NotContain("file:///ga");
+
+		await clientA.DisposeAsync().ConfigureAwait(false);
+		await clientB.DisposeAsync().ConfigureAwait(false);
+		await cts.CancelAsync().ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Guards routing-notification lifetime across sessions: when the first-attached session closes, the surviving session must still receive tools/list_changed after a routing invalidation — session attachment must be reference-counted, not first-wins with a handler-wide unsubscribe on first close.")]
+	public async Task When_FirstSessionCloses_Then_SurvivingSessionStillReceivesRoutingNotifications()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("alpha", () => "a");
+
+		var options = new ReplMcpServerOptions
+		{
+			TransportFactory = static (serverName, io) => new StreamServerTransport(
+				((McpTestFixture.PipeIoContext)io).InputStream,
+				((McpTestFixture.PipeIoContext)io).OutputStream,
+				serverName),
+		};
+		var handler = new McpServerHandler(app.Core, options, McpTestFixture.EmptyServices);
+		using var ctsA = new CancellationTokenSource();
+		using var ctsB = new CancellationTokenSource();
+
+		var (clientA, serverTaskA) = await StartSessionAsync(handler, clientOptions: null, ctsA.Token).ConfigureAwait(false);
+		var (clientB, _) = await StartSessionAsync(handler, clientOptions: null, ctsB.Token).ConfigureAwait(false);
+
+		var listChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var registration = clientB.RegisterNotificationHandler(
+			NotificationMethods.ToolListChangedNotification,
+			(_, _) =>
+			{
+				listChanged.TrySetResult();
+				return ValueTask.CompletedTask;
+			});
+		await using var _ = registration.ConfigureAwait(false);
+
+		// Both sessions are live; close the FIRST one, then invalidate routing.
+		await clientA.DisposeAsync().ConfigureAwait(false);
+		await ctsA.CancelAsync().ConfigureAwait(false);
+		try
+		{
+			await serverTaskA.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException)
+		{
+			// Expected: session A's RunAsync ends on cancellation.
+		}
+
+		app.Map("late", () => "l");
+		app.Core.InvalidateRouting();
+
+		await listChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+		await clientB.DisposeAsync().ConfigureAwait(false);
+		await ctsB.CancelAsync().ConfigureAwait(false);
+	}
+
+	private static McpClientOptions BuildRootsClientOptions(string rootUri) => new()
+	{
+		Capabilities = new ClientCapabilities
+		{
+			Roots = new RootsCapability { ListChanged = true },
+		},
+		Handlers = new McpClientHandlers
+		{
+			RootsHandler = (_, _) => ValueTask.FromResult(new ListRootsResult
+			{
+				Roots = [new Root { Uri = rootUri, Name = rootUri }],
+			}),
+		},
+	};
+
 	private static McpClientOptions BuildSamplingClientOptions() => new()
 	{
 		Capabilities = new ClientCapabilities { Sampling = new SamplingCapability() },

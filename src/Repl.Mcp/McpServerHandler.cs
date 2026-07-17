@@ -40,10 +40,12 @@ internal sealed class McpServerHandler
 	private McpGeneratedSnapshot? _snapshot;
 	private SnapshotVersionState _snapshotState = new(Version: 1, LastVisibilityRetractionVersion: 0);
 	private long _builtSnapshotVersion;
-	private McpServer? _server;
+	// One handler can serve several concurrent sessions; session-scoped concerns (routing
+	// notifications, roots list-changed handler) track EVERY active session, not a single
+	// last- or first-attached server. Guarded by _attachLock.
+	private readonly List<McpServer> _sessions = [];
 	private EventHandler<RoutingInvalidatedEventArgs>? _routingChangedHandler;
 	private ITimer? _debounceTimer;
-	private int _rootsNotificationRegistered;
 	private int _compatibilityIntroServed;
 	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
 
@@ -99,7 +101,7 @@ internal sealed class McpServerHandler
 			}
 			finally
 			{
-				UnsubscribeFromRoutingChanges();
+				DetachSession(server);
 				await server.DisposeAsync().ConfigureAwait(false);
 			}
 		}
@@ -485,15 +487,21 @@ internal sealed class McpServerHandler
 		}
 
 		_requestServers.BindRequest(server);
-		if (_server is null)
+		bool needsSessionAttach;
+		lock (_attachLock)
+		{
+			needsSessionAttach = _sessions.Count == 0;
+		}
+
+		if (needsSessionAttach)
 		{
 			AttachServer(server);
 		}
 	}
 
 	// Session-level attach: routing-change notifications and the roots list-changed
-	// handler belong to the session server, registered once — never to the per-request
-	// destination wrappers.
+	// handler belong to the session servers, registered once per session — never to the
+	// per-request destination wrappers.
 	private void AttachServer(McpServer? server)
 	{
 		if (server is null)
@@ -503,12 +511,12 @@ internal sealed class McpServerHandler
 
 		lock (_attachLock)
 		{
-			if (ReferenceEquals(_server, server))
+			if (_sessions.Contains(server))
 			{
 				return;
 			}
 
-			_server = server;
+			_sessions.Add(server);
 			_requestServers.AttachSession(server);
 			EnsureRoutingSubscription();
 			EnsureRootsNotificationHandler(server);
@@ -543,13 +551,24 @@ internal sealed class McpServerHandler
 		coreApp.RoutingInvalidatedDetailed += handler;
 	}
 
+	// Removes a closing session and repairs the shared state: the accessor's session
+	// fallback moves to a surviving session, and the routing subscription is dropped only
+	// when the LAST session ends — a first-session close must not silence the others.
+	private void DetachSession(McpServer server)
+	{
+		lock (_attachLock)
+		{
+			_sessions.Remove(server);
+			_requestServers.AttachSession(_sessions.Count > 0 ? _sessions[^1] : null);
+			if (_sessions.Count == 0)
+			{
+				UnsubscribeFromRoutingChanges();
+			}
+		}
+	}
+
 	private void EnsureRootsNotificationHandler(McpServer server)
 	{
-		if (Interlocked.Exchange(ref _rootsNotificationRegistered, 1) != 0)
-		{
-			return;
-		}
-
 		var weakSelf = new WeakReference<McpServerHandler>(this);
 		// Roots is deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005) but hosts still send
 		// this notification; Repl keeps supporting it until the SDK removes the surface (#51).
@@ -622,24 +641,28 @@ internal sealed class McpServerHandler
 
 	private async Task SendNotificationSafeAsync(string method)
 	{
-		try
+		McpServer[] sessions;
+		lock (_attachLock)
 		{
-			var server = _server;
-			if (server is null)
-			{
-				return;
-			}
+			sessions = [.. _sessions];
+		}
 
-			using var timeoutCts = new CancellationTokenSource(NotificationSendTimeout);
-			await server.SendNotificationAsync(method, timeoutCts.Token).ConfigureAwait(false);
-		}
-		catch (OperationCanceledException)
+		foreach (var server in sessions)
 		{
-			// Notifications are best-effort. Cancellation is not actionable here.
-		}
-		catch (Exception)
-		{
-			// Notifications are best-effort. The next list/read request will rebuild on demand.
+			try
+			{
+				using var timeoutCts = new CancellationTokenSource(NotificationSendTimeout);
+				await server.SendNotificationAsync(method, timeoutCts.Token).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException)
+			{
+				// Notifications are best-effort. Cancellation is not actionable here.
+			}
+			catch (Exception)
+			{
+				// Notifications are best-effort per session. The next list/read request
+				// will rebuild on demand.
+			}
 		}
 	}
 
