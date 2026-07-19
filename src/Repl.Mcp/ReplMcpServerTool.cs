@@ -14,10 +14,11 @@ internal sealed class ReplMcpServerTool : McpServerTool
 	private readonly McpToolAdapter _adapter;
 	private readonly Tool _protocolTool;
 
-	// MCP Tasks are experimental in the SDK (MCPEXP001) but part of the MCP spec.
-	// LongRunning commands advertise optional task support so agents can use
-	// the call-now/poll-later pattern instead of blocking on slow operations.
-#pragma warning disable MCPEXP001
+	// SDK 2.0 extracted MCP Tasks into ModelContextProtocol.Extensions.Tasks (store, task
+	// results, client polling) and dropped the per-tool Tool.Execution / ToolTaskSupport
+	// augmentation from the protocol surface. Repl keeps .LongRunning() in its own model
+	// (help/docs) and deliberately does not advertise task support until Repl integrates
+	// the Tasks extension end-to-end (tasks/get|update|cancel) — tracked in issue #72.
 	public ReplMcpServerTool(
 		ReplDocCommand command,
 		string toolName,
@@ -31,15 +32,11 @@ internal sealed class ReplMcpServerTool : McpServerTool
 			InputSchema = McpSchemaGenerator.BuildInputSchema(command),
 			OutputSchema = McpSchemaGenerator.BuildOutputSchema(command),
 			Annotations = McpSchemaGenerator.MapAnnotations(command.Annotations),
-			Execution = command.Annotations?.LongRunning == true
-				? new ToolExecution { TaskSupport = ToolTaskSupport.Optional }
-				: null,
 			Meta = TryGetAppOptions(command, out var appOptions)
 				? McpAppMetadata.BuildToolMeta(appOptions)
 				: null,
 		};
 	}
-#pragma warning restore MCPEXP001
 
 	/// <inheritdoc />
 	public override Tool ProtocolTool => _protocolTool;

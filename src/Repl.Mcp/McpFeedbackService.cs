@@ -5,24 +5,27 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Interaction;
 
+// Roots, Sampling, and Logging are deprecated by MCP spec 2026-07-28 (SEP-2577, SDK
+// diagnostic MCP9005); the designated successor for server-initiated flows (SEP-2322,
+// multi-round-trip requests, shipped experimentally in SDK 2.0 as MrtrContext/MrtrExchange)
+// is not adopted by Repl yet, and hosts still rely on these features, so Repl keeps
+// supporting them until the SDK removes the surface (#51).
+#pragma warning disable MCP9005
+
 namespace Repl.Mcp;
 
 /// <summary>
 /// Internal implementation of <see cref="IMcpFeedback"/> backed by a live <see cref="McpServer"/> session.
 /// </summary>
-internal sealed class McpFeedbackService : IMcpFeedback
+internal sealed class McpFeedbackService(McpRequestServerAccessor servers) : IMcpFeedback
 {
 	private const string LoggerName = "repl.interaction";
 
 	private readonly AsyncLocal<ProgressToken?> _progressToken = new();
-	// This service is created per McpServerHandler/session and overlaid into the
-	// per-connection service provider, so the attached server reference is not shared
-	// across concurrent MCP connections.
-	private McpServer? _server;
 
-	public bool IsProgressSupported => _server is not null && _progressToken.Value is not null;
+	public bool IsProgressSupported => servers.Effective is not null && _progressToken.Value is not null;
 
-	public bool IsLoggingSupported => _server is not null;
+	public bool IsLoggingSupported => servers.Effective is not null;
 
 	public async ValueTask ReportProgressAsync(
 		ReplProgressEvent progress,
@@ -30,13 +33,17 @@ internal sealed class McpFeedbackService : IMcpFeedback
 	{
 		ArgumentNullException.ThrowIfNull(progress);
 
-		if (!IsProgressSupported || progress.State == ReplProgressState.Clear || _progressToken.Value is not { } progressToken)
+		// Single read: the effective server must not change between the support check and
+		// the send (a concurrent request re-binding the accessor must not be observed).
+		if (servers.Effective is not { } server
+			|| progress.State == ReplProgressState.Clear
+			|| _progressToken.Value is not { } progressToken)
 		{
 			return;
 		}
 
 		var percent = progress.ResolvePercent();
-		await _server!.NotifyProgressAsync(
+		await server.NotifyProgressAsync(
 			progressToken,
 			new ProgressNotificationValue
 			{
@@ -52,12 +59,12 @@ internal sealed class McpFeedbackService : IMcpFeedback
 		object? data,
 		CancellationToken cancellationToken = default)
 	{
-		if (!IsLoggingSupported)
+		if (servers.Effective is not { } server)
 		{
 			return;
 		}
 
-		await _server!.SendNotificationAsync(
+		await server.SendNotificationAsync(
 			NotificationMethods.LoggingMessageNotification,
 			new LoggingMessageNotificationParams
 			{
@@ -68,7 +75,6 @@ internal sealed class McpFeedbackService : IMcpFeedback
 			cancellationToken: cancellationToken).ConfigureAwait(false);
 	}
 
-	internal void AttachServer(McpServer server) => _server = server;
 
 	internal IDisposable PushProgressToken(ProgressToken? progressToken) =>
 		new ProgressTokenScope(_progressToken, progressToken);

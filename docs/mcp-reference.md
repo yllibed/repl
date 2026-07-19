@@ -510,6 +510,12 @@ side-channel command output and are not included in `resources/read` bodies.
 
 Feature support varies across agents. Check [mcp-availability.com](https://mcp-availability.com/) for current data.
 
+### SDK and protocol versions
+
+- Repl.Mcp builds on the official C# SDK (`ModelContextProtocol`), currently on the **2.0 line** (`2.0.0-preview.3`). The SDK negotiates the protocol version with each client, including fallback to the legacy `initialize` handshake for older hosts.
+- **Roots, Sampling, and Logging** are deprecated by MCP specification 2026-07-28 (SEP-2577). Repl.Mcp keeps supporting them **for existing hosts and applications only** — new applications should not adopt these features (the SDK may remove them) and should prefer Repl's portable abstractions such as `IReplInteractionChannel`. The designated successor for server-initiated flows (SEP-2322, multi-round-trip requests) ships experimentally in the SDK 2.0 line; Repl has not adopted it yet.
+- **MCP Tasks**: the SDK reorganized Tasks into `ModelContextProtocol.Extensions.Tasks` and dropped the per-tool execution augmentation (`Tool.Execution`) from the protocol surface, so `.LongRunning()` commands no longer advertise task support at the protocol level. The annotation stays in Repl's own model (help/docs); protocol-level task support can return once Repl integrates the Tasks extension, store, and get/update/cancel lifecycle (tracked in issue #72).
+
 | Feature | Claude Desktop | Claude Code | Codex | VS Code Copilot | Cursor | Continue |
 |---|---|---|---|---|---|---|
 | Tools | Yes | Yes | Yes | Yes | Yes | Yes |

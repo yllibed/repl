@@ -1,3 +1,5 @@
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using Repl.Mcp;
 
 namespace Repl.McpTests;
@@ -74,7 +76,10 @@ public sealed class Given_McpIntegration
 
 		var options = app.BuildMcpServerOptions();
 
+		// Logging is deprecated (SEP-2577, MCP9005) but still supported by Repl.Mcp (#51).
+#pragma warning disable MCP9005
 		options.Capabilities!.Logging.Should().NotBeNull();
+#pragma warning restore MCP9005
 	}
 
 	[TestMethod]
@@ -115,6 +120,55 @@ public sealed class Given_McpIntegration
 		cmd.Annotations!.OpenWorld.Should().BeTrue();
 		cmd.Annotations!.LongRunning.Should().BeTrue();
 		cmd.Arguments.Should().ContainSingle(a => string.Equals(a.Name, "env", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("Locks the legacy initialize handshake under SDK 2.0: a client pinning an initialize-era protocol revision still negotiates that exact version and can list and call tools — the fixture's default client otherwise negotiates the 2026-07-28 path and never exercises the fallback.")]
+	public async Task When_ClientPinsLegacyProtocolVersion_Then_InitializeHandshakeAndToolsWork()
+	{
+		// 2025-11-25 is the last initialize-era protocol revision (the SDK's
+		// McpProtocolVersions constants are internal, so the literal is pinned here).
+		const string legacyProtocolVersion = "2025-11-25";
+		var clientOptions = new McpClientOptions
+		{
+			ProtocolVersion = legacyProtocolVersion,
+		};
+
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app => app.Map("ping", () => "pong"),
+			configureOptions: null,
+			clientOptions: clientOptions);
+
+		fixture.Client.NegotiatedProtocolVersion.Should().Be(legacyProtocolVersion);
+
+		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		tools.Should().ContainSingle(tool => string.Equals(tool.Name, "ping", StringComparison.Ordinal));
+
+		var result = await fixture.Client.CallToolAsync(
+			toolName: "ping",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+		result.Content.OfType<TextContentBlock>().First().Text.Should().Contain("pong");
+	}
+
+	[TestMethod]
+	[Description("Locks the SDK-2.0 tools/list wire shape for .LongRunning() commands: annotations survive serialization, and no task/execution augmentation is emitted — Repl deliberately does not advertise MCP task support until the Tasks runtime is implemented end-to-end (issue #51).")]
+	public void When_SerializingLongRunningTool_Then_NoTaskAugmentationIsEmitted()
+	{
+		var app = ReplApp.Create();
+		app.Map("deploy", () => "deployed")
+			.WithDescription("Deploy application")
+			.LongRunning()
+			.OpenWorld();
+
+		var options = app.BuildMcpServerOptions();
+		var tool = options.ToolCollection!.Single(tool =>
+			string.Equals(tool.ProtocolTool.Name, "deploy", StringComparison.Ordinal));
+		var json = System.Text.Json.JsonSerializer.Serialize(
+			tool.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
+
+		json.Should().Contain("\"openWorldHint\"");
+		json.Should().NotContain("execution");
+		json.Should().NotContain("taskSupport");
 	}
 
 	[TestMethod]

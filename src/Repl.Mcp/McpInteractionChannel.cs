@@ -5,6 +5,13 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Interaction;
 
+// Roots, Sampling, and Logging are deprecated by MCP spec 2026-07-28 (SEP-2577, SDK
+// diagnostic MCP9005); the designated successor for server-initiated flows (SEP-2322,
+// multi-round-trip requests, shipped experimentally in SDK 2.0 as MrtrContext/MrtrExchange)
+// is not adopted by Repl yet, and hosts still rely on these features, so Repl keeps
+// these features, so Repl keeps supporting them until the SDK removes the surface (#51).
+#pragma warning disable MCP9005
+
 namespace Repl.Mcp;
 
 /// <summary>
