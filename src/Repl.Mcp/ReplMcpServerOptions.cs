@@ -1,4 +1,5 @@
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Extensions.Tasks;
 using Repl.Documentation;
 
 namespace Repl.Mcp;
@@ -96,6 +97,13 @@ public sealed class ReplMcpServerOptions
 	/// Leave this disabled for applications whose tool list is static.
 	/// </summary>
 	public DynamicToolCompatibilityMode DynamicToolCompatibility { get; set; } = DynamicToolCompatibilityMode.Disabled;
+
+	/// <summary>
+	/// Optional store used for MCP Tasks created by <c>.LongRunning()</c> commands.
+	/// When <c>null</c>, Repl uses an in-memory store suitable for a single stdio server process.
+	/// Configure a durable, shared store for stateless HTTP or work that must survive process restarts.
+	/// </summary>
+	public IMcpTaskStore? TaskStore { get; set; }
 
 	private readonly List<McpPromptRegistration> _prompts = [];
 	private readonly List<McpAppResourceRegistration> _uiResources = [];

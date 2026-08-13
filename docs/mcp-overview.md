@@ -64,7 +64,7 @@ app.Map("deploy", handler).Destructive().LongRunning().OpenWorld();
 | `.Destructive()` | Ask user for confirmation, sequential |
 | `.Idempotent()` | Safe to retry, can parallelize |
 | `.OpenWorld()` | Reaches external systems — expect latency and transient failures |
-| `.LongRunning()` | Slow-operation hint (protocol-level task advertisement returns once Repl integrates the SDK Tasks extension — see [mcp-reference.md](mcp-reference.md#sdk-and-protocol-versions)) |
+| `.LongRunning()` | Uses MCP Tasks with capable modern clients; other clients receive the normal synchronous result. See [advanced configuration](mcp-advanced.md#tasks-for-long-running-commands). |
 | `.AutomationHidden()` | Not visible to agents |
 
 **Annotate every command exposed to agents.** Unannotated tools force agents to assume the worst: confirm everything, no parallelism, no retries.

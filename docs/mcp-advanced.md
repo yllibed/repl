@@ -180,6 +180,34 @@ Even a weak client can then discover the real tools manually and call them via `
 | Client supports tools but misses dynamic refreshes | Enable `DiscoverAndCallShim` |
 | Client has both issues | Use soft roots and the dynamic tool shim |
 
+## Tasks for long-running commands
+
+`.LongRunning()` opts a tool into the modern MCP Tasks extension:
+
+```csharp
+app.Map("deploy", DeployAsync)
+    .LongRunning();
+```
+
+For a client that negotiates the `io.modelcontextprotocol/tasks` extension, the call creates a task. The client can poll it with `tasks/get` and cancel it with `tasks/cancel`; the command's `CancellationToken` is cancelled too. Other tools remain synchronous.
+
+Clients that do not negotiate the extension — including legacy clients — receive the normal synchronous `tools/call` result. Repl does not implement the retired 2025 Tasks wire format (`Tool.Execution` / `taskSupport`); it uses the current extension only.
+
+By default Repl keeps task state in an in-memory store, which is the right fit for a stdio server process. For a stateless HTTP server, multiple server instances, or task recovery after a restart, supply a shared durable implementation of `IMcpTaskStore`:
+
+```csharp
+using ModelContextProtocol.Extensions.Tasks;
+
+app.UseMcpServer(options =>
+{
+    options.TaskStore = taskStore;
+});
+```
+
+`taskStore` must be safe for concurrent access and outlive the individual request. A task can be cancelled by a capable client, but a process shutdown still cancels any in-memory work.
+
+> **Interaction limitation:** the current official SDK cannot compose MCP's multi-round-trip requests (MRTR) with a task-backed `McpServerTool`. Keep task-backed commands non-interactive for now. A client that falls back to synchronous execution can still use Repl's existing interaction features.
+
 ## MCP Apps advanced patterns
 
 For the basic MCP Apps setup, start with [mcp-overview.md](mcp-overview.md#mcp-apps) and [mcp-reference.md](mcp-reference.md#mcp-apps). This section covers patterns for more complex UIs.
