@@ -15,6 +15,7 @@
 		<PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.5"/>
 		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.5"/>
 		<PackageVersion Include="ModelContextProtocol" Version="2.2.0"/>
+		<PackageVersion Include="ModelContextProtocol.Extensions.Tasks" Version="2.2.0"/>
 		<PackageVersion Include="Spectre.Console" Version="0.55.0"/>
 	</ItemGroup>
 

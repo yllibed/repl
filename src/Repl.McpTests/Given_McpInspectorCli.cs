@@ -7,7 +7,7 @@ namespace Repl.McpTests;
 public sealed class Given_McpInspectorCli
 {
 	private const string EnableInspectorSmokeVariable = "REPL_RUN_MCP_INSPECTOR_TESTS";
-	private const string InspectorPackage = "@modelcontextprotocol/inspector@0.22.0";
+	private const string InspectorPackage = "@modelcontextprotocol/inspector@2.2.0";
 
 	[TestMethod]
 	[TestCategory("ExternalToolchain")]
@@ -50,6 +50,46 @@ public sealed class Given_McpInspectorCli
 		content.GetProperty("mimeType").GetString().Should().Be("application/json");
 		using var resourceText = JsonDocument.Parse(content.GetProperty("text").GetString() ?? string.Empty);
 		resourceText.RootElement.ValueKind.Should().NotBe(JsonValueKind.Undefined);
+	}
+
+	[TestMethod]
+	[TestCategory("ExternalToolchain")]
+	[Description("Opt-in end-to-end compatibility guard: the official MCP Inspector can call a long-running tool and receives the synchronous fallback when it does not negotiate MCP Tasks.")]
+	public async Task When_InspectorCallsLongRunningTool_Then_ServerReturnsSynchronousFallback()
+	{
+		if (!IsInspectorSmokeEnabled())
+		{
+			Assert.Inconclusive(
+				$"Set {EnableInspectorSmokeVariable}=1 to run the MCP Inspector external-toolchain smoke test.");
+		}
+
+		var npx = ResolveExecutable(OperatingSystem.IsWindows() ? "npx.cmd" : "npx")
+			?? throw new InvalidOperationException(
+				$"{EnableInspectorSmokeVariable}=1 was set, but npx was not found on PATH.");
+		var dotnet = ResolveExecutable(OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet")
+			?? throw new InvalidOperationException(
+				$"{EnableInspectorSmokeVariable}=1 was set, but dotnet was not found on PATH.");
+		var serverDll = ResolveSampleServerDll();
+
+		var responseJson = await RunInspectorAsync(
+			npx,
+			dotnet,
+			serverDll,
+			["--method", "tools/call", "--tool-name", "feedback_demo", "--format", "json"])
+			.ConfigureAwait(false);
+
+		using var response = JsonDocument.Parse(responseJson);
+		var content = response.RootElement
+			.GetProperty("result")
+			.GetProperty("content")
+			.EnumerateArray()
+			.Single()
+			.GetProperty("text")
+			.GetString();
+		using var result = JsonDocument.Parse(content ?? string.Empty);
+
+		result.RootElement.GetProperty("kind").GetString().Should().Be("success");
+		result.RootElement.GetProperty("message").GetString().Should().Be("Feedback demo completed.");
 	}
 
 	private static bool IsInspectorSmokeEnabled()
@@ -138,6 +178,12 @@ public sealed class Given_McpInspectorCli
 		CopyEnvironmentVariable(startInfo, "PATH");
 		CopyEnvironmentVariable(startInfo, "HOME");
 		CopyEnvironmentVariable(startInfo, "USERPROFILE");
+		CopyEnvironmentVariable(startInfo, "APPDATA");
+		CopyEnvironmentVariable(startInfo, "LOCALAPPDATA");
+		CopyEnvironmentVariable(startInfo, "COMSPEC");
+		CopyEnvironmentVariable(startInfo, "SystemRoot");
+		CopyEnvironmentVariable(startInfo, "WINDIR");
+		CopyEnvironmentVariable(startInfo, "PATHEXT");
 		CopyEnvironmentVariable(startInfo, "TMPDIR");
 		CopyEnvironmentVariable(startInfo, "TMP");
 		CopyEnvironmentVariable(startInfo, "TEMP");

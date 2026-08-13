@@ -16,6 +16,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="ModelContextProtocol" />
+		<PackageReference Include="ModelContextProtocol.Extensions.Tasks" />
 	</ItemGroup>
 
 	<ItemGroup>

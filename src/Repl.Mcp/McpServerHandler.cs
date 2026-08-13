@@ -1,7 +1,10 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol;
+using ModelContextProtocol.Extensions.Tasks;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Documentation;
@@ -31,6 +34,11 @@ internal sealed class McpServerHandler
 	private readonly McpSamplingService _sampling;
 	private readonly McpElicitationService _elicitation;
 	private readonly McpFeedbackService _feedback;
+	private readonly IMcpTaskStore _taskStore;
+	private readonly IServiceProvider _taskServices;
+	private readonly IReadOnlyList<IConfigureOptions<McpServerOptions>> _taskConfigurators;
+	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _longRunningToolNames =
+		new(StringComparer.OrdinalIgnoreCase);
 	private readonly Lock _refreshLock = new();
 	private readonly Lock _attachLock = new();
 
@@ -71,6 +79,19 @@ internal sealed class McpServerHandler
 		_sampling = new McpSamplingService(_requestServers);
 		_elicitation = new McpElicitationService(_requestServers);
 		_feedback = new McpFeedbackService(_requestServers);
+		_taskStore = options.TaskStore
+			?? services.GetService(typeof(IMcpTaskStore)) as IMcpTaskStore
+			?? new InMemoryMcpTaskStore();
+
+		var taskServices = new ServiceCollection();
+		taskServices
+			.AddMcpServer()
+			.WithTasks(_taskStore, taskOptions =>
+				taskOptions.ExecutionModeSelector = ResolveTaskExecutionMode);
+		_taskServices = taskServices.BuildServiceProvider();
+		_taskConfigurators = _taskServices
+			.GetServices<IConfigureOptions<McpServerOptions>>()
+			.ToArray();
 	}
 
 	private McpSessionContext CreateSessionContext()
@@ -169,7 +190,7 @@ internal sealed class McpServerHandler
 			_ = CreateDocumentationModel(CreateSessionContext().Services);
 		}
 
-		return new McpServerOptions
+		var serverOptions = new McpServerOptions
 		{
 			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
 			Capabilities = BuildCapabilities(),
@@ -184,6 +205,8 @@ internal sealed class McpServerHandler
 				GetPromptHandler = GetPromptAsync,
 			},
 		};
+		ConfigureTasks(serverOptions);
+		return serverOptions;
 	}
 
 	internal McpServerOptions BuildStaticServerOptions()
@@ -192,7 +215,7 @@ internal sealed class McpServerHandler
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
 		var snapshot = BuildSnapshotCore(CreateSessionContext());
 
-		return new McpServerOptions
+		var serverOptions = new McpServerOptions
 		{
 			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
 			Capabilities = BuildCapabilities(),
@@ -200,6 +223,8 @@ internal sealed class McpServerHandler
 			ResourceCollection = ToResourceCollection(snapshot.Resources),
 			PromptCollection = ToCollection(snapshot.Prompts),
 		};
+		ConfigureTasks(serverOptions);
+		return serverOptions;
 	}
 
 	internal McpGeneratedSnapshot BuildSnapshotForTests() => BuildSnapshotCore(CreateSessionContext());
@@ -472,11 +497,28 @@ internal sealed class McpServerHandler
 			command => command,
 			StringComparer.OrdinalIgnoreCase);
 		var tools = GenerateAllTools(model, adapter, _separator, commandsByPath);
+		foreach (var tool in tools.OfType<ReplMcpServerTool>().Where(static tool => tool.IsLongRunning))
+		{
+			_longRunningToolNames.TryAdd(tool.ProtocolTool.Name, 0);
+		}
 		ValidateCompatibilityToolNames(tools);
 		var resources = GenerateResources(model, adapter, _separator, commandsByPath, context.Services);
 		var prompts = CollectPrompts(model, adapter, _separator);
 		return new McpGeneratedSnapshot(adapter, tools, resources, prompts);
 	}
+
+	private void ConfigureTasks(McpServerOptions serverOptions)
+	{
+		foreach (var configurator in _taskConfigurators)
+		{
+			configurator.Configure(serverOptions);
+		}
+	}
+
+	private McpTaskExecutionMode ResolveTaskExecutionMode(RequestContext<CallToolRequestParams> request) =>
+		request.Params?.Name is { } toolName && _longRunningToolNames.ContainsKey(toolName)
+			? McpTaskExecutionMode.Optional
+			: McpTaskExecutionMode.Synchronous;
 
 	// The documentation model resolves module-presence predicates against the SESSION's
 	// services (e.g. IMcpClientRoots), so the model — and everything generated from it —
