@@ -1,5 +1,4 @@
 using ModelContextProtocol.Server;
-using Repl.Documentation;
 
 namespace Repl.Mcp;
 
@@ -20,6 +19,9 @@ namespace Repl.Mcp;
 /// </remarks>
 internal sealed class McpSessionContext
 {
+	private SnapshotCacheEntry? _snapshotCache;
+	private int _compatibilityIntroServed;
+
 	public McpSessionContext(McpClientRootsService roots, IServiceProvider services)
 	{
 		Roots = roots;
@@ -38,12 +40,50 @@ internal sealed class McpSessionContext
 	/// <summary>Serializes snapshot builds for this session.</summary>
 	public SemaphoreSlim SnapshotGate { get; } = new(initialCount: 1, maxCount: 1);
 
-	/// <summary>Cached generated snapshot for this session.</summary>
-	public McpServerHandler.McpGeneratedSnapshot? Snapshot { get; set; }
+	/// <summary>
+	/// Cached snapshot paired with the routing version it was built at, or <see langword="null"/>
+	/// before this session's first build.
+	/// </summary>
+	public SnapshotCacheEntry? SnapshotCache => Volatile.Read(ref _snapshotCache);
 
-	/// <summary>Routing version the cached snapshot was built at.</summary>
-	public long BuiltSnapshotVersion { get; set; }
+	/// <summary>Publishes <paramref name="snapshot"/> as current for <paramref name="version"/>.</summary>
+	public void PublishSnapshot(McpServerHandler.McpGeneratedSnapshot snapshot, long version) =>
+		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, version));
 
-	/// <summary>Whether this session already received the compatibility-shim intro list.</summary>
-	public int CompatibilityIntroServed;
+	/// <summary>
+	/// Publishes <paramref name="snapshot"/> as serve-able but stale, so the next request rebuilds
+	/// without waiting for another routing mutation.
+	/// </summary>
+	public void PublishStaleSnapshot(McpServerHandler.McpGeneratedSnapshot snapshot) =>
+		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, SnapshotCacheEntry.StaleVersion));
+
+	/// <summary>
+	/// Claims this session's one-time compatibility-shim intro; <see langword="true"/> for the first
+	/// caller only.
+	/// </summary>
+	public bool TryClaimCompatibilityIntro() =>
+		Interlocked.CompareExchange(ref _compatibilityIntroServed, 1, 0) == 0;
+
+	/// <summary>Re-arms the compatibility-shim intro after a routing invalidation.</summary>
+	public void ResetCompatibilityIntro() => Interlocked.Exchange(ref _compatibilityIntroServed, 0);
+
+	/// <summary>
+	/// A generated snapshot and the routing version it was built at, published as ONE value.
+	/// </summary>
+	/// <remarks>
+	/// Held as two independent fields, a lock-free reader could observe the fresh version paired with
+	/// the previous snapshot and serve stale discovery state; one reference swapped with
+	/// release/acquire semantics removes the ordering question altogether. Writers are serialized by
+	/// <see cref="SnapshotGate"/>, so a plain <c>Volatile.Write</c> suffices — unlike
+	/// <see cref="McpServerHandler.PublishSnapshotInvalidation"/>, which races several threads and
+	/// therefore needs a compare-and-swap loop.
+	/// </remarks>
+	internal sealed record SnapshotCacheEntry(McpServerHandler.McpGeneratedSnapshot Snapshot, long Version)
+	{
+		/// <summary>
+		/// Marks an entry serve-able but stale. Routing versions start at 1 and only increase, so this
+		/// can never equal a live version and the next request always rebuilds.
+		/// </summary>
+		public const long StaleVersion = 0;
+	}
 }

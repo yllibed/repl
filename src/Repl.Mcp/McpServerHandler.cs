@@ -223,7 +223,7 @@ internal sealed class McpServerHandler
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 
 		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim
-			&& Interlocked.CompareExchange(ref context.CompatibilityIntroServed, 1, 0) == 0)
+			&& context.TryClaimCompatibilityIntro())
 		{
 			_ = SendNotificationSafeAsync(NotificationMethods.ToolListChangedNotification);
 			return new ListToolsResult
@@ -367,23 +367,21 @@ internal sealed class McpServerHandler
 		CancellationToken cancellationToken)
 	{
 		var snapshotVersion = Volatile.Read(ref _snapshotState).Version;
-		if (context.BuiltSnapshotVersion == snapshotVersion
-			&& context.Snapshot is { } cached)
+		if (context.SnapshotCache is { } cached && cached.Version == snapshotVersion)
 		{
-			return cached;
+			return cached.Snapshot;
 		}
 
 		await context.SnapshotGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
 			snapshotVersion = Volatile.Read(ref _snapshotState).Version;
-			if (context.BuiltSnapshotVersion == snapshotVersion
-				&& context.Snapshot is { } refreshed)
+			if (context.SnapshotCache is { } refreshed && refreshed.Version == snapshotVersion)
 			{
-				return refreshed;
+				return refreshed.Snapshot;
 			}
 
-			var previousSnapshot = context.Snapshot;
+			var previousSnapshot = context.SnapshotCache?.Snapshot;
 			try
 			{
 				return await BuildCurrentSnapshotAsync(context, snapshotVersion, cancellationToken).ConfigureAwait(false);
@@ -400,11 +398,11 @@ internal sealed class McpServerHandler
 			catch (Exception) when (
 				previousSnapshot is not null
 				&& Volatile.Read(ref _snapshotState).LastVisibilityRetractionVersion
-					<= context.BuiltSnapshotVersion)
+					<= (context.SnapshotCache?.Version ?? McpSessionContext.SnapshotCacheEntry.StaleVersion))
 			{
-				// Preserve availability for transient projection failures, but leave the version dirty
-				// so the next request retries without requiring another routing mutation.
-				context.Snapshot = previousSnapshot;
+				// Preserve availability for transient projection failures, but republish as stale so the
+				// next request retries without requiring another routing mutation.
+				context.PublishStaleSnapshot(previousSnapshot);
 				return previousSnapshot;
 			}
 		}
@@ -453,10 +451,15 @@ internal sealed class McpServerHandler
 				continue;
 			}
 
-			context.Snapshot = built;
+			// One publication either way: a build that raced a routing bump is still serve-able, but
+			// is marked stale so the next request rebuilds it.
 			if (observedState.Version == snapshotVersion)
 			{
-				context.BuiltSnapshotVersion = snapshotVersion;
+				context.PublishSnapshot(built, snapshotVersion);
+			}
+			else
+			{
+				context.PublishStaleSnapshot(built);
 			}
 			return built;
 		}
@@ -661,7 +664,7 @@ internal sealed class McpServerHandler
 			{
 				foreach (var session in _sessions)
 				{
-					Interlocked.Exchange(ref session.CompatibilityIntroServed, 0);
+					session.ResetCompatibilityIntro();
 				}
 			}
 		}
