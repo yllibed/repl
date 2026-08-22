@@ -3,29 +3,33 @@ using ModelContextProtocol.Server;
 namespace Repl.Mcp;
 
 /// <summary>
-/// Resolves the <see cref="McpServer"/> a capability call must target.
+/// Resolves the <see cref="McpServer"/> a capability call must target, from the flowing request.
 /// </summary>
 /// <remarks>
-/// SDK 2.0's <c>2026-07-28</c> protocol path hands each request a destination-bound
-/// <see cref="McpServer"/>, and one handler can serve several sessions. The capability
-/// services are singletons (exposed through DI to command handlers), so the effective
-/// server must be the one bound to the FLOWING request — a shared mutable field would be
-/// overwritten by whichever request attached last, cross-wiring capabilities between
-/// concurrent calls. <see cref="AsyncLocal{T}"/> flows with the invocation and cannot
-/// leak across requests; the session-level server remains the fallback for code running
-/// outside a request (e.g. routing-change notifications).
+/// On the <c>2026-07-28</c> revision there is no <c>initialize</c> handshake: the client declares its
+/// capabilities per request in <c>_meta</c>, and the SDK surfaces them only on the destination-bound
+/// server handed to a handler — <see cref="McpServer.ClientCapabilities"/> is documented as
+/// <see langword="null"/> on the root server. Capability resolution is therefore a property of the
+/// REQUEST, not of the connection.
+/// <para>
+/// The whole <see cref="MessageContext"/> is bound rather than just its server, because the same
+/// per-request metadata carries more than the destination (see the log level in
+/// <see cref="McpFeedbackService"/>). <see cref="AsyncLocal{T}"/> flows with the invocation and cannot
+/// leak across requests. There is deliberately no session-level fallback: a shared field would hand
+/// out the capabilities of whichever connection attached last, which is precisely the cross-wiring
+/// this type exists to prevent.
+/// </para>
 /// </remarks>
 internal sealed class McpRequestServerAccessor
 {
-	private readonly AsyncLocal<McpServer?> _current = new();
-	private McpServer? _session;
+	private readonly AsyncLocal<MessageContext?> _current = new();
 
-	/// <summary>Server for the flowing request, falling back to the session server.</summary>
-	public McpServer? Effective => _current.Value ?? _session;
+	/// <summary>The request currently flowing on this async context, if any.</summary>
+	public MessageContext? Current => _current.Value;
 
-	/// <summary>Binds the flowing async context to the request's destination server.</summary>
-	public void BindRequest(McpServer server) => _current.Value = server;
+	/// <summary>Server for the flowing request, or <see langword="null"/> outside a request.</summary>
+	public McpServer? Effective => _current.Value?.Server;
 
-	/// <summary>Records the session-level server used outside request flows (null when the last session ends).</summary>
-	public void AttachSession(McpServer? server) => _session = server;
+	/// <summary>Binds the flowing async context to the request being served.</summary>
+	public void BindRequest(MessageContext request) => _current.Value = request;
 }

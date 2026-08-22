@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
@@ -114,7 +114,6 @@ internal sealed class McpServerHandler
 			if (_externalContext.SessionServer is null && requestServer is not null)
 			{
 				_externalContext.SessionServer = requestServer;
-				_requestServers.AttachSession(requestServer);
 				EnsureRootsNotificationHandler(requestServer, _externalContext.Roots);
 			}
 
@@ -218,7 +217,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListToolsRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 
@@ -246,7 +245,7 @@ internal sealed class McpServerHandler
 		RequestContext<CallToolRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		IDictionary<string, JsonElement> arguments = request.Params.Arguments ?? EmptyArguments;
@@ -279,7 +278,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListResourcesRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		return new ListResourcesResult
@@ -297,7 +296,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListResourceTemplatesRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		return new ListResourceTemplatesResult
@@ -315,7 +314,7 @@ internal sealed class McpServerHandler
 		RequestContext<ReadResourceRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		var uri = request.Params.Uri ?? string.Empty;
@@ -332,7 +331,7 @@ internal sealed class McpServerHandler
 		RequestContext<ListPromptsRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		return new ListPromptsResult
@@ -345,7 +344,7 @@ internal sealed class McpServerHandler
 		RequestContext<GetPromptRequestParams> request,
 		CancellationToken cancellationToken)
 	{
-		BindRequestServer(request.Server);
+		BindRequest(request);
 		var context = ResolveContext(request.Server);
 		var snapshot = await GetSnapshotAsync(context, cancellationToken).ConfigureAwait(false);
 		var promptName = request.Params.Name ?? string.Empty;
@@ -469,7 +468,7 @@ internal sealed class McpServerHandler
 	{
 		// Project once here so tools/list, tools/call and prompts/list all read the same option list.
 		var model = McpAutomationProjection.Apply(CreateDocumentationModel(context.Services));
-		var adapter = new McpToolAdapter(_app, _options, context.Services);
+		var adapter = new McpToolAdapter(_app, _options, context.Services, _requestServers);
 		var commandsByPath = model.Commands.ToDictionary(
 			command => command.Path,
 			command => command,
@@ -535,20 +534,12 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	// Request-level binding: capability services resolve the flowing request's
-	// destination-bound server through the AsyncLocal accessor, so concurrent requests
-	// (SDK 2.0 creates one destination-bound McpServer per request) cannot cross-wire
-	// each other's client capabilities. Session-level concerns are handled by
-	// AttachSession (RunAsync) or the external fallback context (ResolveContext).
-	private void BindRequestServer(McpServer? server)
-	{
-		if (server is null)
-		{
-			return;
-		}
-
-		_requestServers.BindRequest(server);
-	}
+	// Request-level binding: capability services resolve the flowing request through the AsyncLocal
+	// accessor, so concurrent requests (SDK 2.0 creates one destination-bound McpServer per request)
+	// cannot cross-wire each other's client capabilities. The whole request is bound, not just its
+	// server, because 2026-07-28 carries the client's capabilities and log level in per-request
+	// _meta. Session-level concerns are handled by AttachSession (RunAsync).
+	private void BindRequest(MessageContext request) => _requestServers.BindRequest(request);
 
 	// Session-level attach: routing-change notifications and the roots list-changed
 	// handler belong to the session servers, registered once per session — never to the
@@ -558,7 +549,6 @@ internal sealed class McpServerHandler
 		lock (_attachLock)
 		{
 			_sessions.Add(context);
-			_requestServers.AttachSession(server);
 			EnsureRoutingSubscription();
 			EnsureRootsNotificationHandler(server, context.Roots);
 		}
@@ -600,7 +590,6 @@ internal sealed class McpServerHandler
 		lock (_attachLock)
 		{
 			_sessions.Remove(context);
-			_requestServers.AttachSession(_sessions.Count > 0 ? _sessions[^1].SessionServer : null);
 			if (_sessions.Count == 0)
 			{
 				UnsubscribeFromRoutingChanges();

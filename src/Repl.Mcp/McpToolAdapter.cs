@@ -22,15 +22,32 @@ internal sealed partial class McpToolAdapter
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
+	private readonly McpRequestServerAccessor _requestServers;
 	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ReplDocCommand> _toolRoutes = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _staticToolResults = new(StringComparer.OrdinalIgnoreCase);
 
-	public McpToolAdapter(ICoreReplApp app, ReplMcpServerOptions options, IServiceProvider services)
+	public McpToolAdapter(
+		ICoreReplApp app,
+		ReplMcpServerOptions options,
+		IServiceProvider services,
+		McpRequestServerAccessor requestServers)
 	{
 		_app = app;
 		_options = options;
 		_services = services;
+		_requestServers = requestServers;
 	}
+
+	/// <summary>
+	/// Binds the flowing async context to <paramref name="request"/> before dispatching a command.
+	/// </summary>
+	/// <remarks>
+	/// The pre-built primitives (<see cref="ReplMcpServerTool"/> and friends) are dispatched straight
+	/// by the SDK on the <c>BuildMcpServerOptions</c> path, bypassing <see cref="McpServerHandler"/>'s
+	/// request handlers entirely. Without this, capability services resolved from DI would have no
+	/// request to resolve against and would report every client capability as unavailable.
+	/// </remarks>
+	internal void BindRequest(MessageContext request) => _requestServers.BindRequest(request);
 
 	internal string ForcedOutputMimeType
 	{

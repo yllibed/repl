@@ -57,6 +57,7 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 		RequestContext<ReadResourceRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
+		_adapter.BindRequest(request);
 		var arguments = ExtractArguments(request.Params.Uri);
 
 		var result = await _adapter.InvokeAsync(

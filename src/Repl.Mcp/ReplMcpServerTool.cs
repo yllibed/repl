@@ -49,6 +49,7 @@ internal sealed class ReplMcpServerTool : McpServerTool
 		RequestContext<CallToolRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
+		_adapter.BindRequest(request);
 		var arguments = request.Params.Arguments
 			?? new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 		var progressToken = request.Params.ProgressToken;
