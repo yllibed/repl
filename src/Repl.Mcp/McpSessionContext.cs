@@ -34,7 +34,14 @@ internal sealed class McpSessionContext
 	/// <summary>Per-session service overlay handed to <c>McpServer.Create</c>.</summary>
 	public IServiceProvider Services { get; }
 
-	/// <summary>Session server used for server-initiated notifications.</summary>
+	/// <summary>
+	/// Latches the first server observed by the externally hosted fallback context, so its
+	/// roots-list-changed handler is registered once.
+	/// </summary>
+	/// <remarks>
+	/// This used to be the destination for server-initiated notifications; the SDK now owns that
+	/// fan-out, leaving only the latch. It disappears with the fallback context itself.
+	/// </remarks>
 	public McpServer? SessionServer { get; set; }
 
 	/// <summary>Serializes snapshot builds for this session.</summary>

@@ -50,10 +50,16 @@ internal sealed class McpServerHandler
 	private ITimer? _debounceTimer;
 	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
 
-	// Notifications are fire-and-forget best-effort — a stuck stdio peer must not hang this
-	// indefinitely, since nothing awaits it and it would otherwise pile up one task per
-	// invalidation forever.
-	private static readonly TimeSpan NotificationSendTimeout = TimeSpan.FromSeconds(5);
+	// Discovery-change signals. These collections stay EMPTY and never contribute a primitive to a
+	// list response: they exist only so the SDK's own fan-out runs, because that is the only code
+	// with access to the subscription registry. On 2026-07-28 it delivers each notification type
+	// ONLY to clients that requested it through subscriptions/listen, over that request's stream and
+	// tagged with its id, while still broadcasting session-wide to initialize-era clients. Every
+	// McpServer built from the options subscribes on construction and unsubscribes on dispose, which
+	// is what makes one shared instance correct across concurrent connections.
+	private readonly McpServerPrimitiveCollection<McpServerTool> _toolListChanged = new();
+	private readonly McpServerResourceCollection _resourceListChanged = new();
+	private readonly McpServerPrimitiveCollection<McpServerPrompt> _promptListChanged = new();
 
 	public McpServerHandler(
 		ICoreReplApp app,
@@ -136,7 +142,6 @@ internal sealed class McpServerHandler
 		{
 			var context = CreateSessionContext();
 			var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
-			context.SessionServer = server;
 			AttachSession(context, server);
 
 			try
@@ -182,6 +187,11 @@ internal sealed class McpServerHandler
 				ListPromptsHandler = ListPromptsAsync,
 				GetPromptHandler = GetPromptAsync,
 			},
+			// Empty on purpose: collections augment the handlers rather than replace them, so the
+			// tool graph still comes entirely from the handlers above. See the field declarations.
+			ToolCollection = _toolListChanged,
+			ResourceCollection = _resourceListChanged,
+			PromptCollection = _promptListChanged,
 		};
 	}
 
@@ -224,7 +234,7 @@ internal sealed class McpServerHandler
 		if (_options.DynamicToolCompatibility == DynamicToolCompatibilityMode.DiscoverAndCallShim
 			&& context.TryClaimCompatibilityIntro())
 		{
-			_ = SendNotificationSafeAsync(NotificationMethods.ToolListChangedNotification);
+			SignalToolListChanged();
 			return new ListToolsResult
 			{
 				Tools =
@@ -662,50 +672,27 @@ internal sealed class McpServerHandler
 		{
 			_debounceTimer?.Dispose();
 			_debounceTimer = _timeProvider.CreateTimer(
-				_ => _ = SendDiscoveryNotificationsSafeAsync(),
+				_ => SignalDiscoveryChanged(),
 				state: null,
 				dueTime: DebounceDelay,
 				period: Timeout.InfiniteTimeSpan);
 		}
 	}
 
-	private async Task SendDiscoveryNotificationsSafeAsync()
+	private void SignalDiscoveryChanged()
 	{
-		await SendNotificationSafeAsync(NotificationMethods.ToolListChangedNotification).ConfigureAwait(false);
-		await SendNotificationSafeAsync(NotificationMethods.ResourceListChangedNotification).ConfigureAwait(false);
-		await SendNotificationSafeAsync(NotificationMethods.PromptListChangedNotification).ConfigureAwait(false);
+		_toolListChanged.Clear();
+		_resourceListChanged.Clear();
+		_promptListChanged.Clear();
 	}
 
-	private async Task SendNotificationSafeAsync(string method)
-	{
-		McpServer[] sessions;
-		lock (_attachLock)
-		{
-			sessions = [
-				.. _sessions
-					.Select(static session => session.SessionServer)
-					.OfType<McpServer>(),
-			];
-		}
-
-		foreach (var server in sessions)
-		{
-			try
-			{
-				using var timeoutCts = new CancellationTokenSource(NotificationSendTimeout);
-				await server.SendNotificationAsync(method, timeoutCts.Token).ConfigureAwait(false);
-			}
-			catch (OperationCanceledException)
-			{
-				// Notifications are best-effort. Cancellation is not actionable here.
-			}
-			catch (Exception)
-			{
-				// Notifications are best-effort per session. The next list/read request
-				// will rebuild on demand.
-			}
-		}
-	}
+	// Clearing an already-empty primitive collection raises its Changed event without mutating
+	// anything, which is what lets an empty collection act as a pure signal. That the event fires
+	// unconditionally is NOT documented on Clear(), so it is pinned by
+	// Given_McpSubscriptions.When_ClearingAnEmptyCollection_Then_ChangedStillFires: if a future SDK
+	// turns Clear() into a no-op, that test fails loudly instead of discovery notifications silently
+	// disappearing.
+	private void SignalToolListChanged() => _toolListChanged.Clear();
 
 	private void UnsubscribeFromRoutingChanges()
 	{

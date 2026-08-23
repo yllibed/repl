@@ -8,11 +8,6 @@ namespace Repl.McpTests;
 [TestClass]
 public sealed class Given_McpConcurrentSessions
 {
-	// The SDK's McpProtocolVersions constants are internal, so the revisions are pinned here.
-	// 2026-07-28 (SEP-2567) is the sessionless, per-request-metadata revision the default client
-	// negotiates; every guarantee in this file is written against it, hence the explicit assertions.
-	private const string ModernProtocolVersion = "2026-07-28";
-
 	[TestMethod]
 	[Description("Pins the protocol revision every other guarantee in this file is written against: two sessions sharing one handler must both negotiate 2026-07-28. Without this, a silent fallback to the 2025-11-25 initialize handshake would make the per-session capability and catalog assertions below describe a revision they were never meant to characterise — which is exactly how four review waves missed the sessionless-protocol defects.")]
 	public async Task When_TwoSessionsShareOneHandler_Then_BothNegotiateTheModernRevision()
@@ -28,8 +23,8 @@ public sealed class Given_McpConcurrentSessions
 		var sessionB = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
 		await using var scopeB = sessionB.ConfigureAwait(false);
 
-		sessionA.Client.NegotiatedProtocolVersion.Should().Be(ModernProtocolVersion);
-		sessionB.Client.NegotiatedProtocolVersion.Should().Be(ModernProtocolVersion);
+		sessionA.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
+		sessionB.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
 	}
 
 	[TestMethod]
@@ -106,7 +101,7 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("Guards routing-notification lifetime across sessions: when the first-attached session closes, the surviving session must still receive tools/list_changed after a routing invalidation — session attachment must be reference-counted, not first-wins with a handler-wide unsubscribe on first close.")]
+	[Description("Guards routing-notification lifetime across sessions: when the first-attached session closes, the surviving session must still receive tools/list_changed after a routing invalidation — session attachment must be reference-counted, not first-wins with a handler-wide unsubscribe on first close. The surviving session subscribes through subscriptions/listen, which is how a 2026-07-28 client asks for the notification at all.")]
 	public async Task When_FirstSessionCloses_Then_SurvivingSessionStillReceivesRoutingNotifications()
 	{
 		var app = ReplApp.Create();
@@ -129,6 +124,16 @@ public sealed class Given_McpConcurrentSessions
 			});
 		await using var scopeRegistration = registration.ConfigureAwait(false);
 
+		using var listenCts = new CancellationTokenSource();
+		var listenTask = sessionB.Client.SendRequestAsync<SubscriptionsListenRequestParams, EmptyResult>(
+			RequestMethods.SubscriptionsListen,
+			new SubscriptionsListenRequestParams
+			{
+				Notifications = new SubscriptionsListenNotifications { ToolsListChanged = true },
+			},
+			cancellationToken: listenCts.Token)
+			.AsTask();
+
 		// Both sessions are live; close the FIRST one, then invalidate routing. Disposing the
 		// session awaits its RunAsync, so a teardown fault surfaces here instead of being swallowed.
 		await sessionA.DisposeAsync().ConfigureAwait(false);
@@ -137,6 +142,19 @@ public sealed class Given_McpConcurrentSessions
 		app.Core.InvalidateRouting();
 
 		await listChanged.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+
+		await listenCts.CancelAsync().ConfigureAwait(false);
+		try
+		{
+			// Started above and awaited only after cancellation; MSTest has no sync context.
+#pragma warning disable VSTHRD003
+			await listenTask.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		}
+		catch (OperationCanceledException)
+		{
+			// Expected: the listen stream ends on cancellation.
+		}
 	}
 
 	[TestMethod]
@@ -177,7 +195,7 @@ public sealed class Given_McpConcurrentSessions
 		var session = await StartSessionAsync(handler, BuildRootsClientOptions("file:///ga"), cts.Token).ConfigureAwait(false);
 		await using var scope = session.ConfigureAwait(false);
 
-		session.Client.NegotiatedProtocolVersion.Should().Be(ModernProtocolVersion);
+		session.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
 		var result = await session.Client.SendRequestAsync<ListToolsRequestParams, ListToolsResult>(
 			RequestMethods.ToolsList,
 			new ListToolsRequestParams(),

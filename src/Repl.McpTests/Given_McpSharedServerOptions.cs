@@ -15,9 +15,6 @@ namespace Repl.McpTests;
 [TestClass]
 public sealed class Given_McpSharedServerOptions
 {
-	// The SDK's McpProtocolVersions constants are internal, so the revision is pinned here.
-	private const string ModernProtocolVersion = "2026-07-28";
-
 	[TestMethod]
 	[Description("Guards capability resolution on the documented reusable-options path: two connections created from ONE BuildMcpServerOptions() result must each observe their OWN client's capabilities. The pre-built primitives never run the handler's request prologue, so without per-invocation request binding a sampling-capable client is told sampling is unavailable — the capability is resolved against nothing at all.")]
 	public async Task When_TwoConnectionsShareOneOptionsInstance_Then_CapabilitiesAreRequestScoped()
@@ -37,8 +34,8 @@ public sealed class Given_McpSharedServerOptions
 		var plain = await StartAsync(mcpOptions, clientOptions: null, cts.Token).ConfigureAwait(false);
 		await using var plainScope = plain.ConfigureAwait(false);
 
-		capable.Client.NegotiatedProtocolVersion.Should().Be(ModernProtocolVersion);
-		plain.Client.NegotiatedProtocolVersion.Should().Be(ModernProtocolVersion);
+		capable.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
+		plain.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
 
 		var capableText = await CallProbeAsync(capable, cts.Token).ConfigureAwait(false);
 		var plainText = await CallProbeAsync(plain, cts.Token).ConfigureAwait(false);

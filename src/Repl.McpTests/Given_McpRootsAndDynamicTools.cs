@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -105,7 +105,11 @@ public sealed class Given_McpRootsAndDynamicTools
 			{
 				app.Map("echo {msg}", (string msg) => $"echo:{msg}");
 			},
-			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
+			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim,
+			// The shim exists for clients that do not refresh a changing tool list — i.e. initialize-era
+			// clients. Pinning the CLIENT (not the server) keeps the server multi-revision while making
+			// this test state which revision its unsolicited-notification expectation belongs to.
+			clientOptions: new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions });
 
 		await using var registration = fixture.Client.RegisterNotificationHandler(
 			NotificationMethods.ToolListChangedNotification,
@@ -162,7 +166,11 @@ public sealed class Given_McpRootsAndDynamicTools
 			{
 				app.Map("echo {msg}", (string msg) => $"echo:{msg}");
 			},
-			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
+			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim,
+			// The shim exists for clients that do not refresh a changing tool list — i.e. initialize-era
+			// clients. Pinning the CLIENT (not the server) keeps the server multi-revision while making
+			// this test state which revision its unsolicited-notification expectation belongs to.
+			clientOptions: new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions });
 
 		await using var registration = fixture.Client.RegisterNotificationHandler(
 			NotificationMethods.ToolListChangedNotification,
