@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -146,7 +146,8 @@ internal sealed partial class McpToolAdapter
 				: $"Command failed with exit code {invocation.ExitCode}.";
 		}
 
-		return BuildToolResult(output, invocation.ExitCode, _options.PagedResultTextMode);
+		return BuildToolResult(
+			output, invocation.ExitCode, _options.PagedResultTextMode, invocation.UndeliveredMessages);
 	}
 
 	internal async Task<McpResourceReadInvocation> InvokeResourceAsync(
@@ -220,8 +221,11 @@ internal sealed partial class McpToolAdapter
 			{
 				[typeof(IReplInteractionChannel)] = interactionChannel,
 			});
-		using var feedbackScope = (_services.GetService(typeof(IMcpFeedback)) as McpFeedbackService)
-			?.PushProgressToken(progressToken);
+		var feedbackService = _services.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
+		using var feedbackScope = feedbackService?.PushProgressToken(progressToken);
+		// Messages the client cannot receive as notifications ride back in the tool result instead,
+		// so no feedback is lost on a request that never asked for log notifications.
+		using var undeliveredScope = feedbackService?.PushUndeliveredMessages();
 
 		// Force JSON output — agents consume structured data, not human tables/banners.
 		var effectiveTokens = new List<string>(tokens.Count + 1) { $"--output:{ForcedOutputFormat}" };
@@ -246,21 +250,32 @@ internal sealed partial class McpToolAdapter
 
 			var output = outputWriter.ToString().Trim();
 			var error = captureCommandOutput ? string.Empty : errorWriter.ToString().Trim();
-			return new McpPipelineInvocation(output, error, exitCode);
+			var undelivered = undeliveredScope?.Messages.Drain() ?? [];
+			return new McpPipelineInvocation(output, error, exitCode, undelivered);
 		}
 	}
 
 	internal readonly record struct McpResourceReadInvocation(string Text, string MimeType, bool IsError);
 
-	private readonly record struct McpPipelineInvocation(string Output, string Error, int ExitCode);
+	private readonly record struct McpPipelineInvocation(
+		string Output,
+		string Error,
+		int ExitCode,
+		IReadOnlyList<string> UndeliveredMessages);
 
-	private static CallToolResult BuildToolResult(string output, int exitCode, McpPagedResultTextMode pagedTextMode)
+	private static CallToolResult BuildToolResult(
+		string output,
+		int exitCode,
+		McpPagedResultTextMode pagedTextMode,
+		IReadOnlyList<string> undeliveredMessages)
 	{
 		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
 		{
 			return new CallToolResult
 			{
-				Content = [new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) }],
+				Content = WithMessages(
+					new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) },
+					undeliveredMessages),
 				StructuredContent = structuredContent,
 				IsError = false,
 			};
@@ -268,9 +283,37 @@ internal sealed partial class McpToolAdapter
 
 		return new CallToolResult
 		{
-			Content = [new TextContentBlock { Text = output }],
+			Content = WithMessages(new TextContentBlock { Text = output }, undeliveredMessages),
 			IsError = exitCode != 0,
 		};
+	}
+
+	/// <summary>
+	/// Appends messages the client could not receive as notifications, as a trailing content block.
+	/// </summary>
+	/// <remarks>
+	/// The command's own payload stays the FIRST block (and <c>StructuredContent</c> is untouched), so
+	/// a caller reading the primary result is unaffected. Only requests that asked for no log level
+	/// carry anything here — a client receiving message notifications would otherwise see each one
+	/// twice. Resource reads deliberately get no such block: their body must match the advertised
+	/// MIME type.
+	/// </remarks>
+	private static List<ContentBlock> WithMessages(
+		TextContentBlock primary,
+		IReadOnlyList<string> undeliveredMessages)
+	{
+		if (undeliveredMessages.Count == 0)
+		{
+			return [primary];
+		}
+
+		var blocks = new List<ContentBlock>(undeliveredMessages.Count + 1) { primary };
+		foreach (var message in undeliveredMessages)
+		{
+			blocks.Add(new TextContentBlock { Text = message });
+		}
+
+		return blocks;
 	}
 
 	private static string BuildPagedTextContent(

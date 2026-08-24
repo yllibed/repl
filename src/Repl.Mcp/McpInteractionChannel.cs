@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -228,7 +228,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 	public async ValueTask WriteStatusAsync(string text, CancellationToken cancellationToken)
 	{
 		await SendFeedbackAsync(
-				LoggingLevel.Info,
+				McpMessageLevel.Info,
 				JsonSerializer.SerializeToElement(text, McpJsonContext.Default.String),
 				cancellationToken)
 			.ConfigureAwait(false);
@@ -247,24 +247,24 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 		{
 			WriteStatusRequest status => CompleteBuiltInDispatchAsync<TResult>(
 				SendFeedbackAsync(
-					LoggingLevel.Info,
+					McpMessageLevel.Info,
 					JsonSerializer.SerializeToElement(status.Text, McpJsonContext.Default.String),
 					cancellationToken)),
 			WriteProgressRequest progress => CompleteBuiltInDispatchAsync<TResult>(
 				WriteStructuredProgressAsync(progress, cancellationToken)),
 			WriteNoticeRequest notice => CompleteBuiltInDispatchAsync<TResult>(
 				SendFeedbackAsync(
-					LoggingLevel.Info,
+					McpMessageLevel.Info,
 					JsonSerializer.SerializeToElement(notice.Text, McpJsonContext.Default.String),
 					cancellationToken)),
 			WriteWarningRequest warning => CompleteBuiltInDispatchAsync<TResult>(
 				SendFeedbackAsync(
-					LoggingLevel.Warning,
+					McpMessageLevel.Warning,
 					JsonSerializer.SerializeToElement(warning.Text, McpJsonContext.Default.String),
 					cancellationToken)),
 			WriteProblemRequest problem => CompleteBuiltInDispatchAsync<TResult>(
 				SendFeedbackAsync(
-					LoggingLevel.Error,
+					McpMessageLevel.Error,
 					SerializeProblem(problem),
 					cancellationToken)),
 			_ => throw new NotSupportedException(
@@ -273,30 +273,19 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 	}
 
 	private async ValueTask SendFeedbackAsync(
-		LoggingLevel level,
+		McpMessageLevel level,
 		JsonElement data,
 		CancellationToken cancellationToken)
 	{
+		// Always through IMcpFeedback: it owns the per-request log-level rule (2026-07-28 forbids
+		// emitting message notifications for a request that did not ask for them) and the buffer that
+		// carries undeliverable messages back in the tool result. Sending straight to the server here
+		// would bypass both. It is absent only for the discovery-only channel, which has no server
+		// to send to either.
 		if (_feedback is not null)
 		{
 			await _feedback.SendMessageAsync(level, data, cancellationToken).ConfigureAwait(false);
-			return;
 		}
-
-		if (_server is null)
-		{
-			return;
-		}
-
-		await _server.SendNotificationAsync(
-			NotificationMethods.LoggingMessageNotification,
-			new LoggingMessageNotificationParams
-			{
-				Level = level,
-				Logger = "repl.interaction",
-				Data = data,
-			},
-			cancellationToken: cancellationToken).ConfigureAwait(false);
 	}
 
 	private async ValueTask WriteStructuredProgressAsync(
@@ -317,7 +306,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			if (progress.State == ReplProgressState.Warning)
 			{
 				await _feedback.SendMessageAsync(
-						LoggingLevel.Warning,
+						McpMessageLevel.Warning,
 						BuildProgressPayload(progress),
 						cancellationToken)
 					.ConfigureAwait(false);
@@ -325,7 +314,7 @@ internal sealed class McpInteractionChannel : IReplInteractionChannel
 			else if (progress.State == ReplProgressState.Error)
 			{
 				await _feedback.SendMessageAsync(
-						LoggingLevel.Error,
+						McpMessageLevel.Error,
 						BuildProgressPayload(progress),
 						cancellationToken)
 					.ConfigureAwait(false);
