@@ -17,7 +17,7 @@ namespace Repl.Mcp;
 /// through the per-request <see cref="McpRequestServerAccessor"/> binding, which is
 /// finer-grained than the session.
 /// </remarks>
-internal sealed class McpSessionContext
+internal sealed class McpSessionContext : IDisposable
 {
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
@@ -33,16 +33,6 @@ internal sealed class McpSessionContext
 
 	/// <summary>Per-session service overlay handed to <c>McpServer.Create</c>.</summary>
 	public IServiceProvider Services { get; }
-
-	/// <summary>
-	/// Latches the first server observed by the externally hosted fallback context, so its
-	/// roots-list-changed handler is registered once.
-	/// </summary>
-	/// <remarks>
-	/// This used to be the destination for server-initiated notifications; the SDK now owns that
-	/// fan-out, leaving only the latch. It disappears with the fallback context itself.
-	/// </remarks>
-	public McpServer? SessionServer { get; set; }
 
 	/// <summary>Serializes snapshot builds for this session.</summary>
 	public SemaphoreSlim SnapshotGate { get; } = new(initialCount: 1, maxCount: 1);
@@ -73,6 +63,8 @@ internal sealed class McpSessionContext
 
 	/// <summary>Re-arms the compatibility-shim intro after a routing invalidation.</summary>
 	public void ResetCompatibilityIntro() => Interlocked.Exchange(ref _compatibilityIntroServed, 0);
+
+	public void Dispose() => SnapshotGate.Dispose();
 
 	/// <summary>
 	/// A generated snapshot and the routing version it was built at, published as ONE value.

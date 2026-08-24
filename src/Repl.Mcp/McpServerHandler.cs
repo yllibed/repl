@@ -31,6 +31,12 @@ internal sealed class McpServerHandler
 	private readonly McpSamplingService _sampling;
 	private readonly McpElicitationService _elicitation;
 	private readonly McpFeedbackService _feedback;
+	// Context for work that belongs to no MCP session: eager fail-fast validation, the pre-built
+	// catalog behind BuildMcpServerOptions, and the snapshot test seams. Each of those used to mint
+	// its own throwaway context — five roots services and five never-disposed semaphores dropped on
+	// the floor. It shares the handler's lifetime, so nothing disposes it either; unlike a session
+	// context there is never more than one.
+	private readonly McpSessionContext _catalogContext;
 	private readonly Lock _refreshLock = new();
 	private readonly Lock _attachLock = new();
 
@@ -41,11 +47,6 @@ internal sealed class McpServerHandler
 	// McpSessionContext, and this list (guarded by _attachLock) tracks every ACTIVE session
 	// for server-initiated notifications and subscription lifetime.
 	private readonly List<McpSessionContext> _sessions = [];
-	// Lazy single context for externally hosted servers (options built via
-	// BuildDynamicServerOptions and run by the host without RunAsync): those servers carry
-	// the HOST's provider, so requests cannot recover a per-session context from it — they
-	// share one explicit fallback context instead of racing a last-attached field.
-	private McpSessionContext? _externalContext;
 	private EventHandler<RoutingInvalidatedEventArgs>? _routingChangedHandler;
 	private ITimer? _debounceTimer;
 	private static readonly TimeSpan DebounceDelay = TimeSpan.FromMilliseconds(100);
@@ -77,6 +78,7 @@ internal sealed class McpServerHandler
 		_sampling = new McpSamplingService(_requestServers);
 		_elicitation = new McpElicitationService(_requestServers);
 		_feedback = new McpFeedbackService(_requestServers);
+		_catalogContext = CreateSessionContext();
 	}
 
 	private McpSessionContext CreateSessionContext()
@@ -97,35 +99,25 @@ internal sealed class McpServerHandler
 		return context;
 	}
 
-	// Requests recover their session through the provider handed to McpServer.Create —
-	// even a destination-bound per-request server exposes its session's services. Servers
-	// created by an external host (BuildDynamicServerOptions) carry the host's provider
-	// instead and share the explicit fallback context.
-	private McpSessionContext ResolveContext(McpServer? requestServer)
-	{
-		if (requestServer?.Services?.GetService(typeof(McpSessionContext)) is McpSessionContext context)
-		{
-			return context;
-		}
-
-		lock (_attachLock)
-		{
-			if (_externalContext is null)
-			{
-				_externalContext = CreateSessionContext();
-				_sessions.Add(_externalContext);
-				EnsureRoutingSubscription();
-			}
-
-			if (_externalContext.SessionServer is null && requestServer is not null)
-			{
-				_externalContext.SessionServer = requestServer;
-				EnsureRootsNotificationHandler(requestServer, _externalContext.Roots);
-			}
-
-			return _externalContext;
-		}
-	}
+	/// <summary>
+	/// Recovers the session a request belongs to, through the provider handed to
+	/// <c>McpServer.Create</c> — even a destination-bound per-request server exposes its session's
+	/// services.
+	/// </summary>
+	/// <remarks>
+	/// A pure lookup on purpose. This used to fall back to one lazily created context shared by every
+	/// caller that missed the lookup, which made <c>_sessions</c> permanently non-empty — so the
+	/// routing subscription and its debounce timer could never be released — and latched a
+	/// destination-bound per-request server as if it were a session server. The fallback was also
+	/// unreachable: the only server built without a session provider comes from
+	/// <see cref="BuildStaticServerOptions"/>, whose pre-built primitives never route through here.
+	/// </remarks>
+	private static McpSessionContext ResolveContext(McpServer? requestServer) =>
+		requestServer?.Services?.GetService(typeof(McpSessionContext)) as McpSessionContext
+		?? throw new InvalidOperationException(
+			"An MCP request reached a Repl handler without its session context. Handlers are only "
+			+ "registered by BuildDynamicServerOptions, whose server is always created with the "
+			+ "session's own service provider.");
 
 	[UnconditionalSuppressMessage(
 		"Trimming",
@@ -140,7 +132,7 @@ internal sealed class McpServerHandler
 			: new StdioServerTransport(serverName);
 		try
 		{
-			var context = CreateSessionContext();
+			using var context = CreateSessionContext();
 			var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
 			AttachSession(context, server);
 
@@ -170,7 +162,7 @@ internal sealed class McpServerHandler
 		// then repeated for the same commands during the first discovery request.
 		if (_options.CommandFilter is null)
 		{
-			_ = CreateDocumentationModel(CreateSessionContext().Services);
+			_ = CreateDocumentationModel(_catalogContext.Services);
 		}
 
 		return new McpServerOptions
@@ -199,7 +191,7 @@ internal sealed class McpServerHandler
 	{
 		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
-		var snapshot = BuildSnapshotCore(CreateSessionContext());
+		var snapshot = BuildSnapshotCore(_catalogContext);
 
 		return new McpServerOptions
 		{
@@ -211,10 +203,10 @@ internal sealed class McpServerHandler
 		};
 	}
 
-	internal McpGeneratedSnapshot BuildSnapshotForTests() => BuildSnapshotCore(CreateSessionContext());
+	internal McpGeneratedSnapshot BuildSnapshotForTests() => BuildSnapshotCore(_catalogContext);
 
 	internal async Task<McpGeneratedSnapshot> BuildSnapshotForTestsAsync(CancellationToken cancellationToken = default) =>
-		await GetSnapshotAsync(CreateSessionContext(), cancellationToken).ConfigureAwait(false);
+		await GetSnapshotAsync(_catalogContext, cancellationToken).ConfigureAwait(false);
 
 	private string? ResolveAppName()
 	{
@@ -755,7 +747,7 @@ internal sealed class McpServerHandler
 		ReplSessionIO.IsProgrammatic = true;
 		try
 		{
-			var sessionServices = CreateSessionContext().Services;
+			var sessionServices = _catalogContext.Services;
 			using var runtimeStateScope = coreApp.PushRuntimeState(
 				CreateDiscoveryServices(sessionServices),
 				isInteractiveSession: false);
