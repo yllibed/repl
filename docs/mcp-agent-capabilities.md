@@ -246,11 +246,14 @@ public interface IMcpFeedback
         CancellationToken cancellationToken = default);
 
     ValueTask SendMessageAsync(
-        LoggingLevel level,
+        McpMessageLevel level,
         object? data,
         CancellationToken cancellationToken = default);
 }
 ```
+
+`McpMessageLevel` is Repl's own enum (`Debug` … `Emergency`), so this signature does not expose the
+SDK's deprecated `LoggingLevel` to your build.
 
 Use it when:
 
@@ -264,10 +267,10 @@ Use it when:
 app.Map("sync contacts",
     async (IMcpFeedback feedback, CancellationToken ct) =>
 {
-    if (feedback.IsLoggingSupported)
-    {
-        await feedback.SendMessageAsync(LoggingLevel.Info, "Starting sync.", ct);
-    }
+    // Sending unconditionally is fine: a message the client cannot receive as a notification
+    // is carried back in the tool result instead. Check IsLoggingSupported only when you want
+    // to skip work that would otherwise be wasted.
+    await feedback.SendMessageAsync(McpMessageLevel.Info, "Starting sync.", ct);
 
     if (feedback.IsProgressSupported)
     {
@@ -330,7 +333,9 @@ if (!elicitation.IsSupported)
 For `IMcpFeedback`, the same idea applies:
 
 - check `IsProgressSupported` before sending MCP-only progress directly
-- check `IsLoggingSupported` before sending MCP-only messages directly
+- `IsLoggingSupported` tells you whether a message would arrive as a **notification**; it is `false`
+  on `2026-07-28` unless the request declared a log level. Messages are never dropped for that
+  reason — they ride back in the tool result — so treat it as a hint, not a gate
 - prefer `IReplInteractionChannel` when the feedback should still render well outside MCP
 
 ## Client compatibility

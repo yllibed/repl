@@ -22,10 +22,15 @@ If your tool list is static, stay with the default setup from [mcp-overview.md](
 
 > **⚠️ Deprecation notice (SEP-2577):** the MCP specification (2026-07-28) deprecates the
 > Roots feature, and the SDK may remove it in a future version. Repl keeps supporting it
-> **for existing hosts and applications only** — new applications should not build on
-> native MCP roots and can use [soft roots](#soft-roots-fallback) or explicit command
-> parameters instead. See
+> **for existing hosts and applications only.** New applications should take the workspace as an
+> **explicit command parameter**, or mint a handle from a setup command and pass it back — that is
+> what SEP-2567 prescribes now that the protocol has no sessions to hang such state on. See
 > [mcp-reference.md](mcp-reference.md#sdk-and-protocol-versions) for the version posture.
+>
+> [Soft roots](#soft-roots-fallback) are **not** the modern answer: they are the same
+> connection-scoped state by another name, and they are scoped to the process rather than the
+> connection when a host reuses one `BuildMcpServerOptions()` result. Treat them as a legacy
+> compatibility feature for clients that lack native roots.
 
 A **root** is a URI the client declares as being in scope for the session — typically an opened project folder, a working directory, or a boundary for what the agent should inspect or modify.
 
@@ -49,7 +54,7 @@ app.Map("workspace roots", async (IMcpClientRoots roots, CancellationToken ct) =
 | `Current` | Current effective roots for the session |
 | `GetAsync()` | Refreshes native roots if supported |
 | `HasSoftRoots` | Fallback roots were initialized manually |
-| `SetSoftRoots()` / `ClearSoftRoots()` | Manage fallback roots for the current session |
+| `SetSoftRoots()` / `ClearSoftRoots()` | Manage fallback roots — per connection under `mcp serve`, per process when a host reuses one `BuildMcpServerOptions()` result |
 
 > **Why `IMcpClientRoots` is MCP-only:** Roots are session-scoped MCP data. They don't make sense as a generic `Repl.Core` concept for terminal or non-MCP execution. That's why the interface lives in `Repl.Mcp` and is injected only for MCP sessions.
 
