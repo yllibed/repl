@@ -1,4 +1,4 @@
-using ModelContextProtocol.Client;
+﻿using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Repl.Mcp;
 
@@ -151,24 +151,32 @@ public sealed class Given_McpIntegration
 	}
 
 	[TestMethod]
-	[Description("Locks the SDK-2.0 tools/list wire shape for .LongRunning() commands: annotations survive serialization, and no task/execution augmentation is emitted — Repl deliberately does not advertise MCP task support until the Tasks runtime is implemented end-to-end (issue #51).")]
-	public void When_SerializingLongRunningTool_Then_NoTaskAugmentationIsEmitted()
+	[Description("Locks the tools/list wire shape for .LongRunning(): the annotation is Repl-local metadata and must leave no trace on the protocol surface until Repl integrates the SDK Tasks extension (issue #72). Asserted by serializing two otherwise identical tools that differ only by .LongRunning() and requiring byte-identical payloads — a NotContain(\"execution\") assertion could not fail, since SDK 2.x removed Tool.Execution entirely.")]
+	public void When_SerializingLongRunningTool_Then_WireShapeIsUnchanged()
 	{
 		var app = ReplApp.Create();
 		app.Map("deploy", () => "deployed")
 			.WithDescription("Deploy application")
 			.LongRunning()
 			.OpenWorld();
+		app.Map("release", () => "released")
+			.WithDescription("Deploy application")
+			.OpenWorld();
 
 		var options = app.BuildMcpServerOptions();
-		var tool = options.ToolCollection!.Single(tool =>
-			string.Equals(tool.ProtocolTool.Name, "deploy", StringComparison.Ordinal));
-		var json = System.Text.Json.JsonSerializer.Serialize(
-			tool.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
 
-		json.Should().Contain("\"openWorldHint\"");
-		json.Should().NotContain("execution");
-		json.Should().NotContain("taskSupport");
+		SerializeTool(options, "deploy").Should().Be(
+			SerializeTool(options, "release").Replace("\"release\"", "\"deploy\"", StringComparison.Ordinal),
+			because: ".LongRunning() must not change anything a client can observe");
+	}
+
+	private static string SerializeTool(ModelContextProtocol.Server.McpServerOptions options, string name)
+	{
+		var tool = options.ToolCollection!.Single(tool =>
+			string.Equals(tool.ProtocolTool.Name, name, StringComparison.Ordinal));
+
+		return System.Text.Json.JsonSerializer.Serialize(
+			tool.ProtocolTool, ModelContextProtocol.McpJsonUtilities.DefaultOptions);
 	}
 
 	[TestMethod]

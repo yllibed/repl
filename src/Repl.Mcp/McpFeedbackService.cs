@@ -5,10 +5,8 @@ using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Interaction;
 
-// Logging is deprecated by MCP spec 2026-07-28 (SEP-2577, SDK diagnostic MCP9005); the designated
-// successor for server-initiated flows (SEP-2322 multi-round-trip requests, shipped in the SDK 2.0
-// line as MrtrContext/MrtrExchange) is not adopted by Repl yet, and hosts still rely on message
-// notifications, so Repl keeps supporting them until the SDK removes the surface (#51).
+// Deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005); kept for existing hosts.
+// Rationale and successor: docs/mcp-reference.md#sdk-and-protocol-versions (#51).
 #pragma warning disable MCP9005
 
 namespace Repl.Mcp;
