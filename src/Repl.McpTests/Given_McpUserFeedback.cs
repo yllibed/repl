@@ -4,6 +4,12 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Repl.Interaction;
+using Repl.Mcp;
+
+// These tests exercise Roots/Sampling/Logging, deprecated by MCP spec 2026-07-28
+// (SEP-2577, MCP9005) but still supported by Repl.Mcp until the SDK removes them.
+// Tracked in issue #51.
+#pragma warning disable MCP9005
 
 namespace Repl.McpTests;
 
@@ -19,7 +25,7 @@ public sealed class Given_McpUserFeedback
 		NotificationCaptureState.Current = captureState;
 		try
 		{
-			await using var fixture = await CreateFeedbackFixtureAsync(clientOptions: CreateClientOptions()).ConfigureAwait(false);
+			await using var fixture = await CreateFeedbackFixtureAsync(LegacyClientOptions()).ConfigureAwait(false);
 
 			var result = await fixture.Client.CallToolAsync(
 				toolName: "feedback",
@@ -44,7 +50,7 @@ public sealed class Given_McpUserFeedback
 		NotificationCaptureState.Current = captureState;
 		try
 		{
-			await using var fixture = await CreateStructuredProgressFixtureAsync(CreateClientOptions()).ConfigureAwait(false);
+			await using var fixture = await CreateStructuredProgressFixtureAsync(LegacyClientOptions()).ConfigureAwait(false);
 
 			var result = await fixture.Client.CallToolAsync(
 				toolName: "feedback_progress",
@@ -61,6 +67,85 @@ public sealed class Given_McpUserFeedback
 		{
 			NotificationCaptureState.Current = null;
 		}
+	}
+
+	[TestMethod]
+	[Description("Guards the 2026-07-28 rule that a server MUST NOT emit notifications/message for a request that declared no log level (SEP-2575) — and guards against that rule silently swallowing user feedback: the notice, warning and problem the command reported must instead ride back in the tool result, so no host loses them.")]
+	public async Task When_RequestDeclaresNoLogLevel_Then_FeedbackRidesInTheToolResultInstead()
+	{
+		var notifications = new List<(LoggingLevel Level, string Data)>();
+		var captureState = new NotificationCaptureState(notifications);
+		NotificationCaptureState.Current = captureState;
+		try
+		{
+			await using var fixture = await CreateFeedbackFixtureAsync(CreateClientOptions()).ConfigureAwait(false);
+			fixture.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
+
+			var result = await fixture.Client.CallToolAsync(
+				toolName: "feedback",
+				arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+
+			// Give a (forbidden) notification time to arrive before asserting that none did.
+			await WaitForConditionAsync(() => notifications.Count > 0, timeoutMs: 500).ConfigureAwait(false);
+
+			notifications.Should().BeEmpty(
+				because: "the request declared no log level, so the server must not emit message notifications");
+			var text = string.Join('\n', result.Content.OfType<TextContentBlock>().Select(block => block.Text));
+			text.Should().Contain("Connected");
+			text.Should().Contain("Token expires soon");
+			text.Should().Contain("Sync failed");
+			result.IsError.Should().BeFalse();
+		}
+		finally
+		{
+			NotificationCaptureState.Current = null;
+		}
+	}
+
+	[TestMethod]
+	[Description("Guards severity filtering against the level the client asked for: after logging/setLevel(Error) the notice and warning a command reports must not be delivered, while the problem must. Emitting everything regardless of the requested threshold floods hosts that deliberately asked for errors only.")]
+	public async Task When_ClientRequestsErrorLevel_Then_LowerSeveritiesAreNotNotified()
+	{
+		var notifications = new List<(LoggingLevel Level, string Data)>();
+		var captureState = new NotificationCaptureState(notifications);
+		NotificationCaptureState.Current = captureState;
+		try
+		{
+			await using var fixture = await CreateFeedbackFixtureAsync(LegacyClientOptions()).ConfigureAwait(false);
+			await fixture.Client.SetLoggingLevelAsync(LoggingLevel.Error).ConfigureAwait(false);
+
+			await fixture.Client.CallToolAsync(
+				toolName: "feedback",
+				arguments: new Dictionary<string, object?>(StringComparer.Ordinal)).ConfigureAwait(false);
+
+			await WaitForConditionAsync(() => notifications.Count >= 1).ConfigureAwait(false);
+
+			notifications.Should().OnlyContain(entry => entry.Level == LoggingLevel.Error);
+			notifications.Should().ContainSingle(entry =>
+				entry.Data.Contains("Sync failed", StringComparison.Ordinal));
+		}
+		finally
+		{
+			NotificationCaptureState.Current = null;
+		}
+	}
+
+	/// <summary>
+	/// A client pinned to the last revision on which message notifications can be requested at all.
+	/// </summary>
+	/// <remarks>
+	/// On <c>2026-07-28</c> the SDK's client cannot ask for a log level: it rejects
+	/// <c>logging/setLevel</c> for that revision, exposes no option for the level, and replaces a
+	/// caller's <c>_meta</c> with its own keys (protocol version, client info, capabilities). Tests
+	/// that assert notification DELIVERY therefore have to pin the initialize-era revision. The modern
+	/// path is covered by
+	/// <see cref="When_RequestDeclaresNoLogLevel_Then_FeedbackRidesInTheToolResultInstead"/>.
+	/// </remarks>
+	private static McpClientOptions LegacyClientOptions()
+	{
+		var options = CreateClientOptions();
+		options.ProtocolVersion = McpProtocolRevisions.LastWithSessions;
+		return options;
 	}
 
 	private static async Task<McpTestFixture> CreateFeedbackFixtureAsync(

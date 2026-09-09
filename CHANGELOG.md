@@ -5,6 +5,43 @@ Nerdbank.GitVersioning at pack time; this file groups changes by theme instead o
 
 ## Unreleased
 
+### Changed — MCP SDK 2.2.0
+
+- `Repl.Mcp` now builds on `ModelContextProtocol` **2.2.0** (from 1.4.1). The SDK is a transitively
+  public dependency, so a consumer referencing `Repl.Mcp` must move to the 2.x line. The server stays
+  multi-revision: it keeps the `initialize` handshake for existing hosts while also serving the
+  sessionless `2026-07-28` revision.
+- **Breaking:** `IMcpFeedback.SendMessageAsync` takes a Repl-owned `McpMessageLevel` instead of the
+  SDK's `LoggingLevel`. `LoggingLevel` carries the SDK's `MCP9005` deprecation, and Repl's internal
+  `#pragma` never covered a *consumer's* compilation — anyone building with warnings as errors got a
+  hard error on a Repl signature. The new enum has the same members and numeric values.
+- **User feedback delivery depends on the negotiated revision.** `2026-07-28` removed
+  `logging/setLevel` and forbids emitting `notifications/message` for a request that declared no
+  `_meta/io.modelcontextprotocol/logLevel` (SEP-2575), so Repl now honours that. Messages that cannot
+  be sent as notifications are appended to the **tool result** after the command's own payload, so no
+  host loses feedback. Initialize-era clients keep the previous session-wide behaviour, unchanged.
+  A caller reading only the first content block, or `StructuredContent`, is unaffected.
+- **Discovery notifications are delivered by the SDK's own fan-out** rather than broadcast by Repl.
+  Initialize-era clients keep receiving unsolicited `*/list_changed`; a `2026-07-28` client receives
+  only the types it requested through `subscriptions/listen`, tagged with its listen request id. A
+  modern client that opens no subscription receives none — as the specification requires. List
+  results carry `ttlMs: 0`, so such a client re-lists on demand instead of caching.
+- `.LongRunning()` remains Repl-local metadata and emits nothing on the protocol surface; SDK 2.x
+  removed the per-tool `Tool.Execution` augmentation. Protocol-level task support returns once Repl
+  integrates `ModelContextProtocol.Extensions.Tasks` (tracked in issue #72).
+
+### Compatibility notes — MCP
+
+- **Known limitation.** Soft roots ([`docs/mcp-advanced.md`](docs/mcp-advanced.md#soft-roots-fallback))
+  set by one connection are visible to every other connection created from the same
+  `BuildMcpServerOptions()` result. Client capabilities *are* isolated per request on that path;
+  cross-call state is not, because `2026-07-28` removed protocol sessions and that path has no
+  per-connection identity. Host one server per process (`mcp serve`), or take the workspace as an
+  explicit command argument.
+- `docs/mcp-transports.md` previously claimed each connection has "its own I/O capture" and "its own
+  session-aware routing state". I/O capture is per *invocation*, and session-aware routing state
+  exists only under `mcp serve`. The doc now states what is isolated at which boundary.
+
 ### Added — option visibility
 
 - `.Hidden(bool isHidden = true)` on the option builder (`WithOption(name, option => option.Hidden())`)

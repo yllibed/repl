@@ -1,24 +1,35 @@
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
+// Deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005); kept for existing hosts.
+// Rationale and successor: docs/mcp-reference.md#sdk-and-protocol-versions (#51).
+#pragma warning disable MCP9005
+
 namespace Repl.Mcp;
 
+// One instance PER SESSION (owned by McpSessionContext): hard roots, soft roots, and
+// their cache/version state are session state — one handler can serve several sessions,
+// and serving session A's roots to session B would expose A's workspace URIs and build
+// B's root-dependent snapshot from the wrong workspace. Outbound transport still goes
+// through the request-bound accessor (the destination is per request, finer than the
+// session).
 internal sealed class McpClientRootsService : IMcpClientRoots
 {
 	private readonly ICoreReplApp _app;
+	private readonly McpRequestServerAccessor _servers;
 	private readonly Lock _syncRoot = new();
-	private McpServer? _server;
 	private McpClientRoot[] _hardRoots = [];
 	private McpClientRoot[] _softRoots = [];
 	private bool _hardRootsLoaded;
 	private long _hardRootsVersion;
 
-	public McpClientRootsService(ICoreReplApp app)
+	public McpClientRootsService(ICoreReplApp app, McpRequestServerAccessor servers)
 	{
 		_app = app;
+		_servers = servers;
 	}
 
-	public bool IsSupported => _server?.ClientCapabilities?.Roots is not null;
+	public bool IsSupported => _servers.Effective?.ClientCapabilities?.Roots is not null;
 
 	public bool HasSoftRoots
 	{
@@ -42,15 +53,11 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 		}
 	}
 
-	public void AttachServer(McpServer server)
-	{
-		ArgumentNullException.ThrowIfNull(server);
-		_server = server;
-	}
-
 	public async ValueTask<IReadOnlyList<McpClientRoot>> GetAsync(CancellationToken cancellationToken = default)
 	{
-		var server = _server;
+		// Single read: the effective server must not change between the support check and
+		// the roots request (a concurrent request re-binding the accessor must not be observed).
+		var server = _servers.Effective;
 		if (server?.ClientCapabilities?.Roots is null)
 		{
 			return Current;

@@ -15,13 +15,11 @@ namespace Repl.Mcp;
 /// a multi-field variant would build the <see cref="ElicitRequestParams.RequestSchema"/> with
 /// multiple properties instead of one.
 /// </remarks>
-internal sealed class McpElicitationService : IMcpElicitation
+internal sealed class McpElicitationService(McpRequestServerAccessor servers) : IMcpElicitation
 {
 	private const string FieldName = "value";
 
-	private McpServer? _server;
-
-	public bool IsSupported => _server?.ClientCapabilities?.Elicitation is not null;
+	public bool IsSupported => servers.Effective?.ClientCapabilities?.Elicitation is not null;
 
 	public async ValueTask<string?> ElicitTextAsync(
 		string message,
@@ -99,19 +97,19 @@ internal sealed class McpElicitationService : IMcpElicitation
 			: null;
 	}
 
-	internal void AttachServer(McpServer server) => _server = server;
-
 	private async ValueTask<ElicitResult?> ElicitSingleFieldAsync(
 		string message,
 		ElicitRequestParams.PrimitiveSchemaDefinition schema,
 		CancellationToken cancellationToken)
 	{
-		if (!IsSupported)
+		// Single read: the effective server must not change between the support check and
+		// the call (a concurrent request re-binding the accessor must not be observed).
+		if (servers.Effective is not { ClientCapabilities.Elicitation: not null } server)
 		{
 			return null;
 		}
 
-		var result = await _server!.ElicitAsync(
+		var result = await server.ElicitAsync(
 			new ElicitRequestParams
 			{
 				Message = message,

@@ -1,8 +1,13 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Repl.Mcp;
+
+// These tests exercise Roots/Sampling/Logging, deprecated by MCP spec 2026-07-28
+// (SEP-2577, MCP9005) but still supported by Repl.Mcp until the SDK removes them.
+// Tracked in issue #51.
+#pragma warning disable MCP9005
 
 namespace Repl.McpTests;
 
@@ -100,7 +105,11 @@ public sealed class Given_McpRootsAndDynamicTools
 			{
 				app.Map("echo {msg}", (string msg) => $"echo:{msg}");
 			},
-			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
+			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim,
+			// The shim exists for clients that do not refresh a changing tool list — i.e. initialize-era
+			// clients. Pinning the CLIENT (not the server) keeps the server multi-revision while making
+			// this test state which revision its unsolicited-notification expectation belongs to.
+			clientOptions: new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions });
 
 		await using var registration = fixture.Client.RegisterNotificationHandler(
 			NotificationMethods.ToolListChangedNotification,
@@ -157,7 +166,11 @@ public sealed class Given_McpRootsAndDynamicTools
 			{
 				app.Map("echo {msg}", (string msg) => $"echo:{msg}");
 			},
-			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim);
+			configureOptions: options => options.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim,
+			// The shim exists for clients that do not refresh a changing tool list — i.e. initialize-era
+			// clients. Pinning the CLIENT (not the server) keeps the server multi-revision while making
+			// this test state which revision its unsolicited-notification expectation belongs to.
+			clientOptions: new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions });
 
 		await using var registration = fixture.Client.RegisterNotificationHandler(
 			NotificationMethods.ToolListChangedNotification,

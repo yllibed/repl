@@ -1,4 +1,4 @@
-using ModelContextProtocol;
+﻿using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl.Documentation;
@@ -64,6 +64,8 @@ internal sealed class ReplMcpServerPrompt : McpServerPrompt
 		RequestContext<GetPromptRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
+		_adapter.BindRequest(request);
+
 		// Prompt arguments are already JsonElement — pass through directly.
 		var jsonArgs = request.Params.Arguments is { } args
 			? new Dictionary<string, System.Text.Json.JsonElement>(args, StringComparer.Ordinal)
