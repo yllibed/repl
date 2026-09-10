@@ -203,8 +203,26 @@ internal static class ProcessSignalCoordinator
 		}
 	}
 
+	/// <summary>
+	/// Claims SIGTERM the way a freshly installed registration would, without an operating-system
+	/// registration to deliver it. Ctrl+C and Ctrl+Break have
+	/// <see cref="ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting"/> for this; SIGTERM had no
+	/// counterpart, so the claim logic was reachable in-process only through the console path.
+	/// <para>
+	/// This does not exercise <see cref="HandleSigTerm"/> itself: translating the decision into
+	/// <see cref="PosixSignalContext.Cancel"/> needs a real signal context, and stays covered only by
+	/// the out-of-process suite.
+	/// </para>
+	/// </summary>
+	internal static ConsoleCancelKeyHandlingResult HandleSigTermForTesting() =>
+		TryClaimSignal(generation: null, "SIGTERM", SigTermExitCode);
+
+	// A null generation accepts whichever epoch is current, which is what a freshly installed
+	// registration would see. Reading the counter before taking the gate would race
+	// TryInitializeRegistrations' failure path and the test isolation scope, both of which advance it,
+	// so the caller passes null rather than a value it read itself.
 	private static ConsoleCancelKeyHandlingResult TryClaimSignal(
-		int generation,
+		int? generation,
 		string name,
 		int exitCode)
 	{
@@ -212,7 +230,7 @@ internal static class ProcessSignalCoordinator
 		List<Action>? startCancellations = null;
 		lock (Gate)
 		{
-			if (generation != s_generation)
+			if (generation is { } capturedGeneration && capturedGeneration != s_generation)
 			{
 				return ConsoleCancelKeyHandlingResult.NotHandled;
 			}

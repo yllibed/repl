@@ -448,6 +448,52 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
+	[Description("SIGTERM claims the epoch cooperatively and carries 143, reached in-process rather than only through a spawned child.")]
+	public async Task When_FirstSigTermArrives_Then_ActiveScopeIsCancelledWithTheSigTermCode()
+	{
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		var result = ProcessSignalCoordinator.HandleSigTermForTesting();
+
+		result.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+		scope.Token.IsCancellationRequested.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("A SIGTERM after Ctrl+C escalates to the operating system and leaves the first claim's exit code intact, so the second signal cannot relabel what the run is exiting with.")]
+	public async Task When_SigTermFollowsCtrlC_Then_TheFirstClaimKeepsItsExitCode()
+	{
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		var firstSignal = ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting();
+		var secondSignal = ProcessSignalCoordinator.HandleSigTermForTesting();
+
+		firstSignal.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		secondSignal.Should().Be(ConsoleCancelKeyHandlingResult.AllowProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigIntExitCode);
+	}
+
+	[TestMethod]
+	[Description("SIGTERM stays inert without an active scope, so the seam cannot claim an epoch the real registration would have left to the operating-system default.")]
+	public void When_NoScopeIsActive_Then_SigTermIsNotHandled() =>
+		ProcessSignalCoordinator.HandleSigTermForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.NotHandled);
+
+	[TestMethod]
+	[Description("The SIGTERM seam accepts whichever epoch is current, the way a freshly installed registration would: isolating registrations advances the generation counter, and a scope that survives it is still claimed.")]
+	public async Task When_TheGenerationAdvancesUnderAnActiveScope_Then_SigTermStillClaimsTheCurrentEpoch()
+	{
+		await using var scope = new ProcessSignalCancellationScope(default);
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+
+		var result = ProcessSignalCoordinator.HandleSigTermForTesting();
+
+		result.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+	}
+
+	[TestMethod]
 	[Description("A platform with no mobile flag keeps the signal bridge, so the platform predicate is not vacuously false for every input.")]
 	public void When_NoPlatformFlagIsSet_Then_SignalBridgeIsSupported()
 	{
