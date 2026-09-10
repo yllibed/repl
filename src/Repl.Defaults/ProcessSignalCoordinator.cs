@@ -32,6 +32,13 @@ internal static class ProcessSignalCoordinator
 	private static SignalRegistrationPolicy? s_registrationPolicyForTesting;
 
 	/// <summary>
+	/// Invoked once a scope has joined the epoch and any cancellation it inherited has been started,
+	/// so a test harness can await the moment a signal stops being inert instead of guessing with a
+	/// delay. Never set on the production path.
+	/// </summary>
+	internal static Action? ScopeRegisteredCallbackForTesting { get; set; }
+
+	/// <summary>
 	/// Whether the platform in force wants a SIGTERM registration at all. Read with
 	/// <see cref="SigTermRegistrationInstalledForTesting"/>: wanted but not installed is what a
 	/// declared platform under test looks like, and is the state that proves no operating-system
@@ -111,6 +118,7 @@ internal static class ProcessSignalCoordinator
 		}
 
 		startCancellation?.Invoke();
+		ScopeRegisteredCallbackForTesting?.Invoke();
 	}
 
 	private static RegistrationOutcome TryInitializeRegistrations()
