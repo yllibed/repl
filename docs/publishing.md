@@ -114,7 +114,7 @@ what the *Release preparation* section above covers:
 
 ```powershell
 git switch release/0.11.0
-# Merge or cherry-pick the fix and commit it.
+# Merge the fix's pull request into this branch, then:
 nbgv get-version   # what version will this commit build as?
 ```
 
@@ -124,6 +124,17 @@ version, and `prepare-release` removed the prerelease tag, leaving no `{height}`
 therefore needs its `version` field bumped on that branch — to `0.11.1` — before it can ship. The
 branch name then no longer matches its version, which is cosmetic: `publicReleaseRefSpec` matches
 `^refs/heads/release/.*$`, so packaging and release creation are unaffected.
+
+**Bring the fix in through a pull request targeting the release branch**, rather than cherry-picking
+straight onto it. The reason is the release notes: `--generate-notes` builds the body from the pull
+requests merged since the previous tag, so a commit that reached the branch outside a pull request
+contributes nothing to it. Measured against this repository, a range of twelve real commits with no
+merged pull request generates no `What's Changed` section at all — the body is a single compare link.
+There is no changelog file to fall back on, so that is a patch release that does not say what it
+fixed. A pull request targeting `release/0.11.0` costs nothing extra and puts its title in the notes.
+
+If a fix does land as a direct commit anyway, edit the release body by hand afterwards: the workflow
+passes `--generate-notes` unconditionally and has no way to supply notes for that path.
 
 `nbgv prepare-release` can also be run *on* a release branch to move its stability stage, for example
 from a prerelease tag to stable — that is Nerdbank.GitVersioning's documented behaviour, not an
@@ -157,7 +168,9 @@ assigns the version at pack time.
 Know what that publishes, and what it does not. `--generate-notes` emits **pull request titles**,
 authors and links; it does **not** copy a PR description into the release body. So a PR title is
 consumer-facing prose, and a migration step written only in a PR description is reachable through the
-link but is not part of the notes.
+link but is not part of the notes. And when the range contains no merged pull request at all, the
+body is only the compare link — no `What's Changed` heading, no commit list. That is why a servicing
+fix belongs in a pull request targeting its release branch; see *Servicing a released version*.
 
 Durable guidance therefore belongs in the topic page under `docs/` that owns the feature — a new
 default, a behavioural break and its restore recipe, a constraint on upgrading packages together.
