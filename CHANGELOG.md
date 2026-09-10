@@ -135,12 +135,43 @@ this file cannot name the build; the PR and issue numbers are the durable anchor
 - An `IReplResult` whose `Kind` is not `text` or `success` is a `HandlerError` (exit `1`), including
   a kind the framework does not recognize. An unclassifiable result never reports success to a
   pipeline; use `Results.Exit(n)` to choose a code deliberately.
-- `ReplExecutionOutcomeKind.Interrupted` and `ExitCodes.Interrupted` are **inert in this release**:
-  no public API produces that kind, and an application cannot supply an outcome to the table from
-  outside the framework. They ship now so in-framework signal handling (#80) can route SIGINT/SIGTERM
-  through the same table and resolver without adding public API after these packages are published.
+- `ReplExecutionOutcomeKind.Interrupted` and `ExitCodes.Interrupted` are produced by automatic
+  process-signal handling, described under *Added — standalone process signals* below. They are not
+  reachable any other way: an application cannot supply an outcome to the table from outside the
+  framework, so the kind only appears for a signal the framework itself claimed.
 - Exit codes are not range-checked. Keep them within `0`-`255`: POSIX `wait` exposes only the low
   eight bits to the parent process.
+
+### Added — standalone process signals
+
+- `ReplRunOptions.ProcessSignalHandling` and `ProcessSignalHandlingMode` let internally configured standalone `Run`/`RunAsync` calls opt into or out of cooperative process-signal handling. The nullable option inherits the active profile default: CLI and default-interactive profiles use `Automatic`; an unprofiled `ReplApp.Create()` and `UseEmbeddedConsoleProfile()` use `None`, preserving caller-owned shutdown unless a process-owning profile is selected.
+- In automatic mode, the first Ctrl+C console event—or Ctrl+Break on Windows—cancels all overlapping standalone runs in one process-wide ownership epoch and reports a successful or cancelled run as `ReplExecutionOutcomeKind.Interrupted`, which resolves through `ExitCodes.Interrupted` and defaults to exit code `130`. On supported Unix platforms, SIGTERM behaves the same way with `143`. A run that already produced a refusal or a failure keeps reporting it. A subsequent signal uses the operating-system default, and stderr diagnostics identify both steps. Explicit non-zero handler exit codes remain authoritative.
+
+### Changed — process signal ownership
+
+- Apps that select `UseCliProfile()` or `UseDefaultInteractive()` now take process signal ownership by
+  default. Two observable changes follow for an existing consumer. Selecting
+  `ProcessSignalHandlingMode.None` restores the previous behavior:
+  - **Exit codes.** A run interrupted by Ctrl+C, Ctrl+Break on Windows, or SIGTERM on Unix now resolves
+    to `130` or `143` where it previously produced whatever the operating-system default termination
+    yielded. The interruption goes through the exit-code policy, so `ExitCodes.Interrupted` overrides
+    those defaults and `ExitCodes.Resolver` observes it like any other outcome. A wrapper script or CI step that treats any non-zero code as a failure will start seeing
+    these on interruption. An explicit non-zero handler exit code still takes precedence.
+  - **Handler token identity.** One-shot handlers now receive a run-scoped token linked to the caller
+    token instead of the caller token itself, and Repl disposes it when the run ends. No token Repl
+    creates may outlive its run. A handler that stored one and used it afterwards — for detached or
+    background work — sees `ObjectDisposedException` from `Register` or `WaitHandle`, and, worse,
+    nothing at all from `IsCancellationRequested`, which keeps reporting `false`. Handlers that only
+    await work within the run are unaffected. Apps with no profile, `UseEmbeddedConsoleProfile()`, and
+    the external `IServiceProvider`/`IHost`/`IReplHost` overloads keep passing the caller token through
+    unchanged.
+
+### Operational notes — process signals
+
+- Exit codes `130` (`128 + SIGINT(2)`) and `143` (`128 + SIGTERM(15)`) follow the widely adopted Unix/Bash convention; they are not universal .NET or Windows exit-code guarantees. SIGTERM bridging is Unix-only.
+- Automatic handling has no built-in grace-period timeout. A supervisor can send a second signal to force termination. The process callbacks are installed lazily once and remain inert outside automatic runs so runtime callback snapshots cannot race handler teardown.
+- For one-shot handlers, automatic mode injects a linked, run-scoped token, while external host/provider overloads pass the caller token through unchanged. Interactive commands receive a separate command-scoped linked token so Ctrl+C can cancel only the active command. Handlers must not retain any Repl-created token beyond its scope. An explicit `Automatic` request on an external overload is ignored with a diagnostic on the active error channel.
+- Android, browser, iOS (including Mac Catalyst), and tvOS do not install the unsupported process-signal bridge; `Automatic` emits a diagnostic and their platform host must provide cancellation. Consumer cancellation-callback failures are also diagnosed without replacing an established `130`/`143` exit policy.
 
 ### Added — option visibility
 

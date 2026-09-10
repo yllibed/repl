@@ -6,6 +6,12 @@ namespace Repl;
 public sealed record ReplRunOptions
 {
 	/// <summary>
+	/// Gets how standalone runs handle process termination signals.
+	/// <see langword="null"/> uses the active application profile's default.
+	/// </summary>
+	public ProcessSignalHandlingMode? ProcessSignalHandling { get; init; }
+
+	/// <summary>
 	/// Gets or sets the hosted-service lifecycle behavior.
 	/// </summary>
 	public HostedServiceLifecycleMode HostedServiceLifecycle { get; init; } = HostedServiceLifecycleMode.None;

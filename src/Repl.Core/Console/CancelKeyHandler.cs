@@ -1,29 +1,24 @@
 namespace Repl;
 
 /// <summary>
-/// Session-scoped Ctrl+C handler that implements double-tap cancellation.
-/// <list type="bullet">
-///   <item>1st Ctrl+C during a command → cancels the per-command CTS, session continues.</item>
-///   <item>2nd Ctrl+C within ~2 s (or Ctrl+C with no active command) → exits the process.</item>
-/// </list>
-/// Uses <see cref="Console.CancelKeyPress"/> which works universally across terminals,
-/// IDEs (Rider, VS Code), SSH sessions, and tmux — unlike Esc-key polling.
+/// Session-scoped Ctrl+C handler. The first press during a command cancels its CTS and keeps
+/// the session alive; a subsequent press, or a press with no active command, exits the process.
+/// Registers its claim with <see cref="ConsoleCancelKeyCoordinator"/> so interactive and standalone
+/// handlers share one atomic, process-wide ownership decision.
 /// </summary>
 internal sealed class CancelKeyHandler : IDisposable
 {
-	private static readonly TimeSpan DoubleTapWindow = TimeSpan.FromSeconds(2);
-
 	private CancellationTokenSource? _commandCts;
-	private DateTimeOffset _lastCancelPress;
 	private readonly Lock _lock = new();
-	private readonly bool _hooked;
+	private readonly IDisposable? _registration;
+	private int _disposed;
 
 	internal CancelKeyHandler()
 	{
-		_hooked = !ReplSessionIO.IsSessionActive;
-		if (_hooked)
+		if (!ReplSessionIO.IsSessionActive)
 		{
-			Console.CancelKeyPress += OnCancelKeyPress;
+			// The key is irrelevant here: Ctrl+C and Ctrl+Break cancel the active command the same way.
+			_registration = ConsoleCancelKeyCoordinator.RegisterInteractive(_ => TryHandleCancelKey());
 		}
 	}
 
@@ -41,36 +36,31 @@ internal sealed class CancelKeyHandler : IDisposable
 
 	public void Dispose()
 	{
-		if (_hooked)
+		if (Interlocked.Exchange(ref _disposed, 1) != 0)
 		{
-			Console.CancelKeyPress -= OnCancelKeyPress;
+			return;
 		}
+
+		_registration?.Dispose();
 	}
 
-	private void OnCancelKeyPress(object? sender, ConsoleCancelEventArgs e)
+	internal ConsoleCancelKeyHandlingResult HandleCancelKeyForTesting() => TryHandleCancelKey();
+
+	private ConsoleCancelKeyHandlingResult TryHandleCancelKey()
 	{
 		lock (_lock)
 		{
-			var now = DateTimeOffset.UtcNow;
-
 			if (_commandCts is { IsCancellationRequested: false })
 			{
-				// First Ctrl+C during a command → cancel command, keep session alive.
-				e.Cancel = true;
 				_commandCts.Cancel();
-				_lastCancelPress = now;
 				ReplSessionIO.Error.WriteLine();
 				ReplSessionIO.Error.WriteLine("Press Ctrl+C again to exit.");
-				return;
+				return ConsoleCancelKeyHandlingResult.SuppressProcessTermination;
 			}
 
-			if (now - _lastCancelPress < DoubleTapWindow)
-			{
-				// Second Ctrl+C within window → exit (don't set e.Cancel).
-				return;
-			}
-
-			// Ctrl+C with no active command → exit.
+			// A subsequent press, or a press with no active command, retains
+			// the operating-system default instead of handing ownership to a standalone run.
+			return ConsoleCancelKeyHandlingResult.AllowProcessTermination;
 		}
 	}
 }

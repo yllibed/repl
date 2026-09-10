@@ -27,6 +27,10 @@ app.Map("hello", () => "world");
 return app.Run(args);
 ```
 
+## Process signals
+
+Process-owning profiles cooperatively translate a first Ctrl+C event, Ctrl+Break on Windows, or SIGTERM on supported Unix platforms into handler cancellation. An unprofiled app and embedded hosts remain caller-owned by default; Repl does not claim their standalone signals. Configure this per run with `ReplRunOptions.ProcessSignalHandling`; see the [configuration reference](https://repl.yllibed.org/reference/configuration/#process-signal-handling) for exit codes `130`/`143`, second-signal escalation, token lifetime, and platform limits.
+
 ## Docs
 
 - [REPL Mode](https://repl.yllibed.org/getting-started/repl-mode/) — interactive session, scopes, history

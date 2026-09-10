@@ -765,7 +765,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 				if (TupleDecomposer.IsTupleResult(result, out var tuple))
 				{
-					return await RenderTupleResultAsync(tuple, scopeTokens, globalOptions, cancellationToken)
+					return await RenderTupleResultAsync(
+							tuple,
+							scopeTokens,
+							globalOptions,
+							serviceProvider,
+							cancellationToken)
 						.ConfigureAwait(false);
 				}
 
@@ -794,15 +799,34 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 				var normalizedResult = ApplyNavigationResult(result, scopeTokens);
 				ExecutionObserver?.OnResult(normalizedResult);
-				var rendered = await RenderOutputAsync(
-						normalizedResult,
-						globalOptions.OutputFormat,
-						cancellationToken,
-						scopeTokens is not null,
-						globalOptions.ResultFlow)
-					.ConfigureAwait(false);
+
+				// Classified before rendering, so an explicit exit code is already in hand if rendering
+				// its payload is then cancelled. Without that, a cancellation arriving mid-render lost
+				// the handler's own code and the run reported the cancellation's instead.
+				var classified = ClassifyResult(normalizedResult);
+				bool rendered;
+				try
+				{
+					rendered = await RenderOutputAsync(
+							normalizedResult,
+							globalOptions.OutputFormat,
+							cancellationToken,
+							scopeTokens is not null,
+							globalOptions.ResultFlow)
+						.ConfigureAwait(false);
+				}
+				catch (OperationCanceledException ex)
+					when (PreservesExplicitExitCode(classified, ex, cancellationToken))
+				{
+					// The handler had already chosen its exit code; only showing its payload was
+					// interrupted. The code stays authoritative, which is what IExitResult promises and
+					// what the process-signal contract documents for a non-zero one.
+					await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
+					return (classified, false);
+				}
+
 				// RenderOutputAsync returns false only for an unknown requested output format: a usage mistake.
-				return (rendered ? ClassifyResult(normalizedResult) : ExecutionOutcome.UsageError(normalizedResult), false);
+				return (rendered ? classified : ExecutionOutcome.UsageError(normalizedResult), false);
 		}
 		// Gated on the ambient runtime state, not on scopeTokens: a protocol-passthrough command always
 		// passes scopeTokens: null, interactive or not, so it is no mode discriminator.
@@ -907,10 +931,32 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 	}
 
-	// The seventh place this question is asked with its own predicate; see the follow-up on giving
-	// cancellation classification an owning type.
+	// One of several places this question is asked with its own predicate; giving cancellation
+	// classification an owning type is tracked in #89 rather than done here.
 	private static bool IsCallerCancellation(Exception exception, CancellationToken cancellationToken) =>
 		exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
+
+	/// <summary>
+	/// Whether an exception raised while rendering a result should leave that result's explicit exit
+	/// code in force. Three conditions, and each excludes a way of getting this wrong.
+	/// <list type="bullet">
+	/// <item>An <see cref="IExitResult"/>, because only that carries a code of the handler's choosing.</item>
+	/// <item>A <em>non-zero</em> one. A zero code reports nothing, so preserving it would let a cancelled
+	/// run exit successfully — swallowing the cancellation instead of propagating it or applying
+	/// <see cref="ExitCodeOptions.Cancelled"/>. <c>IsSuccessLike</c> is what draws that line, the same
+	/// one a process signal uses when it decides whether to reclassify a run as interrupted.</item>
+	/// <item>A cancellation the run itself owns. A transformer raising
+	/// <see cref="OperationCanceledException"/> on its own account is a broken renderer, not an
+	/// intentional exit, and stays a failure like any other transformer fault.</item>
+	/// </list>
+	/// </summary>
+	private static bool PreservesExplicitExitCode(
+		ExecutionOutcome classified,
+		Exception exception,
+		CancellationToken cancellationToken) =>
+		classified.Kind == ReplExecutionOutcomeKind.HandlerExitCode
+		&& !classified.IsSuccessLike
+		&& IsCallerCancellation(exception, cancellationToken);
 
 	/// <summary>
 	/// Turns a reported failure into an outcome. Pure by design: every fallible step happened in
@@ -1012,10 +1058,51 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 	}
 
+	/// <summary>
+	/// Renders one element of a tuple result. Returns the outcome the whole run should short-circuit to,
+	/// or <see langword="null"/> to carry on with the next element.
+	/// </summary>
+	/// <remarks>
+	/// The element is classified before it is rendered, for the same reason the scalar path is: the last
+	/// element decides the run's outcome, so an explicit exit code has to be in hand if rendering its
+	/// payload is then cancelled by the caller or by a process signal.
+	/// </remarks>
+	private async ValueTask<ExecutionOutcome?> RenderTupleElementAsync(
+		object? normalized,
+		ExecutionOutcome classified,
+		bool isInteractive,
+		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		bool rendered;
+		try
+		{
+			rendered = await RenderOutputAsync(
+					normalized,
+					globalOptions.OutputFormat,
+					cancellationToken,
+					isInteractive,
+					globalOptions.ResultFlow)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException ex)
+			when (PreservesExplicitExitCode(classified, ex, cancellationToken))
+		{
+			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
+			return classified;
+		}
+
+		// RenderOutputAsync returns false only for an unknown requested output format: a usage mistake,
+		// which outranks whatever this element was carrying.
+		return rendered ? null : ExecutionOutcome.UsageError(normalized);
+	}
+
 	private async ValueTask<(ExecutionOutcome Outcome, bool EnterInteractive)> RenderTupleResultAsync(
 		ITuple tuple,
 		List<string>? scopeTokens,
 		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
 		var isInteractive = scopeTokens is not null;
@@ -1048,22 +1135,23 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 			ExecutionObserver?.OnResult(normalized);
 
-			var rendered = await RenderOutputAsync(
+			var classified = isLast ? ClassifyResult(normalized) : outcome;
+			var elementOutcome = await RenderTupleElementAsync(
 					normalized,
-					globalOptions.OutputFormat,
-					cancellationToken,
+					classified,
 					isInteractive,
-					globalOptions.ResultFlow)
+					globalOptions,
+					serviceProvider,
+					cancellationToken)
 				.ConfigureAwait(false);
-
-			if (!rendered)
+			if (elementOutcome is { } shortCircuit)
 			{
-				return (ExecutionOutcome.UsageError(normalized), false);
+				return (shortCircuit, false);
 			}
 
 			if (isLast)
 			{
-				outcome = ClassifyResult(normalized);
+				outcome = classified;
 			}
 		}
 

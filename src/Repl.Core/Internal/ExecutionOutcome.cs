@@ -48,12 +48,30 @@ internal readonly record struct ExecutionOutcome(
 	public static ExecutionOutcome Cancelled(Exception exception, int? conventionalExitCode = null) =>
 		new(ReplExecutionOutcomeKind.Cancelled, Exception: exception, ExplicitExitCode: conventionalExitCode);
 
+	/// <summary>
+	/// A run stopped by a process signal the framework claimed. <paramref name="conventionalExitCode"/> is
+	/// the <c>128 + signal</c> code that signal carries, which <see cref="ExitCodeOptions.Interrupted"/>
+	/// overrides when set.
+	/// </summary>
+	public static ExecutionOutcome Interrupted(Exception exception, int conventionalExitCode) =>
+		new(ReplExecutionOutcomeKind.Interrupted, Exception: exception, ExplicitExitCode: conventionalExitCode);
+
 	public static ExecutionOutcome FrameworkError(object? rendered, Exception? exception = null) =>
 		new(ReplExecutionOutcomeKind.FrameworkError, rendered, exception);
 
 	/// <summary>
 	/// True when the outcome should not prevent an automatic transition into the interactive loop.
 	/// </summary>
+	/// <summary>
+	/// True when a claimed process signal should reclassify this outcome as
+	/// <see cref="ReplExecutionOutcomeKind.Interrupted"/>. A run that completed cleanly, or that the
+	/// signal's own token cancelled, has nothing of its own to report and the interruption is the story.
+	/// A run that already produced a refusal or a failure keeps reporting it: the interruption arrived
+	/// after the fact, and replacing a usage error with <c>130</c> would hide why the command was wrong.
+	/// </summary>
+	public bool IsInterruptible =>
+		IsSuccessLike || Kind is ReplExecutionOutcomeKind.Cancelled;
+
 	public bool IsSuccessLike =>
 		Kind is ReplExecutionOutcomeKind.Success or ReplExecutionOutcomeKind.Help
 		|| (Kind == ReplExecutionOutcomeKind.HandlerExitCode && ExplicitExitCode == 0);

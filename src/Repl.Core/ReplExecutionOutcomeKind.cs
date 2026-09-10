@@ -68,9 +68,11 @@ public enum ReplExecutionOutcomeKind
 	Cancelled = 7,
 
 	/// <summary>
-	/// The run was interrupted by a process signal (SIGINT, Ctrl+Break, SIGTERM). Reserved for a
-	/// process-signal handler (see issue #80); no public API produces this kind today — the core pipeline
-	/// never emits it, and nothing can supply an outcome to the table from outside the framework.
+	/// The run was interrupted by a process signal (SIGINT, Ctrl+Break, SIGTERM) that the framework
+	/// claimed, which standalone runs opt into through <c>ReplRunOptions.ProcessSignalHandling</c>. The
+	/// core pipeline never produces it on its own: an interruption is decided by the signal owner around
+	/// the run, and only a clean or cancelled run is reclassified — one that already produced a refusal
+	/// or a failure keeps reporting it.
 	/// </summary>
 	Interrupted = 8,
 

@@ -52,17 +52,15 @@ public sealed class ExitCodeOptions
 	/// <summary>
 	/// Gets or sets the exit code for <see cref="ReplExecutionOutcomeKind.Interrupted"/> — a process
 	/// signal (SIGINT, Ctrl+Break, SIGTERM) turned into a cooperative shutdown by a process-signal
-	/// handler.
+	/// handler — <c>ReplRunOptions.ProcessSignalHandling</c> in automatic mode claims the signal and
+	/// reports the run as interrupted.
 	/// <para>
-	/// <strong>Inert today.</strong> No public API produces that kind: the core pipeline never emits it,
-	/// and an application cannot supply an outcome to this table from outside the framework. The entry
-	/// exists so in-framework signal handling (issue #80) can route SIGINT/SIGTERM through the same table
-	/// and resolver without adding public API after these packages ship. Setting it changes nothing until
-	/// that lands.
+	/// When <see langword="null"/> (the default) the conventional <c>128 + signal</c> code the claimed
+	/// signal carries is used — <c>130</c> for SIGINT and Ctrl+Break, <c>143</c> for SIGTERM — falling
+	/// back to <c>130</c> when none is supplied. Set this to publish a single code for every signal
+	/// instead. A run that had already produced its own refusal or failure keeps reporting that instead
+	/// of the interruption; only a clean or cancelled run is reclassified.
 	/// </para>
-	/// When it does, <see langword="null"/> (the default) uses the conventional <c>128 + signal</c> code
-	/// the handler supplies, falling back to <c>130</c> when it supplies none; set this to publish a
-	/// single code for every signal instead.
 	/// </summary>
 	public int? Interrupted { get; set; }
 

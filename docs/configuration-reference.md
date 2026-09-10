@@ -145,7 +145,7 @@ of a top-level run; nested MCP sub-invocations always use the defaults and skip 
 - `HandlerError` (`int`, default: `1`) — Handler returned an error-like `IReplResult`.
 - `HandlerException` (`int`, default: `1`) — Handler or middleware threw.
 - `Cancelled` (`int?`, default: `null`) — Cancellation through the caller's own token, during the command or while hosted services were starting. `null` rethrows the `OperationCanceledException` unless a `Resolver` is set, in which case the resolver is handed `130` (`128 + SIGINT`); a value is returned instead. A handler that raises `OperationCanceledException` without the caller having asked for cancellation is a `HandlerException`, not a cancellation.
-- `Interrupted` (`int?`, default: `null`) — **Inert in this release.** No public API produces `ReplExecutionOutcomeKind.Interrupted`: the core pipeline never emits it, and an application cannot supply an outcome to this table from outside the framework. Reserved for in-framework signal handling (#80), after which `null` will use the conventional `128 + signal` code the handler supplies, falling back to `130` when it supplies none; setting it publishes one code for every signal.
+- `Interrupted` (`int?`, default: `null`) — A process signal (SIGINT, Ctrl+Break, SIGTERM) the framework claimed for a standalone run that opted in through `ReplRunOptions.ProcessSignalHandling`. `null` uses the conventional `128 + signal` code the signal carries (`130` for SIGINT/Ctrl+Break, `143` for SIGTERM), falling back to `130` when none is supplied; setting it publishes one code for every signal. Only a clean or cancelled run is reclassified as interrupted — one that already produced a refusal or failure keeps reporting it.
 - `FrameworkError` (`int`, default: `1`) — Incompatible programmatic adapter, unsupported hosting capability, or a hosted-service start/stop failure. The outcome carries the exception that caused it; when a shutdown failure suppressed an exception the run was propagating, that is an `AggregateException` of both. Neither a cancellation nor an interruption falls back to this code.
 - `Resolver` (`Func<ReplExecutionOutcome, int>?`, default: `null`) — Final interception hook. Receives the outcome with its table-mapped `ExitCode`; its return value wins. Also sees `HandlerExitCode` outcomes (explicit `Results.Exit`), which bypass the table. `ReplExecutionOutcome.Scope` distinguishes the process exit code (`ReplExitCodeScope.Process`, once per run) from one interactive command's shell-integration mark (`ReplExitCodeScope.ShellIntegrationMark`, only when a mark actually carries a code). Setting a resolver also opts in to observing cancellation. It must not throw: an exception degrades to the table-mapped code plus one diagnostic line on the error stream.
 
@@ -201,6 +201,144 @@ Accessed via `ReplOptions.ShellCompletion`. See [Shell Completion](shell-complet
 
 A record passed to `app.RunAsync(...)` to control runtime behavior. Separate from `ReplOptions`.
 
+- `ProcessSignalHandling` (`ProcessSignalHandlingMode?`, default: `null`) — `null` preserves the active application's profile default. Set it to `Automatic` or `None` to override that default for one run. An unprofiled app defaults to caller-owned handling (`None`).
 - `HostedServiceLifecycle` (`HostedServiceLifecycleMode`, default: `None`) — Hosted service lifecycle mode.
 - `AnsiSupport` (`AnsiMode`, default: `Auto`) — ANSI support mode for this run.
 - `TerminalOverrides` (`TerminalSessionOverrides?`, default: `null`) — Terminal session overrides.
+
+### Process signal handling
+
+`ProcessSignalHandling` applies only to standalone `Run`/`RunAsync` overloads that use the app's internally configured services. Overloads that receive an external `IServiceProvider`, `IHost`, or `IReplHost` do not install the standalone process-signal bridge; the external owner remains responsible for translating shutdown into the caller-owned cancellation token. Passing an explicit `Automatic` value to one of those overloads writes a diagnostic to the active error channel and ignores the value. If such a run enters Repl's interactive loop, that loop still retains its own console command-cancellation policy.
+
+The mode that actually applies to a run is resolved in this order:
+
+```mermaid
+flowchart TD
+    A["Run / RunAsync"] --> B{"Which overload?"}
+    B -->|"External IServiceProvider, IHost or IReplHost"| C["Caller-owned<br/>an explicit Automatic is diagnosed and ignored"]
+    B -->|"Internally configured services"| D{"ReplRunOptions.ProcessSignalHandling"}
+    D -->|"None"| E["Caller-owned<br/>no bridge is installed"]
+    D -->|"Automatic"| G{"Is the bridge available?"}
+    D -->|"null (default)"| F["Active profile default"]
+    F -->|"UseCliProfile / UseDefaultInteractive"| G
+    F -->|"no profile / UseEmbeddedConsoleProfile"| E
+    G -->|"yes"| H["Repl owns signals for this run<br/>the handler receives a linked run-scoped token"]
+    G -->|"Android, browser, iOS incl. Mac Catalyst, tvOS"| I["Diagnostic, then no bridge<br/>the handler still receives a linked run-scoped token"]
+    G -->|"registration rejected by the environment"| I
+```
+
+| Value | Behavior |
+|---|---|
+| `null` | Inherit the active profile's default. Supplying unrelated options such as `AnsiSupport` does not change signal ownership. |
+| `ProcessSignalHandlingMode.Automatic` | Repl temporarily owns standalone process-signal handling and converts a first supported signal into cooperative cancellation. |
+| `ProcessSignalHandlingMode.None` | Repl installs no standalone process-signal handling. The caller or host owns shutdown. |
+
+Profile defaults are:
+
+| App configuration | Default | Intended owner |
+|---|---|---|
+| `ReplApp.Create()` without a profile | `None` | Caller or embedding host |
+| `UseCliProfile()` | `Automatic` | Standalone CLI process |
+| `UseDefaultInteractive()` | `Automatic` for one-shot runs; the interactive session keeps its existing Ctrl+C behavior | Repl |
+| `UseEmbeddedConsoleProfile()` | `None` | Embedding host |
+
+An embedded host can opt in for one run, while a standalone app can opt out:
+
+```csharp
+var exitCode = await app.RunAsync(
+    args,
+    new ReplRunOptions
+    {
+        ProcessSignalHandling = ProcessSignalHandlingMode.Automatic,
+    },
+    stoppingToken);
+```
+
+```csharp
+var exitCode = await app.RunAsync(
+    args,
+    new ReplRunOptions
+    {
+        ProcessSignalHandling = ProcessSignalHandlingMode.None,
+    },
+    stoppingToken);
+```
+
+#### First and second signals
+
+Automatic handling supports overlapping standalone runs in one process-wide ownership epoch. The shared OS callbacks are installed lazily once per process and remain inert when no automatic run owns signals; keeping the callbacks stable avoids registration teardown races with runtime callback snapshots.
+
+1. The first supported signal is claimed once, a diagnostic is written to standard error, and every active automatic run receives cooperative cancellation. A run that starts before the last scope from that epoch is disposed joins the already-cancelled epoch rather than interpreting the next signal as another first signal.
+2. A subsequent supported signal is not suppressed. Repl writes a final diagnostic and leaves termination to the operating system, so cleanup is not guaranteed to finish.
+3. After the last automatic scope is disposed **and all signal-triggered cancellation callbacks have drained**, the process-wide claimed-signal state resets. A run that joins while callbacks are still draining inherits the cancelled epoch.
+
+The epoch is process-wide, so its state is easier to read as a machine than as a list:
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> Inert
+
+    Inert --> Unclaimed: a run starts
+    Unclaimed --> Inert: last run disposed
+    Unclaimed --> Claimed: step 1
+    Claimed --> Claimed: a run starts
+    Claimed --> Inert: step 3
+    Claimed --> [*]: step 2
+
+    note right of Inert
+        OS callbacks are installed lazily on the first
+        automatic run, then stay installed. If the
+        platform or the environment refuses them, runs
+        still start and stop but no signal can reach
+        this machine, so it never reaches Claimed.
+    end note
+
+    note right of Claimed
+        Late joiners inherit the cancelled epoch
+        instead of reading the next signal as a
+        new first signal.
+    end note
+```
+
+The step numbers are the three above. Two edges are worth reading twice: `Claimed --> [*]` is the operating system terminating the process, not Repl returning an exit code; and `Claimed --> Inert` waits on cancellation-callback draining as well as scope disposal, neither of which is bounded. That is deliberate — see the paragraph below the priority rule.
+
+Interactive console-key handling has priority over standalone handling: the first Ctrl+C event—or Ctrl+Break on Windows—during an interactive command cancels that command; a subsequent event, or one with no active command, retains the operating-system default.
+
+One `Console.CancelKeyPress` subscription serves both owners, and which key counts depends on the platform:
+
+```mermaid
+flowchart TD
+    A["Console.CancelKeyPress"] --> B{"Special key"}
+    B -->|"ControlC"| D
+    B -->|"ControlBreak on Windows"| D
+    B -->|"ControlBreak on Unix, i.e. SIGQUIT"| C["Unclaimed<br/>OS default applies"]
+    D{"An interactive handler is registered?"}
+    D -->|"yes"| E["Interactive handler decides<br/>first press cancels the running command"]
+    D -->|"no"| F{"An automatic standalone run is active?"}
+    F -->|"yes"| G["The standalone epoch claims it<br/>see the epoch machine above"]
+    F -->|"no"| C
+```
+
+Repl does **not** impose an automatic grace-period timeout after the first signal. A non-cooperative handler can therefore keep running until another signal is sent or an external supervisor escalates termination. Cancellation-callback draining is likewise unbounded: resetting the epoch while a callback is still running could cause the next signal to be suppressed as a new first signal. If a callback never completes, the epoch remains claimed and every subsequent supported signal falls through to operating-system termination. This avoids embedding an application-specific shutdown deadline in the library.
+
+#### Exit codes
+
+| Signal/event | Typical source | Exit code | Basis |
+|---|---|---:|---|
+| `SIGINT` | Ctrl+C | `130` | Unix convention: `128 + 2` |
+| `ConsoleSpecialKey.ControlBreak` | Ctrl+Break on Windows | `130` | Repl compatibility policy |
+| `SIGTERM` | Service manager, container runtime, or `kill` | `143` | Unix convention: `128 + 15` |
+| `SIGQUIT` | Ctrl+\ on Unix, or `kill -QUIT` | `131` | Unclaimed by Repl; whatever the operating system produces |
+
+The `128 + signal number` calculation is a widely adopted Unix shell convention, notably used by Bash. It is not a universal .NET exit-code standard, and POSIX requires signal termination statuses to be distinguishable without requiring this exact arithmetic on every shell and platform. Repl deliberately returns `130` or `143` for predictable Unix CLI, script, container, and supervisor integration.
+
+If a handler completes normally with its own non-zero exit code, that code takes precedence. A successful `0` result or an `OperationCanceledException` caused by the claimed signal resolves to the signal code. Exceptions thrown by consumer cancellation callbacks are observed and diagnosed during scope disposal but do not replace an already-established signal exit code.
+
+#### Platform scope and token lifetime
+
+- Ctrl+C is bridged through `Console.CancelKeyPress`. Ctrl+Break follows the same Repl policy only on Windows. On Unix, .NET surfaces SIGQUIT through `Console.CancelKeyPress` as `ControlBreak`; Repl leaves that event unclaimed so the operating-system SIGQUIT behavior is preserved.
+- SIGTERM bridging uses .NET's POSIX signal API and is enabled only on supported non-Windows platforms. SIGTERM does not participate in the interactive console-key priority rule. Repl does not install a direct POSIX SIGQUIT registration. Windows `taskkill`, console-window close, and service-control shutdown do not acquire equivalent SIGTERM semantics from this option; a Windows host must translate its lifecycle events into the caller cancellation token.
+- Android, browser, iOS (including Mac Catalyst), and tvOS do not support the required console/POSIX registrations. `Automatic` emits a diagnostic and installs no process-signal bridge there; the platform host must provide cancellation. .NET identifies Mac Catalyst as part of its iOS-like mobile family and compiles the platform-not-supported POSIX signal registration there.
+- In `Automatic` mode, a one-shot handler receives a run-scoped token linked to the caller token and the process-signal cancellation source. An interactive command receives a command-scoped token linked to that run token so Ctrl+C can cancel only the active command. Repl disposes each linked token when its scope ends; handlers may use it for awaited work but must not retain it for detached work.
+- In `None` mode and external-host overloads, Repl does not create the standalone signal-linked token. A one-shot handler receives the caller token unchanged. An interactive command still receives its separate command-scoped linked token, so its identity and lifetime differ from the caller token even though host-shutdown cancellation flows through it.

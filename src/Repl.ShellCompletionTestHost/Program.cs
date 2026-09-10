@@ -6,7 +6,7 @@ namespace Repl.ShellCompletionTestHost;
 
 internal static class Program
 {
-	private static int Main(string[] args)
+	private static async Task<int> Main(string[] args)
 	{
 		var app = ReplApp.Create();
 		ConfigureScenario(app, Environment.GetEnvironmentVariable("REPL_TEST_SCENARIO"));
@@ -16,9 +16,18 @@ internal static class Program
 			app.UseDefaultInteractive();
 		}
 
-#pragma warning disable MA0045 // Sync entry point is intentional for this test host.
-		return app.Run(args);
-#pragma warning restore MA0045
+		ReplRunOptions? runOptions = null;
+		if (TryReadEnum<ProcessSignalHandlingMode>("REPL_TEST_SIGNAL_HANDLING", out var signalHandling))
+		{
+			runOptions = new ReplRunOptions { ProcessSignalHandling = signalHandling };
+		}
+
+		if (TryReadBoolean("REPL_TEST_USE_SYNC_RUN", out var useSynchronousRun) && useSynchronousRun)
+		{
+			return app.Run(args, runOptions);
+		}
+
+		return await app.RunAsync(args, runOptions).ConfigureAwait(false);
 	}
 
 	private static void ConfigureScenario(ReplApp app, string? scenario)
@@ -33,10 +42,68 @@ internal static class Program
 			case "setup":
 				ConfigureCompletionScenario(app);
 				return;
+			case "process-signal":
+				ConfigureProcessSignalScenario(app);
+				return;
+			case "process-signal-exit-code":
+				ConfigureProcessSignalExitCodeScenario(app);
+				return;
 			default:
 				throw new InvalidOperationException(
-					$"Unknown REPL test scenario '{scenario}'. Supported values: completion, setup.");
+					$"Unknown REPL test scenario '{scenario}'. Supported values: completion, setup, process-signal, process-signal-exit-code.");
 		}
+	}
+
+	private static void ConfigureProcessSignalScenario(ReplApp app)
+	{
+		app.UseCliProfile();
+		app.Map("wait {marker}", async (string marker, CancellationToken cancellationToken) =>
+		{
+			await File.WriteAllTextAsync(marker, "READY\n", CancellationToken.None).ConfigureAwait(false);
+			try
+			{
+				await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+			}
+			finally
+			{
+				await File.AppendAllTextAsync(marker, "FINALLY\n", CancellationToken.None).ConfigureAwait(false);
+				if (int.TryParse(
+						Environment.GetEnvironmentVariable("REPL_TEST_SIGNAL_CLEANUP_DELAY_MS"),
+						NumberStyles.Integer,
+						CultureInfo.InvariantCulture,
+						out var cleanupDelayMs)
+					&& cleanupDelayMs > 0)
+				{
+					await Task.Delay(TimeSpan.FromMilliseconds(cleanupDelayMs), CancellationToken.None).ConfigureAwait(false);
+					await File.AppendAllTextAsync(
+						marker,
+						"CLEANUP-COMPLETED\n",
+						CancellationToken.None).ConfigureAwait(false);
+				}
+			}
+		});
+	}
+
+	private static void ConfigureProcessSignalExitCodeScenario(ReplApp app)
+	{
+		app.UseCliProfile();
+		app.Map("wait {marker}", async (string marker, CancellationToken cancellationToken) =>
+		{
+			await File.WriteAllTextAsync(marker, "READY\n", CancellationToken.None).ConfigureAwait(false);
+			try
+			{
+				await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+			{
+				await File.AppendAllTextAsync(
+					marker,
+					"HANDLER-RETURNED\n",
+					CancellationToken.None).ConfigureAwait(false);
+			}
+
+			return Results.Exit(7);
+		});
 	}
 
 	private static void ConfigureCompletionScenario(ReplApp app)
