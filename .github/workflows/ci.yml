@@ -526,13 +526,17 @@ jobs:
           # of the same version carrying different binaries, with the tag describing neither.
           # Whatever a repeat run built cannot ship under this version; that needs a version bump.
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "::warning title=Release v${VERSION} already exists::Left untouched. A published version is immutable, so nothing this run built can ship as ${VERSION} — on NuGet or on the release. If this commit changed shipped code, bump the version on the release branch and push again."
+            echo "::warning title=Release v${VERSION} already exists::Its assets and tag are left untouched. NuGet still runs and will skip every version it already has — but it accepts one it is missing, which is how a partial push recovers. If this commit changed shipped code, bump the version on the release branch: the release's own assets will not be updated."
             {
               echo "### Release \`v${VERSION}\` already exists — left untouched"
               echo
-              echo "Its assets and tag are unchanged, and **nothing this run built was published**."
-              echo "A released version is immutable, so no code change in this commit can ship as"
-              echo "\`${VERSION}\`. Bump the version on the release branch if it needs to."
+              echo "Its assets and tag are unchanged. \`Publish to NuGet\` still runs: it skips every"
+              echo "version already published, which is the normal outcome here, and uploads one that"
+              echo "is missing, which is how a partially failed push recovers."
+              echo
+              echo "So a code change in this commit cannot reach consumers as \`${VERSION}\` through the"
+              echo "release assets, and reaches NuGet only for a package NuGet does not yet have."
+              echo "Bump the version on the release branch if the change is meant to ship."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             # --target is what makes the tag point at the commit that built these packages. Without

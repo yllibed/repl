@@ -82,6 +82,10 @@ a documentation fix, a workflow tweak, a cherry-picked change. Both publish step
   `Publish to NuGet` still executes. It does not re-upload either: a released version is immutable on
   NuGet, so replacing the release's assets would leave a direct GitHub download and a NuGet install of
   the same version carrying different binaries, with the tag describing neither.
+- `Publish to NuGet` running on that path is deliberate: it is how a push whose NuGet upload failed
+  part-way recovers, since `--skip-duplicate` leaves what is already published alone and uploads only
+  what is missing. The consequence to keep in mind is that such a recovery uploads from the *current*
+  commit, while the release's assets and tag stay on the one that created them.
 
 **What repeating does not do is publish anything.** Neither NuGet nor the release accepts a second
 version's worth of packages under a number already released, so if that follow-up commit changed
@@ -112,8 +116,13 @@ branch name then no longer matches its version, which is cosmetic: `publicReleas
 `^refs/heads/release/.*$`, so packaging and release creation are unaffected.
 
 `nbgv prepare-release` can also be run *on* a release branch to move its stability stage, for example
-from a prerelease tag to stable. Consult Nerdbank.GitVersioning's versioning-workflow documentation
-before doing anything here that these two paths do not cover; do not improvise a version edit.
+from a prerelease tag to stable — that is Nerdbank.GitVersioning's documented behaviour, not an
+exception invented here. `AGENTS.md`'s rule that release preparation runs from `main` is about not
+cutting a release from a feature or pull-request branch; a release branch is neither, and cutting a
+new line still starts from `main` as the *Release preparation* section describes.
+
+Consult Nerdbank.GitVersioning's versioning-workflow documentation before doing anything here that
+these paths do not cover; do not improvise a version edit.
 
 That includes the tag: it keeps pointing at the commit that produced the published packages, which
 is the only commit it can honestly describe. Moving a published tag is a deliberate decision rather
