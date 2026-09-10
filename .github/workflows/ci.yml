@@ -508,17 +508,36 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           VERSION="${{ needs.build-test-pack.outputs.version }}"
           PRERELEASE=""
           [[ "$VERSION" == *-* ]] && PRERELEASE="--prerelease"
-          # --target is what makes the tag point at the commit that built these packages. Without
-          # it, gh creates a missing tag from the latest state of the default branch, so a
-          # release/** publish would tag main instead of the release branch it ran on.
-          gh release create "v${VERSION}" packages/* \
-            --title "v${VERSION}" \
-            --target "${GITHUB_SHA}" \
-            --generate-notes \
-            $PRERELEASE
+
+          # A release branch's version has no {height}, so every commit on it computes the same
+          # number. Creating the release twice is therefore an ordinary occurrence rather than an
+          # error, and failing here would skip Publish to NuGet for a run that had nothing wrong
+          # with it. Re-attach the packages instead — but say loudly that nothing new can ship
+          # under a version NuGet already has, because a green build must not imply otherwise.
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "::warning title=Release v${VERSION} already exists::Packages were re-attached, but NuGet will skip them: a published version is immutable. If this commit changed shipped code, bump the version on the release branch and push again."
+            {
+              echo "### Release \`v${VERSION}\` already existed"
+              echo
+              echo "Assets re-attached to the existing release. **NuGet will skip these packages** —"
+              echo "a published version is immutable, so no code change in this commit can ship as"
+              echo "\`${VERSION}\`. Bump the version on the release branch if it needs to."
+            } >> "$GITHUB_STEP_SUMMARY"
+            gh release upload "v${VERSION}" packages/* --clobber
+          else
+            # --target is what makes the tag point at the commit that built these packages. Without
+            # it, gh creates a missing tag from the latest state of the default branch, so a
+            # release/** publish would tag main instead of the release branch it ran on.
+            gh release create "v${VERSION}" packages/* \
+              --title "v${VERSION}" \
+              --target "${GITHUB_SHA}" \
+              --generate-notes \
+              $PRERELEASE
+          fi
 
       - name: Publish to NuGet
         if: success()

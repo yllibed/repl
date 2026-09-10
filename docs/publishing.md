@@ -72,24 +72,27 @@ NuGet publication.
 
 `nbgv prepare-release` removes the prerelease tag on the release branch, so its `version` has no
 `{height}`: **every commit on `release/0.11.0` computes the same `0.11.0`**. That is the intended
-behaviour for a stable line, but it has a consequence worth knowing before you push twice.
-
-The two publish steps disagree about repetition:
+behaviour for a stable line, and pushing to such a branch more than once is an ordinary thing to do —
+a documentation fix, a workflow tweak, a cherry-picked change. Both publish steps tolerate the repeat:
 
 - `dotnet nuget push` runs with `--skip-duplicate`, so re-pushing an already-published version is
-  tolerated and reported, not fatal.
-- `gh release create` has no such tolerance. The second push to a release branch tries to create a
-  release whose tag already exists, that step fails, and because `Publish to NuGet` is gated on
-  `if: success()` the publication is skipped for that run.
+  reported and skipped rather than fatal.
+- The release job checks whether `v<version>` already exists. If it does, it re-attaches the packages
+  with `gh release upload --clobber` instead of trying to create the release again, so the run stays
+  green and `Publish to NuGet` still executes.
 
-So a follow-up commit on a release branch — a documentation fix, a cherry-picked hotfix — turns CI
-red and publishes nothing, without anything being wrong with the code. Two ways through it:
+**What repeating does not do is ship anything new.** A published NuGet version is immutable, so if
+that follow-up commit changed shipped code, the new packages are skipped and the fix does not reach
+consumers under that version. The release job says so loudly — a workflow warning and a job-summary
+note — precisely because a green build must not be read as "the change shipped".
 
-- **Preferred:** cut a new version. Bump the release branch's `version` (for example to `0.11.1`)
-  so the run produces a version that has never been released.
-- **If the commit genuinely must not change the version** (say a workflow-only change on the release
-  branch), expect the release job to fail on the duplicate and treat it as such; nothing was
-  published, and nothing was lost.
+So: a commit on a release branch that changes what consumers get needs a new version. Bump the
+release branch's `version` (for example to `0.11.1`) and push again. A commit that changes nothing
+consumers receive can be pushed as-is and will simply re-attach identical packages.
+
+The existing tag is left where it is on the repeat path. Moving a published tag changes what an
+already-released version points at, which is a deliberate decision rather than something CI should
+do on its own.
 
 The release job does not rebuild: it downloads the `packages` artifact produced by
 `Build, Test, Pack`, so a release publishes exactly the packages CI tested.
