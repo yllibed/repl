@@ -152,6 +152,26 @@ of a top-level run; nested MCP sub-invocations always use the defaults and skip 
 Codes should stay within `0`-`255` — POSIX `wait` exposes only the low eight bits to the parent
 process. Repl passes a configured code through unchanged rather than clamping it.
 
+### Restoring the pre-policy codes
+
+Before this table existed, every framework refusal and every handler failure alike exited `1`. If an
+application or its test suite depends on that, set the two refusal codes back:
+
+```csharp
+app.Options(options =>
+{
+    options.ExitCodes.UsageError = 1;
+    options.ExitCodes.BindingError = 1;
+});
+```
+
+Two consequences are worth knowing even if you keep the defaults. A test suite asserting `1` for an
+unknown command or an invalid option needs to expect `2`, including through
+`Repl.Testing`'s `CommandExecution.ExitCode`, which follows the configured policy. And an MCP tool
+call reports the same numbers in its agent-visible failure text, so a refusal now reads
+"exit code 2"; `IsError` is unaffected, since a nested sub-invocation only tests for non-zero and
+always uses the built-in defaults.
+
 ## AmbientCommandOptions
 
 Accessed via `ReplOptions.AmbientCommands`.

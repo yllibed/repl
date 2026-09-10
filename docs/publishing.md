@@ -69,6 +69,18 @@ NuGet publication.
 - On push to `main`/`release/*`, CI creates a GitHub Release with tag `v<NuGetPackageVersion>`.
 - Only create tags manually for exceptional/manual workflows.
 
+## Release notes
+
+There is no changelog file to maintain. CI creates a GitHub Release per published version with
+`gh release create "v${VERSION}" --generate-notes`, so the notes are generated from the pull requests
+merged since the previous tag and are anchored to the version a consumer actually installs — which a
+hand-written file cannot be, since Nerdbank.GitVersioning assigns the version at pack time.
+
+That puts the burden on pull request titles and descriptions: they *are* the release notes. A change
+with a consumer-visible contract — a new default, a behavioural break, a migration step — belongs in
+the PR description and, when it is durable guidance rather than a one-time note, in the topic page
+under `docs/` that owns the feature.
+
 ## NuGet publish status
 
 - Package and symbol packages (`.snupkg`) are produced by `Build, Test, Pack` and published
