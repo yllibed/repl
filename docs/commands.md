@@ -171,6 +171,8 @@ Almost always a target-name mistake. `WithOption` takes the **CLR** handler para
 
 If the option is genuinely hidden and you want to confirm what the app thinks, export the command explicitly: `doc export <command path> --json` includes hidden options with `"isHidden": true`. The aggregate export omits them, so target the command.
 
+Every option in a structured export carries `isHidden` and `isAutomationHidden` unconditionally. A consumer validating that output against a closed schema (`additionalProperties: false`) has to allow both fields.
+
 Note there is no built-in signal for *use* of a hidden option. If the point is retiring a deprecated switch, record that in the handler yourself — otherwise nothing will tell you when it has become safe to remove.
 
 ### Accessing global options outside handlers

@@ -165,6 +165,12 @@ app.Options(options =>
 });
 ```
 
+This restores the *code* for paths that were already refusals. It cannot restore a path whose
+**classification** changed, and one did: a bare invocation with an unknown format
+(`tool --output:bogus`) used to print help and exit the `Help` code — `0` by default — and is now a
+`UsageError`. The recipe above makes it `1`, not the former `0`. Set `ExitCodes.UsageError = 0` only
+if that single path matters more to you than telling a refusal from a success everywhere else.
+
 Two consequences are worth knowing even if you keep the defaults. A test suite asserting `1` for an
 unknown command or an invalid option needs to expect `2`, including through
 `Repl.Testing`'s `CommandExecution.ExitCode`, which follows the configured policy. And an MCP tool

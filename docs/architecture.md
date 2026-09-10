@@ -36,6 +36,15 @@
 - `Repl.ShellCompletionTestHost`
  	- Test host process for validating shell completion scripts.
 
+## Upgrading the packages together
+
+`Repl.Defaults` calls into `Repl.Core` at a version-matched surface, so the two must be upgraded
+together. A previously compiled `Repl.Defaults` keeps working against a newer `Repl.Core` — historical
+descriptors are preserved as distinct overloads rather than folded into defaulted parameters — but the
+reverse is not guaranteed: a release's `Repl.Defaults` may call APIs that only exist in the same
+release's `Repl.Core`. Upgrading one and pinning the other is unsupported. The `Repl` meta-package
+takes both at matched versions, which is the reason to prefer it.
+
 ## Quality gates
 
 - Strict build rules from `src/Directory.Build.props`:

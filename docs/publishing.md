@@ -72,14 +72,20 @@ NuGet publication.
 ## Release notes
 
 There is no changelog file to maintain. CI creates a GitHub Release per published version with
-`gh release create "v${VERSION}" --generate-notes`, so the notes are generated from the pull requests
-merged since the previous tag and are anchored to the version a consumer actually installs — which a
-hand-written file cannot be, since Nerdbank.GitVersioning assigns the version at pack time.
+`gh release create "v${VERSION}" --target "${GITHUB_SHA}" --generate-notes`, so the notes are
+generated from the pull requests merged since the previous tag and the tag points at the commit whose
+packages are attached — an anchoring a hand-written file cannot have, since Nerdbank.GitVersioning
+assigns the version at pack time.
 
-That puts the burden on pull request titles and descriptions: they *are* the release notes. A change
-with a consumer-visible contract — a new default, a behavioural break, a migration step — belongs in
-the PR description and, when it is durable guidance rather than a one-time note, in the topic page
-under `docs/` that owns the feature.
+Know what that publishes, and what it does not. `--generate-notes` emits **pull request titles**,
+authors and links; it does **not** copy a PR description into the release body. So a PR title is
+consumer-facing prose, and a migration step written only in a PR description is reachable through the
+link but is not part of the notes.
+
+Durable guidance therefore belongs in the topic page under `docs/` that owns the feature — a new
+default, a behavioural break and its restore recipe, a constraint on upgrading packages together.
+The PR description is where you explain the change to a reviewer; `docs/` is where a consumer finds
+it six months later.
 
 ## NuGet publish status
 
