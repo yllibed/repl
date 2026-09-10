@@ -140,7 +140,10 @@ jobs:
 
             tmp_dir="$(mktemp -d)"
             trap 'rm -rf "$tmp_dir"' EXIT
-            curl -fsSL "$nu_url" -o "$tmp_dir/nu.tar.gz"
+            # The release lookup above retries; this download did not, and it is the one that
+            # fails — a 500 from the asset host took the job down with curl's own exit 22 and no
+            # retry line in the log. curl treats HTTP 500 as transient, so `--retry` covers it.
+            curl -fsSL --retry 3 --retry-delay 2 "$nu_url" -o "$tmp_dir/nu.tar.gz"
             tar -xzf "$tmp_dir/nu.tar.gz" -C "$tmp_dir"
             nu_binary="$(find "$tmp_dir" -type f -name nu | head -n 1)"
             if [[ -z "$nu_binary" ]]; then
