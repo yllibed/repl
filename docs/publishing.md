@@ -78,12 +78,20 @@ behaviour for a stable line, and pushing to such a branch more than once is an o
 a documentation fix, a workflow tweak, a cherry-picked change. Neither publish step treats the repeat
 as an error, and neither of them can republish the version either.
 
-**The GitHub Release is left entirely alone.** The job checks whether `v<version>` already exists and,
-if it does, touches nothing: not the assets, not the tag. It does not re-upload, because a released
-version is immutable on NuGet — replacing the assets would leave a direct GitHub download and a NuGet
-install of one version number carrying different binaries. The tag likewise keeps pointing at the
+**A published release is left entirely alone.** The job checks whether `v<version>` has already been
+published and, if it has, touches nothing: not the assets, not the tag. It does not re-upload,
+because a released version is immutable on NuGet — replacing the assets would leave a direct GitHub
+download and a NuGet install of one version number carrying different binaries. The tag likewise keeps pointing at the
 commit that produced the published packages, the only commit it can honestly describe. Moving a
 published tag is a deliberate decision, not something CI should do on its own.
+
+**An unfinished draft stops the run instead.** `gh release create` attaches assets by creating the
+release as a draft, uploading the packages, then publishing it, so a run interrupted mid-upload
+leaves a draft behind — and the existence check finds it, because `gh release view` looks up drafts
+as well as published releases. Taking that for a finished release would skip creation and let NuGet
+publish under a version with no release anyone can see, so the job fails instead and publishes
+nothing. Inspect the draft and either publish it with the packages it is missing or delete it and
+re-run: both are decisions about what has already reached consumers, and CI should not guess at them.
 
 **NuGet still runs, and that is deliberate.** `dotnet nuget push --skip-duplicate` leaves every
 version it already has alone, which is the normal outcome here. But it *does* upload a package NuGet

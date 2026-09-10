@@ -516,6 +516,39 @@ jobs:
           PRERELEASE=""
           [[ "$VERSION" == *-* ]] && PRERELEASE="--prerelease"
 
+          # `gh release create` with assets is not one API call: gh's manual (Immutable Releases)
+          # states it creates the release as a draft, uploads the assets, then publishes it. A run
+          # interrupted mid-upload leaves an unpublished draft, which `gh release view` still finds
+          # because its lookup queries drafts too. Reading that as an existing release would skip
+          # the creation below and let Publish to NuGet run, putting packages on NuGet under a
+          # version no one can see a release for — so the three states are told apart here. A
+          # lookup that fails for any other reason reads as `missing` and falls through to
+          # `gh release create`, which then fails loudly rather than skipping anything.
+          RELEASE_STATE=missing
+          if IS_DRAFT="$(gh release view "v${VERSION}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            RELEASE_STATE=published
+            if [[ "$IS_DRAFT" == "true" ]]; then
+              RELEASE_STATE=draft
+            fi
+          fi
+
+          if [[ "$RELEASE_STATE" == draft ]]; then
+            # Detection, not repair: publishing the draft and deleting it are both decisions about
+            # what has already reached consumers, and this job is the one part of the workflow that
+            # pull-request CI never runs, so untested recovery logic here is worse than stopping.
+            echo "::error title=Release v${VERSION} exists as an unpublished draft::A previous run created it and did not finish. Nothing was published by this run. Inspect the draft, then either publish it with the packages it is missing or delete it and re-run."
+            {
+              echo "### Release \`v${VERSION}\` exists as an unpublished draft"
+              echo
+              echo "A previous run created the release and did not finish uploading its assets."
+              echo "**Nothing was published by this run** — not the release, not NuGet."
+              echo
+              echo "Inspect the draft, then either publish it with the packages it is missing or"
+              echo "delete it and re-run this workflow."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
           # A release branch's version has no {height}, so every commit on it computes the same
           # number. Creating the release twice is therefore an ordinary occurrence rather than an
           # error, and failing here would skip Publish to NuGet for a run that had nothing wrong
@@ -525,7 +558,7 @@ jobs:
           # replacing the release's assets would leave a direct GitHub download and a NuGet install
           # of the same version carrying different binaries, with the tag describing neither.
           # Whatever a repeat run built cannot ship under this version; that needs a version bump.
-          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+          if [[ "$RELEASE_STATE" == published ]]; then
             echo "::warning title=Release v${VERSION} already exists::Its assets and tag are left untouched. NuGet still runs and will skip every version it already has — but it accepts one it is missing, which is how a partial push recovers. If this commit changed shipped code, bump the version on the release branch: the release's own assets will not be updated."
             {
               echo "### Release \`v${VERSION}\` already exists — left untouched"
