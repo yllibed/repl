@@ -13,8 +13,10 @@ git status --short
 nbgv prepare-release
 ```
 
-For stable release preparation, run `nbgv prepare-release` from a clean `main` only. Do
-not run it from a feature branch or a pull request branch.
+Cutting a release line starts from a clean `main`, never from a feature branch or a pull
+request branch. That is what this section covers. Two other `nbgv prepare-release`
+invocations operate on an existing release branch instead — promoting its stability stage,
+and the servicing flow — and are described under *Servicing a released version* below.
 
 The command uses the `release` settings in `version.json` to:
 
