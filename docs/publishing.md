@@ -73,28 +73,28 @@ NuGet publication.
 `nbgv prepare-release` removes the prerelease tag on the release branch, so its `version` has no
 `{height}`: **every commit on `release/0.11.0` computes the same `0.11.0`**. That is the intended
 behaviour for a stable line, and pushing to such a branch more than once is an ordinary thing to do —
-a documentation fix, a workflow tweak, a cherry-picked change. Both publish steps tolerate the repeat:
+a documentation fix, a workflow tweak, a cherry-picked change. Neither publish step treats the repeat
+as an error, and neither of them can republish the version either.
 
-- `dotnet nuget push` runs with `--skip-duplicate`, so re-pushing an already-published version is
-  reported and skipped rather than fatal.
-- The release job checks whether `v<version>` already exists. If it does, it leaves that release
-  entirely alone — assets and tag — instead of trying to create it again, so the run stays green and
-  `Publish to NuGet` still executes. It does not re-upload either: a released version is immutable on
-  NuGet, so replacing the release's assets would leave a direct GitHub download and a NuGet install of
-  the same version carrying different binaries, with the tag describing neither.
-- `Publish to NuGet` running on that path is deliberate: it is how a push whose NuGet upload failed
-  part-way recovers, since `--skip-duplicate` leaves what is already published alone and uploads only
-  what is missing. The consequence to keep in mind is that such a recovery uploads from the *current*
-  commit, while the release's assets and tag stay on the one that created them.
+**The GitHub Release is left entirely alone.** The job checks whether `v<version>` already exists and,
+if it does, touches nothing: not the assets, not the tag. It does not re-upload, because a released
+version is immutable on NuGet — replacing the assets would leave a direct GitHub download and a NuGet
+install of one version number carrying different binaries. The tag likewise keeps pointing at the
+commit that produced the published packages, the only commit it can honestly describe. Moving a
+published tag is a deliberate decision, not something CI should do on its own.
 
-**What repeating does not do is publish anything.** Neither NuGet nor the release accepts a second
-version's worth of packages under a number already released, so if that follow-up commit changed
-shipped code, the fix reaches nobody under that version. The release job says so loudly — a workflow
-warning and a job-summary note — precisely because a green build must not be read as "the change
-shipped".
+**NuGet still runs, and that is deliberate.** `dotnet nuget push --skip-duplicate` leaves every
+version it already has alone, which is the normal outcome here. But it *does* upload a package NuGet
+is missing, and that is the only way a push whose upload failed part-way recovers without manual
+intervention. Two things follow. A repeat run is not guaranteed to publish nothing at all — it
+publishes precisely what NuGet lacks. And such a recovery uploads from the *current* commit, while
+the release's assets and tag stay on the one that created them.
 
-So: a commit on a release branch that changes what consumers get needs a new version, and a commit
-that changes nothing they receive can be pushed as-is — it re-attaches identical packages.
+**So a change meant for consumers needs a new version.** Under a number already released, the release
+assets will not be updated and NuGet will accept only what it does not yet have — which is never the
+changed build of a package it already holds. The job says so through a workflow warning and a
+job-summary note, precisely because a green build must not be read as "the change shipped". A commit
+that changes nothing consumers receive can be pushed as it is.
 
 ### Servicing a released version
 
@@ -121,12 +121,10 @@ exception invented here. `AGENTS.md`'s rule that release preparation runs from `
 cutting a release from a feature or pull-request branch; a release branch is neither, and cutting a
 new line still starts from `main` as the *Release preparation* section describes.
 
-Consult Nerdbank.GitVersioning's versioning-workflow documentation before doing anything here that
-these paths do not cover; do not improvise a version edit.
+Consult Nerdbank.GitVersioning's versioning-workflow documentation before doing anything these paths
+do not cover; do not improvise a version edit.
 
-That includes the tag: it keeps pointing at the commit that produced the published packages, which
-is the only commit it can honestly describe. Moving a published tag is a deliberate decision rather
-than something CI should do on its own.
+### What a release contains
 
 The release job does not rebuild: it downloads the `packages` artifact produced by
 `Build, Test, Pack`. Within that job, `Test` and `Pack` both run with `--no-build` against the
