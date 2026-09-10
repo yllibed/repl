@@ -27,11 +27,45 @@ internal static class ProcessSignalCoordinator
 	private static int s_generation;
 	private static int s_pendingDrainCount;
 	private static bool s_registrationsInitialized;
+	private static bool s_sigTermRegistrationDeclared;
 	private static RegistrationFault? s_registrationFaultForTesting;
+	private static SignalRegistrationPolicy? s_registrationPolicyForTesting;
 
 	/// <summary>
-	/// Gives a test a coordinator with no installed registrations, optionally failing the next
-	/// registration attempt, and leaves it able to install fresh ones on disposal.
+	/// Whether the platform in force wants a SIGTERM registration at all. Read with
+	/// <see cref="SigTermRegistrationInstalledForTesting"/>: wanted but not installed is what a
+	/// declared platform under test looks like, and is the state that proves no operating-system
+	/// registration was created on its behalf.
+	/// </summary>
+	internal static bool SigTermRegistrationDeclaredForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return s_sigTermRegistrationDeclared;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Whether a live operating-system SIGTERM registration exists right now.
+	/// </summary>
+	internal static bool SigTermRegistrationInstalledForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return s_sigTermRegistration is not null;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Gives a test a coordinator with no installed registrations, optionally under a declared
+	/// platform and optionally failing the next registration attempt, and leaves it able to install
+	/// fresh ones on disposal.
 	/// <para>
 	/// Registrations capture the generation counter they were created under, so putting a saved
 	/// registration object back after the counter has moved would leave it permanently stale and
@@ -41,11 +75,13 @@ internal static class ProcessSignalCoordinator
 	/// </summary>
 	internal static IDisposable IsolateRegistrationsForTesting(
 		Exception? registrationFault = null,
-		bool faultAfterSigTermRegistration = false) =>
+		bool faultAfterSigTermRegistration = false,
+		SignalRegistrationPolicy? policy = null) =>
 		new RegistrationIsolationScope(
 			registrationFault is null
 				? null
-				: new RegistrationFault(registrationFault, faultAfterSigTermRegistration));
+				: new RegistrationFault(registrationFault, faultAfterSigTermRegistration),
+			policy);
 
 	internal static void Register(ProcessSignalCancellationScope scope)
 	{
@@ -94,9 +130,13 @@ internal static class ProcessSignalCoordinator
 				OrphanedSigTermRegistration: null);
 		}
 
+		return InstallRegistrations(++s_generation);
+	}
+
+	private static RegistrationOutcome InstallRegistrations(int generation)
+	{
 		PosixSignalRegistration? sigTermRegistration = null;
 		IDisposable? cancelKeyRegistration = null;
-		var generation = ++s_generation;
 		try
 		{
 			// No supported platform rejects a signal registration on demand, so the failure policy
@@ -105,7 +145,15 @@ internal static class ProcessSignalCoordinator
 			// the orphaned-registration cleanup below.
 			ThrowIfFaultInjected(afterSigTermRegistration: false);
 
-			if (!OperatingSystem.IsWindows())
+			// Windows already gets Ctrl+C and Ctrl+Break through the console coordinator, and .NET maps
+			// PosixSignal.SIGTERM onto CTRL_SHUTDOWN_EVENT there, so registering it would add a second
+			// handler alongside the one that already owns those keys. That is a wiring decision, not a
+			// capability limit, so it comes from the policy in force rather than straight from the host:
+			// a declared platform's wiring becomes assertable from any platform. Whether a real
+			// registration may be created is a separate bit, because a declared platform must never
+			// install one in the test runner's own process.
+			s_sigTermRegistrationDeclared = !IsWindowsForRegistration();
+			if (s_sigTermRegistrationDeclared && MayCreateRealRegistrations())
 			{
 				sigTermRegistration = PosixSignalRegistration.Create(
 					PosixSignal.SIGTERM,
@@ -278,14 +326,26 @@ internal static class ProcessSignalCoordinator
 	}
 
 	private static bool IsSignalBridgeSupported() =>
-		IsSignalBridgeSupportedForTesting(
-			OperatingSystem.IsAndroid(),
-			OperatingSystem.IsBrowser(),
-			// Named explicitly rather than relied upon through IsIOS: Mac Catalyst is documented here as
-			// unsupported, and OperatingSystem exposes it as its own guard, so the check states what it
-			// means instead of resting on whether one platform predicate implies the other.
-			OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst(),
-			OperatingSystem.IsTvOS());
+		s_registrationPolicyForTesting is { } policy
+			? IsSignalBridgeSupportedForTesting(
+				policy.IsAndroid,
+				policy.IsBrowser,
+				policy.IsIOSOrMacCatalyst,
+				policy.IsTvOS)
+			: IsSignalBridgeSupportedForTesting(
+				OperatingSystem.IsAndroid(),
+				OperatingSystem.IsBrowser(),
+				// Named explicitly rather than relied upon through IsIOS: Mac Catalyst is documented here as
+				// unsupported, and OperatingSystem exposes it as its own guard, so the check states what it
+				// means instead of resting on whether one platform predicate implies the other.
+				OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst(),
+				OperatingSystem.IsTvOS());
+
+	private static bool IsWindowsForRegistration() =>
+		s_registrationPolicyForTesting?.IsWindows ?? OperatingSystem.IsWindows();
+
+	private static bool MayCreateRealRegistrations() =>
+		s_registrationPolicyForTesting?.CreateRealRegistrations ?? true;
 
 	internal static bool IsSignalBridgeSupportedForTesting(
 		bool isAndroid,
@@ -317,14 +377,43 @@ internal static class ProcessSignalCoordinator
 		}
 	}
 
+	/// <summary>
+	/// The platform whose registration decisions apply while a test isolation scope is open, and
+	/// whether the coordinator may create real operating-system registrations under it.
+	/// <para>
+	/// <see cref="CreateRealRegistrations"/> is deliberately independent of the platform flags. A test
+	/// declaring a platform it is not running on must not install a live registration on its behalf —
+	/// .NET accepts <see cref="PosixSignal.SIGTERM"/> on every supported platform, Windows included,
+	/// so nothing but this flag would stop it.
+	/// </para>
+	/// </summary>
+	internal sealed record SignalRegistrationPolicy
+	{
+		internal bool IsWindows { get; init; }
+
+		internal bool IsAndroid { get; init; }
+
+		internal bool IsBrowser { get; init; }
+
+		internal bool IsIOSOrMacCatalyst { get; init; }
+
+		internal bool IsTvOS { get; init; }
+
+		internal bool CreateRealRegistrations { get; init; }
+	}
+
 	private sealed class RegistrationIsolationScope : IDisposable
 	{
-		public RegistrationIsolationScope(RegistrationFault? registrationFault) =>
-			TearDownRegistrations(registrationFault);
+		public RegistrationIsolationScope(
+			RegistrationFault? registrationFault,
+			SignalRegistrationPolicy? policy) =>
+			TearDownRegistrations(registrationFault, policy);
 
-		public void Dispose() => TearDownRegistrations(registrationFault: null);
+		public void Dispose() => TearDownRegistrations(registrationFault: null, policy: null);
 
-		private static void TearDownRegistrations(RegistrationFault? registrationFault)
+		private static void TearDownRegistrations(
+			RegistrationFault? registrationFault,
+			SignalRegistrationPolicy? policy)
 		{
 			IDisposable? cancelKeyRegistration;
 			PosixSignalRegistration? sigTermRegistration;
@@ -337,8 +426,10 @@ internal static class ProcessSignalCoordinator
 				// Uninstalled, so the next Register installs fresh registrations under a current
 				// generation instead of reviving ones the counter has already left behind.
 				s_registrationsInitialized = false;
+				s_sigTermRegistrationDeclared = false;
 				s_generation++;
 				s_registrationFaultForTesting = registrationFault;
+				s_registrationPolicyForTesting = policy;
 			}
 
 			cancelKeyRegistration?.Dispose();

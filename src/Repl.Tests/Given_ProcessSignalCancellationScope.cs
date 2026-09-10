@@ -379,20 +379,28 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
-	[OSCondition(ConditionMode.Exclude, OperatingSystems.Windows)]
-	[Description("A registration that fails after SIGTERM was registered disposes the orphan instead of leaking it. This is the only ordering that reaches the cleanup, and a leaked PosixSignalRegistration would keep suppressing SIGTERM for a process that has already been told the bridge is caller-owned.")]
+	[Description("A registration that fails after SIGTERM was registered disposes the orphan instead of leaking it. This is the only ordering that reaches the cleanup, and a leaked PosixSignalRegistration would keep suppressing SIGTERM for a process that has already been told the bridge is caller-owned. Declaring a non-Windows platform with real registrations allowed is what lets this ordering exist on a Windows host too, since .NET accepts PosixSignal.SIGTERM there as well.")]
 	public async Task When_RegistrationFailsAfterSigTerm_Then_TheOrphanedRegistrationIsReleased()
 	{
 		using var error = new StringWriter();
 		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
 		using (var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
 			new PlatformNotSupportedException("cancel-key registration rejected"),
-			faultAfterSigTermRegistration: true))
+			faultAfterSigTermRegistration: true,
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy
+			{
+				IsWindows = false,
+				CreateRealRegistrations = true,
+			}))
 		{
 			await using var degraded = new ProcessSignalCancellationScope(default);
 
 			degraded.Token.IsCancellationRequested.Should().BeFalse();
 			error.ToString().Should().Contain("Failed to install automatic process-signal handling");
+			// Pin the failure to the injected fault. Without this the test still passes when the SIGTERM
+			// registration itself is what failed — in which case no orphan existed and the cleanup this
+			// test exists for was never reached.
+			error.ToString().Should().Contain("cancel-key registration rejected");
 		}
 
 		// A leaked registration would still be claiming SIGTERM under a stale generation. After the
@@ -491,6 +499,59 @@ public sealed class Given_ProcessSignalCancellationScope
 
 		result.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
 		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+	}
+
+	[TestMethod]
+	[Description("A declared non-Windows platform wants a SIGTERM registration and, with real registrations left suppressed, does not get one. That pair is what a platform test looks like from any host: the wiring decision is asserted without an operating-system registration being installed on the declared platform's behalf.")]
+	public async Task When_ANonWindowsPlatformIsDeclared_Then_SigTermIsWantedButNotInstalled()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = false });
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting.Should().BeTrue();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("A declared Windows platform wants no SIGTERM registration at all, because the console coordinator already owns Ctrl+C and Ctrl+Break there and .NET maps PosixSignal.SIGTERM onto CTRL_SHUTDOWN_EVENT. Assertable from a non-Windows host, which is where this decision was previously unverifiable.")]
+	public async Task When_WindowsIsDeclared_Then_NoSigTermRegistrationIsWanted()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = true });
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting.Should().BeFalse();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Suppressing real registrations does not suppress delivery: the in-process seams reach the claim logic either way. Without this the platform tests above could pass against a coordinator that had quietly stopped claiming anything.")]
+	public async Task When_RealRegistrationsAreSuppressed_Then_SignalsAreStillClaimed()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = false });
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.HandleSigTermForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+	}
+
+	[TestMethod]
+	[Description("A declared unsupported platform degrades the bridge through the real Register path rather than only through the platform predicate, so the diagnostic and the caller-owned fallback are exercised from any host.")]
+	public async Task When_AnUnsupportedPlatformIsDeclared_Then_TheBridgeDegradesWithADiagnostic()
+	{
+		using var error = new StringWriter();
+		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsBrowser = true });
+
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		error.ToString().Should().Contain("unavailable on this platform");
+		scope.Token.IsCancellationRequested.Should().BeFalse();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
 	}
 
 	[TestMethod]
