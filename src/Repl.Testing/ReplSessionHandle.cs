@@ -36,6 +36,10 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		_sessionId = sessionId;
 	}
 
+	/// <summary>
+	/// This session's id, unique within its <see cref="ReplTestHost"/> and stable for the session's
+	/// lifetime.
+	/// </summary>
 	public string SessionId => _sessionId;
 
 	/// <summary>
@@ -131,6 +135,12 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// Captures the session's current terminal metadata. Returns
+	/// <see cref="SessionSnapshot.Empty(string)"/> when the session has registered none yet, so this
+	/// never returns <see langword="null"/>.
+	/// </summary>
+	/// <returns>A snapshot of this session.</returns>
 	public SessionSnapshot GetSnapshot()
 	{
 		if (ReplSessionIO.TryGetSession(SessionId, out var session))
@@ -149,6 +159,9 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		return SessionSnapshot.Empty(SessionId);
 	}
 
+	/// <summary>
+	/// Ends the session and removes it from its host. Disposing twice is a no-op.
+	/// </summary>
 	public ValueTask DisposeAsync()
 	{
 		if (_disposed)
