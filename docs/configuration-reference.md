@@ -152,6 +152,32 @@ of a top-level run; nested MCP sub-invocations always use the defaults and skip 
 Codes should stay within `0`-`255` — POSIX `wait` exposes only the low eight bits to the parent
 process. Repl passes a configured code through unchanged rather than clamping it.
 
+### Restoring the pre-policy codes
+
+Before this table existed, every framework refusal and every handler failure alike exited `1`. If an
+application or its test suite depends on that, set the two refusal codes back:
+
+```csharp
+app.Options(options =>
+{
+    options.ExitCodes.UsageError = 1;
+    options.ExitCodes.BindingError = 1;
+});
+```
+
+This restores the *code* for paths that were already refusals. It cannot restore a path whose
+**classification** changed, and one did: a bare invocation with an unknown format
+(`tool --output:bogus`) used to print help and exit the `Help` code — `0` by default — and is now a
+`UsageError`. The recipe above makes it `1`, not the former `0`. Set `ExitCodes.UsageError = 0` only
+if that single path matters more to you than telling a refusal from a success everywhere else.
+
+Two consequences are worth knowing even if you keep the defaults. A test suite asserting `1` for an
+unknown command or an invalid option needs to expect `2`, including through
+`Repl.Testing`'s `CommandExecution.ExitCode`, which follows the configured policy. And an MCP tool
+call reports the same numbers in its agent-visible failure text, so a refusal now reads
+"exit code 2"; `IsError` is unaffected, since a nested sub-invocation only tests for non-zero and
+always uses the built-in defaults.
+
 ## AmbientCommandOptions
 
 Accessed via `ReplOptions.AmbientCommands`.
@@ -341,4 +367,11 @@ If a handler completes normally with its own non-zero exit code, that code takes
 - SIGTERM bridging uses .NET's POSIX signal API and is enabled only on supported non-Windows platforms. SIGTERM does not participate in the interactive console-key priority rule. Repl does not install a direct POSIX SIGQUIT registration. Windows `taskkill`, console-window close, and service-control shutdown do not acquire equivalent SIGTERM semantics from this option; a Windows host must translate its lifecycle events into the caller cancellation token.
 - Android, browser, iOS (including Mac Catalyst), and tvOS do not support the required console/POSIX registrations. `Automatic` emits a diagnostic and installs no process-signal bridge there; the platform host must provide cancellation. .NET identifies Mac Catalyst as part of its iOS-like mobile family and compiles the platform-not-supported POSIX signal registration there.
 - In `Automatic` mode, a one-shot handler receives a run-scoped token linked to the caller token and the process-signal cancellation source. An interactive command receives a command-scoped token linked to that run token so Ctrl+C can cancel only the active command. Repl disposes each linked token when its scope ends; handlers may use it for awaited work but must not retain it for detached work.
+
+#### What changes for an existing application
+
+Selecting `UseCliProfile()` or `UseDefaultInteractive()` takes process signal ownership by default, which is a change in two observable ways. `ProcessSignalHandlingMode.None` restores the previous behaviour for either.
+
+- **Exit codes.** A run interrupted by Ctrl+C, Ctrl+Break on Windows, or SIGTERM on Unix resolves to `130` or `143`, where it previously produced whatever operating-system default termination yielded. A wrapper script or CI step that treats any non-zero code as a failure will start seeing these on interruption.
+- **Handler token identity — the one that fails quietly.** A one-shot handler receives a run-scoped token rather than the caller's own, and Repl disposes it when the run ends. A handler that stored one and used it afterwards, for detached or background work, gets `ObjectDisposedException` from `Register` or `WaitHandle` — and, worse, nothing at all from `IsCancellationRequested`, which keeps reporting `false`. Handlers that only await work within the run are unaffected, as are apps with no profile, `UseEmbeddedConsoleProfile()`, and the external `IServiceProvider` / `IHost` / `IReplHost` overloads, which pass the caller's token through unchanged.
 - In `None` mode and external-host overloads, Repl does not create the standalone signal-linked token. A one-shot handler receives the caller token unchanged. An interactive command still receives its separate command-scoped linked token, so its identity and lifetime differ from the caller token even though host-shutdown cancellation flows through it.
