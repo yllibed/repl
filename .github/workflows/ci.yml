@@ -258,11 +258,14 @@ jobs:
         id: pack
         shell: pwsh
         run: |
+          # --no-build, like Test above: packing the same outputs the tests ran against is what lets
+          # docs/publishing.md promise a release ships exactly what CI exercised. Without it pack is
+          # free to re-run Build, and a regenerated assembly could reach a package untested.
           if ($env:PUBLIC_RELEASE -eq 'true') {
-            dotnet pack src/Repl.slnx -c Release --no-restore -p:PublicRelease=true -p:WarnOnPackingNonPackableProject=false -o '${{ runner.temp }}/packages'
+            dotnet pack src/Repl.slnx -c Release --no-build --no-restore -p:PublicRelease=true -p:WarnOnPackingNonPackableProject=false -o '${{ runner.temp }}/packages'
           }
           else {
-            dotnet pack src/Repl.slnx -c Release --no-restore -p:WarnOnPackingNonPackableProject=false -o '${{ runner.temp }}/packages'
+            dotnet pack src/Repl.slnx -c Release --no-build --no-restore -p:WarnOnPackingNonPackableProject=false -o '${{ runner.temp }}/packages'
           }
 
       - name: Package readiness report (non-blocking)

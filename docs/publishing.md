@@ -86,16 +86,39 @@ that follow-up commit changed shipped code, the new packages are skipped and the
 consumers under that version. The release job says so loudly — a workflow warning and a job-summary
 note — precisely because a green build must not be read as "the change shipped".
 
-So: a commit on a release branch that changes what consumers get needs a new version. Bump the
-release branch's `version` (for example to `0.11.1`) and push again. A commit that changes nothing
-consumers receive can be pushed as-is and will simply re-attach identical packages.
+So: a commit on a release branch that changes what consumers get needs a new version, and a commit
+that changes nothing they receive can be pushed as-is — it re-attaches identical packages.
+
+### Servicing a released version
+
+Nerdbank.GitVersioning's own workflow for a fix to an already-released line works **on the release
+branch**, not through `nbgv prepare-release` from `main` — that command cuts a *new* line, which is
+what the *Release preparation* section above covers:
+
+```powershell
+git switch release/0.11.0
+# Merge or cherry-pick the fix and commit it.
+nbgv get-version   # what version will this commit build as?
+```
+
+Run `nbgv get-version` before pushing, because this repository's configuration makes the answer
+`0.11.0` again: `release.branchName` is `release/{version}`, so the branch carries a full three-part
+version, and `prepare-release` removed the prerelease tag, leaving no `{height}` to advance. A fix
+therefore needs its `version` field bumped on that branch — to `0.11.1` — before it can ship. The
+branch name then no longer matches its version, which is cosmetic: `publicReleaseRefSpec` matches
+`^refs/heads/release/.*$`, so packaging and release creation are unaffected.
+
+`nbgv prepare-release` can also be run *on* a release branch to move its stability stage, for example
+from a prerelease tag to stable. Consult Nerdbank.GitVersioning's versioning-workflow documentation
+before doing anything here that these two paths do not cover; do not improvise a version edit.
 
 The existing tag is left where it is on the repeat path. Moving a published tag changes what an
 already-released version points at, which is a deliberate decision rather than something CI should
 do on its own.
 
 The release job does not rebuild: it downloads the `packages` artifact produced by
-`Build, Test, Pack`, so a release publishes exactly the packages CI tested.
+`Build, Test, Pack`. Within that job, `Test` and `Pack` both run with `--no-build` against the
+outputs of a single `Build`, so a release publishes exactly the assemblies the tests ran against.
 
 ## Do I need to create a Git tag manually?
 
