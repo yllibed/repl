@@ -519,18 +519,21 @@ jobs:
           # A release branch's version has no {height}, so every commit on it computes the same
           # number. Creating the release twice is therefore an ordinary occurrence rather than an
           # error, and failing here would skip Publish to NuGet for a run that had nothing wrong
-          # with it. Re-attach the packages instead — but say loudly that nothing new can ship
-          # under a version NuGet already has, because a green build must not imply otherwise.
+          # with it. So this path does nothing at all — deliberately, and loudly.
+          #
+          # Nothing, rather than re-uploading: a published version is immutable on NuGet, so
+          # replacing the release's assets would leave a direct GitHub download and a NuGet install
+          # of the same version carrying different binaries, with the tag describing neither.
+          # Whatever a repeat run built cannot ship under this version; that needs a version bump.
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "::warning title=Release v${VERSION} already exists::Packages were re-attached, but NuGet will skip them: a published version is immutable. If this commit changed shipped code, bump the version on the release branch and push again."
+            echo "::warning title=Release v${VERSION} already exists::Left untouched. A published version is immutable, so nothing this run built can ship as ${VERSION} — on NuGet or on the release. If this commit changed shipped code, bump the version on the release branch and push again."
             {
-              echo "### Release \`v${VERSION}\` already existed"
+              echo "### Release \`v${VERSION}\` already exists — left untouched"
               echo
-              echo "Assets re-attached to the existing release. **NuGet will skip these packages** —"
-              echo "a published version is immutable, so no code change in this commit can ship as"
+              echo "Its assets and tag are unchanged, and **nothing this run built was published**."
+              echo "A released version is immutable, so no code change in this commit can ship as"
               echo "\`${VERSION}\`. Bump the version on the release branch if it needs to."
             } >> "$GITHUB_STEP_SUMMARY"
-            gh release upload "v${VERSION}" packages/* --clobber
           else
             # --target is what makes the tag point at the commit that built these packages. Without
             # it, gh creates a missing tag from the latest state of the default branch, so a

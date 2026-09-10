@@ -77,14 +77,17 @@ a documentation fix, a workflow tweak, a cherry-picked change. Both publish step
 
 - `dotnet nuget push` runs with `--skip-duplicate`, so re-pushing an already-published version is
   reported and skipped rather than fatal.
-- The release job checks whether `v<version>` already exists. If it does, it re-attaches the packages
-  with `gh release upload --clobber` instead of trying to create the release again, so the run stays
-  green and `Publish to NuGet` still executes.
+- The release job checks whether `v<version>` already exists. If it does, it leaves that release
+  entirely alone — assets and tag — instead of trying to create it again, so the run stays green and
+  `Publish to NuGet` still executes. It does not re-upload either: a released version is immutable on
+  NuGet, so replacing the release's assets would leave a direct GitHub download and a NuGet install of
+  the same version carrying different binaries, with the tag describing neither.
 
-**What repeating does not do is ship anything new.** A published NuGet version is immutable, so if
-that follow-up commit changed shipped code, the new packages are skipped and the fix does not reach
-consumers under that version. The release job says so loudly — a workflow warning and a job-summary
-note — precisely because a green build must not be read as "the change shipped".
+**What repeating does not do is publish anything.** Neither NuGet nor the release accepts a second
+version's worth of packages under a number already released, so if that follow-up commit changed
+shipped code, the fix reaches nobody under that version. The release job says so loudly — a workflow
+warning and a job-summary note — precisely because a green build must not be read as "the change
+shipped".
 
 So: a commit on a release branch that changes what consumers get needs a new version, and a commit
 that changes nothing they receive can be pushed as-is — it re-attaches identical packages.
@@ -112,9 +115,9 @@ branch name then no longer matches its version, which is cosmetic: `publicReleas
 from a prerelease tag to stable. Consult Nerdbank.GitVersioning's versioning-workflow documentation
 before doing anything here that these two paths do not cover; do not improvise a version edit.
 
-The existing tag is left where it is on the repeat path. Moving a published tag changes what an
-already-released version points at, which is a deliberate decision rather than something CI should
-do on its own.
+That includes the tag: it keeps pointing at the commit that produced the published packages, which
+is the only commit it can honestly describe. Moving a published tag is a deliberate decision rather
+than something CI should do on its own.
 
 The release job does not rebuild: it downloads the `packages` artifact produced by
 `Build, Test, Pack`. Within that job, `Test` and `Pack` both run with `--no-build` against the
