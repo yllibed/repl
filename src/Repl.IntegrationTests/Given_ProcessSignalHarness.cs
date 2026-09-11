@@ -205,6 +205,163 @@ public sealed class Given_ProcessSignalHarness
 		await act.Should().ThrowAsync<ArgumentException>();
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies a cancellation callback that throws while the run unwinds is reported on the run's diagnostics rather than swallowed. Until now this was only provable through internal APIs a package consumer cannot reach, which is the gap this toolkit exists to close.")]
+	public async Task When_ACancellationCallbackThrows_Then_TheRunReportsIt()
+	{
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var harness = ReplProcessSignalHarness.Create(() =>
+		{
+			var app = CreateApp(configure: null);
+			app.Map("work", async (CancellationToken cancellationToken) =>
+			{
+				// Registered on the signal-linked token, so the failure happens on the cancellation path
+				// the signal drives, not on an unrelated one.
+				using var registration = cancellationToken.Register(
+					static () => throw new InvalidOperationException("callback refused to unwind"));
+				started.TrySetResult();
+				await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+				return "unreachable";
+			});
+
+			return app;
+		});
+
+		var run = await harness.StartRunAsync("work");
+		await started.Task;
+		harness.SendSignal(ReplProcessSignal.Interrupt);
+		var result = await run.Completion;
+
+		result.DiagnosticText.Should().Contain("callback refused to unwind");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a run that produced its own outcome keeps it when a signal lands, rather than having it replaced by the interruption code. This is the precedence rule the framework calls IsInterruptible, and it decides whether a command's reported failure survives a Ctrl+C that arrives while it renders.")]
+	public async Task When_TheRunProducedItsOwnFailure_Then_TheSignalDoesNotRelabelIt()
+	{
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var harness = ReplProcessSignalHarness.Create(() =>
+		{
+			var app = CreateApp(configure: null);
+			app.Map("work", async (CancellationToken cancellationToken) =>
+			{
+				started.TrySetResult();
+				// Waits for the signal, then ends with its own explicit code instead of propagating.
+				try
+				{
+					await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+				}
+				catch (OperationCanceledException)
+				{
+					// Deliberately swallowed: the point is a run that resolves its own outcome.
+				}
+
+				return Results.Exit(7);
+			});
+
+			return app;
+		});
+
+		var run = await harness.StartRunAsync("work");
+		await started.Task;
+		harness.SendSignal(ReplProcessSignal.Interrupt);
+		var result = await run.Completion;
+
+		result.ExitCode.Should().Be(7, because: "a run that resolved its own outcome outranks the interruption");
+		result.OutcomeKind.Should().NotBe(ReplExecutionOutcomeKind.Interrupted);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a run nothing ever signals fails on its timeout instead of hanging the suite. The timeout is the only thing that turns a signal that never arrived into a failing test rather than a stuck one, and it is also what makes disposal terminate.")]
+	public async Task When_NoSignalEverArrives_Then_TheRunTimesOut()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.RunTimeout = TimeSpan.FromMilliseconds(250));
+		var run = await harness.StartRunAsync("work").ConfigureAwait(false);
+		var completion = run.Completion;
+
+#pragma warning disable VSTHRD003 // The run was started by this test, two lines up.
+		var act = async () => await completion.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+
+		await act.Should().ThrowAsync<TimeoutException>().ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies disposal releases process-signal ownership even when a run it is draining ended in failure. A run nobody signalled faults on its timeout, and without that being contained the exclusivity flag would stay set and the isolation never torn down — turning one failed test into every later harness in the suite refusing to start.")]
+	public async Task When_ARunFailsAndTheHarnessIsDisposed_Then_OwnershipIsStillReleased()
+	{
+		var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.RunTimeout = TimeSpan.FromMilliseconds(250));
+		// Started and never signalled, so its completion faults and disposal has a failure to drain.
+		_ = await harness.StartRunAsync("work").ConfigureAwait(false);
+
+		await harness.DisposeAsync().ConfigureAwait(false);
+
+		var next = ReplProcessSignalHarness.Create(() => CreateEchoApp());
+		try
+		{
+			var run = await next.StartRunAsync("echo").ConfigureAwait(false);
+			var completion = run.Completion;
+
+			(await completion.ConfigureAwait(false)).ExitCode.Should().Be(
+				0,
+				because: "the failed run must not have stranded ownership");
+		}
+		finally
+		{
+			await next.DisposeAsync().ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("Exercises disposal overlapping a start, which without serialisation can enumerate the run list while it is being appended to. The interleaving is not deterministic, so this is a smoke guard rather than a proof; the invariant it pins — ownership always comes back — is asserted deterministically by When_ARunFailsAndTheHarnessIsDisposed_Then_OwnershipIsStillReleased.")]
+	public async Task When_DisposalRacesAStart_Then_OwnershipIsStillReleased()
+	{
+		var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.RunTimeout = TimeSpan.FromMilliseconds(250));
+		try
+		{
+			var starting = Task.Run(async () =>
+			{
+				try
+				{
+					_ = await harness.StartRunAsync("work").ConfigureAwait(false);
+				}
+				catch (ObjectDisposedException)
+				{
+					// Losing the race to disposal is a legitimate outcome; stranding ownership is not.
+				}
+			});
+
+			var disposing = harness.DisposeAsync().AsTask();
+#pragma warning disable VSTHRD003 // Both tasks are started here, in this method.
+			await Task.WhenAll(starting, disposing).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		}
+		finally
+		{
+			await harness.DisposeAsync().ConfigureAwait(false);
+		}
+
+		// The real assertion: ownership came back, so the suite can keep going.
+		var next = ReplProcessSignalHarness.Create(() => CreateEchoApp());
+		try
+		{
+			var run = await next.StartRunAsync("echo").ConfigureAwait(false);
+			var completion = run.Completion;
+
+			(await completion.ConfigureAwait(false)).ExitCode.Should().Be(0);
+		}
+		finally
+		{
+			await next.DisposeAsync().ConfigureAwait(false);
+		}
+	}
+
 	private static ReplApp CreateBlockingApp(
 		TaskCompletionSource? started = null,
 		TaskCompletionSource? cleanedUp = null,

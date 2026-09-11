@@ -14,6 +14,10 @@ namespace Repl.Testing;
 /// control event on Linux, and whether a registration would succeed on a given host is a fact about
 /// that host. Those need a spawned process on the matching platform.
 /// </para>
+/// <para>
+/// Use the named profiles. The flags are readable so a test can assert on them, but not settable, so
+/// that combinations no device has — Android and Windows at once — cannot be built by mistake.
+/// </para>
 /// </summary>
 public sealed record ReplPlatformProfile
 {
@@ -54,19 +58,19 @@ public sealed record ReplPlatformProfile
 	public static ReplPlatformProfile TvOS { get; } = new() { IsTvOS = true };
 
 	/// <summary>Whether the declared platform is Windows.</summary>
-	public bool IsWindows { get; init; }
+	public bool IsWindows { get; internal init; }
 
 	/// <summary>Whether the declared platform is Android.</summary>
-	public bool IsAndroid { get; init; }
+	public bool IsAndroid { get; internal init; }
 
 	/// <summary>Whether the declared platform is WebAssembly in a browser.</summary>
-	public bool IsBrowser { get; init; }
+	public bool IsBrowser { get; internal init; }
 
 	/// <summary>Whether the declared platform is iOS or Mac Catalyst.</summary>
-	public bool IsIOSOrMacCatalyst { get; init; }
+	public bool IsIOSOrMacCatalyst { get; internal init; }
 
 	/// <summary>Whether the declared platform is tvOS.</summary>
-	public bool IsTvOS { get; init; }
+	public bool IsTvOS { get; internal init; }
 
 	/// <summary>
 	/// Whether the signal bridge is available at all on the declared platform. When it is not,
@@ -79,7 +83,9 @@ public sealed record ReplPlatformProfile
 			IsIOSOrMacCatalyst,
 			IsTvOS);
 
-	internal ProcessSignalCoordinator.SignalRegistrationPolicy ToPolicy(bool createRealRegistrations) =>
+	// CreateRealRegistrations is deliberately never set from here: a declared platform must not install
+	// a live operating-system handler in the test runner's process, and .NET would accept one.
+	internal ProcessSignalCoordinator.SignalRegistrationPolicy ToPolicy() =>
 		new()
 		{
 			IsWindows = IsWindows,
@@ -87,6 +93,5 @@ public sealed record ReplPlatformProfile
 			IsBrowser = IsBrowser,
 			IsIOSOrMacCatalyst = IsIOSOrMacCatalyst,
 			IsTvOS = IsTvOS,
-			CreateRealRegistrations = createRealRegistrations,
 		};
 }

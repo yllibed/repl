@@ -20,6 +20,11 @@ public sealed class ReplSignalRun
 	/// Completes when the run finishes. Faults with <see cref="TimeoutException"/> when the run
 	/// outlives <see cref="ReplProcessSignalOptions.RunTimeout"/>, which is what a signal that never
 	/// arrived looks like.
+	/// <para>
+	/// Bind the run to a local before awaiting this. Chaining the two — <c>await (await
+	/// harness.StartRunAsync(x)).Completion</c> — trips VSTHRD003 in a project that treats the
+	/// Visual Studio threading analyzers as errors.
+	/// </para>
 	/// </summary>
 	public Task<ReplSignalRunResult> Completion { get; }
 }

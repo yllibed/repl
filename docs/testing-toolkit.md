@@ -213,6 +213,8 @@ become assertable from anywhere:
 await using var harness = ReplProcessSignalHarness.Create(
     CreateApp,
     options => options.Platform = ReplPlatformProfile.Windows);
+var run = await harness.StartRunAsync("work");
+
 // Ctrl+Break is a signal on Windows and nothing anywhere else — this passes on Linux too.
 harness.SendSignal(ReplProcessSignal.Break).Should().Be(ReplSignalDelivery.CancellationRequested);
 ```
@@ -221,11 +223,13 @@ Profiles: `Current`, `Windows`, `Unix` (Linux and macOS decide identically here,
 `Android`, `Browser`, `IOS`, `TvOS`. The last four have no signal bridge, so a run under them degrades
 to caller-owned handling and says so once.
 
-A declared platform changes **decisions only**. It never installs an operating-system registration on
-that platform's behalf, and a real signal aimed at your test runner is still judged against the real
-host. That matters more than it sounds: .NET accepts a `SIGTERM` registration on Windows too, so
-nothing but this rule would stop a declared-Unix test from installing a live handler in your test
-process.
+A declared platform changes **decisions only**. The harness never installs an operating-system signal
+registration, and a real signal aimed at your test runner is still judged against the real host. That
+matters more than it sounds: .NET accepts a `SIGTERM` registration on Windows too, so nothing but this
+rule would stop a declared-Unix test from installing a live handler in your test process.
+
+Profiles are the only way to build one — the flags are readable so you can assert on them, not
+settable, so combinations no device has cannot be constructed by mistake.
 
 ### One harness at a time
 

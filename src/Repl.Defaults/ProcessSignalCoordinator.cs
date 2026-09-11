@@ -30,13 +30,10 @@ internal static class ProcessSignalCoordinator
 	private static bool s_sigTermRegistrationDeclared;
 	private static RegistrationFault? s_registrationFaultForTesting;
 	private static SignalRegistrationPolicy? s_registrationPolicyForTesting;
-
-	/// <summary>
-	/// Invoked once a scope has joined the epoch and any cancellation it inherited has been started,
-	/// so a test harness can await the moment a signal stops being inert instead of guessing with a
-	/// delay. Never set on the production path.
-	/// </summary>
-	internal static Action? ScopeRegisteredCallbackForTesting { get; set; }
+	// Invoked once a scope has joined the epoch and any cancellation it inherited has started, so a test
+	// harness can await the moment a signal stops being inert instead of guessing with a delay. Owned by
+	// the isolation scope like every other test knob here, so it cannot outlive the harness that set it.
+	private static Action? s_scopeRegisteredCallbackForTesting;
 
 	/// <summary>
 	/// Whether the platform in force wants a SIGTERM registration at all. Read with
@@ -83,12 +80,14 @@ internal static class ProcessSignalCoordinator
 	internal static IDisposable IsolateRegistrationsForTesting(
 		Exception? registrationFault = null,
 		bool faultAfterSigTermRegistration = false,
-		SignalRegistrationPolicy? policy = null) =>
+		SignalRegistrationPolicy? policy = null,
+		Action? scopeRegisteredCallback = null) =>
 		new RegistrationIsolationScope(
 			registrationFault is null
 				? null
 				: new RegistrationFault(registrationFault, faultAfterSigTermRegistration),
-			policy);
+			policy,
+			scopeRegisteredCallback);
 
 	internal static void Register(ProcessSignalCancellationScope scope)
 	{
@@ -118,7 +117,7 @@ internal static class ProcessSignalCoordinator
 		}
 
 		startCancellation?.Invoke();
-		ScopeRegisteredCallbackForTesting?.Invoke();
+		s_scopeRegisteredCallbackForTesting?.Invoke();
 	}
 
 	private static RegistrationOutcome TryInitializeRegistrations()
@@ -414,14 +413,17 @@ internal static class ProcessSignalCoordinator
 	{
 		public RegistrationIsolationScope(
 			RegistrationFault? registrationFault,
-			SignalRegistrationPolicy? policy) =>
-			TearDownRegistrations(registrationFault, policy);
+			SignalRegistrationPolicy? policy,
+			Action? scopeRegisteredCallback) =>
+			TearDownRegistrations(registrationFault, policy, scopeRegisteredCallback);
 
-		public void Dispose() => TearDownRegistrations(registrationFault: null, policy: null);
+		public void Dispose() =>
+			TearDownRegistrations(registrationFault: null, policy: null, scopeRegisteredCallback: null);
 
 		private static void TearDownRegistrations(
 			RegistrationFault? registrationFault,
-			SignalRegistrationPolicy? policy)
+			SignalRegistrationPolicy? policy,
+			Action? scopeRegisteredCallback)
 		{
 			IDisposable? cancelKeyRegistration;
 			PosixSignalRegistration? sigTermRegistration;
@@ -438,6 +440,7 @@ internal static class ProcessSignalCoordinator
 				s_generation++;
 				s_registrationFaultForTesting = registrationFault;
 				s_registrationPolicyForTesting = policy;
+				s_scopeRegisteredCallbackForTesting = scopeRegisteredCallback;
 			}
 
 			cancelKeyRegistration?.Dispose();

@@ -23,6 +23,15 @@ namespace Repl.Testing;
 /// <see cref="ReplSignalDelivery.WouldTerminateProcess"/> and execution continues. That half needs a
 /// spawned process on the matching platform.
 /// </para>
+/// <para>
+/// <b>No operating-system signal registration is ever installed.</b> One thing is not isolated though,
+/// and cannot be: starting a run registers a console cancel-key handler, which is how the framework
+/// arbitrates Ctrl+C between an interactive session and a standalone run, and that arbitration is part
+/// of what these tests exist to exercise. The subscription behind it is installed once per process and
+/// never removed, by design. So while a run is in flight, a <i>real</i> Ctrl+C aimed at your test
+/// runner is claimed cooperatively by the run under test and the first press does not stop it — press
+/// again to escalate.
+/// </para>
 /// </summary>
 public sealed class ReplProcessSignalHarness : IAsyncDisposable
 {
@@ -34,7 +43,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	private readonly SemaphoreSlim _startGate = new(initialCount: 1, maxCount: 1);
 	private readonly List<Task<ReplSignalRunResult>> _runs = [];
 	private readonly StringWriter _deliveryDiagnostics = new();
-	private TaskCompletionSource? _scopeRegistered;
+	private readonly ScopeRegistrationSignal _scopeRegistered;
 	private bool _disposed;
 
 	/// <summary>
@@ -55,12 +64,13 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	private ReplProcessSignalHarness(
 		Func<ReplApp> appFactory,
 		ReplProcessSignalOptions options,
-		IDisposable isolation)
+		IDisposable isolation,
+		ScopeRegistrationSignal scopeRegistered)
 	{
 		_appFactory = appFactory;
 		_options = options;
 		_isolation = isolation;
-		ProcessSignalCoordinator.ScopeRegisteredCallbackForTesting = OnScopeRegistered;
+		_scopeRegistered = scopeRegistered;
 	}
 
 	/// <summary>
@@ -70,7 +80,8 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// <param name="appFactory">Builds the application under test.</param>
 	/// <param name="configure">Adjusts the harness options.</param>
 	/// <returns>A harness holding process-signal ownership until it is disposed.</returns>
-	/// <exception cref="ArgumentNullException"><paramref name="appFactory"/> is <see langword="null"/>, or <see cref="ReplProcessSignalOptions.Platform"/> was set to <see langword="null"/>.</exception>
+	/// <exception cref="ArgumentNullException"><paramref name="appFactory"/> is <see langword="null"/>.</exception>
+	/// <exception cref="ArgumentException"><paramref name="configure"/> set <see cref="ReplProcessSignalOptions.Platform"/> to <see langword="null"/>.</exception>
 	/// <exception cref="InvalidOperationException">Another harness is already active in this process.</exception>
 	public static ReplProcessSignalHarness Create(
 		Func<ReplApp> appFactory,
@@ -81,9 +92,9 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		configure?.Invoke(options);
 		if (options.Platform is null)
 		{
-			throw new ArgumentNullException(
-				nameof(configure),
-				$"{nameof(ReplProcessSignalOptions)}.{nameof(ReplProcessSignalOptions.Platform)} cannot be null.");
+			throw new ArgumentException(
+				$"{nameof(ReplProcessSignalOptions)}.{nameof(ReplProcessSignalOptions.Platform)} cannot be set to null.",
+				nameof(configure));
 		}
 
 		// Two live harnesses would not merely race on the application under test: taking ownership
@@ -100,10 +111,15 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 		try
 		{
+			// The readiness callback is handed to the isolation scope rather than parked on the
+			// coordinator, so all of this harness's reach into process-global state has one owner and one
+			// teardown — and cannot outlive the harness that installed it.
+			var scopeRegistered = new ScopeRegistrationSignal();
 			var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
 				registrationFault: options.RegistrationFault,
-				policy: options.Platform.ToPolicy(options.UseRealProcessSignalRegistrations));
-			return new ReplProcessSignalHarness(appFactory, options, isolation);
+				policy: options.Platform.ToPolicy(),
+				scopeRegisteredCallback: scopeRegistered.Signal);
+			return new ReplProcessSignalHarness(appFactory, options, isolation, scopeRegistered);
 		}
 		catch
 		{
@@ -147,8 +163,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		await _startGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			var registered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-			_scopeRegistered = registered;
+			var registered = _scopeRegistered.Arm();
 			var completion = Task.Run(
 				() => ExecuteRunAsync(commandLine, cancellationToken),
 				CancellationToken.None);
@@ -248,13 +263,31 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		}
 
 		_disposed = true;
-		ProcessSignalCoordinator.ScopeRegisteredCallbackForTesting = null;
-		await DrainRunsAsync().ConfigureAwait(false);
-		_runs.Clear();
-		_isolation.Dispose();
-		_startGate.Dispose();
-		_deliveryDiagnostics.Dispose();
-		Interlocked.Exchange(ref s_active, 0);
+		try
+		{
+			// Taken so draining cannot enumerate the run list while a start is appending to it, and so a
+			// start already past its own gate check finishes registering before the callback goes away.
+			await _startGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+			try
+			{
+				await DrainRunsAsync().ConfigureAwait(false);
+				_runs.Clear();
+			}
+			finally
+			{
+				_startGate.Release();
+			}
+		}
+		finally
+		{
+			// Unconditionally: anything thrown above would otherwise leave the exclusivity flag set and
+			// the coordinator isolated for the rest of the process, turning one failed disposal into
+			// every later harness in the suite refusing to start.
+			_isolation.Dispose();
+			_startGate.Dispose();
+			_deliveryDiagnostics.Dispose();
+			Interlocked.Exchange(ref s_active, 0);
+		}
 	}
 
 	[SuppressMessage(
@@ -303,8 +336,6 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			+ "check that its profile or run options leave automatic handling enabled.");
 	}
 
-	private void OnScopeRegistered() => _scopeRegistered?.TrySetResult();
-
 	private async Task<ReplSignalRunResult> ExecuteRunAsync(
 		string commandLine,
 		CancellationToken cancellationToken)
@@ -340,7 +371,13 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			diagnosticText = ReplTestText.NormalizeOutput(diagnosticText);
 		}
 
-		return new ReplSignalRunResult(exitCode, observer.OutcomeKind, outputText, diagnosticText);
+		return new ReplSignalRunResult
+		{
+			ExitCode = exitCode,
+			OutcomeKind = observer.OutcomeKind,
+			OutputText = outputText,
+			DiagnosticText = diagnosticText,
+		};
 	}
 
 	private static async Task<int> RunAsync(
@@ -391,6 +428,24 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	}
 
 	private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
+
+	/// <summary>
+	/// Carries the "a scope has joined the epoch" notification from the coordinator to whichever start
+	/// is waiting for it. Starts are serialised, so at most one is ever armed.
+	/// </summary>
+	private sealed class ScopeRegistrationSignal
+	{
+		private TaskCompletionSource? _pending;
+
+		public TaskCompletionSource Arm()
+		{
+			var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			Volatile.Write(ref _pending, pending);
+			return pending;
+		}
+
+		public void Signal() => Volatile.Read(ref _pending)?.TrySetResult();
+	}
 
 	private sealed class RunObserver : IReplExecutionObserver
 	{

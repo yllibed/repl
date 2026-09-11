@@ -25,20 +25,6 @@ public sealed class ReplProcessSignalOptions
 	public ReplPlatformProfile Platform { get; set; } = ReplPlatformProfile.Current;
 
 	/// <summary>
-	/// Lets the harness install real operating-system signal registrations instead of driving the
-	/// lifecycle in memory. Off by default, and worth leaving off.
-	/// <para>
-	/// With this on, the harness competes for the test runner's own signals: a Ctrl+C or a CI-issued
-	/// SIGTERM meant to stop a hung test run can be claimed cooperatively by the run under test, and
-	/// whoever is trying to stop it has to escalate to SIGKILL. Turn it on only to assert that a
-	/// registration is installed at all, and only on the platform it belongs to — a declared
-	/// <see cref="Platform"/> combined with this is how you install a handler for a platform you are
-	/// not on.
-	/// </para>
-	/// </summary>
-	public bool UseRealProcessSignalRegistrations { get; set; }
-
-	/// <summary>
 	/// Makes the next registration attempt fail with this exception, so a test can assert that
 	/// automatic handling degrades to caller-owned and says so, rather than taking it on trust. No
 	/// supported platform refuses a registration on demand, so this is the only way to reach that
