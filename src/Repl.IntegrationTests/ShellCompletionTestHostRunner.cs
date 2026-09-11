@@ -125,7 +125,7 @@ internal static class ShellCompletionTestHostRunner
 			+ $"{Environment.NewLine}Captured output:{Environment.NewLine}{readOutput()}");
 	}
 
-	private static string ResolveHostExecutablePath()
+	internal static string ResolveHostExecutablePath()
 	{
 		var root = ResolveRepositoryRoot();
 		var configuration = ResolveBuildConfiguration();

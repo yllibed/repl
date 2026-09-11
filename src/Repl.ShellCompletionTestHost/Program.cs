@@ -60,6 +60,10 @@ internal static class Program
 		app.Map("wait {marker}", async (string marker, CancellationToken cancellationToken) =>
 		{
 			await File.WriteAllTextAsync(marker, "READY\n", CancellationToken.None).ConfigureAwait(false);
+			// Also on standard output, for a caller watching the stream rather than the file. The file
+			// stays because it is the only way to observe what happened during a shutdown the process
+			// may not survive long enough to flush.
+			Console.WriteLine("READY");
 			try
 			{
 				await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
