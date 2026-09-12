@@ -1,12 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
-using System.Text.RegularExpressions;
 
 namespace Repl.Testing;
 
 /// <summary>
 /// Handle for a single live in-memory REPL session.
 /// </summary>
-public sealed partial class ReplSessionHandle : IAsyncDisposable
+public sealed class ReplSessionHandle : IAsyncDisposable
 {
 	private readonly ReplTestHost _owner;
 	private readonly ReplApp _app;
@@ -36,6 +35,10 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		_sessionId = sessionId;
 	}
 
+	/// <summary>
+	/// This session's id, unique within its <see cref="ReplTestHost"/> and stable for the session's
+	/// lifetime.
+	/// </summary>
 	public string SessionId => _sessionId;
 
 	/// <summary>
@@ -87,7 +90,7 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 			using var output = new StringWriter();
 			var host = new TestSessionHost(_sessionId, output);
 			var observer = new SessionExecutionObserver();
-			var args = BuildArgsWithAnswers(Tokenize(commandText), _sessionAnswers, answers);
+			var args = BuildArgsWithAnswers(ReplTestText.Tokenize(commandText), _sessionAnswers, answers);
 			using var timeout = CreateTimeoutSource(cancellationToken);
 			var token = timeout?.Token ?? cancellationToken;
 
@@ -111,7 +114,7 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 			var outputText = output.ToString();
 			if (_options.NormalizeAnsi)
 			{
-				outputText = NormalizeOutput(outputText);
+				outputText = ReplTestText.NormalizeOutput(outputText);
 			}
 
 			var timeline = BuildTimeline(outputText, observer.Events, observer.LastResult);
@@ -131,6 +134,12 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		}
 	}
 
+	/// <summary>
+	/// Captures the session's current terminal metadata. Returns
+	/// <see cref="SessionSnapshot.Empty(string)"/> when the session has registered none yet, so this
+	/// never returns <see langword="null"/>.
+	/// </summary>
+	/// <returns>A snapshot of this session.</returns>
 	public SessionSnapshot GetSnapshot()
 	{
 		if (ReplSessionIO.TryGetSession(SessionId, out var session))
@@ -149,6 +158,9 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 		return SessionSnapshot.Empty(SessionId);
 	}
 
+	/// <summary>
+	/// Ends the session and removes it from its host. Disposing twice is a no-op.
+	/// </summary>
 	public ValueTask DisposeAsync()
 	{
 		if (_disposed)
@@ -193,13 +205,13 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 	}
 
 	private static string[] BuildArgsWithAnswers(
-		List<string> baseTokens,
+		string[] baseTokens,
 		IReadOnlyDictionary<string, string>? sessionAnswers,
 		IReadOnlyDictionary<string, string>? commandAnswers)
 	{
 		if (sessionAnswers is null && commandAnswers is null)
 		{
-			return baseTokens.ToArray();
+			return baseTokens;
 		}
 
 		var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -219,7 +231,7 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 			}
 		}
 
-		var args = new List<string>(baseTokens.Count + merged.Count);
+		var args = new List<string>(baseTokens.Length + merged.Count);
 		args.AddRange(baseTokens);
 		foreach (var pair in merged)
 		{
@@ -283,55 +295,6 @@ public sealed partial class ReplSessionHandle : IAsyncDisposable
 	{
 		ObjectDisposedException.ThrowIf(_disposed, this);
 	}
-
-	private static List<string> Tokenize(string value)
-	{
-		var tokens = new List<string>();
-		var current = new System.Text.StringBuilder();
-		var inQuotes = false;
-		foreach (var ch in value)
-		{
-			if (ch == '"')
-			{
-				inQuotes = !inQuotes;
-				continue;
-			}
-
-			if (!inQuotes && char.IsWhiteSpace(ch))
-			{
-				if (current.Length > 0)
-				{
-					tokens.Add(current.ToString());
-					current.Clear();
-				}
-
-				continue;
-			}
-
-			current.Append(ch);
-		}
-
-		if (current.Length > 0)
-		{
-			tokens.Add(current.ToString());
-		}
-
-		return tokens;
-	}
-
-	private static string NormalizeOutput(string output)
-	{
-		if (string.IsNullOrEmpty(output))
-		{
-			return output;
-		}
-
-		var normalized = output.Replace("\r", string.Empty, StringComparison.Ordinal);
-		return BuildAnsiEscapeRegex().Replace(normalized, string.Empty);
-	}
-
-	[GeneratedRegex(@"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", RegexOptions.None, matchTimeoutMilliseconds: 50)]
-	private static partial Regex BuildAnsiEscapeRegex();
 
 	private sealed class TestSessionHost(string sessionId, TextWriter output) : IReplSessionHost
 	{

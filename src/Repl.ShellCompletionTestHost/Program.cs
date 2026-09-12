@@ -57,9 +57,13 @@ internal static class Program
 	private static void ConfigureProcessSignalScenario(ReplApp app)
 	{
 		app.UseCliProfile();
-		app.Map("wait {marker}", async (string marker, CancellationToken cancellationToken) =>
+		app.Map("wait {marker}", async (string marker, IReplIoContext io, CancellationToken cancellationToken) =>
 		{
 			await File.WriteAllTextAsync(marker, "READY\n", CancellationToken.None).ConfigureAwait(false);
+			// Also on the session's own output, for a caller watching the stream rather than the file.
+			// The file stays because it is the only way to observe what happened during a shutdown the
+			// process may not survive long enough to flush.
+			await io.Output.WriteLineAsync("READY").ConfigureAwait(false);
 			try
 			{
 				await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);

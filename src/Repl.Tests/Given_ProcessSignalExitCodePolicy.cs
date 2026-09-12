@@ -9,6 +9,10 @@ namespace Repl.Tests;
 /// <c>ExitCodes.Resolver</c> both govern a signalled run.
 /// </summary>
 [TestClass]
+// Drives the same process-global coordinator state as every other class that carries this attribute.
+// It was safe without it only because those are all tagged, so MSTest ran this one alone in the
+// parallel pass — an invariant that would break the moment a second untagged class touched that state.
+[DoNotParallelize]
 public sealed class Given_ProcessSignalExitCodePolicy
 {
 	[TestMethod]
