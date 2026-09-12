@@ -61,8 +61,13 @@ public sealed class CommandExecution
 	public IReadOnlyList<ReplInteractionEvent> InteractionEvents { get; }
 
 	/// <summary>
-	/// The command's events in order: what it wrote, then each interaction it raised, then the result
-	/// it produced. Use this when the ordering between output and interactions is what matters.
+	/// The command's events: everything it wrote as a single event, then each interaction it raised in
+	/// the order it was observed, then the result it produced.
+	/// <para>
+	/// Output is one aggregate event, captured at the end — not interleaved with the interactions. An
+	/// assertion that a particular line was written before or after a given interaction is asserting
+	/// this shape, not an observed chronology.
+	/// </para>
 	/// </summary>
 	public IReadOnlyList<CommandEvent> TimelineEvents { get; }
 

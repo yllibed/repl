@@ -32,10 +32,12 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies SIGTERM claims a run in flight and carries the conventional 143, so the two signal kinds are not assumed to share one exit code.")]
+	[Description("Regression guard: verifies SIGTERM claims a run in flight and carries the conventional 143, so the two signal kinds are not assumed to share one exit code. Declares Unix because that is where the framework wires SIGTERM up; on Windows it installs no registration for it, and this then passes identically on every host.")]
 	public async Task When_TerminateArrives_Then_TheRunResolvesTheSigTermCode()
 	{
-		await using var harness = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
+		await using var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.Platform = ReplPlatformProfile.Unix);
 		var run = await harness.StartRunAsync("work");
 
 		var delivery = harness.SendSignal(ReplProcessSignal.Terminate);
@@ -60,10 +62,12 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies a second signal reports that the operating system would take over and leaves the first claim's exit code intact, so escalating cannot relabel what the run is exiting with.")]
+	[Description("Regression guard: verifies a second signal reports that the operating system would take over and leaves the first claim's exit code intact, so escalating cannot relabel what the run is exiting with. Escalates with a different signal kind than it claimed with, which is why it declares the platform that wires SIGTERM up.")]
 	public async Task When_ASecondSignalArrives_Then_ItWouldTerminateAndTheFirstClaimStands()
 	{
-		await using var harness = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
+		await using var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.Platform = ReplPlatformProfile.Unix);
 		var run = await harness.StartRunAsync("work");
 
 		var first = harness.SendSignal(ReplProcessSignal.Interrupt);
@@ -360,6 +364,79 @@ public sealed class Given_ProcessSignalHarness
 		{
 			await next.DisposeAsync().ConfigureAwait(false);
 		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies SIGTERM is left to the operating-system default on a declared platform that wires no SIGTERM registration. On Windows the framework installs none, so a harness that claimed anyway would let a cross-platform test assert a cancellation that could never happen on the platform it names.")]
+	[DataRow(false, ReplSignalDelivery.CancellationRequested, DisplayName = "Declared Unix: SIGTERM is wired and claims")]
+	[DataRow(true, ReplSignalDelivery.NotHandled, DisplayName = "Declared Windows: SIGTERM is not wired")]
+	public async Task When_TerminateIsDelivered_Then_OnlyADeclaredPlatformThatWiresItClaims(
+		bool declareWindows,
+		ReplSignalDelivery expected)
+	{
+		await using var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.Platform = declareWindows
+				? ReplPlatformProfile.Windows
+				: ReplPlatformProfile.Unix);
+		var run = await harness.StartRunAsync("work");
+
+		harness.SendSignal(ReplProcessSignal.Terminate).Should().Be(expected);
+
+		// Release the run either way, so a broken case fails on the assertion above rather than on a
+		// harness blocking until its timeout.
+		harness.SendSignal(ReplProcessSignal.Interrupt);
+		await run.Completion;
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a run whose command swallows the timeout cancellation still fails the test. The application returns normally in that case, so nothing throws out of the run and the timeout would otherwise be reported as a successful result for a signal that never arrived.")]
+	public async Task When_TheCommandSwallowsTheTimeout_Then_TheRunStillFails()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(
+			() =>
+			{
+				var app = CreateApp(configure: null);
+				app.Map("work", async (CancellationToken cancellationToken) =>
+				{
+					try
+					{
+						await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+					}
+					catch (OperationCanceledException)
+					{
+						// Swallowed on purpose: this is the application shape the guard exists for.
+					}
+
+					return "finished anyway";
+				});
+
+				return app;
+			},
+			options => options.RunTimeout = TimeSpan.FromMilliseconds(250));
+		var run = await harness.StartRunAsync("work").ConfigureAwait(false);
+		var completion = run.Completion;
+
+#pragma warning disable VSTHRD003 // The run was started by this test, two lines up.
+		var act = async () => await completion.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+
+		await act.Should().ThrowAsync<TimeoutException>().ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a harness is refused while an unrelated run with automatic signal handling is in flight. Taking ownership tears down that run's registrations without removing its scope, so the first signal this harness delivered would cancel a run it has nothing to do with.")]
+	public async Task When_AnUnrelatedRunIsInFlight_Then_CreatingAHarnessIsRefused()
+	{
+		await using var owner = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
+		var run = await owner.StartRunAsync("work");
+
+		var second = () => ReplProcessSignalHarness.Create(() => CreateEchoApp());
+
+		second.Should().Throw<InvalidOperationException>();
+
+		owner.SendSignal(ReplProcessSignal.Interrupt);
+		await run.Completion;
 	}
 
 	private static ReplApp CreateBlockingApp(

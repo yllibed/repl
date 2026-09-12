@@ -82,7 +82,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// <returns>A harness holding process-signal ownership until it is disposed.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="appFactory"/> is <see langword="null"/>.</exception>
 	/// <exception cref="ArgumentException"><paramref name="configure"/> set <see cref="ReplProcessSignalOptions.Platform"/> to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Another harness is already active in this process.</exception>
+	/// <exception cref="InvalidOperationException">Another harness is already active in this process, or a run with automatic signal handling is already in flight.</exception>
 	public static ReplProcessSignalHarness Create(
 		Func<ReplApp> appFactory,
 		Action<ReplProcessSignalOptions>? configure = null)
@@ -95,6 +95,17 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			throw new ArgumentException(
 				$"{nameof(ReplProcessSignalOptions)}.{nameof(ReplProcessSignalOptions.Platform)} cannot be set to null.",
 				nameof(configure));
+		}
+
+		// Taking ownership tears down the registrations without touching the scopes that were using
+		// them, so a run already in flight would keep its place in the epoch and be cancelled by the
+		// first signal this harness delivers. Refuse rather than corrupt something unrelated.
+		if (ProcessSignalCoordinator.ActiveScopeCountForTesting != 0)
+		{
+			throw new InvalidOperationException(
+				"A run with automatic process-signal handling is already in flight in this process. "
+				+ "Taking signal ownership now would interfere with it: let it finish before creating "
+				+ "the harness, and configure your test framework not to run signal tests in parallel.");
 		}
 
 		// Two live harnesses would not merely race on the application under test: taking ownership
@@ -145,7 +156,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// finishes, the epoch resets and the next signal is a first signal again.
 	/// </para>
 	/// </summary>
-	/// <param name="commandLine">The command line to run, tokenized the way a shell would.</param>
+	/// <param name="commandLine">The command line to run. Split on whitespace, with double quotes grouping — not a shell parser: single quotes are literal and escape sequences are not interpreted.</param>
 	/// <param name="cancellationToken">Cancels waiting for the run to register, and the run itself.</param>
 	/// <returns>The run, still in flight.</returns>
 	/// <exception cref="ArgumentException"><paramref name="commandLine"/> is empty or whitespace.</exception>
@@ -163,6 +174,9 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		await _startGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
+			// Re-checked: the first check happened before this wait, and disposal may have taken the gate
+			// in between. Starting now would run outside an isolation that has already been torn down.
+			ThrowIfDisposed();
 			var registered = _scopeRegistered.Arm();
 			var completion = Task.Run(
 				() => ExecuteRunAsync(commandLine, cancellationToken),
@@ -230,6 +244,12 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			ReplProcessSignal.Break => ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting(
 				ConsoleSpecialKey.ControlBreak,
 				isWindows: _options.Platform.IsWindows),
+			// Gated on the platform in force actually wiring SIGTERM up. On a declared Windows profile the
+			// framework installs no SIGTERM registration, and on an unsupported one it installs nothing at
+			// all, so claiming here would have a cross-platform test assert a cancellation that could
+			// never happen on the platform it names.
+			ReplProcessSignal.Terminate when !ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting =>
+				ConsoleCancelKeyHandlingResult.NotHandled,
 			ReplProcessSignal.Terminate => ProcessSignalCoordinator.HandleSigTermForTesting(),
 			_ => throw new ArgumentOutOfRangeException(
 				nameof(signal),
@@ -349,19 +369,26 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		var observer = new RunObserver();
 		var app = _appFactory();
 		int exitCode;
-		using (ReplSessionIO.SetSession(
-			output,
-			TextReader.Null,
-			sessionId: sessionId,
-			commandOutput: output,
-			error: error))
+		try
 		{
-			app.Core.ExecutionObserver = observer;
-			using var timeout = CreateTimeoutSource(cancellationToken);
-			exitCode = await RunAsync(app, commandLine, timeout, cancellationToken).ConfigureAwait(false);
+			using (ReplSessionIO.SetSession(
+				output,
+				TextReader.Null,
+				sessionId: sessionId,
+				commandOutput: output,
+				error: error))
+			{
+				app.Core.ExecutionObserver = observer;
+				using var timeout = CreateTimeoutSource(cancellationToken);
+				exitCode = await RunAsync(app, commandLine, timeout, cancellationToken).ConfigureAwait(false);
+			}
 		}
-
-		ReplSessionIO.RemoveSession(sessionId);
+		finally
+		{
+			// The scope restores the ambient writers but does not remove an explicitly named session, so
+			// a run that failed would otherwise leave its entry in the process-wide dictionary forever.
+			ReplSessionIO.RemoveSession(sessionId);
+		}
 
 		var outputText = output.ToString();
 		var diagnosticText = error.ToString();
@@ -386,28 +413,38 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		CancellationTokenSource? timeout,
 		CancellationToken cancellationToken)
 	{
+		int exitCode;
 		try
 		{
 			// The overload taking no IServiceProvider, IHost or IReplHost is the only one that installs
 			// the standalone signal bridge. Every other overload writes a diagnostic and drops
 			// ProcessSignalHandling, so routing this through one of them would leave every delivery
 			// inert with nothing but an unasserted line to show for it.
-			return await app.RunAsync(
+			exitCode = await app.RunAsync(
 				ReplTestText.Tokenize(commandLine),
 				new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.Automatic },
 				timeout?.Token ?? cancellationToken).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (IsRunTimeout(timeout, cancellationToken))
 		{
-			throw new TimeoutException(
-				$"The run '{commandLine}' exceeded its timeout. A signal test starts a run that blocks "
-				+ "until it is cancelled, so this usually means the signal never claimed it.");
+			throw CreateTimeoutException(commandLine);
 		}
 		finally
 		{
 			app.Core.ExecutionObserver = null;
 		}
+
+		// An application that maps cancellation to an exit code, or a command that swallows it, returns
+		// normally and never reaches the filter above. Reporting that as a result would hand the test a
+		// passing run for a signal that never arrived.
+		return IsRunTimeout(timeout, cancellationToken)
+			? throw CreateTimeoutException(commandLine)
+			: exitCode;
 	}
+
+	private static TimeoutException CreateTimeoutException(string commandLine) =>
+		new($"The run '{commandLine}' exceeded its timeout. A signal test starts a run that blocks "
+			+ "until it is cancelled, so this usually means the signal never claimed it.");
 
 	// The harness's own timeout fired, and not the caller's token.
 	private static bool IsRunTimeout(CancellationTokenSource? timeout, CancellationToken cancellationToken) =>

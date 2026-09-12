@@ -53,6 +53,22 @@ internal static class ProcessSignalCoordinator
 	}
 
 	/// <summary>
+	/// How many scopes currently hold the ownership epoch. A test harness reads this before taking
+	/// ownership: isolating while somebody else's run is in flight tears down that run's registrations
+	/// without removing its scope, so a later synthetic signal would cancel it too.
+	/// </summary>
+	internal static int ActiveScopeCountForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return ActiveScopes.Count;
+			}
+		}
+	}
+
+	/// <summary>
 	/// Whether a live operating-system SIGTERM registration exists right now.
 	/// </summary>
 	internal static bool SigTermRegistrationInstalledForTesting

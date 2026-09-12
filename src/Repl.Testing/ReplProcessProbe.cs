@@ -124,6 +124,15 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 
 			if (_process.HasExited)
 			{
+				// Exiting does not mean the capture is complete: the last line may still be sitting in an
+				// asynchronous callback. This overload waits for those handlers to finish, so the recheck
+				// below sees everything the child actually wrote before the wait is called a failure.
+				_process.WaitForExit();
+				if (_capture.Read().Contains(expected, StringComparison.Ordinal))
+				{
+					return;
+				}
+
 				throw new InvalidOperationException(
 					Describe($"exited with code {_process.ExitCode} before writing '{expected}'"));
 			}
@@ -218,7 +227,16 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		_disposed = true;
 		if (!_process.HasExited)
 		{
-			_process.Kill(entireProcessTree: true);
+			try
+			{
+				_process.Kill(entireProcessTree: true);
+			}
+			catch (InvalidOperationException)
+			{
+				// It exited between the check and the kill. That is the outcome this wanted anyway, and
+				// turning a won race into a teardown failure would fail tests that had already passed.
+			}
+
 			await _process.WaitForExitAsync().ConfigureAwait(false);
 		}
 
