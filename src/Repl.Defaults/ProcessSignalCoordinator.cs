@@ -33,7 +33,7 @@ internal static class ProcessSignalCoordinator
 	// Invoked once a scope has joined the epoch and any cancellation it inherited has started, so a test
 	// harness can await the moment a signal stops being inert instead of guessing with a delay. Owned by
 	// the isolation scope like every other test knob here, so it cannot outlive the harness that set it.
-	private static Action? s_scopeRegisteredCallbackForTesting;
+	private static Action<object?>? s_scopeRegisteredCallbackForTesting;
 	private static object? s_testOwner;
 
 	// Flows into the run's async context, so a scope constructed inside a run the owner launched is
@@ -44,7 +44,7 @@ internal static class ProcessSignalCoordinator
 	// It carries the claim rather than a flag: a bare bool also flows into anything a handler spawned,
 	// so a background task outliving its harness would still read true and pass as a run launched by
 	// whichever harness owns the coordinator next.
-	private static readonly AsyncLocal<object?> OwnedRun = new();
+	private static readonly AsyncLocal<OwnedRunContext?> OwnedRun = new();
 
 	/// <summary>
 	/// Whether the platform in force wants a SIGTERM registration at all. Read with
@@ -92,7 +92,7 @@ internal static class ProcessSignalCoordinator
 		Exception? registrationFault = null,
 		bool faultAfterSigTermRegistration = false,
 		SignalRegistrationPolicy? policy = null,
-		Action? scopeRegisteredCallback = null) =>
+		Action<object?>? scopeRegisteredCallback = null) =>
 		new RegistrationIsolationScope(
 			registrationFault is null
 				? null
@@ -132,15 +132,39 @@ internal static class ProcessSignalCoordinator
 	/// Marks the current async context as belonging to the test owner, so scopes constructed beneath it
 	/// are accepted while the claim is held. Returns a scope that restores the previous marking.
 	/// </summary>
-	internal static IDisposable MarkOwnedRunForTesting()
+	/// <param name="runToken">
+	/// Identifies the individual run, so a registration can be matched to the start that launched it
+	/// rather than merely to the harness. A start whose wait gave up leaves its launch running, and that
+	/// launch may register long afterwards; without the token its late registration would be taken for
+	/// whichever start is waiting by then.
+	/// </param>
+	internal static IDisposable MarkOwnedRunForTesting(object runToken)
 	{
+		ArgumentNullException.ThrowIfNull(runToken);
 		var previous = OwnedRun.Value;
 		lock (Gate)
 		{
-			OwnedRun.Value = s_testOwner;
+			OwnedRun.Value = new OwnedRunContext(s_testOwner, runToken);
 		}
 
 		return new OwnedRunMarker(previous);
+	}
+
+	/// <summary>
+	/// How many scopes hold the epoch right now. A harness reads this as it releases ownership: a scope
+	/// it did not start and cannot drain — a command that launched its own automatic run, say — would
+	/// otherwise keep the epoch occupied and make every later harness refuse to start, with nothing
+	/// saying why.
+	/// </summary>
+	internal static int ActiveScopeCountForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return ActiveScopes.Count;
+			}
+		}
 	}
 
 	internal static void Register(ProcessSignalCancellationScope scope)
@@ -148,13 +172,14 @@ internal static class ProcessSignalCoordinator
 		ArgumentNullException.ThrowIfNull(scope);
 		RegistrationOutcome outcome;
 		Action? startCancellation = null;
+		string? orphanDiagnostic = null;
 		lock (Gate)
 		{
 			// A test harness owns process-signal handling for its lifetime. A run it did not launch would
 			// join its isolated epoch, be cancelled by its synthetic signals, and release its readiness
 			// wait — so it is refused here rather than corrupted quietly. Running one concurrently with a
 			// signal test is already what the harness documentation tells callers not to do.
-			if (s_testOwner is not null && !ReferenceEquals(OwnedRun.Value, s_testOwner))
+			if (s_testOwner is not null && !ReferenceEquals(OwnedRun.Value?.Owner, s_testOwner))
 			{
 				throw new InvalidOperationException(
 					"A process-signal test harness currently owns signal handling in this process, so this "
@@ -163,19 +188,7 @@ internal static class ProcessSignalCoordinator
 					+ "that starts an automatic run.");
 			}
 
-			// A claim left behind by an owner that has since been released: its scopes were abandoned
-			// rather than drained, so nothing is going to clear it. Inheriting it would cancel this run
-			// with a signal nobody sent, reported as Interrupted with no diagnostic naming a signal —
-			// indistinguishable, from the caller's side, from a bug in their own application.
-			if (s_claimedSignal is { Owner: not null } orphaned && !ReferenceEquals(orphaned.Owner, s_testOwner))
-			{
-				s_claimedSignal = null;
-				WriteDiagnostic(
-					$"Discarding a {orphaned.Name} claim left by a process-signal test harness that was "
-					+ "disposed while a run it could not stop was still executing. This run is unaffected, "
-					+ "but that run may still be running.");
-			}
-
+			orphanDiagnostic = DiscardOrphanedClaim();
 			outcome = TryInitializeRegistrations();
 			// The scope joins the epoch even when no bridge could be installed, so that disposal stays
 			// symmetric and a run started before an earlier scope claimed a signal still inherits it.
@@ -189,6 +202,11 @@ internal static class ProcessSignalCoordinator
 		// Installing the bridge is a convenience, not a precondition for running the command. Every way
 		// it can fail to install — an unsupported platform, or an environment that refuses the
 		// registration — degrades to caller-owned handling and says so once, on the same path.
+		if (orphanDiagnostic is { } orphanMessage)
+		{
+			WriteDiagnostic(orphanMessage);
+		}
+
 		if (outcome.Diagnostic is { } diagnostic)
 		{
 			outcome.OrphanedCancelKeyRegistration?.Dispose();
@@ -197,10 +215,35 @@ internal static class ProcessSignalCoordinator
 		}
 
 		startCancellation?.Invoke();
-		if (s_testOwner is null || ReferenceEquals(OwnedRun.Value, s_testOwner))
+		if (OwnedRun.Value is { } ownedRun && ReferenceEquals(ownedRun.Owner, s_testOwner))
 		{
-			s_scopeRegisteredCallbackForTesting?.Invoke();
+			s_scopeRegisteredCallbackForTesting?.Invoke(ownedRun.RunToken);
 		}
+	}
+
+	/// <summary>
+	/// Clears a claim left behind by an owner that has since been released. Its scopes were abandoned
+	/// rather than drained, so nothing is going to clear it, and a run inheriting it would be cancelled
+	/// by a signal nobody sent — reported as an interruption with no diagnostic naming a signal, which
+	/// from the caller's side is indistinguishable from a bug in their own application.
+	/// </summary>
+	/// <returns>
+	/// What to report, or <see langword="null"/> when there was nothing to discard. Returned rather than
+	/// written: <see cref="ReplSessionIO.Error"/> is caller-supplied, and this class promises no consumer
+	/// callback runs while the gate is held — a writer that blocked here would stop a concurrent signal
+	/// callback from reaching its suppression decision.
+	/// </returns>
+	private static string? DiscardOrphanedClaim()
+	{
+		if (s_claimedSignal is not { Owner: not null } orphaned || ReferenceEquals(orphaned.Owner, s_testOwner))
+		{
+			return null;
+		}
+
+		s_claimedSignal = null;
+		return $"Discarding a {orphaned.Name} claim left by a process-signal test harness that was "
+			+ "disposed while a run it could not stop was still executing. This run is unaffected, "
+			+ "but that run may still be running.";
 	}
 
 	private static RegistrationOutcome TryInitializeRegistrations()
@@ -495,7 +538,7 @@ internal static class ProcessSignalCoordinator
 		public RegistrationIsolationScope(
 			RegistrationFault? registrationFault,
 			SignalRegistrationPolicy? policy,
-			Action? scopeRegisteredCallback) =>
+			Action<object?>? scopeRegisteredCallback) =>
 			TearDownRegistrations(registrationFault, policy, scopeRegisteredCallback);
 
 		public void Dispose() =>
@@ -504,7 +547,7 @@ internal static class ProcessSignalCoordinator
 		private static void TearDownRegistrations(
 			RegistrationFault? registrationFault,
 			SignalRegistrationPolicy? policy,
-			Action? scopeRegisteredCallback)
+			Action<object?>? scopeRegisteredCallback)
 		{
 			IDisposable? cancelKeyRegistration;
 			PosixSignalRegistration? sigTermRegistration;
@@ -543,7 +586,9 @@ internal static class ProcessSignalCoordinator
 		}
 	}
 
-	private sealed class OwnedRunMarker(object? previous) : IDisposable
+	private sealed record OwnedRunContext(object? Owner, object RunToken);
+
+	private sealed class OwnedRunMarker(OwnedRunContext? previous) : IDisposable
 	{
 		public void Dispose() => OwnedRun.Value = previous;
 	}

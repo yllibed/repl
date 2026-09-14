@@ -594,7 +594,7 @@ public sealed class Given_ProcessSignalCancellationScope
 		first.Should().NotBeNull();
 
 		// A context marked under the first claim, captured the way a spawned background task would.
-		var marker = ProcessSignalCoordinator.MarkOwnedRunForTesting();
+		var marker = ProcessSignalCoordinator.MarkOwnedRunForTesting(new object());
 		first!.Dispose();
 
 		using var second = ProcessSignalCoordinator.TryClaimTestOwnership();
@@ -619,7 +619,7 @@ public sealed class Given_ProcessSignalCancellationScope
 		var owner = ProcessSignalCoordinator.TryClaimTestOwnership();
 		owner.Should().NotBeNull();
 		ProcessSignalCancellationScope? abandoned;
-		using (ProcessSignalCoordinator.MarkOwnedRunForTesting())
+		using (ProcessSignalCoordinator.MarkOwnedRunForTesting(new object()))
 		{
 			abandoned = new ProcessSignalCancellationScope(default);
 		}

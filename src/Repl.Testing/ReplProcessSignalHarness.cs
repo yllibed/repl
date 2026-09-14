@@ -174,11 +174,12 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			// Re-checked: the first check happened before this wait, and disposal may have taken the gate
 			// in between. Starting now would run outside an isolation that has already been torn down.
 			ThrowIfDisposed();
-			var registered = _scopeRegistered.Arm();
+			var runToken = new object();
+			var registered = _scopeRegistered.Arm(runToken);
 			// Marked before the run is launched so the marker flows into the context where the run's
 			// ProcessSignalCancellationScope is constructed, letting the coordinator tell this harness's
 			// scopes from anybody else's.
-			using var owned = ProcessSignalCoordinator.MarkOwnedRunForTesting();
+			using var owned = ProcessSignalCoordinator.MarkOwnedRunForTesting(runToken);
 			var completion = Task.Run(
 				() => ExecuteRunAsync(commandLine, cancellationToken),
 				CancellationToken.None);
@@ -201,7 +202,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			{
 				// This wait gave up on a registration that may still arrive. Drop the reservation so the
 				// late registration cannot be paired with a later start's wait instead.
-				_scopeRegistered.Abandon(registered);
+				_scopeRegistered.Abandon(runToken);
 				throw;
 			}
 
@@ -312,6 +313,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 		_disposed = true;
 		var abandoned = 0;
+		var leakedScopes = 0;
 		try
 		{
 			// Taken so draining cannot enumerate the run list while a start is appending to it, and so a
@@ -331,6 +333,11 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		}
 		finally
 		{
+			// Read before ownership goes: a scope this harness never started — a command that launched its
+			// own automatic run, say — stays in the epoch, and every later harness is then refused with
+			// nothing saying why. Reported below rather than prevented, since nothing here can drain it.
+			leakedScopes = ProcessSignalCoordinator.ActiveScopeCountForTesting;
+
 			// Unconditionally: anything thrown above would otherwise leave the exclusivity flag set and
 			// the coordinator isolated for the rest of the process, turning one failed disposal into
 			// every later harness in the suite refusing to start.
@@ -343,6 +350,14 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		// Reported after ownership is released, so the next harness can still be created — but reported,
 		// because a run still holding a scope outlives the isolation that was just torn down, and every
 		// later signal test in this process inherits that epoch.
+		ReportWhatOutlivedTheHarness(abandoned, leakedScopes);
+	}
+
+	// Raised after ownership is released, so the next harness can still be created. Reported at all
+	// because both states leave the process-wide epoch occupied by something this harness cannot drain,
+	// and the alternative is a later test failing for a reason nothing explains.
+	private static void ReportWhatOutlivedTheHarness(int abandoned, int leakedScopes)
+	{
 		if (abandoned > 0)
 		{
 			throw new InvalidOperationException(
@@ -350,6 +365,15 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				+ "stopped: a command that never observes its cancellation token cannot be interrupted. "
 				+ "They still hold a place in the process-wide signal epoch, so later signal tests in "
 				+ "this process may see cancellations they did not cause.");
+		}
+
+		if (leakedScopes > 0)
+		{
+			throw new InvalidOperationException(
+				$"{leakedScopes} process-signal scope(s) outlived the harness without having been started "
+				+ "through it — a command under test started its own run with automatic signal handling. "
+				+ "The harness cannot drain what it did not start, and while those scopes hold the epoch "
+				+ "every later harness in this process is refused.");
 		}
 	}
 
@@ -584,64 +608,58 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// Carries the "a scope has joined the epoch" notification from the coordinator to whichever start
 	/// is waiting for it. Starts are serialised, so at most one is ever armed.
 	/// </summary>
+	/// <summary>
+	/// Pairs each "a scope joined the epoch" notification with the start that caused it.
+	/// <para>
+	/// Keyed by run token rather than ordered, because order is not something this can rely on: a start
+	/// whose wait gave up leaves its launch running, and that launch may register long afterwards. With
+	/// a queue its late registration would be handed to whichever start was waiting by then, reporting
+	/// that run as having joined the epoch when it had not — and a signal sent next would cancel the
+	/// abandoned run while missing the one just returned to the caller.
+	/// </para>
+	/// </summary>
 	private sealed class ScopeRegistrationSignal
 	{
 		private readonly Lock _gate = new();
-		private readonly Queue<TaskCompletionSource> _pending = new();
+		private readonly Dictionary<object, TaskCompletionSource> _pending = [];
 
-		/// <summary>
-		/// Arms one wait. A queue rather than a single slot: a start whose wait timed out while its
-		/// application factory was still blocked leaves that startup task running, and its eventual
-		/// registration must satisfy its own wait — not whichever start happens to be waiting by then,
-		/// which would report a run as having joined the epoch when it had not.
-		/// </summary>
-		public TaskCompletionSource Arm()
+		public TaskCompletionSource Arm(object runToken)
 		{
 			var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 			lock (_gate)
 			{
-				_pending.Enqueue(pending);
+				_pending[runToken] = pending;
 			}
 
 			return pending;
 		}
 
-		/// <summary>
-		/// Releases the oldest wait still outstanding, which is the one belonging to the earliest start
-		/// that has not registered yet. Registrations arrive in start order because starting is
-		/// serialised, so oldest-first pairs each registration with the start that caused it.
-		/// </summary>
-		public void Signal()
+		public void Signal(object? runToken)
 		{
+			if (runToken is null)
+			{
+				return;
+			}
+
 			TaskCompletionSource? pending;
 			lock (_gate)
 			{
-				pending = _pending.Count == 0 ? null : _pending.Dequeue();
+				_ = _pending.Remove(runToken, out pending);
 			}
 
 			pending?.TrySetResult();
 		}
 
 		/// <summary>
-		/// Abandons a wait that will never be satisfied — its start gave up — so a later registration
-		/// from that same abandoned startup task cannot be paired with somebody else's wait.
+		/// Drops a wait whose start gave up, so the entry does not linger. Its launch may still register
+		/// later; with nothing left under that token, the notification is simply discarded instead of
+		/// being handed to another start.
 		/// </summary>
-		public void Abandon(TaskCompletionSource pending)
+		public void Abandon(object runToken)
 		{
 			lock (_gate)
 			{
-				if (_pending.Count == 0)
-				{
-					return;
-				}
-
-				// Rebuilt without the abandoned entry, preserving the order of the rest.
-				var remaining = _pending.Where(entry => !ReferenceEquals(entry, pending)).ToArray();
-				_pending.Clear();
-				foreach (var entry in remaining)
-				{
-					_pending.Enqueue(entry);
-				}
+				_ = _pending.Remove(runToken);
 			}
 		}
 	}

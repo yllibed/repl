@@ -521,6 +521,65 @@ public sealed class Given_ProcessSignalHarness
 		}
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies a registration arriving from a start that already gave up does not release a different start. The abandoned launch keeps running and registers late; pairing that notification with whichever start is waiting by then would return a run to the caller before it joined the epoch, so the next signal would cancel the abandoned run and miss the one just handed over.")]
+	public async Task When_AnAbandonedStartRegistersLate_Then_ItDoesNotReleaseAnotherStart()
+	{
+		using var releaseFirstFactory = new SemaphoreSlim(initialCount: 0, maxCount: 1);
+		using var releaseSecondFactory = new SemaphoreSlim(initialCount: 0, maxCount: 1);
+		var secondFactoryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var factoryCalls = 0;
+
+		var harness = ReplProcessSignalHarness.Create(
+			() =>
+			{
+				// Blocking here is what makes a start give up before its run ever reaches the coordinator.
+				var call = Interlocked.Increment(ref factoryCalls);
+				if (call == 1)
+				{
+					releaseFirstFactory.Wait();
+				}
+				else if (call == 2)
+				{
+					secondFactoryEntered.TrySetResult();
+					releaseSecondFactory.Wait();
+				}
+
+				return CreateEchoApp();
+			},
+			// Generous, so the second start is still well inside its own budget while it waits for the
+			// first launch to register: the point is which start gets released, not which times out.
+			options => options.RunTimeout = TimeSpan.FromSeconds(2));
+		try
+		{
+			var firstStart = async () => await harness.StartRunAsync("echo").ConfigureAwait(false);
+			await firstStart.Should().ThrowAsync<TimeoutException>().ConfigureAwait(false);
+
+			// The second start arms its own wait and then blocks in its factory, so it is outstanding when
+			// the abandoned first launch finally registers.
+			var secondStart = Task.Run(async () => await harness.StartRunAsync("echo").ConfigureAwait(false));
+			await secondFactoryEntered.Task.ConfigureAwait(false);
+
+			releaseFirstFactory.Release();
+			var releasedEarly = await Task.WhenAny(secondStart, Task.Delay(TimeSpan.FromMilliseconds(300)))
+				.ConfigureAwait(false);
+
+			releasedEarly.Should().NotBeSameAs(
+				secondStart,
+				because: "the first launch's late registration belongs to the start that gave up, not this one");
+
+			releaseSecondFactory.Release();
+			var second = await secondStart.ConfigureAwait(false);
+			await second.Completion.ConfigureAwait(false);
+		}
+		finally
+		{
+			releaseFirstFactory.Release();
+			releaseSecondFactory.Release();
+			await harness.DisposeAsync().ConfigureAwait(false);
+		}
+	}
+
 	private static ReplApp CreateBlockingApp(
 		TaskCompletionSource? started = null,
 		TaskCompletionSource? cleanedUp = null,
