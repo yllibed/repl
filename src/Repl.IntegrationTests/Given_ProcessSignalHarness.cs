@@ -581,10 +581,12 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies a signal that would reach an interactive session instead of the run under test fails loudly. Console cancel-key selection is exclusive — an interactive handler takes Ctrl+C in place of the standalone ones — so reporting that delivery as handled would give a green test asserting a cancellation that never touched the run it names.")]
+	[Description("Regression guard: verifies a signal that would reach an interactive session instead of the run under test fails loudly, and that SIGTERM is unaffected because it never goes through console-key arbitration. Console cancel-key selection is exclusive — an interactive handler takes Ctrl+C in place of the standalone ones — so reporting that delivery as handled would give a green test asserting a cancellation that never touched the run it names. Declares Unix so both halves mean the same thing on every host.")]
 	public async Task When_AnInteractiveSessionOwnsTheConsoleKeys_Then_DeliveryIsRefused()
 	{
-		await using var harness = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
+		await using var harness = ReplProcessSignalHarness.Create(
+			() => CreateBlockingApp(),
+			options => options.Platform = ReplPlatformProfile.Unix);
 		var run = await harness.StartRunAsync("work");
 
 		using (new CancelKeyHandler())
@@ -594,12 +596,13 @@ public sealed class Given_ProcessSignalHarness
 			act.Should().Throw<InvalidOperationException>()
 				.WithMessage("*interactive session*");
 
-			// SIGTERM has no console-key arbitration to lose, so it is unaffected.
-			harness.SendSignal(ReplProcessSignal.Terminate).Should().Be(ReplSignalDelivery.NotHandled);
+			// SIGTERM never goes through console-key arbitration, so an interactive owner does not stand
+			// between it and the run — it claims, which is also what releases the run below.
+			harness.SendSignal(ReplProcessSignal.Terminate)
+				.Should().Be(ReplSignalDelivery.CancellationRequested);
 		}
 
-		harness.SendSignal(ReplProcessSignal.Interrupt).Should().Be(ReplSignalDelivery.CancellationRequested);
-		await run.Completion;
+		(await run.Completion).OutcomeKind.Should().Be(ReplExecutionOutcomeKind.Interrupted);
 	}
 
 	private static ReplApp CreateBlockingApp(
