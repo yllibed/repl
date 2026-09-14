@@ -285,7 +285,10 @@ public sealed class Given_ProcessSignalHarness
 		var run = await harness.StartRunAsync("work").ConfigureAwait(false);
 		var completion = run.Completion;
 
-#pragma warning disable VSTHRD003 // The run was started by this test, two lines up.
+		// VSTHRD003 fires on returning a foreign task as well as awaiting one — "avoid awaiting or
+		// returning" — so a bare task-returning lambda does not avoid it either. The run was started by
+		// this test, two lines up.
+#pragma warning disable VSTHRD003
 		var act = async () => await completion.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
 

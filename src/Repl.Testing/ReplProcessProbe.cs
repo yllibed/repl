@@ -159,6 +159,13 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	/// Delivers a real signal to the child through <c>kill</c>.
 	/// </summary>
 	/// <param name="signal">The signal to send. <see cref="ReplProcessSignal.Break"/> has no Unix equivalent and is refused.</param>
+	/// <remarks>
+	/// The child is checked for having exited before the signal is sent, but the two cannot be made
+	/// atomic without a process handle the operating system keeps alive: if the child exits in between
+	/// and its id is reused, the signal reaches whatever inherited that id. The window is small and the
+	/// check narrows it, but on a busy host it is not zero — the same limitation that applies to killing
+	/// a process tree during disposal.
+	/// </remarks>
 	/// <param name="cancellationToken">Cancels waiting for the sender to finish.</param>
 	/// <exception cref="PlatformNotSupportedException">Running on Windows, or <paramref name="signal"/> is <see cref="ReplProcessSignal.Break"/>.</exception>
 	/// <exception cref="ArgumentOutOfRangeException"><paramref name="signal"/> is not a known signal.</exception>
@@ -233,7 +240,9 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	/// exited on its own leaves that descendant running, because there is no longer a parent to walk
 	/// down from. Holding descendants beyond the parent needs a job object or a process group, which is
 	/// platform-specific and deliberately not done here — so a probed application that forks background
-	/// work has to clean up after itself.
+	/// work has to clean up after itself. Walking the tree has the same residual risk as signalling:
+	/// .NET's Unix implementation matches descendants by process id without a start-time check, so an id
+	/// reused before cleanup runs belongs to whoever inherited it.
 	/// </para>
 	/// </summary>
 	public async ValueTask DisposeAsync()
@@ -289,7 +298,12 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 
 	private async ValueTask SendAsync(int number, CancellationToken cancellationToken)
 	{
-		var startInfo = new ProcessStartInfo("kill")
+		// An absolute path rather than a bare name. Started without a shell, a bare name is resolved
+		// through PATH, so a consumer's CI step that prepends a directory — a third-party action, say —
+		// decides which binary receives the signal. That is a trust decision this package should not be
+		// making on the caller's behalf. Falls back to the name only if neither standard location exists,
+		// so an unusual layout still works.
+		var startInfo = new ProcessStartInfo(ResolveKillPath())
 		{
 			UseShellExecute = false,
 			RedirectStandardError = true,
@@ -312,6 +326,13 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 			TryKill(sender);
 			throw new TimeoutException(Describe($"was still being signalled when 'kill -{number}' timed out"), ex);
 		}
+		catch (OperationCanceledException)
+		{
+			// Same reasoning: the sender outlives its wrapper, so giving up on the wait without killing it
+			// leaves a helper process behind for whoever cancelled.
+			TryKill(sender);
+			throw;
+		}
 		if (sender.ExitCode == 0)
 		{
 			return;
@@ -320,6 +341,19 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		var error = await sender.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
 		throw new InvalidOperationException(
 			$"'kill -{number}' failed with exit code {sender.ExitCode} for process {_process.Id}: {error}");
+	}
+
+	private static string ResolveKillPath()
+	{
+		foreach (var candidate in (string[])["/bin/kill", "/usr/bin/kill"])
+		{
+			if (File.Exists(candidate))
+			{
+				return candidate;
+			}
+		}
+
+		return "kill";
 	}
 
 	private static void TryKill(Process process)
@@ -345,6 +379,9 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	{
 		private readonly Lock _gate = new();
 		private readonly StringBuilder _text = new();
+		// Materialised once per change rather than once per read: WaitForOutputAsync reads every 25ms,
+		// and copying the whole buffer each time costs more the longer the child talks.
+		private string? _materialized;
 
 		public void Append(string? line)
 		{
@@ -356,6 +393,7 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 			lock (_gate)
 			{
 				_text.AppendLine(line);
+				_materialized = null;
 			}
 		}
 
@@ -363,7 +401,7 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		{
 			lock (_gate)
 			{
-				return _text.ToString();
+				return _materialized ??= _text.ToString();
 			}
 		}
 	}

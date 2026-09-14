@@ -91,7 +91,7 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 			var host = new TestSessionHost(_sessionId, output);
 			var observer = new SessionExecutionObserver();
 			var args = BuildArgsWithAnswers(ReplTestText.Tokenize(commandText), _sessionAnswers, answers);
-			using var timeout = CreateTimeoutSource(cancellationToken);
+			using var timeout = ReplTestTimeout.CreateSource(_options.CommandTimeout, cancellationToken);
 			var token = timeout?.Token ?? cancellationToken;
 
 			_app.Core.ExecutionObserver = observer;
@@ -100,7 +100,7 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 			{
 				exitCode = await _app.RunAsync(args, host, _services, _runOptions, token).ConfigureAwait(false);
 			}
-			catch (OperationCanceledException) when (IsCommandTimeout(timeout, cancellationToken))
+			catch (OperationCanceledException) when (ReplTestTimeout.Expired(timeout, cancellationToken))
 			{
 				throw CreateTimeoutException(commandText);
 			}
@@ -266,7 +266,7 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		string commandText,
 		CancellationToken cancellationToken)
 	{
-		if (observer.WasCancelled && IsCommandTimeout(timeout, cancellationToken))
+		if (observer.WasCancelled && ReplTestTimeout.Expired(timeout, cancellationToken))
 		{
 			throw CreateTimeoutException(commandText);
 		}

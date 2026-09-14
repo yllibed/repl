@@ -609,6 +609,36 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
+	[Description("A claim left by an owner that has been released is discarded rather than inherited. A harness disposed while a run it could not stop was still executing leaves its scope in the epoch and its signal claimed; the next ordinary run would otherwise be cancelled by a signal nobody sent and report Interrupted with no diagnostic naming one — indistinguishable from a bug in the caller's own application.")]
+	public async Task When_AClaimOutlivesItsOwner_Then_TheNextRunDoesNotInheritIt()
+	{
+		using var error = new StringWriter();
+		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+
+		var owner = ProcessSignalCoordinator.TryClaimTestOwnership();
+		owner.Should().NotBeNull();
+		ProcessSignalCancellationScope? abandoned;
+		using (ProcessSignalCoordinator.MarkOwnedRunForTesting())
+		{
+			abandoned = new ProcessSignalCancellationScope(default);
+		}
+
+		ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		// Released without draining, which is what disposal does when a run cannot be stopped.
+		owner!.Dispose();
+
+		await using var next = new ProcessSignalCancellationScope(default);
+
+		next.Token.IsCancellationRequested.Should().BeFalse(
+			because: "a claim nobody is draining must not cancel an unrelated run");
+		next.ExitCode.Should().BeNull();
+		error.ToString().Should().Contain("Discarding");
+		await abandoned.DisposeAsync();
+	}
+
+	[TestMethod]
 	[Description("A platform with no mobile flag keeps the signal bridge, so the platform predicate is not vacuously false for every input.")]
 	public void When_NoPlatformFlagIsSet_Then_SignalBridgeIsSupported()
 	{

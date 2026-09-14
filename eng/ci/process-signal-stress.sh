@@ -63,6 +63,10 @@ run_stress \
 
 # Given_ProcessSignalHarness does not contain the substring "Given_ProcessSignals" — there is no "s"
 # after "Signal" — so it needs its own clause rather than riding along on the one below.
+#
+# The count below is a floor: the run fails only when fewer tests match, so adding tests never breaks
+# it — and never raises it either. Raise it when you add tests to any of the three classes, or the
+# tripwire loses exactly as much sensitivity as the slack it accumulates.
 run_stress \
   "process-signal integration stress" \
   "$integration_iterations" \

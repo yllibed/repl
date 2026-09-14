@@ -22,9 +22,8 @@ public enum ReplSignalDelivery
 	/// A signal arrived after one was already claimed, so the framework stepped aside and a real
 	/// process would have been terminated by the operating system.
 	/// <para>
-	/// This reports the framework's decision, which is all an in-process test can observe. It does not
-	/// mean anything stopped: no process dies here, so a run still in flight keeps running and code
-	/// after the delivery still executes. Only a spawned process can show that termination happened.
+	/// This reports the framework's decision and nothing more — see
+	/// <see cref="ReplProcessSignalHarness"/> for what an in-process test can and cannot prove.
 	/// </para>
 	/// </summary>
 	WouldTerminateProcess,

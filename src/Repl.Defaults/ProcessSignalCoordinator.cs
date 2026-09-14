@@ -163,6 +163,19 @@ internal static class ProcessSignalCoordinator
 					+ "that starts an automatic run.");
 			}
 
+			// A claim left behind by an owner that has since been released: its scopes were abandoned
+			// rather than drained, so nothing is going to clear it. Inheriting it would cancel this run
+			// with a signal nobody sent, reported as Interrupted with no diagnostic naming a signal —
+			// indistinguishable, from the caller's side, from a bug in their own application.
+			if (s_claimedSignal is { Owner: not null } orphaned && !ReferenceEquals(orphaned.Owner, s_testOwner))
+			{
+				s_claimedSignal = null;
+				WriteDiagnostic(
+					$"Discarding a {orphaned.Name} claim left by a process-signal test harness that was "
+					+ "disposed while a run it could not stop was still executing. This run is unaffected, "
+					+ "but that run may still be running.");
+			}
+
 			outcome = TryInitializeRegistrations();
 			// The scope joins the epoch even when no bridge could be installed, so that disposal stays
 			// symmetric and a run started before an earlier scope claimed a signal still inherits it.
@@ -368,7 +381,7 @@ internal static class ProcessSignalCoordinator
 
 			if (previousSignal is null)
 			{
-				s_claimedSignal = new ClaimedSignal(name, exitCode);
+				s_claimedSignal = new ClaimedSignal(name, exitCode, s_testOwner);
 				startCancellations = [];
 				foreach (var scope in ActiveScopes)
 				{
@@ -458,10 +471,8 @@ internal static class ProcessSignalCoordinator
 	/// The platform whose registration decisions apply while a test isolation scope is open, and
 	/// whether the coordinator may create real operating-system registrations under it.
 	/// <para>
-	/// <see cref="CreateRealRegistrations"/> is deliberately independent of the platform flags. A test
-	/// declaring a platform it is not running on must not install a live registration on its behalf —
-	/// .NET accepts <see cref="PosixSignal.SIGTERM"/> on every supported platform, Windows included,
-	/// so nothing but this flag would stop it.
+	/// <see cref="CreateRealRegistrations"/> is deliberately independent of the platform flags; the
+	/// reason is at the point that enforces it, in <c>InstallRegistrations</c>.
 	/// </para>
 	/// </summary>
 	internal sealed record SignalRegistrationPolicy
@@ -537,7 +548,10 @@ internal static class ProcessSignalCoordinator
 		public void Dispose() => OwnedRun.Value = previous;
 	}
 
-	private readonly record struct ClaimedSignal(string Name, int ExitCode);
+	// Owner is the test claim in force when the signal was claimed, or null for an ordinary run. A
+	// claim whose owner has since been released belongs to an epoch nobody is draining any more: a
+	// later run must not inherit its cancellation, which would look like a signal the test never sent.
+	private readonly record struct ClaimedSignal(string Name, int ExitCode, object? Owner);
 
 	/// <summary>
 	/// The result of one registration attempt. A null <paramref name="Diagnostic"/> means the bridge is

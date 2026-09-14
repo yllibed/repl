@@ -9,7 +9,9 @@ namespace Repl.Testing;
 /// <para>
 /// This is a sibling of <see cref="ReplTestHost"/> rather than part of it. Sessions are isolated from
 /// each other; signal handling is process-global, so a harness owns it for its lifetime and only one
-/// can exist at a time. Constructing a second one while the first is alive throws instead of
+/// can exist at a time. <b>Dispose it</b> — ownership is released there and nowhere else, so a harness
+/// that is never disposed leaves every later run with automatic signal handling refused for the rest
+/// of the process. Constructing a second one while the first is alive throws instead of
 /// producing a flaky pair — <b>configure your test framework not to run these in parallel</b>:
 /// MSTest <c>[DoNotParallelize]</c>, xUnit a shared <c>[Collection]</c> or
 /// <c>[assembly: CollectionBehavior(DisableTestParallelization = true)]</c>, NUnit
@@ -24,14 +26,13 @@ namespace Repl.Testing;
 /// spawned process on the matching platform.
 /// </para>
 /// <para>
-/// <b>No operating-system signal registration is ever installed.</b> One thing is not isolated though,
-/// and cannot be: starting a run registers a console cancel-key handler, which is how the framework
-/// arbitrates Ctrl+C between an interactive session and a standalone run, and that arbitration is part
-/// of what these tests exist to exercise. The subscription behind it is installed once per process and
-/// never removed, by design. So while a run is in flight, a <i>real</i> Ctrl+C aimed at your test
-/// runner is claimed cooperatively by the run under test and the first press does not stop it — press
-/// again to escalate. A declared profile with no signal bridge registers no handler at all, so a real
-/// Ctrl+C then behaves normally.
+/// <b>No operating-system signal registration is ever installed</b> — no <c>PosixSignalRegistration</c>,
+/// on any platform. What is not isolated, and cannot be, is the console cancel-key handler: starting a
+/// run registers one, because arbitrating Ctrl+C between an interactive session and a standalone run is
+/// part of what these tests exist to exercise, and the subscription behind it is installed once per
+/// process and never removed by design. So while a run is in flight, a <i>real</i> Ctrl+C aimed at your
+/// test runner is claimed by the run under test and the first press does not stop it — press again to
+/// escalate. See <see cref="ReplPlatformProfile"/> for how a declared platform affects that.
 /// </para>
 /// </summary>
 public sealed class ReplProcessSignalHarness : IAsyncDisposable
@@ -46,6 +47,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	private readonly IDisposable _ownership;
 	private readonly SemaphoreSlim _startGate = new(initialCount: 1, maxCount: 1);
 	private readonly List<Task<ReplSignalRunResult>> _runs = [];
+	private readonly List<Task<ReplSignalRunResult>> _bounded = [];
 	private readonly StringWriter _deliveryDiagnostics = new();
 	private readonly ScopeRegistrationSignal _scopeRegistered;
 	private bool _disposed;
@@ -180,14 +182,30 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			var completion = Task.Run(
 				() => ExecuteRunAsync(commandLine, cancellationToken),
 				CancellationToken.None);
+			// Both are retained. The raw task is what tells an abandoned run from a finished one during
+			// the drain; the wrapper is what the caller is handed, so it is also what can fault unobserved
+			// when a caller deliberately never awaits it — which one of this suite's own tests does.
+			var bounded = BoundByWallClockAsync(completion, commandLine);
 			_runs.Add(completion);
+			_bounded.Add(bounded);
 
-			await WaitForRegistrationAsync(
-				registered.Task,
-				completion,
-				commandLine,
-				cancellationToken).ConfigureAwait(false);
-			return new ReplSignalRun(commandLine, BoundByWallClockAsync(completion, commandLine));
+			try
+			{
+				await WaitForRegistrationAsync(
+					registered.Task,
+					completion,
+					commandLine,
+					cancellationToken).ConfigureAwait(false);
+			}
+			catch
+			{
+				// This wait gave up on a registration that may still arrive. Drop the reservation so the
+				// late registration cannot be paired with a later start's wait instead.
+				_scopeRegistered.Abandon(registered);
+				throw;
+			}
+
+			return new ReplSignalRun(commandLine, bounded);
 		}
 		finally
 		{
@@ -279,6 +297,12 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// here.
 	/// </para>
 	/// </summary>
+	/// <exception cref="InvalidOperationException">
+	/// One or more runs were still executing and could not be stopped — a command that never observes
+	/// its cancellation token cannot be interrupted. Ownership is released before this is raised, so the
+	/// next harness can still be created; it is reported because such a run still holds a place in the
+	/// process-wide signal epoch.
+	/// </exception>
 	public async ValueTask DisposeAsync()
 	{
 		if (_disposed)
@@ -296,7 +320,9 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			try
 			{
 				abandoned = await DrainRunsAsync().ConfigureAwait(false);
+				ObserveBoundedTasks();
 				_runs.Clear();
+				_bounded.Clear();
 			}
 			finally
 			{
@@ -395,13 +421,33 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 #pragma warning restore VSTHRD003
 	}
 
-	private bool HasRunTimeout =>
-		_options.RunTimeout > TimeSpan.Zero && _options.RunTimeout != Timeout.InfiniteTimeSpan;
+	private bool HasRunTimeout => ReplTestTimeout.IsEnabled(_options.RunTimeout);
 
 	// Twice the run timeout, because draining can begin before a run's own timeout has elapsed and the
 	// run still has to unwind once it fires. A cooperative run therefore always finishes within this;
 	// only one that never observes its token is still here at the end, which is what it is measuring.
 	private TimeSpan DrainTimeout => _options.RunTimeout + _options.RunTimeout;
+
+	// Every task handed to a caller is observed, whether or not the caller awaited it. A test that
+	// deliberately never reads Completion — because the run's outcome is not what it is asserting — must
+	// not leave a faulted task for TaskScheduler.UnobservedTaskException to raise later.
+	private void ObserveBoundedTasks()
+	{
+		foreach (var bounded in _bounded)
+		{
+			if (bounded.IsCompleted)
+			{
+				_ = bounded.Exception;
+				continue;
+			}
+
+			_ = bounded.ContinueWith(
+				static observed => _ = observed.Exception,
+				CancellationToken.None,
+				TaskContinuationOptions.ExecuteSynchronously,
+				TaskScheduler.Default);
+		}
+	}
 
 	private async Task WaitForRegistrationAsync(
 		Task registered,
@@ -465,7 +511,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				isHostedSession: false))
 			{
 				app.Core.ExecutionObserver = observer;
-				using var timeout = CreateTimeoutSource(cancellationToken);
+				using var timeout = ReplTestTimeout.CreateSource(_options.RunTimeout, cancellationToken);
 				exitCode = await RunAsync(app, commandLine, timeout, cancellationToken).ConfigureAwait(false);
 			}
 		}
@@ -511,7 +557,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.Automatic },
 				timeout?.Token ?? cancellationToken).ConfigureAwait(false);
 		}
-		catch (OperationCanceledException) when (IsRunTimeout(timeout, cancellationToken))
+		catch (OperationCanceledException) when (ReplTestTimeout.Expired(timeout, cancellationToken))
 		{
 			throw CreateTimeoutException(commandLine);
 		}
@@ -523,7 +569,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		// An application that maps cancellation to an exit code, or a command that swallows it, returns
 		// normally and never reaches the filter above. Reporting that as a result would hand the test a
 		// passing run for a signal that never arrived.
-		return IsRunTimeout(timeout, cancellationToken)
+		return ReplTestTimeout.Expired(timeout, cancellationToken)
 			? throw CreateTimeoutException(commandLine)
 			: exitCode;
 	}
@@ -531,24 +577,6 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	private static TimeoutException CreateTimeoutException(string commandLine) =>
 		new($"The run '{commandLine}' exceeded its timeout. A signal test starts a run that blocks "
 			+ "until it is cancelled, so this usually means the signal never claimed it.");
-
-	// The harness's own timeout fired, and not the caller's token.
-	private static bool IsRunTimeout(CancellationTokenSource? timeout, CancellationToken cancellationToken) =>
-		timeout is not null
-		&& timeout.IsCancellationRequested
-		&& !cancellationToken.IsCancellationRequested;
-
-	private CancellationTokenSource? CreateTimeoutSource(CancellationToken cancellationToken)
-	{
-		if (_options.RunTimeout <= TimeSpan.Zero || _options.RunTimeout == Timeout.InfiniteTimeSpan)
-		{
-			return null;
-		}
-
-		var source = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		source.CancelAfter(_options.RunTimeout);
-		return source;
-	}
 
 	private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -558,16 +586,64 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// </summary>
 	private sealed class ScopeRegistrationSignal
 	{
-		private TaskCompletionSource? _pending;
+		private readonly Lock _gate = new();
+		private readonly Queue<TaskCompletionSource> _pending = new();
 
+		/// <summary>
+		/// Arms one wait. A queue rather than a single slot: a start whose wait timed out while its
+		/// application factory was still blocked leaves that startup task running, and its eventual
+		/// registration must satisfy its own wait — not whichever start happens to be waiting by then,
+		/// which would report a run as having joined the epoch when it had not.
+		/// </summary>
 		public TaskCompletionSource Arm()
 		{
 			var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-			Volatile.Write(ref _pending, pending);
+			lock (_gate)
+			{
+				_pending.Enqueue(pending);
+			}
+
 			return pending;
 		}
 
-		public void Signal() => Volatile.Read(ref _pending)?.TrySetResult();
+		/// <summary>
+		/// Releases the oldest wait still outstanding, which is the one belonging to the earliest start
+		/// that has not registered yet. Registrations arrive in start order because starting is
+		/// serialised, so oldest-first pairs each registration with the start that caused it.
+		/// </summary>
+		public void Signal()
+		{
+			TaskCompletionSource? pending;
+			lock (_gate)
+			{
+				pending = _pending.Count == 0 ? null : _pending.Dequeue();
+			}
+
+			pending?.TrySetResult();
+		}
+
+		/// <summary>
+		/// Abandons a wait that will never be satisfied — its start gave up — so a later registration
+		/// from that same abandoned startup task cannot be paired with somebody else's wait.
+		/// </summary>
+		public void Abandon(TaskCompletionSource pending)
+		{
+			lock (_gate)
+			{
+				if (_pending.Count == 0)
+				{
+					return;
+				}
+
+				// Rebuilt without the abandoned entry, preserving the order of the rest.
+				var remaining = _pending.Where(entry => !ReferenceEquals(entry, pending)).ToArray();
+				_pending.Clear();
+				foreach (var entry in remaining)
+				{
+					_pending.Enqueue(entry);
+				}
+			}
+		}
 	}
 
 	private sealed class RunObserver : IReplExecutionObserver

@@ -24,6 +24,12 @@ namespace Repl.Testing;
 /// </summary>
 public sealed record ReplPlatformProfile
 {
+	// Named profiles only: the flags describe real platforms, and an object initialiser would let a
+	// caller build combinations no device has.
+	private ReplPlatformProfile()
+	{
+	}
+
 	/// <summary>
 	/// The platform the test is actually running on, taken from <see cref="OperatingSystem"/>.
 	/// </summary>
