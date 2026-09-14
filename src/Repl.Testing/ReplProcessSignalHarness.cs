@@ -30,7 +30,8 @@ namespace Repl.Testing;
 /// of what these tests exist to exercise. The subscription behind it is installed once per process and
 /// never removed, by design. So while a run is in flight, a <i>real</i> Ctrl+C aimed at your test
 /// runner is claimed cooperatively by the run under test and the first press does not stop it — press
-/// again to escalate.
+/// again to escalate. A declared profile with no signal bridge registers no handler at all, so a real
+/// Ctrl+C then behaves normally.
 /// </para>
 /// </summary>
 public sealed class ReplProcessSignalHarness : IAsyncDisposable
@@ -181,7 +182,11 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				CancellationToken.None);
 			_runs.Add(completion);
 
-			await WaitForRegistrationAsync(registered.Task, completion, commandLine).ConfigureAwait(false);
+			await WaitForRegistrationAsync(
+				registered.Task,
+				completion,
+				commandLine,
+				cancellationToken).ConfigureAwait(false);
 			return new ReplSignalRun(commandLine, BoundByWallClockAsync(completion, commandLine));
 		}
 		finally
@@ -380,8 +385,11 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		{
 			return await run.WaitAsync(_options.RunTimeout, Clock).ConfigureAwait(false);
 		}
-		catch (TimeoutException)
+		catch (TimeoutException) when (!run.IsCompleted)
 		{
+			// Only when the wait is what gave up. A TimeoutException the run itself produced — a slow
+			// provider build, say — propagates untouched: replacing it would send the test after a
+			// deadline that never elapsed instead of the failure that actually happened.
 			throw CreateTimeoutException(commandLine);
 		}
 #pragma warning restore VSTHRD003
@@ -395,13 +403,20 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	// only one that never observes its token is still here at the end, which is what it is measuring.
 	private TimeSpan DrainTimeout => _options.RunTimeout + _options.RunTimeout;
 
-	private static async Task WaitForRegistrationAsync(
+	private async Task WaitForRegistrationAsync(
 		Task registered,
 		Task<ReplSignalRunResult> completion,
-		string commandLine)
+		string commandLine,
+		CancellationToken cancellationToken)
 	{
 #pragma warning disable VSTHRD003 // Both tasks were started by the caller one frame up, not handed in from elsewhere.
-		_ = await Task.WhenAny(registered, completion).ConfigureAwait(false);
+		// Bounded here as well as around the run. The run's own timeout starts inside ExecuteRunAsync,
+		// after the application factory has returned — so a factory that blocks would otherwise hang this
+		// wait with nothing to stop it, and the token documented as cancelling it would do nothing.
+		var pending = Task.WhenAny(registered, completion);
+		_ = HasRunTimeout
+			? await pending.WaitAsync(_options.RunTimeout, Clock, cancellationToken).ConfigureAwait(false)
+			: await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
 
 		// Which task WhenAny hands back is not the question — a run short enough to finish before this
 		// resumes has both of them complete, and picking the loser would fail a perfectly good start.
@@ -414,7 +429,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		// It did not. Await the run first so a real failure is reported as itself; if it succeeded, the
 		// application never took process-signal ownership, which would otherwise show up only as every
 		// later delivery being silently inert.
-		_ = await completion.ConfigureAwait(false);
+		_ = await completion.WaitAsync(cancellationToken).ConfigureAwait(false);
 #pragma warning restore VSTHRD003
 		throw new InvalidOperationException(
 			$"The run '{commandLine}' finished without registering a process-signal scope, so no signal "

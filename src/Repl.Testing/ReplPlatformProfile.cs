@@ -5,9 +5,12 @@ namespace Repl.Testing;
 /// it is running on. Declaring one lets a Windows wiring decision be asserted from Linux and the other
 /// way round.
 /// <para>
-/// A declared platform changes decisions only. It never causes an operating-system registration to be
-/// installed on that platform's behalf, and it never changes how a real signal aimed at the test
-/// runner is treated — those are always evaluated against the actual host.
+/// A declared platform changes decisions only, and never causes an operating-system registration to be
+/// installed on that platform's behalf. One consequence is worth knowing: a profile with no signal
+/// bridge — <see cref="Browser"/>, <see cref="Android"/>, <see cref="IOS"/>, <see cref="TvOS"/> —
+/// installs no console cancel-key handler either, so while such a run is in flight a real Ctrl+C aimed
+/// at your test runner takes its normal course instead of being claimed by the run. Under the other
+/// profiles it is claimed, as it would be for any standalone run.
 /// </para>
 /// <para>
 /// What a declared platform cannot buy: real delivery. No kernel will deliver a Windows console

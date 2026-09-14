@@ -232,10 +232,14 @@ Profiles: `Current`, `Windows`, `Unix` (Linux and macOS decide identically here,
 `Android`, `Browser`, `IOS`, `TvOS`. The last four have no signal bridge, so a run under them degrades
 to caller-owned handling and says so once.
 
-A declared platform changes **decisions only**. The harness never installs an operating-system signal
-registration, and a real signal aimed at your test runner is still judged against the real host. That
-matters more than it sounds: .NET accepts a `SIGTERM` registration on Windows too, so nothing but this
-rule would stop a declared-Unix test from installing a live handler in your test process.
+A declared platform changes **decisions only**: the harness never installs an operating-system signal
+registration on that platform's behalf. That matters more than it sounds — .NET accepts a `SIGTERM`
+registration on Windows too, so nothing but this rule would stop a declared-Unix test from installing
+a live handler in your test process.
+
+One consequence to know: a profile with no signal bridge (`Browser`, `Android`, `IOS`, `TvOS`)
+registers no console cancel-key handler either, so a real Ctrl+C aimed at your runner during such a run
+takes its normal course rather than being claimed by it.
 
 Profiles are the only way to build one — the flags are readable so you can assert on them, not
 settable, so combinations no device has cannot be constructed by mistake.

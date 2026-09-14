@@ -34,13 +34,17 @@ internal static class ProcessSignalCoordinator
 	// harness can await the moment a signal stops being inert instead of guessing with a delay. Owned by
 	// the isolation scope like every other test knob here, so it cannot outlive the harness that set it.
 	private static Action? s_scopeRegisteredCallbackForTesting;
-	private static bool s_testOwnershipHeld;
+	private static object? s_testOwner;
 
 	// Flows into the run's async context, so a scope constructed inside a run the owner launched is
 	// recognised as the owner's while one created anywhere else is not. Ambient rather than passed,
 	// because ProcessSignalCancellationScope is constructed deep inside ReplApp.RunAsync and neither
 	// the coordinator nor the scope has a channel to carry an owner through.
-	private static readonly AsyncLocal<bool> OwnedRun = new();
+	//
+	// It carries the claim rather than a flag: a bare bool also flows into anything a handler spawned,
+	// so a background task outliving its harness would still read true and pass as a run launched by
+	// whichever harness owns the coordinator next.
+	private static readonly AsyncLocal<object?> OwnedRun = new();
 
 	/// <summary>
 	/// Whether the platform in force wants a SIGTERM registration at all. Read with
@@ -101,18 +105,26 @@ internal static class ProcessSignalCoordinator
 	/// in between the two, and held until the returned scope is disposed. While it is held,
 	/// <see cref="Register"/> refuses any scope the owner did not launch.
 	/// </summary>
-	/// <returns>The claim, to be disposed when it is released, or <see langword="null"/> when a run already holds the epoch or another owner has it.</returns>
+	/// <returns>The claim, to be disposed when it is released, or <see langword="null"/> when the previous epoch has not finished or another owner has it.</returns>
 	internal static IDisposable? TryClaimTestOwnership()
 	{
 		lock (Gate)
 		{
-			if (s_testOwnershipHeld || ActiveScopes.Count != 0)
+			// An empty scope set is not an idle coordinator. UnregisterAsync removes a scope before its
+			// signal-triggered callbacks have drained and keeps the claimed signal alive until they have,
+			// so claiming in that window would hand the next harness an epoch that is still claimed — and
+			// its first run would be cancelled on registration, with no signal ever sent.
+			if (s_testOwner is not null
+				|| ActiveScopes.Count != 0
+				|| s_pendingDrainCount != 0
+				|| s_claimedSignal is not null)
 			{
 				return null;
 			}
 
-			s_testOwnershipHeld = true;
-			return new TestOwnershipClaim();
+			var claim = new TestOwnershipClaim();
+			s_testOwner = claim;
+			return claim;
 		}
 	}
 
@@ -123,7 +135,11 @@ internal static class ProcessSignalCoordinator
 	internal static IDisposable MarkOwnedRunForTesting()
 	{
 		var previous = OwnedRun.Value;
-		OwnedRun.Value = true;
+		lock (Gate)
+		{
+			OwnedRun.Value = s_testOwner;
+		}
+
 		return new OwnedRunMarker(previous);
 	}
 
@@ -138,7 +154,7 @@ internal static class ProcessSignalCoordinator
 			// join its isolated epoch, be cancelled by its synthetic signals, and release its readiness
 			// wait — so it is refused here rather than corrupted quietly. Running one concurrently with a
 			// signal test is already what the harness documentation tells callers not to do.
-			if (s_testOwnershipHeld && !OwnedRun.Value)
+			if (s_testOwner is not null && !ReferenceEquals(OwnedRun.Value, s_testOwner))
 			{
 				throw new InvalidOperationException(
 					"A process-signal test harness currently owns signal handling in this process, so this "
@@ -168,7 +184,7 @@ internal static class ProcessSignalCoordinator
 		}
 
 		startCancellation?.Invoke();
-		if (!s_testOwnershipHeld || OwnedRun.Value)
+		if (s_testOwner is null || ReferenceEquals(OwnedRun.Value, s_testOwner))
 		{
 			s_scopeRegisteredCallbackForTesting?.Invoke();
 		}
@@ -508,12 +524,15 @@ internal static class ProcessSignalCoordinator
 		{
 			lock (Gate)
 			{
-				s_testOwnershipHeld = false;
+				if (ReferenceEquals(s_testOwner, this))
+				{
+					s_testOwner = null;
+				}
 			}
 		}
 	}
 
-	private sealed class OwnedRunMarker(bool previous) : IDisposable
+	private sealed class OwnedRunMarker(object? previous) : IDisposable
 	{
 		public void Dispose() => OwnedRun.Value = previous;
 	}

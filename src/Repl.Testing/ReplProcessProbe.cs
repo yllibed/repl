@@ -104,7 +104,11 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	/// Waits until the child has written <paramref name="expected"/>, which is how a test knows the
 	/// application has reached the point worth signalling rather than guessing with a delay.
 	/// </summary>
-	/// <param name="expected">The text to wait for.</param>
+	/// <param name="expected">
+	/// The text to wait for. Redirected output is read a line at a time, so the child has to terminate
+	/// the marker with a newline — <c>Console.WriteLine</c> does, a bare <c>Write</c> does not, and a
+	/// marker left unterminated is not seen until the stream closes.
+	/// </param>
 	/// <param name="cancellationToken">Cancels the wait.</param>
 	/// <exception cref="ArgumentException"><paramref name="expected"/> is empty or whitespace.</exception>
 	/// <exception cref="InvalidOperationException">The child exited before writing it.</exception>
@@ -242,16 +246,7 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		_disposed = true;
 		if (!_process.HasExited)
 		{
-			try
-			{
-				_process.Kill(entireProcessTree: true);
-			}
-			catch (InvalidOperationException)
-			{
-				// It exited between the check and the kill. That is the outcome this wanted anyway, and
-				// turning a won race into a teardown failure would fail tests that had already passed.
-			}
-
+			TryKill(_process);
 			await _process.WaitForExitAsync().ConfigureAwait(false);
 		}
 
@@ -304,9 +299,19 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 
 		using var sender = Process.Start(startInfo)
 			?? throw new InvalidOperationException("Failed to start 'kill' to deliver the signal.");
-		await sender.WaitForExitAsync(cancellationToken)
-			.WaitAsync(_options.Timeout, Clock, cancellationToken)
-			.ConfigureAwait(false);
+		try
+		{
+			await sender.WaitForExitAsync(cancellationToken)
+				.WaitAsync(_options.Timeout, Clock, cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (TimeoutException ex)
+		{
+			// Disposing the sender would not stop it, and a bare timeout here would drop the captured
+			// output every other wait on this type promises.
+			TryKill(sender);
+			throw new TimeoutException(Describe($"was still being signalled when 'kill -{number}' timed out"), ex);
+		}
 		if (sender.ExitCode == 0)
 		{
 			return;
@@ -315,6 +320,19 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		var error = await sender.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
 		throw new InvalidOperationException(
 			$"'kill -{number}' failed with exit code {sender.ExitCode} for process {_process.Id}: {error}");
+	}
+
+	private static void TryKill(Process process)
+	{
+		try
+		{
+			process.Kill(entireProcessTree: true);
+		}
+		catch (InvalidOperationException)
+		{
+			// It exited between the check and the kill. That is the outcome this wanted anyway, and
+			// turning a won race into a teardown failure would fail tests that had already passed.
+		}
 	}
 
 	private string Describe(string what) =>

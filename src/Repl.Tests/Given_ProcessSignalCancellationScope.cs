@@ -555,6 +555,60 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
+	[Description("Test ownership is refused while a claimed epoch is still draining. UnregisterAsync removes a scope before its cancellation callbacks finish and keeps the claim alive until they do, so an empty scope set is not an idle coordinator: claiming in that window hands the next owner an epoch that is still claimed, and its first run is cancelled on registration with no signal ever sent.")]
+	public async Task When_AClaimedEpochIsStillDraining_Then_TestOwnershipIsRefused()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+		var drainStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		using var releaseDrain = new ManualResetEventSlim(initialState: false);
+		IDisposable? claimedDuringDrain = null;
+
+		var scope = new ProcessSignalCancellationScope(default);
+		// Runs while the scope is unregistering, which is exactly the window: removed from ActiveScopes,
+		// claim not yet cleared.
+		scope.Token.Register(() =>
+		{
+			drainStarted.TrySetResult();
+			releaseDrain.Wait();
+		});
+
+		ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+
+		var disposal = scope.DisposeAsync().AsTask();
+		await drainStarted.Task;
+		claimedDuringDrain = ProcessSignalCoordinator.TryClaimTestOwnership();
+		releaseDrain.Set();
+		await disposal;
+
+		claimedDuringDrain.Should().BeNull(because: "the previous epoch had not finished draining");
+		using var afterDrain = ProcessSignalCoordinator.TryClaimTestOwnership();
+		afterDrain.Should().NotBeNull(because: "once drained, the coordinator is claimable again");
+	}
+
+	[TestMethod]
+	[Description("An owned-run marker belongs to the claim that set it, not to whoever owns the coordinator next. A bare flag also flows into anything a handler spawned, so a background task outliving its harness would still read as owned and could join a later owner's epoch.")]
+	public void When_AMarkerOutlivesItsClaim_Then_ItIsNotHonouredByTheNextOwner()
+	{
+		var first = ProcessSignalCoordinator.TryClaimTestOwnership();
+		first.Should().NotBeNull();
+
+		// A context marked under the first claim, captured the way a spawned background task would.
+		var marker = ProcessSignalCoordinator.MarkOwnedRunForTesting();
+		first!.Dispose();
+
+		using var second = ProcessSignalCoordinator.TryClaimTestOwnership();
+		second.Should().NotBeNull(because: "the first claim was released");
+
+		// The stale marker must not pass as the second owner's run.
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+		var act = () => new ProcessSignalCancellationScope(default);
+
+		act.Should().Throw<InvalidOperationException>().WithMessage("*owns signal handling*");
+		marker.Dispose();
+	}
+
+	[TestMethod]
 	[Description("A platform with no mobile flag keeps the signal bridge, so the platform predicate is not vacuously false for every input.")]
 	public void When_NoPlatformFlagIsSet_Then_SignalBridgeIsSupported()
 	{
