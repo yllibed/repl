@@ -110,6 +110,18 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		// using them — so that run would keep its place in the epoch and be cancelled by this harness's
 		// first signal. While the claim is held the coordinator refuses any run this harness did not
 		// launch, which is loud rather than quietly wrong.
+		// Console cancel-key selection is exclusive: an interactive session takes Ctrl+C instead of the
+		// standalone handlers, so a harness created alongside one would deliver Interrupt into that
+		// session and be told it was handled while its own run went untouched — a green test asserting
+		// something that never happened.
+		if (ConsoleCancelKeyCoordinator.HasInteractiveHandlersForTesting)
+		{
+			throw new InvalidOperationException(
+				"An interactive session currently owns the console cancel keys in this process. It takes "
+				+ "Ctrl+C instead of a standalone run, so a signal delivered here would reach that session "
+				+ "rather than the run under test: end the interactive session before creating the harness.");
+		}
+
 		var ownership = ProcessSignalCoordinator.TryClaimTestOwnership()
 			?? throw new InvalidOperationException(
 				"Process-signal handling in this process is already owned — either by another harness, or "
@@ -254,6 +266,17 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 	private ReplSignalDelivery Deliver(ReplProcessSignal signal)
 	{
+		// Re-checked rather than trusted from construction: an interactive session registered since then
+		// would silently take this delivery, and reporting that as handled is worse than failing here.
+		if (signal is not ReplProcessSignal.Terminate
+			&& ConsoleCancelKeyCoordinator.HasInteractiveHandlersForTesting)
+		{
+			throw new InvalidOperationException(
+				$"An interactive session owns the console cancel keys, so {signal} would reach it rather "
+				+ "than the run under test. Only Terminate bypasses that selection, because SIGTERM does "
+				+ "not participate in the interactive console-key priority rule.");
+		}
+
 		// Interrupt and Break go through console cancel-key arbitration, so an interactive owner wins
 		// exactly as it does in production. Terminate has no such layer and reaches the claim directly:
 		// SIGTERM does not participate in the interactive console-key priority rule. That asymmetry is

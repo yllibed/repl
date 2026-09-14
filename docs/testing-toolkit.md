@@ -272,8 +272,10 @@ await probe.SendSignalAsync(ReplProcessSignal.Terminate);
 ```
 
 Output is drained continuously, so a chatty child never blocks; every wait reports what was captured
-when it fails; and disposal kills the process tree so a failed assertion cannot leak a running
-process.
+when it fails; and disposal kills the process tree, so a failed assertion does not leave the probed
+application running. That last one reaches only as far as the tree's root: a child that spawns
+something long-lived and then exits on its own leaves that descendant behind, because there is no
+parent left to walk down from.
 
 **Signals are delivered on Unix only.** Sending one to another process on Windows needs a console
 control event and console attachment rather than a signal, which is deliberately out of scope until

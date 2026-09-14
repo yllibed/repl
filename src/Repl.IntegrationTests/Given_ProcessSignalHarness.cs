@@ -580,6 +580,28 @@ public sealed class Given_ProcessSignalHarness
 		}
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies a signal that would reach an interactive session instead of the run under test fails loudly. Console cancel-key selection is exclusive — an interactive handler takes Ctrl+C in place of the standalone ones — so reporting that delivery as handled would give a green test asserting a cancellation that never touched the run it names.")]
+	public async Task When_AnInteractiveSessionOwnsTheConsoleKeys_Then_DeliveryIsRefused()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
+		var run = await harness.StartRunAsync("work");
+
+		using (new CancelKeyHandler())
+		{
+			var act = () => harness.SendSignal(ReplProcessSignal.Interrupt);
+
+			act.Should().Throw<InvalidOperationException>()
+				.WithMessage("*interactive session*");
+
+			// SIGTERM has no console-key arbitration to lose, so it is unaffected.
+			harness.SendSignal(ReplProcessSignal.Terminate).Should().Be(ReplSignalDelivery.NotHandled);
+		}
+
+		harness.SendSignal(ReplProcessSignal.Interrupt).Should().Be(ReplSignalDelivery.CancellationRequested);
+		await run.Completion;
+	}
+
 	private static ReplApp CreateBlockingApp(
 		TaskCompletionSource? started = null,
 		TaskCompletionSource? cleanedUp = null,

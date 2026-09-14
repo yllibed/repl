@@ -84,6 +84,23 @@ internal static class ConsoleCancelKeyCoordinator
 		specialKey == ConsoleSpecialKey.ControlC
 		|| (isWindows && specialKey == ConsoleSpecialKey.ControlBreak);
 
+	/// <summary>
+	/// Whether an interactive session currently owns the console keys. Selection is exclusive — an
+	/// interactive handler takes Ctrl+C instead of, not alongside, the standalone ones — so a test
+	/// harness delivering a synthetic key while one is registered would be told the signal was handled
+	/// when it reached somebody else entirely.
+	/// </summary>
+	internal static bool HasInteractiveHandlersForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return InteractiveHandlers.Count > 0;
+			}
+		}
+	}
+
 	private static DispatchSelection CaptureSelection()
 	{
 		lock (Gate)
