@@ -35,11 +35,14 @@ namespace Repl.Testing;
 /// </summary>
 public sealed class ReplProcessSignalHarness : IAsyncDisposable
 {
-	private static int s_active;
+	// Real elapsed time bounds a run that will not cooperate, so the provider is passed explicitly
+	// rather than left implicit.
+	private static readonly TimeProvider Clock = TimeProvider.System;
 
 	private readonly Func<ReplApp> _appFactory;
 	private readonly ReplProcessSignalOptions _options;
 	private readonly IDisposable _isolation;
+	private readonly IDisposable _ownership;
 	private readonly SemaphoreSlim _startGate = new(initialCount: 1, maxCount: 1);
 	private readonly List<Task<ReplSignalRunResult>> _runs = [];
 	private readonly StringWriter _deliveryDiagnostics = new();
@@ -65,11 +68,13 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		Func<ReplApp> appFactory,
 		ReplProcessSignalOptions options,
 		IDisposable isolation,
+		IDisposable ownership,
 		ScopeRegistrationSignal scopeRegistered)
 	{
 		_appFactory = appFactory;
 		_options = options;
 		_isolation = isolation;
+		_ownership = ownership;
 		_scopeRegistered = scopeRegistered;
 	}
 
@@ -97,28 +102,17 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				nameof(configure));
 		}
 
-		// Taking ownership tears down the registrations without touching the scopes that were using
-		// them, so a run already in flight would keep its place in the epoch and be cancelled by the
-		// first signal this harness delivers. Refuse rather than corrupt something unrelated.
-		if (ProcessSignalCoordinator.ActiveScopeCountForTesting != 0)
-		{
-			throw new InvalidOperationException(
-				"A run with automatic process-signal handling is already in flight in this process. "
-				+ "Taking signal ownership now would interfere with it: let it finish before creating "
-				+ "the harness, and configure your test framework not to run signal tests in parallel.");
-		}
-
-		// Two live harnesses would not merely race on the application under test: taking ownership
-		// tears down and reinstalls the shared registration state, so the second would corrupt the
-		// first's isolation. Failing loudly beats being intermittently wrong.
-		if (Interlocked.CompareExchange(ref s_active, 1, 0) != 0)
-		{
-			throw new InvalidOperationException(
-				"A process-signal test harness is already active in this process. Signal handling is "
-				+ "process-global, so only one harness can own it at a time: dispose the previous "
-				+ "harness before creating another, and configure your test framework not to run "
-				+ "harness tests in parallel.");
-		}
+		// Taken atomically with the check that nothing else holds the epoch: a snapshot would let a run
+		// register in the gap, and taking ownership tears down registrations without removing the scopes
+		// using them — so that run would keep its place in the epoch and be cancelled by this harness's
+		// first signal. While the claim is held the coordinator refuses any run this harness did not
+		// launch, which is loud rather than quietly wrong.
+		var ownership = ProcessSignalCoordinator.TryClaimTestOwnership()
+			?? throw new InvalidOperationException(
+				"Process-signal handling in this process is already owned — either by another harness, or "
+				+ "by a run with automatic signal handling that is still in flight. Only one owner at a "
+				+ "time: let it finish, and configure your test framework not to run signal tests in "
+				+ "parallel with anything that starts an automatic run.");
 
 		try
 		{
@@ -130,11 +124,11 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				registrationFault: options.RegistrationFault,
 				policy: options.Platform.ToPolicy(),
 				scopeRegisteredCallback: scopeRegistered.Signal);
-			return new ReplProcessSignalHarness(appFactory, options, isolation, scopeRegistered);
+			return new ReplProcessSignalHarness(appFactory, options, isolation, ownership, scopeRegistered);
 		}
 		catch
 		{
-			Interlocked.Exchange(ref s_active, 0);
+			ownership.Dispose();
 			throw;
 		}
 	}
@@ -178,13 +172,17 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			// in between. Starting now would run outside an isolation that has already been torn down.
 			ThrowIfDisposed();
 			var registered = _scopeRegistered.Arm();
+			// Marked before the run is launched so the marker flows into the context where the run's
+			// ProcessSignalCancellationScope is constructed, letting the coordinator tell this harness's
+			// scopes from anybody else's.
+			using var owned = ProcessSignalCoordinator.MarkOwnedRunForTesting();
 			var completion = Task.Run(
 				() => ExecuteRunAsync(commandLine, cancellationToken),
 				CancellationToken.None);
 			_runs.Add(completion);
 
 			await WaitForRegistrationAsync(registered.Task, completion, commandLine).ConfigureAwait(false);
-			return new ReplSignalRun(commandLine, completion);
+			return new ReplSignalRun(commandLine, BoundByWallClockAsync(completion, commandLine));
 		}
 		finally
 		{
@@ -218,7 +216,8 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			TextReader.Null,
 			sessionId: sessionId,
 			commandOutput: TextWriter.Null,
-			error: _deliveryDiagnostics);
+			error: _deliveryDiagnostics,
+			isHostedSession: false);
 		try
 		{
 			return Deliver(signal);
@@ -283,6 +282,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		}
 
 		_disposed = true;
+		var abandoned = 0;
 		try
 		{
 			// Taken so draining cannot enumerate the run list while a start is appending to it, and so a
@@ -290,7 +290,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			await _startGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
 			try
 			{
-				await DrainRunsAsync().ConfigureAwait(false);
+				abandoned = await DrainRunsAsync().ConfigureAwait(false);
 				_runs.Clear();
 			}
 			finally
@@ -306,7 +306,19 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			_isolation.Dispose();
 			_startGate.Dispose();
 			_deliveryDiagnostics.Dispose();
-			Interlocked.Exchange(ref s_active, 0);
+			_ownership.Dispose();
+		}
+
+		// Reported after ownership is released, so the next harness can still be created — but reported,
+		// because a run still holding a scope outlives the isolation that was just torn down, and every
+		// later signal test in this process inherits that epoch.
+		if (abandoned > 0)
+		{
+			throw new InvalidOperationException(
+				$"{abandoned} run(s) were still executing when the harness was disposed and could not be "
+				+ "stopped: a command that never observes its cancellation token cannot be interrupted. "
+				+ "They still hold a place in the process-wide signal epoch, so later signal tests in "
+				+ "this process may see cancellations they did not cause.");
 		}
 	}
 
@@ -314,20 +326,74 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		"Design",
 		"CA1031:Do not catch general exception types",
 		Justification = "Disposal exists to drain the ownership epoch before the next test. A run that failed or timed out has already reported that through its own Completion, which the test either awaited or chose not to; rethrowing it from a using block would replace the test's own failure with this one.")]
-	private async Task DrainRunsAsync()
+	private async Task<int> DrainRunsAsync()
 	{
+		var abandoned = 0;
 		foreach (var run in _runs)
 		{
 			try
 			{
-				_ = await run.ConfigureAwait(false);
+				_ = HasRunTimeout
+					? await run.WaitAsync(DrainTimeout, Clock).ConfigureAwait(false)
+					: await run.ConfigureAwait(false);
+			}
+			catch (TimeoutException) when (run.IsCompleted)
+			{
+				// The run itself ended on its own timeout. That is a finished run reporting a failure the
+				// test has already seen, not one this drain gave up on.
+			}
+			catch (TimeoutException)
+			{
+				// Still running, and nothing here can stop it. Observe whatever it eventually produces so
+				// it does not resurface as an unobserved task exception, and report it below.
+				abandoned++;
+				_ = run.ContinueWith(
+					static observed => _ = observed.Exception,
+					CancellationToken.None,
+					TaskContinuationOptions.ExecuteSynchronously,
+					TaskScheduler.Default);
 			}
 			catch (Exception)
 			{
 				// Intentionally observed and dropped; see the justification above.
 			}
 		}
+
+		return abandoned;
 	}
+
+	// Cancelling a run only asks it to stop. A command that never observes its token blocks forever, so
+	// the timeout has to be measured against the clock rather than against the run's cooperation —
+	// otherwise the one guarantee that keeps a signal test from hanging a suite is the one it cannot
+	// make. The run itself cannot be killed; it is abandoned, and disposal reports it.
+	private async Task<ReplSignalRunResult> BoundByWallClockAsync(
+		Task<ReplSignalRunResult> run,
+		string commandLine)
+	{
+#pragma warning disable VSTHRD003 // Started by StartRunAsync, one frame up.
+		if (!HasRunTimeout)
+		{
+			return await run.ConfigureAwait(false);
+		}
+
+		try
+		{
+			return await run.WaitAsync(_options.RunTimeout, Clock).ConfigureAwait(false);
+		}
+		catch (TimeoutException)
+		{
+			throw CreateTimeoutException(commandLine);
+		}
+#pragma warning restore VSTHRD003
+	}
+
+	private bool HasRunTimeout =>
+		_options.RunTimeout > TimeSpan.Zero && _options.RunTimeout != Timeout.InfiniteTimeSpan;
+
+	// Twice the run timeout, because draining can begin before a run's own timeout has elapsed and the
+	// run still has to unwind once it fires. A cooperative run therefore always finishes within this;
+	// only one that never observes its token is still here at the end, which is what it is measuring.
+	private TimeSpan DrainTimeout => _options.RunTimeout + _options.RunTimeout;
 
 	private static async Task WaitForRegistrationAsync(
 		Task registered,
@@ -371,12 +437,17 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		int exitCode;
 		try
 		{
+			// isHostedSession decides the runtime channel: left at its default the run would take
+			// ReplRuntimeChannel.Session, hiding commands gated to the CLI channel and telling handlers
+			// they are in a hosted session. This harness models a process-owning standalone invocation,
+			// so it has to say so.
 			using (ReplSessionIO.SetSession(
 				output,
 				TextReader.Null,
 				sessionId: sessionId,
 				commandOutput: output,
-				error: error))
+				error: error,
+				isHostedSession: false))
 			{
 				app.Core.ExecutionObserver = observer;
 				using var timeout = CreateTimeoutSource(cancellationToken);

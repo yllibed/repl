@@ -179,7 +179,7 @@ public sealed class Given_ProcessSignalHarness
 		var second = () => ReplProcessSignalHarness.Create(() => CreateEchoApp());
 
 		second.Should().Throw<InvalidOperationException>()
-			.WithMessage("*already active in this process*");
+			.WithMessage("*already owned*");
 	}
 
 	[TestMethod]
@@ -425,7 +425,27 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies a harness is refused while an unrelated run with automatic signal handling is in flight. Taking ownership tears down that run's registrations without removing its scope, so the first signal this harness delivered would cancel a run it has nothing to do with.")]
+	[Description("Regression guard: verifies an unrelated automatic run started WHILE a harness owns signal handling is refused. A snapshot taken at construction cannot see this one: it registers afterwards, joins the harness's isolated epoch, releases its readiness wait and is cancelled by its synthetic signals. Failing that run loudly is the point — it is concurrent with a signal test, which the harness documentation forbids.")]
+	public async Task When_AnUnrelatedRunStartsWhileOwned_Then_ItIsRefused()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
+		var run = await harness.StartRunAsync("work");
+
+		var unrelated = CreateEchoApp();
+		var act = async () => await unrelated.RunAsync(
+			["echo"],
+			new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.Automatic })
+			.ConfigureAwait(false);
+
+		await act.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("*owns signal handling*").ConfigureAwait(false);
+
+		harness.SendSignal(ReplProcessSignal.Interrupt);
+		await run.Completion.ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a harness is refused while an unrelated run with automatic signal handling is already in flight. Taking ownership tears down that run's registrations without removing its scope, so the first signal this harness delivered would cancel a run it has nothing to do with.")]
 	public async Task When_AnUnrelatedRunIsInFlight_Then_CreatingAHarnessIsRefused()
 	{
 		await using var owner = ReplProcessSignalHarness.Create(() => CreateBlockingApp());
@@ -437,6 +457,65 @@ public sealed class Given_ProcessSignalHarness
 
 		owner.SendSignal(ReplProcessSignal.Interrupt);
 		await run.Completion;
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a harness run is a standalone invocation, not a hosted session. The capture session decides the runtime channel, and defaulting it to hosted makes every run take the Session channel: commands gated to the CLI channel vanish and handlers see IsHostedSession true, so a signal test would exercise a different application path from the process-owning invocation it claims to model.")]
+	public async Task When_ARunExecutes_Then_ItIsAStandaloneInvocationNotAHostedSession()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(() =>
+		{
+			var app = CreateApp(configure: null);
+			app.Map("where", (IReplIoContext io) => io.IsHostedSession ? "hosted" : "standalone");
+			return app;
+		});
+
+		var run = await harness.StartRunAsync("where");
+		var result = await run.Completion;
+
+		result.ExitCode.Should().Be(0);
+		result.OutputText.Should().Contain(
+			"standalone",
+			because: "the harness models a process-owning run, which is not a hosted session");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies the timeout holds against a command that ignores its cancellation token. CancelAfter only requests cancellation, so a handler that never observes the token blocks forever; without a wall-clock bound the promised TimeoutException never arrives and disposal hangs draining the run, which is exactly the stuck suite the timeout exists to prevent.")]
+	public async Task When_TheCommandIgnoresCancellation_Then_TheTimeoutStillFires()
+	{
+		var release = new SemaphoreSlim(initialCount: 0, maxCount: 1);
+		var harness = ReplProcessSignalHarness.Create(
+			() =>
+			{
+				var app = CreateApp(configure: null);
+				// Deliberately uncooperative: no CancellationToken parameter at all.
+				app.Map("work", async () =>
+				{
+					await release.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+					return "released";
+				});
+
+				return app;
+			},
+			options => options.RunTimeout = TimeSpan.FromMilliseconds(250));
+		try
+		{
+			var run = await harness.StartRunAsync("work").ConfigureAwait(false);
+			var completion = run.Completion;
+
+#pragma warning disable VSTHRD003 // The run was started by this test, two lines up.
+			var act = async () => await completion.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+
+			await act.Should().ThrowAsync<TimeoutException>().ConfigureAwait(false);
+		}
+		finally
+		{
+			// Let the abandoned run finish so disposal is not reporting a leak this test created.
+			release.Release();
+			await harness.DisposeAsync().ConfigureAwait(false);
+			release.Dispose();
+		}
 	}
 
 	private static ReplApp CreateBlockingApp(

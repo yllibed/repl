@@ -34,6 +34,13 @@ internal static class ProcessSignalCoordinator
 	// harness can await the moment a signal stops being inert instead of guessing with a delay. Owned by
 	// the isolation scope like every other test knob here, so it cannot outlive the harness that set it.
 	private static Action? s_scopeRegisteredCallbackForTesting;
+	private static bool s_testOwnershipHeld;
+
+	// Flows into the run's async context, so a scope constructed inside a run the owner launched is
+	// recognised as the owner's while one created anywhere else is not. Ambient rather than passed,
+	// because ProcessSignalCancellationScope is constructed deep inside ReplApp.RunAsync and neither
+	// the coordinator nor the scope has a channel to carry an owner through.
+	private static readonly AsyncLocal<bool> OwnedRun = new();
 
 	/// <summary>
 	/// Whether the platform in force wants a SIGTERM registration at all. Read with
@@ -48,22 +55,6 @@ internal static class ProcessSignalCoordinator
 			lock (Gate)
 			{
 				return s_sigTermRegistrationDeclared;
-			}
-		}
-	}
-
-	/// <summary>
-	/// How many scopes currently hold the ownership epoch. A test harness reads this before taking
-	/// ownership: isolating while somebody else's run is in flight tears down that run's registrations
-	/// without removing its scope, so a later synthetic signal would cancel it too.
-	/// </summary>
-	internal static int ActiveScopeCountForTesting
-	{
-		get
-		{
-			lock (Gate)
-			{
-				return ActiveScopes.Count;
 			}
 		}
 	}
@@ -105,6 +96,37 @@ internal static class ProcessSignalCoordinator
 			policy,
 			scopeRegisteredCallback);
 
+	/// <summary>
+	/// Claims the coordinator for a test harness. Atomic with the emptiness check, so no run can slip
+	/// in between the two, and held until the returned scope is disposed. While it is held,
+	/// <see cref="Register"/> refuses any scope the owner did not launch.
+	/// </summary>
+	/// <returns>The claim, to be disposed when it is released, or <see langword="null"/> when a run already holds the epoch or another owner has it.</returns>
+	internal static IDisposable? TryClaimTestOwnership()
+	{
+		lock (Gate)
+		{
+			if (s_testOwnershipHeld || ActiveScopes.Count != 0)
+			{
+				return null;
+			}
+
+			s_testOwnershipHeld = true;
+			return new TestOwnershipClaim();
+		}
+	}
+
+	/// <summary>
+	/// Marks the current async context as belonging to the test owner, so scopes constructed beneath it
+	/// are accepted while the claim is held. Returns a scope that restores the previous marking.
+	/// </summary>
+	internal static IDisposable MarkOwnedRunForTesting()
+	{
+		var previous = OwnedRun.Value;
+		OwnedRun.Value = true;
+		return new OwnedRunMarker(previous);
+	}
+
 	internal static void Register(ProcessSignalCancellationScope scope)
 	{
 		ArgumentNullException.ThrowIfNull(scope);
@@ -112,6 +134,19 @@ internal static class ProcessSignalCoordinator
 		Action? startCancellation = null;
 		lock (Gate)
 		{
+			// A test harness owns process-signal handling for its lifetime. A run it did not launch would
+			// join its isolated epoch, be cancelled by its synthetic signals, and release its readiness
+			// wait — so it is refused here rather than corrupted quietly. Running one concurrently with a
+			// signal test is already what the harness documentation tells callers not to do.
+			if (s_testOwnershipHeld && !OwnedRun.Value)
+			{
+				throw new InvalidOperationException(
+					"A process-signal test harness currently owns signal handling in this process, so this "
+					+ "run cannot install its own. Signal handling is process-global: let the harness finish, "
+					+ "and configure your test framework not to run signal tests in parallel with anything "
+					+ "that starts an automatic run.");
+			}
+
 			outcome = TryInitializeRegistrations();
 			// The scope joins the epoch even when no bridge could be installed, so that disposal stays
 			// symmetric and a run started before an earlier scope claimed a signal still inherits it.
@@ -133,7 +168,10 @@ internal static class ProcessSignalCoordinator
 		}
 
 		startCancellation?.Invoke();
-		s_scopeRegisteredCallbackForTesting?.Invoke();
+		if (!s_testOwnershipHeld || OwnedRun.Value)
+		{
+			s_scopeRegisteredCallbackForTesting?.Invoke();
+		}
 	}
 
 	private static RegistrationOutcome TryInitializeRegistrations()
@@ -462,6 +500,22 @@ internal static class ProcessSignalCoordinator
 			cancelKeyRegistration?.Dispose();
 			sigTermRegistration?.Dispose();
 		}
+	}
+
+	private sealed class TestOwnershipClaim : IDisposable
+	{
+		public void Dispose()
+		{
+			lock (Gate)
+			{
+				s_testOwnershipHeld = false;
+			}
+		}
+	}
+
+	private sealed class OwnedRunMarker(bool previous) : IDisposable
+	{
+		public void Dispose() => OwnedRun.Value = previous;
 	}
 
 	private readonly record struct ClaimedSignal(string Name, int ExitCode);

@@ -140,6 +140,14 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 			await Task.Delay(TimeSpan.FromMilliseconds(25), Clock, cancellationToken).ConfigureAwait(false);
 		}
 
+		// One last look before giving up: text written during the final delay lands after the loop
+		// condition was evaluated, and rejecting it would fail a wait whose own error message contains
+		// the very marker it says never arrived.
+		if (_capture.Read().Contains(expected, StringComparison.Ordinal))
+		{
+			return;
+		}
+
 		throw new TimeoutException(Describe($"did not write '{expected}' within {_options.Timeout}"));
 	}
 
@@ -213,9 +221,16 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Kills the child and its descendants if anything is still running, then releases the process.
+	/// Kills the child and its descendants if the child is still running, then releases the process.
 	/// A test that asserted an exit already has nothing left to kill; this is what keeps a failed
 	/// assertion from leaking a process into the rest of the suite.
+	/// <para>
+	/// The tree is reachable only while its root is: a child that spawned something long-lived and then
+	/// exited on its own leaves that descendant running, because there is no longer a parent to walk
+	/// down from. Holding descendants beyond the parent needs a job object or a process group, which is
+	/// platform-specific and deliberately not done here — so a probed application that forks background
+	/// work has to clean up after itself.
+	/// </para>
 	/// </summary>
 	public async ValueTask DisposeAsync()
 	{

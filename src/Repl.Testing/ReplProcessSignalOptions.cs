@@ -10,6 +10,14 @@ public sealed class ReplProcessSignalOptions
 	/// <see cref="TimeoutException"/>. A signal test starts a run that blocks until it is cancelled,
 	/// so this is what turns "the signal never arrived" into a failing test instead of a hung one.
 	/// Defaults to 10 seconds. Use <see cref="Timeout.InfiniteTimeSpan"/> to disable it.
+	/// <para>
+	/// Measured against the clock, not against the run agreeing to stop: a command that never observes
+	/// its cancellation token cannot be interrupted, so the harness abandons it rather than waiting.
+	/// The command keeps running — nothing here can kill it — and because it still holds a place in the
+	/// process-wide signal epoch, disposal reports it rather than letting later signal tests inherit it.
+	/// Disabling the timeout gives that up: a run that never ends then hangs both its completion and the
+	/// harness's disposal.
+	/// </para>
 	/// </summary>
 	public TimeSpan RunTimeout { get; set; } = TimeSpan.FromSeconds(10);
 

@@ -181,6 +181,15 @@ result.ExitCode.Should().Be(130);
 decision before it returns, so the framework decides synchronously and so does this. Await
 `run.Completion` to see what the decision did.
 
+Runs execute as **standalone invocations**, not hosted sessions — the same classification a
+process-owning `Main` gets. Commands gated to the CLI channel are therefore present, and handlers see
+`IReplIoContext.IsHostedSession == false`.
+
+`RunTimeout` is measured against the clock rather than against the run agreeing to stop, so a command
+that never observes its cancellation token still fails the test instead of hanging the suite. Such a
+run cannot be killed: the harness abandons it, and disposal says so, because it still holds a place in
+the process-wide signal epoch.
+
 **`StartRunAsync` guarantees the signal will reach the run, not that the command is running.** The
 signal scope is installed around the whole run, before its arguments are parsed, so the command body
 has usually not started when the call returns. If you are asserting on what the command did — that its
@@ -233,9 +242,11 @@ settable, so combinations no device has cannot be constructed by mistake.
 
 ### One harness at a time
 
-Signal handling is process-global. A harness owns it for its lifetime, and creating a second one while
-the first is alive throws — two would corrupt each other's isolation, not merely race on the
-application. Configure your framework accordingly:
+Signal handling is process-global, and a harness owns it for its lifetime — really owns it, not by
+convention. While it holds ownership, a second harness is refused, and so is any other run that would
+install its own signal handling: such a run joins the harness's isolated epoch, gets cancelled by its
+synthetic signals, and releases its readiness wait. Failing that run loudly is the point. Configure
+your framework so it does not happen:
 
 | Framework | Parallel by default? | What to add |
 | --- | --- | --- |
