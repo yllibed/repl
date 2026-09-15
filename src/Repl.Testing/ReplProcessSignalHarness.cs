@@ -266,30 +266,22 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 	private ReplSignalDelivery Deliver(ReplProcessSignal signal)
 	{
-		// Re-checked rather than trusted from construction: an interactive session registered since then
-		// would silently take this delivery, and reporting that as handled is worse than failing here.
-		if (signal is not ReplProcessSignal.Terminate
-			&& ConsoleCancelKeyCoordinator.HasInteractiveHandlersForTesting)
-		{
-			throw new InvalidOperationException(
-				$"An interactive session owns the console cancel keys, so {signal} would reach it rather "
-				+ "than the run under test. Only Terminate bypasses that selection, because SIGTERM does "
-				+ "not participate in the interactive console-key priority rule.");
-		}
-
 		// Interrupt and Break go through console cancel-key arbitration, so an interactive owner wins
 		// exactly as it does in production. Terminate has no such layer and reaches the claim directly:
 		// SIGTERM does not participate in the interactive console-key priority rule. That asymmetry is
 		// the framework's, so the routing is fixed rather than configurable — sending SIGTERM through
 		// the console path would fake a priority rule that does not exist.
+		var interactiveOwned = false;
 		var decision = signal switch
 		{
-			ReplProcessSignal.Interrupt => ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting(
+			ReplProcessSignal.Interrupt => ConsoleCancelKeyCoordinator.HandleStandaloneCancelKeyForTesting(
 				ConsoleSpecialKey.ControlC,
-				isWindows: _options.Platform.IsWindows),
-			ReplProcessSignal.Break => ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting(
+				_options.Platform.IsWindows,
+				out interactiveOwned),
+			ReplProcessSignal.Break => ConsoleCancelKeyCoordinator.HandleStandaloneCancelKeyForTesting(
 				ConsoleSpecialKey.ControlBreak,
-				isWindows: _options.Platform.IsWindows),
+				_options.Platform.IsWindows,
+				out interactiveOwned),
 			// Gated on the platform in force actually wiring SIGTERM up. On a declared Windows profile the
 			// framework installs no SIGTERM registration, and on an unsupported one it installs nothing at
 			// all, so claiming here would have a cross-platform test assert a cancellation that could
@@ -302,6 +294,16 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 				signal,
 				"Unknown process signal."),
 		};
+
+		// Reported, not returned as NotHandled: the delivery did not merely go unclaimed, it could not be
+		// made at all, and a test told "nothing happened" would go looking in the wrong place.
+		if (interactiveOwned)
+		{
+			throw new InvalidOperationException(
+				$"An interactive session owns the console cancel keys, so {signal} would reach it rather "
+				+ "than the run under test. Only Terminate bypasses that selection, because SIGTERM does "
+				+ "not participate in the interactive console-key priority rule.");
+		}
 
 		return decision switch
 		{

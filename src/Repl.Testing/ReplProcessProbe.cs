@@ -26,6 +26,12 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	private const int SigInt = 2;
 	private const int SigTerm = 15;
 
+	// How long to let the asynchronous readers settle after the child exits. Bounded on purpose: the
+	// blocking drain waits for end-of-stream, and a descendant that inherited the child's redirected
+	// handles keeps the stream open for as long as it lives — so waiting for EOF can wait forever, in
+	// the one method whose entire job is to honour a deadline.
+	private static readonly TimeSpan ExitDrainGrace = TimeSpan.FromMilliseconds(500);
+
 	// Real time against a real process: there is no clock to fake when the thing being waited on is an
 	// operating-system process, so the system provider is passed explicitly rather than left implicit.
 	private static readonly TimeProvider Clock = TimeProvider.System;
@@ -129,9 +135,8 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 			if (_process.HasExited)
 			{
 				// Exiting does not mean the capture is complete: the last line may still be sitting in an
-				// asynchronous callback. This overload waits for those handlers to finish, so the recheck
-				// below sees everything the child actually wrote before the wait is called a failure.
-				_process.WaitForExit();
+				// asynchronous callback. Let it settle, then look again before calling this a failure.
+				await DrainAfterExitAsync(deadline, cancellationToken).ConfigureAwait(false);
 				if (_capture.Read().Contains(expected, StringComparison.Ordinal))
 				{
 					return;
@@ -225,9 +230,9 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 			throw new TimeoutException(Describe($"did not exit within {_options.Timeout}"), ex);
 		}
 
-		// The overload without a token also drains the asynchronous output handlers, so everything the
-		// child wrote is in Output by the time the exit code is read.
-		_process.WaitForExit();
+		// Settles the asynchronous readers so everything the child wrote is in Output by the time the exit
+		// code is read — bounded, for the same reason as the drain in WaitForOutputAsync.
+		await DrainAfterExitAsync(Clock.GetUtcNow() + _options.Timeout, cancellationToken).ConfigureAwait(false);
 		return _process.ExitCode;
 	}
 
@@ -341,6 +346,35 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		var error = await sender.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
 		throw new InvalidOperationException(
 			$"'kill -{number}' failed with exit code {sender.ExitCode} for process {_process.Id}: {error}");
+	}
+
+	/// <summary>
+	/// Waits for the capture to stop growing, or for <paramref name="deadline"/>, whichever comes first.
+	/// <para>
+	/// A poll rather than <see cref="Process.WaitForExit()"/>: that overload drains by waiting for
+	/// end-of-stream on the redirected handles, and a descendant that inherited them holds the stream
+	/// open until it exits — so the drain outlives the process it was draining, and every deadline above
+	/// it stops meaning anything. Settling on "nothing new arrived" gives up that certainty in exchange
+	/// for terminating, which is the trade a timeout exists to make.
+	/// </para>
+	/// </summary>
+	private async Task DrainAfterExitAsync(DateTimeOffset deadline, CancellationToken cancellationToken)
+	{
+		var limit = Clock.GetUtcNow() + ExitDrainGrace;
+		if (limit > deadline)
+		{
+			limit = deadline;
+		}
+
+		var previous = _capture.Read().Length;
+		var settled = 0;
+		while (Clock.GetUtcNow() < limit && settled < 2)
+		{
+			await Task.Delay(TimeSpan.FromMilliseconds(25), Clock, cancellationToken).ConfigureAwait(false);
+			var current = _capture.Read().Length;
+			settled = current == previous ? settled + 1 : 0;
+			previous = current;
+		}
 	}
 
 	private static string ResolveKillPath()
