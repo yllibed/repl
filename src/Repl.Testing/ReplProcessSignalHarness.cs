@@ -46,7 +46,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	private readonly IDisposable _isolation;
 	private readonly IDisposable _ownership;
 	private readonly SemaphoreSlim _startGate = new(initialCount: 1, maxCount: 1);
-	private readonly List<Task<ReplSignalRunResult>> _runs = [];
+	private readonly List<(string CommandLine, Task<ReplSignalRunResult> Completion)> _runs = [];
 	private readonly List<Task<ReplSignalRunResult>> _bounded = [];
 	private readonly StringWriter _deliveryDiagnostics = new();
 	private readonly ScopeRegistrationSignal _scopeRegistered;
@@ -90,7 +90,8 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// <returns>A harness holding process-signal ownership until it is disposed.</returns>
 	/// <exception cref="ArgumentNullException"><paramref name="appFactory"/> is <see langword="null"/>.</exception>
 	/// <exception cref="ArgumentException"><paramref name="configure"/> set <see cref="ReplProcessSignalOptions.Platform"/> to <see langword="null"/>.</exception>
-	/// <exception cref="InvalidOperationException">Another harness is already active in this process, or a run with automatic signal handling is already in flight.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="configure"/> set a timeout that cannot bound anything; see <see cref="ReplProcessSignalOptions.RunTimeout"/>.</exception>
+	/// <exception cref="InvalidOperationException">Another harness is already active in this process, a run with automatic signal handling is already in flight, a run an earlier harness could not stop is still executing, or an interactive session currently owns the console cancel keys.</exception>
 	public static ReplProcessSignalHarness Create(
 		Func<ReplApp> appFactory,
 		Action<ReplProcessSignalOptions>? configure = null)
@@ -124,10 +125,11 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 		var ownership = ProcessSignalCoordinator.TryClaimTestOwnership()
 			?? throw new InvalidOperationException(
-				"Process-signal handling in this process is already owned — either by another harness, or "
-				+ "by a run with automatic signal handling that is still in flight. Only one owner at a "
-				+ "time: let it finish, and configure your test framework not to run signal tests in "
-				+ "parallel with anything that starts an automatic run.");
+				"Process-signal handling in this process is already owned — by another harness, by a run "
+				+ "with automatic signal handling that is still in flight, or by a run an earlier harness "
+				+ "reported as abandoned and which has not ended yet. Only one owner at a time: let it "
+				+ "finish, and configure your test framework not to run signal tests in parallel with "
+				+ "anything that starts an automatic run.");
 
 		try
 		{
@@ -175,6 +177,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// <exception cref="ArgumentException"><paramref name="commandLine"/> is empty or whitespace.</exception>
 	/// <exception cref="ObjectDisposedException">The harness has been disposed.</exception>
 	/// <exception cref="InvalidOperationException">The run finished without ever registering a signal scope, which means the application never took process-signal ownership.</exception>
+	/// <exception cref="TimeoutException">The run did not register a signal scope within <see cref="ReplProcessSignalOptions.RunTimeout"/>, which means the application factory or its startup is blocking.</exception>
 	public async ValueTask<ReplSignalRun> StartRunAsync(
 		string commandLine,
 		CancellationToken cancellationToken = default)
@@ -203,7 +206,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			// the drain; the wrapper is what the caller is handed, so it is also what can fault unobserved
 			// when a caller deliberately never awaits it — which one of this suite's own tests does.
 			var bounded = BoundByWallClockAsync(completion, commandLine);
-			_runs.Add(completion);
+			_runs.Add((commandLine, completion));
 			_bounded.Add(bounded);
 
 			try
@@ -236,6 +239,10 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// Synchronous on purpose: a signal callback owes the operating system a suppression decision
 	/// before it returns, so the framework decides synchronously and so does this. Await
 	/// <see cref="ReplSignalRun.Completion"/> to see what the decision did to a run.
+	/// </para>
+	/// <para>
+	/// Deliver signals one at a time. Concurrent calls are not supported: an operating system delivers
+	/// signals to a process in sequence, and the diagnostics each delivery writes share one buffer.
 	/// </para>
 	/// </summary>
 	/// <param name="signal">The signal to deliver.</param>
@@ -324,14 +331,15 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	/// a scope in the ownership epoch, and letting it outlive the harness would leak that epoch into
 	/// whatever runs next. <see cref="ReplProcessSignalOptions.RunTimeout"/> is what guarantees the
 	/// wait ends, so a harness whose timeout is disabled and whose run was never released will block
-	/// here.
+	/// here. Otherwise this takes at most twice that timeout in total, however many runs are in flight.
 	/// </para>
 	/// </summary>
 	/// <exception cref="InvalidOperationException">
 	/// One or more runs were still executing and could not be stopped — a command that never observes
-	/// its cancellation token cannot be interrupted. Ownership is released before this is raised, so the
-	/// next harness can still be created; it is reported because such a run still holds a place in the
-	/// process-wide signal epoch.
+	/// its cancellation token cannot be interrupted. Ownership is released, but such a run keeps its
+	/// place in the process-wide signal epoch, and <see cref="Create"/> is refused until it ends: the
+	/// message names the command lines so the wait has something to point at. Ordinary runs are
+	/// unaffected — a claim left behind is discarded with a diagnostic rather than inherited.
 	/// </exception>
 	public async ValueTask DisposeAsync()
 	{
@@ -341,7 +349,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		}
 
 		_disposed = true;
-		var abandoned = 0;
+		IReadOnlyList<string> abandoned = [];
 		var leakedScopes = 0;
 		try
 		{
@@ -367,6 +375,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			// nothing saying why. Reported below rather than prevented, since nothing here can drain it.
 			leakedScopes = ProcessSignalCoordinator.ActiveScopeCountForTesting;
 
+
 			// Unconditionally: anything thrown above would otherwise leave the exclusivity flag set and
 			// the coordinator isolated for the rest of the process, turning one failed disposal into
 			// every later harness in the suite refusing to start.
@@ -376,24 +385,23 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			_ownership.Dispose();
 		}
 
-		// Reported after ownership is released, so the next harness can still be created — but reported,
-		// because a run still holding a scope outlives the isolation that was just torn down, and every
-		// later signal test in this process inherits that epoch.
 		ReportWhatOutlivedTheHarness(abandoned, leakedScopes);
 	}
 
-	// Raised after ownership is released, so the next harness can still be created. Reported at all
-	// because both states leave the process-wide epoch occupied by something this harness cannot drain,
-	// and the alternative is a later test failing for a reason nothing explains.
-	private static void ReportWhatOutlivedTheHarness(int abandoned, int leakedScopes)
+	// Raised after ownership is released. Reported at all because both states leave the process-wide
+	// epoch occupied by something this harness cannot drain, and the alternative is a later test failing
+	// for a reason nothing explains.
+	private static void ReportWhatOutlivedTheHarness(IReadOnlyList<string> abandoned, int leakedScopes)
 	{
-		if (abandoned > 0)
+		if (abandoned.Count > 0)
 		{
 			throw new InvalidOperationException(
-				$"{abandoned} run(s) were still executing when the harness was disposed and could not be "
-				+ "stopped: a command that never observes its cancellation token cannot be interrupted. "
-				+ "They still hold a place in the process-wide signal epoch, so later signal tests in "
-				+ "this process may see cancellations they did not cause.");
+				$"{abandoned.Count} run(s) were still executing when the harness was disposed and could "
+				+ "not be stopped: a command that never observes its cancellation token cannot be "
+				+ $"interrupted — {string.Join(", ", abandoned.Select(static line => $"'{line}'"))}. They "
+				+ "still hold a place in the process-wide signal epoch, so every later harness in this "
+				+ "process is refused until they end. Ordinary runs are unaffected: a claim left behind is "
+				+ "discarded with a diagnostic rather than inherited.");
 		}
 
 		if (leakedScopes > 0)
@@ -410,37 +418,45 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		"Design",
 		"CA1031:Do not catch general exception types",
 		Justification = "Disposal exists to drain the ownership epoch before the next test. A run that failed or timed out has already reported that through its own Completion, which the test either awaited or chose not to; rethrowing it from a using block would replace the test's own failure with this one.")]
-	private async Task<int> DrainRunsAsync()
+	private async Task<IReadOnlyList<string>> DrainRunsAsync()
 	{
-		var abandoned = 0;
-		foreach (var run in _runs)
+		// One deadline for the whole drain rather than one per run: waiting on each in turn made
+		// disposal cost the timeout once for every run that ignored its token, so the bound the caller
+		// was promised grew with the number of runs in flight.
+#pragma warning disable VSTHRD003 // Every task here was started by this harness, in StartRunAsync.
+		var completions = _runs.Select(static run => run.Completion).ToArray();
+		try
 		{
-			try
+			_ = HasRunTimeout
+				? await Task.WhenAll(completions).WaitAsync(DrainTimeout, Clock).ConfigureAwait(false)
+				: await Task.WhenAll(completions).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		}
+		catch (Exception)
+		{
+			// Intentionally observed and dropped; see the justification above. What is still running is
+			// read from the tasks below rather than inferred from whichever one threw first.
+		}
+
+		var abandoned = new List<string>();
+		foreach (var (commandLine, completion) in _runs)
+		{
+			if (completion.IsCompleted)
 			{
-				_ = HasRunTimeout
-					? await run.WaitAsync(DrainTimeout, Clock).ConfigureAwait(false)
-					: await run.ConfigureAwait(false);
+				// A run that ended on its own timeout is a finished run reporting a failure the test has
+				// already seen. Observed here so it cannot resurface as an unobserved task exception.
+				_ = completion.Exception;
+				continue;
 			}
-			catch (TimeoutException) when (run.IsCompleted)
-			{
-				// The run itself ended on its own timeout. That is a finished run reporting a failure the
-				// test has already seen, not one this drain gave up on.
-			}
-			catch (TimeoutException)
-			{
-				// Still running, and nothing here can stop it. Observe whatever it eventually produces so
-				// it does not resurface as an unobserved task exception, and report it below.
-				abandoned++;
-				_ = run.ContinueWith(
-					static observed => _ = observed.Exception,
-					CancellationToken.None,
-					TaskContinuationOptions.ExecuteSynchronously,
-					TaskScheduler.Default);
-			}
-			catch (Exception)
-			{
-				// Intentionally observed and dropped; see the justification above.
-			}
+
+			// Still running, and nothing here can stop it. Observe whatever it eventually produces, and
+			// report it by name below.
+			abandoned.Add(commandLine);
+			_ = completion.ContinueWith(
+				static observed => _ = observed.Exception,
+				CancellationToken.None,
+				TaskContinuationOptions.ExecuteSynchronously,
+				TaskScheduler.Default);
 		}
 
 		return abandoned;
@@ -479,6 +495,7 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	// Twice the run timeout, because draining can begin before a run's own timeout has elapsed and the
 	// run still has to unwind once it fires. A cooperative run therefore always finishes within this;
 	// only one that never observes its token is still here at the end, which is what it is measuring.
+	// Spent once for the whole drain, not once per run.
 	private TimeSpan DrainTimeout => _options.RunTimeout + _options.RunTimeout;
 
 	// Every task handed to a caller is observed, whether or not the caller awaited it. A test that
@@ -513,9 +530,23 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		// after the application factory has returned — so a factory that blocks would otherwise hang this
 		// wait with nothing to stop it, and the token documented as cancelling it would do nothing.
 		var pending = Task.WhenAny(registered, completion);
-		_ = HasRunTimeout
-			? await pending.WaitAsync(_options.RunTimeout, Clock, cancellationToken).ConfigureAwait(false)
-			: await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+		try
+		{
+			_ = HasRunTimeout
+				? await pending.WaitAsync(_options.RunTimeout, Clock, cancellationToken).ConfigureAwait(false)
+				: await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+		}
+		catch (TimeoutException ex)
+		{
+			// The bare exception says only "The operation has timed out.", which names neither the run nor
+			// the stage — and this stage is before the run's own timeout exists, so the run-level message
+			// would send the reader looking for a signal that was never expected yet.
+			throw new TimeoutException(
+				$"The run '{commandLine}' did not register a process-signal scope within "
+				+ $"{_options.RunTimeout}. The run had not started executing: the application factory or "
+				+ "the application's own startup is blocking.",
+				ex);
+		}
 
 		// Which task WhenAny hands back is not the question — a run short enough to finish before this
 		// resumes has both of them complete, and picking the loser would fail a perfectly good start.
@@ -633,10 +664,6 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 	private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
-	/// <summary>
-	/// Carries the "a scope has joined the epoch" notification from the coordinator to whichever start
-	/// is waiting for it. Starts are serialised, so at most one is ever armed.
-	/// </summary>
 	/// <summary>
 	/// Pairs each "a scope joined the epoch" notification with the start that caused it.
 	/// <para>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using AwesomeAssertions;
 using Repl.Testing;
 
@@ -606,12 +607,14 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies a zero run timeout is refused rather than read as no timeout. Read as no timeout it removes the one safeguard keeping a run that never observes its token from hanging its own completion and the harness's disposal — at the moment a test asked for a tighter bound, not a looser one.")]
-	public void When_TheRunTimeoutIsZero_Then_ItIsRefused()
+	[DataRow(0, DisplayName = "Zero")]
+	[DataRow(-1, DisplayName = "Negative")]
+	[Description("Regression guard: verifies a run timeout that cannot bound anything is refused rather than read as no timeout. Read as no timeout it removes the one safeguard keeping a run that never observes its token from hanging its own completion and the harness's disposal — at the moment a test asked for a tighter bound, not a looser one.")]
+	public void When_TheRunTimeoutIsNotPositive_Then_ItIsRefused(int seconds)
 	{
 		var act = () => ReplProcessSignalHarness.Create(
 			() => CreateEchoApp(),
-			options => options.RunTimeout = TimeSpan.Zero);
+			options => options.RunTimeout = TimeSpan.FromSeconds(seconds));
 
 		act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*must be positive*");
 	}
@@ -627,6 +630,80 @@ public sealed class Given_ProcessSignalHarness
 		var run = await harness.StartRunAsync("echo");
 
 		(await run.Completion).ExitCode.Should().Be(0);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies disposal names the runs it could not stop and that every later harness is refused until they end. A run ignoring its token keeps its scope in the process-wide epoch, so the claim this replaced — that ownership is released and the next harness can still be created — walked the caller into an 'already owned' failure with nothing connecting it to the run that caused it. This is also the only cover for the coordinator's active-scope refusal: the other exclusivity guard reaches the owner branch instead. The elapsed bound is what holds the drain to one deadline rather than one per run.")]
+	public async Task When_RunsCannotBeStopped_Then_TheyAreNamedAndLaterHarnessesAreRefused()
+	{
+		using var release = new CancellationTokenSource();
+		var harness = ReplProcessSignalHarness.Create(
+			() => CreateUncooperativeApp(release.Token),
+			options => options.RunTimeout = TimeSpan.FromSeconds(1));
+		try
+		{
+			await harness.StartRunAsync("stubborn-one");
+			await harness.StartRunAsync("stubborn-two");
+
+			var startedAt = Stopwatch.GetTimestamp();
+			var dispose = async () => await harness.DisposeAsync().ConfigureAwait(false);
+
+			var thrown = await dispose.Should().ThrowAsync<InvalidOperationException>();
+			thrown.Which.Message.Should().Contain("stubborn-one").And.Contain("stubborn-two");
+			Stopwatch.GetElapsedTime(startedAt).Should().BeLessThan(
+				TimeSpan.FromSeconds(3),
+				because: "the whole drain shares one deadline rather than spending one per abandoned run");
+
+			var second = () => ReplProcessSignalHarness.Create(() => CreateEchoApp());
+			second.Should().Throw<InvalidOperationException>()
+				.WithMessage("*already owned*", because: "the abandoned runs still hold the epoch");
+		}
+		finally
+		{
+			// Unconditionally: these runs are the only thing that can release the epoch, and leaving them
+			// would refuse every harness for the rest of the process.
+			await release.CancelAsync();
+		}
+
+		await using var recovered = await CreateOnceTheEpochClearsAsync();
+		var run = await recovered.StartRunAsync("echo");
+
+		(await run.Completion).ExitCode.Should().Be(0);
+	}
+
+	// Polls rather than waiting on the runs: they are abandoned, so nothing here holds a handle to them,
+	// and the epoch clears only once each one has finished unwinding on its own.
+	private static async Task<ReplProcessSignalHarness> CreateOnceTheEpochClearsAsync()
+	{
+		var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+		while (true)
+		{
+			try
+			{
+				return ReplProcessSignalHarness.Create(() => CreateEchoApp());
+			}
+			catch (InvalidOperationException) when (DateTimeOffset.UtcNow < deadline)
+			{
+				await Task.Delay(TimeSpan.FromMilliseconds(25)).ConfigureAwait(false);
+			}
+		}
+	}
+
+	// Ignores the run's own cancellation token, which is what makes it unstoppable by a signal or by
+	// the harness's timeout. The external token is the test's way back out.
+	private static ReplApp CreateUncooperativeApp(CancellationToken release)
+	{
+		var app = CreateApp(configure: null);
+		foreach (var name in (string[])["stubborn-one", "stubborn-two"])
+		{
+			app.Map(name, async () =>
+			{
+				await Task.Delay(Timeout.Infinite, release).ConfigureAwait(false);
+				return "unreachable";
+			});
+		}
+
+		return app;
 	}
 
 	private static ReplApp CreateBlockingApp(

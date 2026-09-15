@@ -187,12 +187,16 @@ process-owning `Main` gets. Commands gated to the CLI channel are therefore pres
 
 `RunTimeout` is measured against the clock rather than against the run agreeing to stop, so a command
 that never observes its cancellation token still fails the test instead of hanging the suite. Such a
-run cannot be killed: the harness abandons it, and disposal says so, because it still holds a place in
-the process-wide signal epoch.
+run cannot be killed: the harness abandons it, and disposal says so — naming the command lines,
+because such a run keeps its place in the process-wide signal epoch and every later harness is refused
+until it ends.
 
-**`StartRunAsync` guarantees the signal will reach the run, not that the command is running.** The
-signal scope is installed around the whole run, before its arguments are parsed, so the command body
-has usually not started when the call returns. If you are asserting on what the command did — that its
+**`StartRunAsync` guarantees the signal will reach the run, not that the command is running** — and
+only for as long as the run lasts. The signal scope is installed around the whole run, before its
+arguments are parsed, so the command body has usually not started when the call returns. A command
+short enough to finish first takes its scope with it, and a delivery after that is `NotHandled`,
+exactly as a signal arriving after a real process has done its work would be: signal a run that stays
+put. If you are asserting on what the command did — that its
 cleanup ran, say — have the command say when it is running:
 
 ```csharp
@@ -276,6 +280,19 @@ when it fails; and disposal kills the process tree, so a failed assertion does n
 application running. That last one reaches only as far as the tree's root: a child that spawns
 something long-lived and then exits on its own leaves that descendant behind, because there is no
 parent left to walk down from.
+
+`ReplProcessProbeOptions.Timeout` bounds every one of those waits — for output, for a signal, for the
+exit — and defaults to 30 seconds. `Timeout.InfiniteTimeSpan` waits without a deadline; zero and
+negatives are refused, because they would fail each wait the moment it started. The exit wait watches
+the process rather than its output streams: a descendant that inherited the child's redirected handles
+holds them open after the child is gone, and waiting on end-of-stream would report a process that
+exited milliseconds ago as still running. Output settles separately, under its own short grace.
+
+One last caveat about addressing a process by id: a signal and the tree kill both resolve the child by
+its process id, and .NET's Unix implementation matches descendants without a start-time check. An id
+reused between the probe reading it and the operation running belongs to whoever inherited it. In
+practice this needs a process table churning hard enough to wrap within a test, but it is the reason
+the probe kills as early as it can rather than at the end of a suite.
 
 **Signals are delivered on Unix only.** Sending one to another process on Windows needs a console
 control event and console attachment rather than a signal, which is deliberately out of scope until

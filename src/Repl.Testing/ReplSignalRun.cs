@@ -2,8 +2,10 @@ namespace Repl.Testing;
 
 /// <summary>
 /// A run started by <see cref="ReplProcessSignalHarness.StartRunAsync"/> and still in flight. Its
-/// signal scope is already registered by the time the start call returns, so a signal delivered from
-/// here on reaches it rather than falling through as inert.
+/// signal scope is registered by the time the start call returns, so a signal delivered from here on
+/// reaches it rather than falling through as inert — for as long as the run lasts. See
+/// <see cref="ReplProcessSignalHarness.StartRunAsync"/> for what the start does and does not
+/// guarantee.
 /// </summary>
 public sealed class ReplSignalRun
 {

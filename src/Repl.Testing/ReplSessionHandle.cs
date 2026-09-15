@@ -272,24 +272,8 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		}
 	}
 
-	// The timeout fired, and not the caller's own token.
-	private static bool IsCommandTimeout(CancellationTokenSource? timeout, CancellationToken cancellationToken) =>
-		timeout is not null && timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested;
-
 	private TimeoutException CreateTimeoutException(string commandText) =>
 		new($"Command '{commandText}' exceeded timeout of {_options.CommandTimeout.TotalMilliseconds:0} ms.");
-
-	private CancellationTokenSource? CreateTimeoutSource(CancellationToken cancellationToken)
-	{
-		if (_options.CommandTimeout <= TimeSpan.Zero || _options.CommandTimeout == Timeout.InfiniteTimeSpan)
-		{
-			return null;
-		}
-
-		var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		timeout.CancelAfter(_options.CommandTimeout);
-		return timeout;
-	}
 
 	private void ThrowIfDisposed()
 	{
