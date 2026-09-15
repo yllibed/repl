@@ -13,6 +13,12 @@ public sealed record SessionSnapshot(
 	bool? AnsiSupported,
 	DateTimeOffset LastUpdatedUtc)
 {
+	/// <summary>
+	/// A snapshot for a session that has registered no terminal metadata yet — every field unset and
+	/// <see cref="LastUpdatedUtc"/> at <see cref="DateTimeOffset.MinValue"/>.
+	/// </summary>
+	/// <param name="sessionId">The session the snapshot describes.</param>
+	/// <returns>An empty snapshot.</returns>
 	public static SessionSnapshot Empty(string sessionId) =>
 		new(
 			sessionId,

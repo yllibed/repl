@@ -379,20 +379,28 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
-	[OSCondition(ConditionMode.Exclude, OperatingSystems.Windows)]
-	[Description("A registration that fails after SIGTERM was registered disposes the orphan instead of leaking it. This is the only ordering that reaches the cleanup, and a leaked PosixSignalRegistration would keep suppressing SIGTERM for a process that has already been told the bridge is caller-owned.")]
+	[Description("A registration that fails after SIGTERM was registered disposes the orphan instead of leaking it. This is the only ordering that reaches the cleanup, and a leaked PosixSignalRegistration would keep suppressing SIGTERM for a process that has already been told the bridge is caller-owned. Declaring a non-Windows platform with real registrations allowed is what lets this ordering exist on a Windows host too, since .NET accepts PosixSignal.SIGTERM there as well.")]
 	public async Task When_RegistrationFailsAfterSigTerm_Then_TheOrphanedRegistrationIsReleased()
 	{
 		using var error = new StringWriter();
 		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
 		using (var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
 			new PlatformNotSupportedException("cancel-key registration rejected"),
-			faultAfterSigTermRegistration: true))
+			faultAfterSigTermRegistration: true,
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy
+			{
+				IsWindows = false,
+				CreateRealRegistrations = true,
+			}))
 		{
 			await using var degraded = new ProcessSignalCancellationScope(default);
 
 			degraded.Token.IsCancellationRequested.Should().BeFalse();
 			error.ToString().Should().Contain("Failed to install automatic process-signal handling");
+			// Pin the failure to the injected fault. Without this the test still passes when the SIGTERM
+			// registration itself is what failed — in which case no orphan existed and the cleanup this
+			// test exists for was never reached.
+			error.ToString().Should().Contain("cancel-key registration rejected");
 		}
 
 		// A leaked registration would still be claiming SIGTERM under a stale generation. After the
@@ -445,6 +453,204 @@ public sealed class Given_ProcessSignalCancellationScope
 			isBrowser,
 			isIOS,
 			isTvOS).Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("SIGTERM claims the epoch cooperatively and carries 143, reached in-process rather than only through a spawned child.")]
+	public async Task When_FirstSigTermArrives_Then_ActiveScopeIsCancelledWithTheSigTermCode()
+	{
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		var result = ProcessSignalCoordinator.HandleSigTermForTesting();
+
+		result.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+		scope.Token.IsCancellationRequested.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("A SIGTERM after Ctrl+C escalates to the operating system and leaves the first claim's exit code intact, so the second signal cannot relabel what the run is exiting with.")]
+	public async Task When_SigTermFollowsCtrlC_Then_TheFirstClaimKeepsItsExitCode()
+	{
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		var firstSignal = ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting();
+		var secondSignal = ProcessSignalCoordinator.HandleSigTermForTesting();
+
+		firstSignal.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		secondSignal.Should().Be(ConsoleCancelKeyHandlingResult.AllowProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigIntExitCode);
+	}
+
+	[TestMethod]
+	[Description("SIGTERM stays inert without an active scope, so the seam cannot claim an epoch the real registration would have left to the operating-system default.")]
+	public void When_NoScopeIsActive_Then_SigTermIsNotHandled() =>
+		ProcessSignalCoordinator.HandleSigTermForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.NotHandled);
+
+	[TestMethod]
+	[Description("The SIGTERM seam accepts whichever epoch is current, the way a freshly installed registration would: isolating registrations advances the generation counter, and a scope that survives it is still claimed.")]
+	public async Task When_TheGenerationAdvancesUnderAnActiveScope_Then_SigTermStillClaimsTheCurrentEpoch()
+	{
+		await using var scope = new ProcessSignalCancellationScope(default);
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+
+		var result = ProcessSignalCoordinator.HandleSigTermForTesting();
+
+		result.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a registration that fails after SIGTERM was registered leaves no SIGTERM eligibility behind. Eligibility is declared before the console bridge is installed, and the SIGTERM registration created under it is disposed as orphaned when that fails — so eligibility left standing would say a signal can be claimed through a bridge the environment has just refused.")]
+	public async Task When_RegistrationFailsAfterSigTerm_Then_SigTermIsNoLongerEligible()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			registrationFault: new PlatformNotSupportedException("registration refused"),
+			faultAfterSigTermRegistration: true,
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = false });
+
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting.Should().BeFalse();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("A declared non-Windows platform wants a SIGTERM registration and, with real registrations left suppressed, does not get one. That pair is what a platform test looks like from any host: the wiring decision is asserted without an operating-system registration being installed on the declared platform's behalf.")]
+	public async Task When_ANonWindowsPlatformIsDeclared_Then_SigTermIsWantedButNotInstalled()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = false });
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting.Should().BeTrue();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("A declared Windows platform wants no SIGTERM registration at all, because the console coordinator already owns Ctrl+C and Ctrl+Break there and .NET maps PosixSignal.SIGTERM onto CTRL_SHUTDOWN_EVENT. Assertable from a non-Windows host, where the real platform cannot answer for it.")]
+	public async Task When_WindowsIsDeclared_Then_NoSigTermRegistrationIsWanted()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = true });
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting.Should().BeFalse();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Suppressing real registrations does not suppress delivery: the in-process seams reach the claim logic either way. Without this the platform tests above could pass against a coordinator that had quietly stopped claiming anything.")]
+	public async Task When_RealRegistrationsAreSuppressed_Then_SignalsAreStillClaimed()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = false });
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.HandleSigTermForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		scope.ExitCode.Should().Be(ProcessSignalCoordinator.SigTermExitCode);
+	}
+
+	[TestMethod]
+	[Description("A declared unsupported platform degrades the bridge through the real Register path rather than only through the platform predicate, so the diagnostic and the caller-owned fallback are exercised from any host.")]
+	public async Task When_AnUnsupportedPlatformIsDeclared_Then_TheBridgeDegradesWithADiagnostic()
+	{
+		using var error = new StringWriter();
+		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsBrowser = true });
+
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		error.ToString().Should().Contain("unavailable on this platform");
+		scope.Token.IsCancellationRequested.Should().BeFalse();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Test ownership is refused while a claimed epoch is still draining. UnregisterAsync removes a scope before its cancellation callbacks finish and keeps the claim alive until they do, so an empty scope set is not an idle coordinator: claiming in that window hands the next owner an epoch that is still claimed, and its first run is cancelled on registration with no signal ever sent.")]
+	public async Task When_AClaimedEpochIsStillDraining_Then_TestOwnershipIsRefused()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+		var drainStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		using var releaseDrain = new ManualResetEventSlim(initialState: false);
+		IDisposable? claimedDuringDrain = null;
+
+		var scope = new ProcessSignalCancellationScope(default);
+		// Runs while the scope is unregistering, which is exactly the window: removed from ActiveScopes,
+		// claim not yet cleared.
+		scope.Token.Register(() =>
+		{
+			drainStarted.TrySetResult();
+			releaseDrain.Wait();
+		});
+
+		ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+
+		var disposal = scope.DisposeAsync().AsTask();
+		await drainStarted.Task;
+		claimedDuringDrain = ProcessSignalCoordinator.TryClaimTestOwnership();
+		releaseDrain.Set();
+		await disposal;
+
+		claimedDuringDrain.Should().BeNull(because: "the previous epoch had not finished draining");
+		using var afterDrain = ProcessSignalCoordinator.TryClaimTestOwnership();
+		afterDrain.Should().NotBeNull(because: "once drained, the coordinator is claimable again");
+	}
+
+	[TestMethod]
+	[Description("An owned-run marker belongs to the claim that set it, not to whoever owns the coordinator next. A bare flag also flows into anything a handler spawned, so a background task outliving its harness would still read as owned and could join a later owner's epoch.")]
+	public void When_AMarkerOutlivesItsClaim_Then_ItIsNotHonouredByTheNextOwner()
+	{
+		var first = ProcessSignalCoordinator.TryClaimTestOwnership();
+		first.Should().NotBeNull();
+
+		// A context marked under the first claim, captured the way a spawned background task would.
+		var marker = ProcessSignalCoordinator.MarkOwnedRunForTesting(new object());
+		first!.Dispose();
+
+		using var second = ProcessSignalCoordinator.TryClaimTestOwnership();
+		second.Should().NotBeNull(because: "the first claim was released");
+
+		// The stale marker must not pass as the second owner's run.
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+		var act = () => new ProcessSignalCancellationScope(default);
+
+		act.Should().Throw<InvalidOperationException>().WithMessage("*owns signal handling*");
+		marker.Dispose();
+	}
+
+	[TestMethod]
+	[Description("A claim left by an owner that has been released is discarded rather than inherited. A harness disposed while a run it could not stop was still executing leaves its scope in the epoch and its signal claimed; the next ordinary run would otherwise be cancelled by a signal nobody sent and report Interrupted with no diagnostic naming one — indistinguishable from a bug in the caller's own application.")]
+	public async Task When_AClaimOutlivesItsOwner_Then_TheNextRunDoesNotInheritIt()
+	{
+		using var error = new StringWriter();
+		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting();
+
+		var owner = ProcessSignalCoordinator.TryClaimTestOwnership();
+		owner.Should().NotBeNull();
+		ProcessSignalCancellationScope? abandoned;
+		using (ProcessSignalCoordinator.MarkOwnedRunForTesting(new object()))
+		{
+			abandoned = new ProcessSignalCancellationScope(default);
+		}
+
+		ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting()
+			.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
+		// Released without draining, which is what disposal does when a run cannot be stopped.
+		owner!.Dispose();
+
+		await using var next = new ProcessSignalCancellationScope(default);
+
+		next.Token.IsCancellationRequested.Should().BeFalse(
+			because: "a claim nobody is draining must not cancel an unrelated run");
+		next.ExitCode.Should().BeNull();
+		error.ToString().Should().Contain("Discarding");
+		await abandoned.DisposeAsync();
 	}
 
 	[TestMethod]

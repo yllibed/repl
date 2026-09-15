@@ -27,11 +27,60 @@ internal static class ProcessSignalCoordinator
 	private static int s_generation;
 	private static int s_pendingDrainCount;
 	private static bool s_registrationsInitialized;
+	private static bool s_sigTermRegistrationDeclared;
 	private static RegistrationFault? s_registrationFaultForTesting;
+	private static SignalRegistrationPolicy? s_registrationPolicyForTesting;
+	// Invoked once a scope has joined the epoch and any cancellation it inherited has started, so a test
+	// harness can await the moment a signal stops being inert instead of guessing with a delay. Owned by
+	// the isolation scope like every other test knob here, so it cannot outlive the harness that set it.
+	private static Action<object?>? s_scopeRegisteredCallbackForTesting;
+	private static object? s_testOwner;
+
+	// Flows into the run's async context, so a scope constructed inside a run the owner launched is
+	// recognised as the owner's while one created anywhere else is not. Ambient rather than passed,
+	// because ProcessSignalCancellationScope is constructed deep inside ReplApp.RunAsync and neither
+	// the coordinator nor the scope has a channel to carry an owner through.
+	//
+	// It carries the claim rather than a flag: a bare bool also flows into anything a handler spawned,
+	// so a background task outliving its harness would still read true and pass as a run launched by
+	// whichever harness owns the coordinator next.
+	private static readonly AsyncLocal<OwnedRunContext?> OwnedRun = new();
 
 	/// <summary>
-	/// Gives a test a coordinator with no installed registrations, optionally failing the next
-	/// registration attempt, and leaves it able to install fresh ones on disposal.
+	/// Whether the platform in force wants a SIGTERM registration at all. Read with
+	/// <see cref="SigTermRegistrationInstalledForTesting"/>: wanted but not installed is what a
+	/// declared platform under test looks like, and is the state that proves no operating-system
+	/// registration was created on its behalf.
+	/// </summary>
+	internal static bool SigTermRegistrationDeclaredForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return s_sigTermRegistrationDeclared;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Whether a live operating-system SIGTERM registration exists right now.
+	/// </summary>
+	internal static bool SigTermRegistrationInstalledForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return s_sigTermRegistration is not null;
+			}
+		}
+	}
+
+	/// <summary>
+	/// Gives a test a coordinator with no installed registrations, optionally under a declared
+	/// platform and optionally failing the next registration attempt, and leaves it able to install
+	/// fresh ones on disposal.
 	/// <para>
 	/// Registrations capture the generation counter they were created under, so putting a saved
 	/// registration object back after the counter has moved would leave it permanently stale and
@@ -41,19 +90,105 @@ internal static class ProcessSignalCoordinator
 	/// </summary>
 	internal static IDisposable IsolateRegistrationsForTesting(
 		Exception? registrationFault = null,
-		bool faultAfterSigTermRegistration = false) =>
+		bool faultAfterSigTermRegistration = false,
+		SignalRegistrationPolicy? policy = null,
+		Action<object?>? scopeRegisteredCallback = null) =>
 		new RegistrationIsolationScope(
 			registrationFault is null
 				? null
-				: new RegistrationFault(registrationFault, faultAfterSigTermRegistration));
+				: new RegistrationFault(registrationFault, faultAfterSigTermRegistration),
+			policy,
+			scopeRegisteredCallback);
+
+	/// <summary>
+	/// Claims the coordinator for a test harness. Atomic with the emptiness check, so no run can slip
+	/// in between the two, and held until the returned scope is disposed. While it is held,
+	/// <see cref="Register"/> refuses any scope the owner did not launch.
+	/// </summary>
+	/// <returns>The claim, to be disposed when it is released, or <see langword="null"/> when the previous epoch has not finished or another owner has it.</returns>
+	internal static IDisposable? TryClaimTestOwnership()
+	{
+		lock (Gate)
+		{
+			// An empty scope set is not an idle coordinator. UnregisterAsync removes a scope before its
+			// signal-triggered callbacks have drained and keeps the claimed signal alive until they have,
+			// so claiming in that window would hand the next harness an epoch that is still claimed — and
+			// its first run would be cancelled on registration, with no signal ever sent.
+			if (s_testOwner is not null
+				|| ActiveScopes.Count != 0
+				|| s_pendingDrainCount != 0
+				|| s_claimedSignal is not null)
+			{
+				return null;
+			}
+
+			var claim = new TestOwnershipClaim();
+			s_testOwner = claim;
+			return claim;
+		}
+	}
+
+	/// <summary>
+	/// Marks the current async context as belonging to the test owner, so scopes constructed beneath it
+	/// are accepted while the claim is held. Returns a scope that restores the previous marking.
+	/// </summary>
+	/// <param name="runToken">
+	/// Identifies the individual run, so a registration can be matched to the start that launched it
+	/// rather than merely to the harness. A start whose wait gave up leaves its launch running, and that
+	/// launch may register long afterwards; without the token its late registration would be taken for
+	/// whichever start is waiting by then.
+	/// </param>
+	internal static IDisposable MarkOwnedRunForTesting(object runToken)
+	{
+		ArgumentNullException.ThrowIfNull(runToken);
+		var previous = OwnedRun.Value;
+		lock (Gate)
+		{
+			OwnedRun.Value = new OwnedRunContext(s_testOwner, runToken);
+		}
+
+		return new OwnedRunMarker(previous);
+	}
+
+	/// <summary>
+	/// How many scopes hold the epoch right now. A harness reads this as it releases ownership: a scope
+	/// it did not start and cannot drain — a command that launched its own automatic run, say — would
+	/// otherwise keep the epoch occupied and make every later harness refuse to start, with nothing
+	/// saying why.
+	/// </summary>
+	internal static int ActiveScopeCountForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return ActiveScopes.Count;
+			}
+		}
+	}
 
 	internal static void Register(ProcessSignalCancellationScope scope)
 	{
 		ArgumentNullException.ThrowIfNull(scope);
 		RegistrationOutcome outcome;
 		Action? startCancellation = null;
+		string? orphanDiagnostic = null;
 		lock (Gate)
 		{
+			// A test harness owns process-signal handling for its lifetime. A run it did not launch would
+			// join its isolated epoch, be cancelled by its synthetic signals, and release its readiness
+			// wait — so it is refused here rather than corrupted quietly. Running one concurrently with a
+			// signal test is already what the harness documentation tells callers not to do.
+			if (s_testOwner is not null && !ReferenceEquals(OwnedRun.Value?.Owner, s_testOwner))
+			{
+				throw new InvalidOperationException(
+					"A process-signal test harness currently owns signal handling in this process, so this "
+					+ "run cannot install its own. Signal handling is process-global: let the harness finish, "
+					+ "and configure your test framework not to run signal tests in parallel with anything "
+					+ "that starts an automatic run.");
+			}
+
+			orphanDiagnostic = DiscardOrphanedClaim();
 			outcome = TryInitializeRegistrations();
 			// The scope joins the epoch even when no bridge could be installed, so that disposal stays
 			// symmetric and a run started before an earlier scope claimed a signal still inherits it.
@@ -67,6 +202,11 @@ internal static class ProcessSignalCoordinator
 		// Installing the bridge is a convenience, not a precondition for running the command. Every way
 		// it can fail to install — an unsupported platform, or an environment that refuses the
 		// registration — degrades to caller-owned handling and says so once, on the same path.
+		if (orphanDiagnostic is { } orphanMessage)
+		{
+			WriteDiagnostic(orphanMessage);
+		}
+
 		if (outcome.Diagnostic is { } diagnostic)
 		{
 			outcome.OrphanedCancelKeyRegistration?.Dispose();
@@ -75,6 +215,35 @@ internal static class ProcessSignalCoordinator
 		}
 
 		startCancellation?.Invoke();
+		if (OwnedRun.Value is { } ownedRun && ReferenceEquals(ownedRun.Owner, s_testOwner))
+		{
+			s_scopeRegisteredCallbackForTesting?.Invoke(ownedRun.RunToken);
+		}
+	}
+
+	/// <summary>
+	/// Clears a claim left behind by an owner that has since been released. Its scopes were abandoned
+	/// rather than drained, so nothing is going to clear it, and a run inheriting it would be cancelled
+	/// by a signal nobody sent — reported as an interruption with no diagnostic naming a signal, which
+	/// from the caller's side is indistinguishable from a bug in their own application.
+	/// </summary>
+	/// <returns>
+	/// What to report, or <see langword="null"/> when there was nothing to discard. Returned rather than
+	/// written: <see cref="ReplSessionIO.Error"/> is caller-supplied, and this class promises no consumer
+	/// callback runs while the gate is held — a writer that blocked here would stop a concurrent signal
+	/// callback from reaching its suppression decision.
+	/// </returns>
+	private static string? DiscardOrphanedClaim()
+	{
+		if (s_claimedSignal is not { Owner: not null } orphaned || ReferenceEquals(orphaned.Owner, s_testOwner))
+		{
+			return null;
+		}
+
+		s_claimedSignal = null;
+		return $"Discarding a {orphaned.Name} claim left by a process-signal test harness that was "
+			+ "disposed while a run it could not stop was still executing. This run is unaffected, "
+			+ "but that run may still be running.";
 	}
 
 	private static RegistrationOutcome TryInitializeRegistrations()
@@ -94,9 +263,13 @@ internal static class ProcessSignalCoordinator
 				OrphanedSigTermRegistration: null);
 		}
 
+		return InstallRegistrations(++s_generation);
+	}
+
+	private static RegistrationOutcome InstallRegistrations(int generation)
+	{
 		PosixSignalRegistration? sigTermRegistration = null;
 		IDisposable? cancelKeyRegistration = null;
-		var generation = ++s_generation;
 		try
 		{
 			// No supported platform rejects a signal registration on demand, so the failure policy
@@ -105,7 +278,15 @@ internal static class ProcessSignalCoordinator
 			// the orphaned-registration cleanup below.
 			ThrowIfFaultInjected(afterSigTermRegistration: false);
 
-			if (!OperatingSystem.IsWindows())
+			// Windows already gets Ctrl+C and Ctrl+Break through the console coordinator, and .NET maps
+			// PosixSignal.SIGTERM onto CTRL_SHUTDOWN_EVENT there, so registering it would add a second
+			// handler alongside the one that already owns those keys. That is a wiring decision, not a
+			// capability limit, so it comes from the policy in force rather than straight from the host:
+			// a declared platform's wiring becomes assertable from any platform. Whether a real
+			// registration may be created is a separate bit, because a declared platform must never
+			// install one in the test runner's own process.
+			s_sigTermRegistrationDeclared = !IsWindowsForRegistration();
+			if (s_sigTermRegistrationDeclared && MayCreateRealRegistrations())
 			{
 				sigTermRegistration = PosixSignalRegistration.Create(
 					PosixSignal.SIGTERM,
@@ -125,6 +306,10 @@ internal static class ProcessSignalCoordinator
 		{
 			// Invalidate callbacks created by the failed generation before releasing the gate.
 			s_generation++;
+			// Declared before the registrations were attempted, and nothing installed them. Left set, it
+			// would report SIGTERM as handled on a bridge the environment has just refused — a delivery
+			// the operating system could never have made.
+			s_sigTermRegistrationDeclared = false;
 			// Latch the attempt: without this every later run repeats a registration the environment
 			// has already refused, and emits the same diagnostic once per run.
 			s_registrationsInitialized = true;
@@ -203,8 +388,27 @@ internal static class ProcessSignalCoordinator
 		}
 	}
 
+	/// <summary>
+	/// Claims SIGTERM the way a freshly installed registration would, without an operating-system
+	/// registration to deliver it. Ctrl+C and Ctrl+Break have
+	/// <see cref="ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting"/> for this; this is the SIGTERM
+	/// counterpart, and the only in-process route to the claim logic that does not go through the
+	/// console path.
+	/// <para>
+	/// This does not exercise <see cref="HandleSigTerm"/> itself: translating the decision into
+	/// <see cref="PosixSignalContext.Cancel"/> needs a real signal context, and stays covered only by
+	/// the out-of-process suite.
+	/// </para>
+	/// </summary>
+	internal static ConsoleCancelKeyHandlingResult HandleSigTermForTesting() =>
+		TryClaimSignal(generation: null, "SIGTERM", SigTermExitCode);
+
+	// A null generation accepts whichever epoch is current, which is what a freshly installed
+	// registration would see. Reading the counter before taking the gate would race
+	// TryInitializeRegistrations' failure path and the test isolation scope, both of which advance it,
+	// so the caller passes null rather than a value it read itself.
 	private static ConsoleCancelKeyHandlingResult TryClaimSignal(
-		int generation,
+		int? generation,
 		string name,
 		int exitCode)
 	{
@@ -212,7 +416,7 @@ internal static class ProcessSignalCoordinator
 		List<Action>? startCancellations = null;
 		lock (Gate)
 		{
-			if (generation != s_generation)
+			if (generation is { } capturedGeneration && capturedGeneration != s_generation)
 			{
 				return ConsoleCancelKeyHandlingResult.NotHandled;
 			}
@@ -225,7 +429,7 @@ internal static class ProcessSignalCoordinator
 
 			if (previousSignal is null)
 			{
-				s_claimedSignal = new ClaimedSignal(name, exitCode);
+				s_claimedSignal = new ClaimedSignal(name, exitCode, s_testOwner);
 				startCancellations = [];
 				foreach (var scope in ActiveScopes)
 				{
@@ -260,14 +464,26 @@ internal static class ProcessSignalCoordinator
 	}
 
 	private static bool IsSignalBridgeSupported() =>
-		IsSignalBridgeSupportedForTesting(
-			OperatingSystem.IsAndroid(),
-			OperatingSystem.IsBrowser(),
-			// Named explicitly rather than relied upon through IsIOS: Mac Catalyst is documented here as
-			// unsupported, and OperatingSystem exposes it as its own guard, so the check states what it
-			// means instead of resting on whether one platform predicate implies the other.
-			OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst(),
-			OperatingSystem.IsTvOS());
+		s_registrationPolicyForTesting is { } policy
+			? IsSignalBridgeSupportedForTesting(
+				policy.IsAndroid,
+				policy.IsBrowser,
+				policy.IsIOSOrMacCatalyst,
+				policy.IsTvOS)
+			: IsSignalBridgeSupportedForTesting(
+				OperatingSystem.IsAndroid(),
+				OperatingSystem.IsBrowser(),
+				// Named explicitly rather than relied upon through IsIOS: Mac Catalyst is documented here as
+				// unsupported, and OperatingSystem exposes it as its own guard, so the check states what it
+				// means instead of resting on whether one platform predicate implies the other.
+				OperatingSystem.IsIOS() || OperatingSystem.IsMacCatalyst(),
+				OperatingSystem.IsTvOS());
+
+	private static bool IsWindowsForRegistration() =>
+		s_registrationPolicyForTesting?.IsWindows ?? OperatingSystem.IsWindows();
+
+	private static bool MayCreateRealRegistrations() =>
+		s_registrationPolicyForTesting?.CreateRealRegistrations ?? true;
 
 	internal static bool IsSignalBridgeSupportedForTesting(
 		bool isAndroid,
@@ -299,14 +515,44 @@ internal static class ProcessSignalCoordinator
 		}
 	}
 
+	/// <summary>
+	/// The platform whose registration decisions apply while a test isolation scope is open, and
+	/// whether the coordinator may create real operating-system registrations under it.
+	/// <para>
+	/// <see cref="CreateRealRegistrations"/> is deliberately independent of the platform flags; the
+	/// reason is at the point that enforces it, in <c>InstallRegistrations</c>.
+	/// </para>
+	/// </summary>
+	internal sealed record SignalRegistrationPolicy
+	{
+		internal bool IsWindows { get; init; }
+
+		internal bool IsAndroid { get; init; }
+
+		internal bool IsBrowser { get; init; }
+
+		internal bool IsIOSOrMacCatalyst { get; init; }
+
+		internal bool IsTvOS { get; init; }
+
+		internal bool CreateRealRegistrations { get; init; }
+	}
+
 	private sealed class RegistrationIsolationScope : IDisposable
 	{
-		public RegistrationIsolationScope(RegistrationFault? registrationFault) =>
-			TearDownRegistrations(registrationFault);
+		public RegistrationIsolationScope(
+			RegistrationFault? registrationFault,
+			SignalRegistrationPolicy? policy,
+			Action<object?>? scopeRegisteredCallback) =>
+			TearDownRegistrations(registrationFault, policy, scopeRegisteredCallback);
 
-		public void Dispose() => TearDownRegistrations(registrationFault: null);
+		public void Dispose() =>
+			TearDownRegistrations(registrationFault: null, policy: null, scopeRegisteredCallback: null);
 
-		private static void TearDownRegistrations(RegistrationFault? registrationFault)
+		private static void TearDownRegistrations(
+			RegistrationFault? registrationFault,
+			SignalRegistrationPolicy? policy,
+			Action<object?>? scopeRegisteredCallback)
 		{
 			IDisposable? cancelKeyRegistration;
 			PosixSignalRegistration? sigTermRegistration;
@@ -319,8 +565,11 @@ internal static class ProcessSignalCoordinator
 				// Uninstalled, so the next Register installs fresh registrations under a current
 				// generation instead of reviving ones the counter has already left behind.
 				s_registrationsInitialized = false;
+				s_sigTermRegistrationDeclared = false;
 				s_generation++;
 				s_registrationFaultForTesting = registrationFault;
+				s_registrationPolicyForTesting = policy;
+				s_scopeRegisteredCallbackForTesting = scopeRegisteredCallback;
 			}
 
 			cancelKeyRegistration?.Dispose();
@@ -328,7 +577,31 @@ internal static class ProcessSignalCoordinator
 		}
 	}
 
-	private readonly record struct ClaimedSignal(string Name, int ExitCode);
+	private sealed class TestOwnershipClaim : IDisposable
+	{
+		public void Dispose()
+		{
+			lock (Gate)
+			{
+				if (ReferenceEquals(s_testOwner, this))
+				{
+					s_testOwner = null;
+				}
+			}
+		}
+	}
+
+	private sealed record OwnedRunContext(object? Owner, object RunToken);
+
+	private sealed class OwnedRunMarker(OwnedRunContext? previous) : IDisposable
+	{
+		public void Dispose() => OwnedRun.Value = previous;
+	}
+
+	// Owner is the test claim in force when the signal was claimed, or null for an ordinary run. A
+	// claim whose owner has since been released belongs to an epoch nobody is draining any more: a
+	// later run must not inherit its cancellation, which would look like a signal the test never sent.
+	private readonly record struct ClaimedSignal(string Name, int ExitCode, object? Owner);
 
 	/// <summary>
 	/// The result of one registration attempt. A null <paramref name="Diagnostic"/> means the bridge is

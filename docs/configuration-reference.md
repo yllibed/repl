@@ -234,6 +234,12 @@ A record passed to `app.RunAsync(...)` to control runtime behavior. Separate fro
 
 ### Process signal handling
 
+Everything in this section is testable without spawning a process: `Repl.Testing`'s
+`ReplProcessSignalHarness` drives the lifecycle in memory and can declare the platform whose decisions
+apply, so a Windows wiring decision is assertable from Linux and the other way round. See
+[Testing toolkit](testing-toolkit.md#process-signals), which is also where the boundary is written
+down — what an in-memory test can prove, and what needs a real process.
+
 `ProcessSignalHandling` applies only to standalone `Run`/`RunAsync` overloads that use the app's internally configured services. Overloads that receive an external `IServiceProvider`, `IHost`, or `IReplHost` do not install the standalone process-signal bridge; the external owner remains responsible for translating shutdown into the caller-owned cancellation token. Passing an explicit `Automatic` value to one of those overloads writes a diagnostic to the active error channel and ignores the value. If such a run enters Repl's interactive loop, that loop still retains its own console command-cancellation policy.
 
 The mode that actually applies to a run is resolved in this order:

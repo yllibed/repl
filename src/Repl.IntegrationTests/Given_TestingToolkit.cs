@@ -257,4 +257,69 @@ public sealed class Given_TestingToolkit
 	}
 
 	private sealed record Contact(int Id, string Name);
+
+	[TestMethod]
+	[Description("Regression guard: verifies a command timeout larger than a cancellation source can carry is refused where it is set. It has never worked — CancelAfter rejects it, so the failure surfaced from inside RunCommandAsync naming a 'delay' parameter the caller never passed. Only the ceiling is checked: zero and negatives have meant 'no timeout' since this shipped.")]
+	public void When_TheCommandTimeoutCannotBoundAWait_Then_ItIsRefused()
+	{
+		var options = new ReplScenarioOptions();
+
+		var act = () => options.CommandTimeout = TimeSpan.MaxValue;
+
+		act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*at most*");
+	}
+
+	[TestMethod]
+	[DataRow(0, DisplayName = "Zero")]
+	[DataRow(-5, DisplayName = "Negative")]
+	[Description("Regression guard: verifies the shipped 'a non-positive command timeout means no deadline' reading survives the ceiling check added beside it. Tightening the upper end must not quietly close the documented way to run unbounded.")]
+	public async Task When_TheCommandTimeoutIsNotPositive_Then_TheCommandStillRuns(int seconds)
+	{
+		await using var host = ReplTestHost.Create(
+			CreateEchoApp,
+			options => options.CommandTimeout = TimeSpan.FromSeconds(seconds));
+		await using var session = await host.OpenSessionAsync();
+
+		var execution = await session.RunCommandAsync("echo");
+
+		execution.ExitCode.Should().Be(0);
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a null run-options factory is refused where it is set rather than dereferenced later. It surfaced as a bare NullReferenceException from inside session startup, which names nothing the caller touched.")]
+	public void When_TheRunOptionsFactoryIsNull_Then_ItIsRefused()
+	{
+		var options = new ReplScenarioOptions();
+
+		var act = () => options.RunOptionsFactory = null!;
+
+		act.Should().Throw<ArgumentNullException>();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a run-options factory returning null fails with what the caller set, not a NullReferenceException from session startup. The setter cannot catch this one, so the call site has to.")]
+	public async Task When_TheRunOptionsFactoryReturnsNull_Then_TheFailureNamesIt()
+	{
+		await using var host = ReplTestHost.Create(
+			CreateEchoApp,
+			options => options.RunOptionsFactory = static () => null!);
+
+		var act = async () => await host.OpenSessionAsync().ConfigureAwait(false);
+
+		(await act.Should().ThrowAsync<InvalidOperationException>())
+			.WithMessage("*RunOptionsFactory*");
+	}
+
+	private static ReplApp CreateEchoApp()
+	{
+		var app = ReplApp.Create();
+		app.Options(options =>
+		{
+			options.Output.BannerEnabled = false;
+			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
+		});
+		app.Map("echo", () => "echoed");
+		return app;
+	}
+
 }

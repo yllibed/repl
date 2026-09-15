@@ -50,7 +50,12 @@ public sealed record SessionDescriptor
 	internal ReplRunOptions BuildRunOptions(ReplScenarioOptions scenario)
 	{
 		ArgumentNullException.ThrowIfNull(scenario);
-		var baseOptions = scenario.RunOptionsFactory();
+		// Said here rather than left to dereference: a factory returning null surfaced as a bare
+		// NullReferenceException from inside session startup, which names nothing the caller set.
+		var baseOptions = scenario.RunOptionsFactory()
+			?? throw new InvalidOperationException(
+				$"{nameof(ReplScenarioOptions)}.{nameof(ReplScenarioOptions.RunOptionsFactory)} returned "
+				+ "null. It has to return the run options each session starts from.");
 		var overrides = baseOptions.TerminalOverrides ?? new TerminalSessionOverrides();
 		overrides = overrides with
 		{

@@ -363,6 +363,10 @@ That keeps status/progress/problem events out of the main Spectre surface and av
 
 Use `UseCliProfile()` (or an explicit `ProcessSignalHandlingMode.Automatic`) for a standalone CLI where Repl is the process owner. An unprofiled `ReplApp.Create()` remains caller-owned. Use `UseEmbeddedConsoleProfile()` or explicitly set `ProcessSignalHandlingMode.None` when an ASP.NET Core host, worker service, test runner, or another command framework already owns console cancellation and shutdown. Feed that host's cancellation token into `RunAsync` instead of installing competing handlers. External `IServiceProvider`, `IHost`, and `IReplHost` overloads always remain caller-owned and diagnose an explicit `Automatic` request instead of applying it.
 
+Whichever ownership you pick, assert it rather than assume it: `ReplProcessSignalHarness` covers the
+signal lifecycle in memory and `ReplProcessProbe` covers what only a spawned process can show. See
+[Testing toolkit](testing-toolkit.md#process-signals).
+
 Supplying a `ReplRunOptions` instance for an unrelated setting preserves the profile default because `ProcessSignalHandling` is nullable:
 
 ```csharp

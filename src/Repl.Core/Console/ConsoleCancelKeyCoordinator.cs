@@ -65,6 +65,37 @@ internal static class ConsoleCancelKeyCoordinator
 		bool? isWindows = null) =>
 		HandleCancelKey(specialKey, isWindows ?? OperatingSystem.IsWindows(), afterInitialSelection);
 
+	/// <summary>
+	/// Delivers a synthetic key on behalf of a standalone test harness, refusing rather than dispatching
+	/// when an interactive session owns the keys.
+	/// <para>
+	/// The refusal is decided from the same revalidated selection the dispatch would have used, so it
+	/// cannot be overtaken by a registration arriving between a separate check and this call — and no
+	/// handler runs when it refuses, which is the point: reporting an interactive session's result as
+	/// the harness's own is a test passing on a cancellation that never reached the run it names.
+	/// </para>
+	/// </summary>
+	internal static ConsoleCancelKeyHandlingResult HandleStandaloneCancelKeyForTesting(
+		ConsoleSpecialKey specialKey,
+		bool isWindows,
+		out bool interactiveOwned)
+	{
+		interactiveOwned = false;
+		if (!IsHandledCancelKey(specialKey, isWindows))
+		{
+			return ConsoleCancelKeyHandlingResult.NotHandled;
+		}
+
+		var selection = RevalidateSelection(CaptureSelection());
+		if (selection.IsInteractive)
+		{
+			interactiveOwned = true;
+			return ConsoleCancelKeyHandlingResult.NotHandled;
+		}
+
+		return Invoke(selection.Handlers, specialKey);
+	}
+
 	private static ConsoleCancelKeyHandlingResult HandleCancelKey(
 		ConsoleSpecialKey specialKey,
 		bool isWindows,
@@ -83,6 +114,23 @@ internal static class ConsoleCancelKeyCoordinator
 	private static bool IsHandledCancelKey(ConsoleSpecialKey specialKey, bool isWindows) =>
 		specialKey == ConsoleSpecialKey.ControlC
 		|| (isWindows && specialKey == ConsoleSpecialKey.ControlBreak);
+
+	/// <summary>
+	/// Whether an interactive session currently owns the console keys. Selection is exclusive — an
+	/// interactive handler takes Ctrl+C instead of, not alongside, the standalone ones — so a test
+	/// harness delivering a synthetic key while one is registered would be told the signal was handled
+	/// when it reached somebody else entirely.
+	/// </summary>
+	internal static bool HasInteractiveHandlersForTesting
+	{
+		get
+		{
+			lock (Gate)
+			{
+				return InteractiveHandlers.Count > 0;
+			}
+		}
+	}
 
 	private static DispatchSelection CaptureSelection()
 	{
@@ -104,10 +152,9 @@ internal static class ConsoleCancelKeyCoordinator
 
 	private static DispatchSelection CaptureSelectionUnsafe()
 	{
-		var handlers = InteractiveHandlers.Count > 0
-			? InteractiveHandlers.Values
-			: StandaloneHandlers.Values;
-		return new DispatchSelection(s_registrationVersion, [.. handlers]);
+		var isInteractive = InteractiveHandlers.Count > 0;
+		var handlers = isInteractive ? InteractiveHandlers.Values : StandaloneHandlers.Values;
+		return new DispatchSelection(s_registrationVersion, isInteractive, [.. handlers]);
 	}
 
 	private static ConsoleCancelKeyHandlingResult Invoke(
@@ -133,6 +180,7 @@ internal static class ConsoleCancelKeyCoordinator
 
 	private readonly record struct DispatchSelection(
 		long Version,
+		bool IsInteractive,
 		IReadOnlyList<Func<ConsoleSpecialKey, ConsoleCancelKeyHandlingResult>> Handlers);
 
 	private sealed class Registration(long registrationId, bool isInteractive) : IDisposable

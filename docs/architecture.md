@@ -22,7 +22,10 @@
 - `Repl.Mcp`
   - MCP (Model Context Protocol) integration: `UseMcpServer()`, `BuildMcpServerOptions()`, tool/resource/prompt mapping, MCP Apps UI resources, client roots, transport factory.
 - `Repl.Testing`
- 	- In-memory multi-session testing toolkit (`ReplTestHost`, `ReplSessionHandle`, typed execution results/events).
+  - In-memory multi-session testing toolkit (`ReplTestHost`, `ReplSessionHandle`, typed execution results/events),
+    plus process-signal testing: `ReplProcessSignalHarness` drives the lifecycle in memory for any
+    declared platform, and `ReplProcessProbe` spawns an application for what only a real process shows.
+    See [Testing toolkit](testing-toolkit.md#process-signals).
 - `Repl.Tests`
  	- Unit tests for pure logic and contracts.
 - `Repl.IntegrationTests`
@@ -44,6 +47,10 @@ descriptors are preserved as distinct overloads rather than folded into defaulte
 reverse is not guaranteed: a release's `Repl.Defaults` may call APIs that only exist in the same
 release's `Repl.Core`. Upgrading one and pinning the other is unsupported. The `Repl` meta-package
 takes both at matched versions, which is the reason to prefer it.
+
+`Repl.Testing` belongs to that same set. It drives the signal coordinators and the session sink through
+internals both assemblies grant it, so it is version-matched to them too — a newer `Repl.Testing`
+against an older `Repl.Core` or `Repl.Defaults` is unsupported for the same reason.
 
 ## Quality gates
 
