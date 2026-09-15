@@ -150,7 +150,11 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 	/// <summary>
 	/// Starts a run and returns once its signal scope has joined the ownership epoch, so a signal
-	/// delivered afterwards reaches it instead of falling through as inert.
+	/// delivered afterwards reaches it instead of falling through as inert — for as long as the run
+	/// lasts. A command short enough to finish first takes its scope with it, and a later delivery is
+	/// <see cref="ReplSignalDelivery.NotHandled"/>, exactly as a signal arriving after a real process
+	/// has done its work would be. Signal a run that stays put: have the command block on something the
+	/// test completes.
 	/// <para>
 	/// That guarantee is about the signal, not about progress. The scope is installed around the whole
 	/// run, before its arguments are even parsed, so when this returns the command body has usually not

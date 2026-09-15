@@ -502,6 +502,21 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies a registration that fails after SIGTERM was registered leaves no SIGTERM eligibility behind. Eligibility is declared before the console bridge is installed, and the SIGTERM registration created under it is disposed as orphaned when that fails — so eligibility left standing would say a signal can be claimed through a bridge the environment has just refused.")]
+	public async Task When_RegistrationFailsAfterSigTerm_Then_SigTermIsNoLongerEligible()
+	{
+		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(
+			registrationFault: new PlatformNotSupportedException("registration refused"),
+			faultAfterSigTermRegistration: true,
+			policy: new ProcessSignalCoordinator.SignalRegistrationPolicy { IsWindows = false });
+
+		await using var scope = new ProcessSignalCancellationScope(default);
+
+		ProcessSignalCoordinator.SigTermRegistrationDeclaredForTesting.Should().BeFalse();
+		ProcessSignalCoordinator.SigTermRegistrationInstalledForTesting.Should().BeFalse();
+	}
+
+	[TestMethod]
 	[Description("A declared non-Windows platform wants a SIGTERM registration and, with real registrations left suppressed, does not get one. That pair is what a platform test looks like from any host: the wiring decision is asserted without an operating-system registration being installed on the declared platform's behalf.")]
 	public async Task When_ANonWindowsPlatformIsDeclared_Then_SigTermIsWantedButNotInstalled()
 	{

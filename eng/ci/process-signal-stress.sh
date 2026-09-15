@@ -59,7 +59,7 @@ run_stress \
   "$unit_iterations" \
   src/Repl.Tests/Repl.Tests.csproj \
   "FullyQualifiedName~Given_ProcessSignalCancellationScope" \
-  25
+  37
 
 # Given_ProcessSignalHarness does not contain the substring "Given_ProcessSignals" — there is no "s"
 # after "Signal" — so it needs its own clause rather than riding along on the one below.
@@ -72,4 +72,4 @@ run_stress \
   "$integration_iterations" \
   src/Repl.IntegrationTests/Repl.IntegrationTests.csproj \
   "FullyQualifiedName~Given_ProcessSignals|FullyQualifiedName~Given_ProcessSignalHarness|FullyQualifiedName~Given_ProcessProbe" \
-  39
+  43

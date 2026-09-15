@@ -306,6 +306,10 @@ internal static class ProcessSignalCoordinator
 		{
 			// Invalidate callbacks created by the failed generation before releasing the gate.
 			s_generation++;
+			// Declared before the registrations were attempted, and nothing installed them. Left set, it
+			// would report SIGTERM as handled on a bridge the environment has just refused — a delivery
+			// the operating system could never have made.
+			s_sigTermRegistrationDeclared = false;
 			// Latch the attempt: without this every later run repeats a registration the environment
 			// has already refused, and emits the same diagnostic once per run.
 			s_registrationsInitialized = true;

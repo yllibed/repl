@@ -605,6 +605,30 @@ public sealed class Given_ProcessSignalHarness
 		(await run.Completion).OutcomeKind.Should().Be(ReplExecutionOutcomeKind.Interrupted);
 	}
 
+	[TestMethod]
+	[Description("Regression guard: verifies a zero run timeout is refused rather than read as no timeout. Read as no timeout it removes the one safeguard keeping a run that never observes its token from hanging its own completion and the harness's disposal — at the moment a test asked for a tighter bound, not a looser one.")]
+	public void When_TheRunTimeoutIsZero_Then_ItIsRefused()
+	{
+		var act = () => ReplProcessSignalHarness.Create(
+			() => CreateEchoApp(),
+			options => options.RunTimeout = TimeSpan.Zero);
+
+		act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*must be positive*");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies an infinite run timeout is still accepted, so the validation above cannot close the documented way to run without a deadline.")]
+	public async Task When_TheRunTimeoutIsInfinite_Then_ItIsAccepted()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(
+			() => CreateEchoApp(),
+			options => options.RunTimeout = Timeout.InfiniteTimeSpan);
+
+		var run = await harness.StartRunAsync("echo");
+
+		(await run.Completion).ExitCode.Should().Be(0);
+	}
+
 	private static ReplApp CreateBlockingApp(
 		TaskCompletionSource? started = null,
 		TaskCompletionSource? cleanedUp = null,

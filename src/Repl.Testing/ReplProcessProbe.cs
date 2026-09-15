@@ -26,10 +26,9 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	private const int SigInt = 2;
 	private const int SigTerm = 15;
 
-	// How long to let the asynchronous readers settle after the child exits. Bounded on purpose: the
-	// blocking drain waits for end-of-stream, and a descendant that inherited the child's redirected
-	// handles keeps the stream open for as long as it lives — so waiting for EOF can wait forever, in
-	// the one method whose entire job is to honour a deadline.
+	// How long to wait for end-of-stream after the child exits. Bounded on purpose: a descendant that
+	// inherited the child's redirected handles keeps the stream open for as long as it lives, so
+	// end-of-stream may never arrive — in the one method whose entire job is to honour a deadline.
 	private static readonly TimeSpan ExitDrainGrace = TimeSpan.FromMilliseconds(500);
 
 	// Real time against a real process: there is no clock to fake when the thing being waited on is an
@@ -349,31 +348,45 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Waits for the capture to stop growing, or for <paramref name="deadline"/>, whichever comes first.
+	/// Waits for both readers to report end-of-stream, bounded by <see cref="ExitDrainGrace"/> and by
+	/// <paramref name="deadline"/>.
 	/// <para>
-	/// A poll rather than <see cref="Process.WaitForExit()"/>: that overload drains by waiting for
-	/// end-of-stream on the redirected handles, and a descendant that inherited them holds the stream
-	/// open until it exits — so the drain outlives the process it was draining, and every deadline above
-	/// it stops meaning anything. Settling on "nothing new arrived" gives up that certainty in exchange
-	/// for terminating, which is the trade a timeout exists to make.
+	/// End-of-stream rather than a quiet interval: a callback delayed by a busy thread pool looks
+	/// exactly like a stream with nothing left in it, so treating quiet as drained would reject output
+	/// the child had already written — intermittently, and on a loaded CI machine first.
+	/// </para>
+	/// <para>
+	/// Bounded rather than <see cref="Process.WaitForExit()"/>, which waits for the same signal without
+	/// a deadline: a descendant that inherited the redirected handles holds them open until it exits,
+	/// so that drain outlives the process it was draining and every deadline above it stops meaning
+	/// anything. Giving up on the grace keeps the deadline; it costs nothing in the normal case, where
+	/// the streams close as the child exits and this returns at once.
 	/// </para>
 	/// </summary>
 	private async Task DrainAfterExitAsync(DateTimeOffset deadline, CancellationToken cancellationToken)
 	{
-		var limit = Clock.GetUtcNow() + ExitDrainGrace;
-		if (limit > deadline)
+		var grace = ExitDrainGrace;
+		var untilDeadline = deadline - Clock.GetUtcNow();
+		if (untilDeadline < grace)
 		{
-			limit = deadline;
+			grace = untilDeadline;
 		}
 
-		var previous = _capture.Read().Length;
-		var settled = 0;
-		while (Clock.GetUtcNow() < limit && settled < 2)
+		if (grace <= TimeSpan.Zero)
 		{
-			await Task.Delay(TimeSpan.FromMilliseconds(25), Clock, cancellationToken).ConfigureAwait(false);
-			var current = _capture.Read().Length;
-			settled = current == previous ? settled + 1 : 0;
-			previous = current;
+			return;
+		}
+
+		try
+		{
+#pragma warning disable VSTHRD003 // Completed by this probe's own readers, wired in Start.
+			await _capture.Drained.WaitAsync(grace, Clock, cancellationToken).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		}
+		catch (TimeoutException)
+		{
+			// A live descendant still holds the handles. Report what did arrive rather than break the
+			// deadline waiting for a stream nothing is going to close.
 		}
 	}
 
@@ -413,14 +426,33 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	{
 		private readonly Lock _gate = new();
 		private readonly StringBuilder _text = new();
+		// Completed once both redirected streams have reported end-of-stream, which is the only exact
+		// evidence that nothing more is coming. Continuations run asynchronously so a waiter cannot be
+		// resumed on the reader thread that is still delivering the other stream.
+		private readonly TaskCompletionSource _drained =
+			new(TaskCreationOptions.RunContinuationsAsynchronously);
+		private int _openStreams = 2;
 		// Materialised once per change rather than once per read: WaitForOutputAsync reads every 25ms,
 		// and copying the whole buffer each time costs more the longer the child talks.
 		private string? _materialized;
+
+		/// <summary>
+		/// Completes when standard output and standard error have both reached end-of-stream.
+		/// </summary>
+		public Task Drained => _drained.Task;
 
 		public void Append(string? line)
 		{
 			if (line is null)
 			{
+				// .NET raises the handler once per stream with no data to mark end-of-stream. TrySetResult
+				// rather than SetResult: the count is the guard, and a second completion attempt must not
+				// turn a drained capture into a crashed reader thread.
+				if (Interlocked.Decrement(ref _openStreams) <= 0)
+				{
+					_drained.TrySetResult();
+				}
+
 				return;
 			}
 

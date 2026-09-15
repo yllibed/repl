@@ -16,10 +16,22 @@ public sealed class ReplProcessSignalOptions
 	/// The command keeps running — nothing here can kill it — and because it still holds a place in the
 	/// process-wide signal epoch, disposal reports it rather than letting later signal tests inherit it.
 	/// Disabling the timeout gives that up: a run that never ends then hangs both its completion and the
-	/// harness's disposal.
+	/// harness's disposal. That is why it takes <see cref="Timeout.InfiniteTimeSpan"/> and nothing else —
+	/// zero and negatives are refused rather than read as "no timeout", so the one setting that can hang
+	/// a suite has to be asked for in as many words.
 	/// </para>
 	/// </summary>
-	public TimeSpan RunTimeout { get; set; } = TimeSpan.FromSeconds(10);
+	/// <exception cref="ArgumentOutOfRangeException">The value is neither positive nor <see cref="Timeout.InfiniteTimeSpan"/>.</exception>
+	public TimeSpan RunTimeout
+	{
+		get;
+		set => field = value > TimeSpan.Zero || value == Timeout.InfiniteTimeSpan
+			? value
+			: throw new ArgumentOutOfRangeException(
+				nameof(value),
+				value,
+				$"{nameof(RunTimeout)} must be positive, or {nameof(Timeout)}.{nameof(Timeout.InfiniteTimeSpan)} to run without a deadline.");
+	} = TimeSpan.FromSeconds(10);
 
 	/// <summary>
 	/// Strips ANSI escape sequences and carriage returns from captured text, so an assertion does not
