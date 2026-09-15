@@ -89,6 +89,18 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
 		var options = new ReplProcessProbeOptions();
 		configure?.Invoke(options);
+		foreach (var name in options.Environment.Keys)
+		{
+			// Checked here rather than left to the spawn: an empty name fails it with a message about the
+			// working directory, and a name containing '=' silently defines something else — "A=B" with
+			// value "x" reaches the child as A set to "B=x".
+			if (string.IsNullOrEmpty(name) || name.Contains('=', StringComparison.Ordinal))
+			{
+				throw new ArgumentException(
+					$"Environment variable names cannot be empty or contain '='; got '{name}'.",
+					nameof(configure));
+			}
+		}
 
 		var process = new Process { StartInfo = CreateStartInfo(fileName, arguments, options) };
 		var capture = new OutputCapture();

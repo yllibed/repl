@@ -185,6 +185,20 @@ public sealed class Given_ProcessProbe
 	}
 
 	[TestMethod]
+	[DataRow("", DisplayName = "Empty name")]
+	[DataRow("A=B", DisplayName = "Name containing '='")]
+	[Description("Regression guard: verifies an environment variable name the operating system cannot carry is refused where it is set. An empty name failed the spawn with a message blaming the working directory, and a name containing '=' defined something else entirely without any error at all — 'A=B' with value 'x' reached the child as A set to 'B=x'.")]
+	public void When_AnEnvironmentNameIsUnusable_Then_ItIsRefused(string name)
+	{
+		var act = () => ReplProcessProbe.Start(
+			ComSpecOrShell,
+			["-c", "true"],
+			options => options.Environment[name] = "x");
+
+		act.Should().Throw<ArgumentException>().WithMessage("*cannot be empty or contain*");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies a probe timeout larger than the waiting primitives accept is refused where it is set. The signal wait hands this value straight to Task.WaitAsync, which refuses anything above uint.MaxValue-1 milliseconds — so the value a caller reaches for when they mean InfiniteTimeSpan would fail the very wait it was meant to bound.")]
 	public void When_TheProbeTimeoutCannotBoundAWait_Then_ItIsRefused()
 	{
@@ -268,6 +282,9 @@ public sealed class Given_ProcessProbe
 			: ("/bin/sh", ["-c", "env"]);
 
 	private static string ComSpec => Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe";
+
+	// Never actually spawned by the guard above — the refusal happens before the process is started.
+	private static string ComSpecOrShell => OperatingSystem.IsWindows() ? ComSpec : "/bin/sh";
 
 	[TestMethod]
 	[Description("Regression guard: verifies disposal kills an application still running, so a failed assertion cannot leak a blocked process into the rest of the suite.")]
