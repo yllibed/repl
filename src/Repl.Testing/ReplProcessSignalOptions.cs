@@ -25,9 +25,7 @@ public sealed class ReplProcessSignalOptions
 	public TimeSpan RunTimeout
 	{
 		get;
-		// Halved, because disposal waits twice this value: a timeout the drain cannot express would throw
-		// from inside a drain whose exceptions are deliberately swallowed, so the wait would silently not
-		// happen and every run still in flight would be reported as abandoned.
+		// Halved because the harness's DrainTimeout doubles it.
 		set => field = ReplTestTimeout.Validated(value, ReplTestTimeout.MaxSupported / 2, nameof(RunTimeout));
 	} = TimeSpan.FromSeconds(10);
 

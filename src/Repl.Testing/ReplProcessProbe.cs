@@ -386,11 +386,10 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	/// the child had already written — intermittently, and on a loaded CI machine first.
 	/// </para>
 	/// <para>
-	/// Bounded, and kept separate from waiting for the exit itself, because end-of-stream is not the
-	/// child's to give: a descendant that inherited the redirected handles holds them open for as long
-	/// as it lives. An unbounded drain therefore outlives the process it was draining, and every
-	/// deadline above it stops meaning anything. Giving up on the grace costs nothing in the normal
-	/// case, where the streams close as the child exits and this returns at once.
+	/// Bounded, and kept separate from waiting for the exit itself: see
+	/// <see cref="WaitUntilExitedAsync"/> for why end-of-stream is not the child's to give. Giving up on
+	/// the grace costs nothing in the normal case, where the streams close as the child exits and this
+	/// returns at once.
 	/// </para>
 	/// </summary>
 	private async Task DrainAfterExitAsync(DateTimeOffset deadline, CancellationToken cancellationToken)

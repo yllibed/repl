@@ -529,7 +529,7 @@ public sealed class Given_ProcessSignalCancellationScope
 	}
 
 	[TestMethod]
-	[Description("A declared Windows platform wants no SIGTERM registration at all, because the console coordinator already owns Ctrl+C and Ctrl+Break there and .NET maps PosixSignal.SIGTERM onto CTRL_SHUTDOWN_EVENT. Assertable from a non-Windows host, which is where this decision was previously unverifiable.")]
+	[Description("A declared Windows platform wants no SIGTERM registration at all, because the console coordinator already owns Ctrl+C and Ctrl+Break there and .NET maps PosixSignal.SIGTERM onto CTRL_SHUTDOWN_EVENT. Assertable from a non-Windows host, where the real platform cannot answer for it.")]
 	public async Task When_WindowsIsDeclared_Then_NoSigTermRegistrationIsWanted()
 	{
 		using var isolation = ProcessSignalCoordinator.IsolateRegistrationsForTesting(

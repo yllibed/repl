@@ -391,8 +391,9 @@ internal static class ProcessSignalCoordinator
 	/// <summary>
 	/// Claims SIGTERM the way a freshly installed registration would, without an operating-system
 	/// registration to deliver it. Ctrl+C and Ctrl+Break have
-	/// <see cref="ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting"/> for this; SIGTERM had no
-	/// counterpart, so the claim logic was reachable in-process only through the console path.
+	/// <see cref="ConsoleCancelKeyCoordinator.HandleCancelKeyForTesting"/> for this; this is the SIGTERM
+	/// counterpart, and the only in-process route to the claim logic that does not go through the
+	/// console path.
 	/// <para>
 	/// This does not exercise <see cref="HandleSigTerm"/> itself: translating the decision into
 	/// <see cref="PosixSignalContext.Cancel"/> needs a real signal context, and stays covered only by

@@ -375,7 +375,6 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 			// nothing saying why. Reported below rather than prevented, since nothing here can drain it.
 			leakedScopes = ProcessSignalCoordinator.ActiveScopeCountForTesting;
 
-
 			// Unconditionally: anything thrown above would otherwise leave the exclusivity flag set and
 			// the coordinator isolated for the rest of the process, turning one failed disposal into
 			// every later harness in the suite refusing to start.
@@ -462,10 +461,8 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 		return abandoned;
 	}
 
-	// Cancelling a run only asks it to stop. A command that never observes its token blocks forever, so
-	// the timeout has to be measured against the clock rather than against the run's cooperation —
-	// otherwise the one guarantee that keeps a signal test from hanging a suite is the one it cannot
-	// make. The run itself cannot be killed; it is abandoned, and disposal reports it.
+	// Measured against the clock rather than against the run cooperating; see
+	// ReplProcessSignalOptions.RunTimeout for what that means for a run which never observes its token.
 	private async Task<ReplSignalRunResult> BoundByWallClockAsync(
 		Task<ReplSignalRunResult> run,
 		string commandLine)
@@ -492,14 +489,12 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 
 	private bool HasRunTimeout => ReplTestTimeout.IsEnabled(_options.RunTimeout);
 
-	// Twice the run timeout, because draining can begin before a run's own timeout has elapsed and the
-	// run still has to unwind once it fires. A cooperative run therefore always finishes within this;
-	// only one that never observes its token is still here at the end, which is what it is measuring.
-	// Spent once for the whole drain, not once per run.
-	// Safe to double because RunTimeout's setter refuses anything above half of what a wait can carry.
-	// It has to be: this is evaluated as an argument inside a try whose catch swallows everything, so a
-	// throw here would leave the drain silently not waiting, and every run still in flight reported as
-	// abandoned.
+	// Twice the run timeout, spent once for the whole drain: draining can begin before a run's own
+	// timeout has elapsed, and the run still has to unwind once it fires. Only a run that never observes
+	// its token is still here at the end, which is what this measures. Doubling is safe because
+	// RunTimeout's setter refuses anything above half of what a wait can carry — and it has to be,
+	// since this is evaluated inside a try whose catch swallows everything, so a throw would leave the
+	// drain silently not waiting.
 	private TimeSpan DrainTimeout => _options.RunTimeout + _options.RunTimeout;
 
 	// Every task handed to a caller is observed, whether or not the caller awaited it. A test that

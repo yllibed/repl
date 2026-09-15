@@ -9,7 +9,7 @@ namespace Repl.IntegrationTests;
 public sealed class Given_ProcessSignalHarness
 {
 	[TestMethod]
-	[Description("Regression guard: verifies the first signal cancels a run in flight cooperatively, reports Interrupted, resolves the conventional 130, and lets the command's cleanup finish. Delivered from outside the run, which is what the harness exists for: before it, a signal could only be raised from inside the handler under test.")]
+	[Description("Regression guard: verifies the first signal cancels a run in flight cooperatively, reports Interrupted, resolves the conventional 130, and lets the command's cleanup finish. Delivered from outside the run, which is what the harness exists for.")]
 	public async Task When_TheFirstSignalArrives_Then_TheRunIsCancelledCooperatively()
 	{
 		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -119,7 +119,7 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies Ctrl+Break counts as a signal on a declared Windows platform and is ignored on a declared Unix one. Both run on every host, which is the point: before the platform could be declared, half of this pair was unverifiable on any given machine.")]
+	[Description("Regression guard: verifies Ctrl+Break counts as a signal on a declared Windows platform and is ignored on a declared Unix one. Both run on every host, which is the point: each half is otherwise unverifiable on whichever platform is not running the suite.")]
 	[DataRow(true, ReplSignalDelivery.CancellationRequested, DisplayName = "Declared Windows: Ctrl+Break is a signal")]
 	[DataRow(false, ReplSignalDelivery.NotHandled, DisplayName = "Declared Unix: Ctrl+Break is not a signal")]
 	public async Task When_BreakIsDelivered_Then_OnlyADeclaredWindowsPlatformHandlesIt(
@@ -211,7 +211,7 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies a cancellation callback that throws while the run unwinds is reported on the run's diagnostics rather than swallowed. Until now this was only provable through internal APIs a package consumer cannot reach, which is the gap this toolkit exists to close.")]
+	[Description("Regression guard: verifies a cancellation callback that throws while the run unwinds is reported on the run's diagnostics rather than swallowed.")]
 	public async Task When_ACancellationCallbackThrows_Then_TheRunReportsIt()
 	{
 		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -644,7 +644,7 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
-	[Description("Regression guard: verifies disposal names the runs it could not stop and that every later harness is refused until they end. A run ignoring its token keeps its scope in the process-wide epoch, so the claim this replaced — that ownership is released and the next harness can still be created — walked the caller into an 'already owned' failure with nothing connecting it to the run that caused it. This is also the only cover for the coordinator's active-scope refusal: the other exclusivity guard reaches the owner branch instead. The elapsed bound is what holds the drain to one deadline rather than one per run.")]
+	[Description("Regression guard: verifies disposal names the runs it could not stop and that every later harness is refused until they end. A run ignoring its token keeps its scope in the process-wide epoch. Also the only cover for the coordinator's active-scope refusal: When_AnUnrelatedRunIsInFlight_Then_CreatingAHarnessIsRefused stages its run through a harness, so it exercises the owner check instead. The elapsed bound is what holds the drain to one deadline rather than one per run.")]
 	public async Task When_RunsCannotBeStopped_Then_TheyAreNamedAndLaterHarnessesAreRefused()
 	{
 		using var release = new CancellationTokenSource();
