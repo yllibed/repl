@@ -26,9 +26,8 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	private const int SigInt = 2;
 	private const int SigTerm = 15;
 
-	// How long to wait for end-of-stream after the child exits. Bounded on purpose: a descendant that
-	// inherited the child's redirected handles keeps the stream open for as long as it lives, so
-	// end-of-stream may never arrive — in the one method whose entire job is to honour a deadline.
+	// How long to wait for end-of-stream after the child exits; see DrainAfterExitAsync for why it is
+	// bounded at all.
 	private static readonly TimeSpan ExitDrainGrace = TimeSpan.FromMilliseconds(500);
 
 	// Real time against a real process: there is no clock to fake when the thing being waited on is an
@@ -45,6 +44,17 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		_process = process;
 		_capture = capture;
 		_options = options;
+	}
+
+	// Every wait works to a deadline, so the no-deadline case is expressed as one that never arrives
+	// rather than branched on in three places. ReplTestTimeout.IsEnabled is the same rule the session
+	// handle and the signal harness use, so "what counts as a real deadline" is defined once.
+	private DateTimeOffset Deadline()
+	{
+		var now = Clock.GetUtcNow();
+		return ReplTestTimeout.IsEnabled(_options.Timeout) && _options.Timeout < DateTimeOffset.MaxValue - now
+			? now + _options.Timeout
+			: DateTimeOffset.MaxValue;
 	}
 
 	/// <summary>The child's process id, which is what a signal is addressed to.</summary>
@@ -123,7 +133,7 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		ArgumentException.ThrowIfNullOrWhiteSpace(expected);
 		ThrowIfDisposed();
 
-		var deadline = Clock.GetUtcNow() + _options.Timeout;
+		var deadline = Deadline();
 		while (Clock.GetUtcNow() < deadline)
 		{
 			if (_capture.Read().Contains(expected, StringComparison.Ordinal))
@@ -218,20 +228,13 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	public async ValueTask<int> WaitForExitAsync(CancellationToken cancellationToken = default)
 	{
 		ThrowIfDisposed();
-		try
-		{
-			await _process.WaitForExitAsync(cancellationToken)
-				.WaitAsync(_options.Timeout, Clock, cancellationToken)
-				.ConfigureAwait(false);
-		}
-		catch (TimeoutException ex)
-		{
-			throw new TimeoutException(Describe($"did not exit within {_options.Timeout}"), ex);
-		}
 
-		// Settles the asynchronous readers so everything the child wrote is in Output by the time the exit
-		// code is read — bounded, for the same reason as the drain in WaitForOutputAsync.
-		await DrainAfterExitAsync(Clock.GetUtcNow() + _options.Timeout, cancellationToken).ConfigureAwait(false);
+		var deadline = Deadline();
+		await WaitUntilExitedAsync(deadline, cancellationToken).ConfigureAwait(false);
+
+		// The exit status is settled; the output is not. Both readers report end-of-stream under their
+		// own bound, so everything the child wrote is in Output by the time the code is read.
+		await DrainAfterExitAsync(deadline, cancellationToken).ConfigureAwait(false);
 		return _process.ExitCode;
 	}
 
@@ -248,6 +251,11 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	/// .NET's Unix implementation matches descendants by process id without a start-time check, so an id
 	/// reused before cleanup runs belongs to whoever inherited it.
 	/// </para>
+	/// <para>
+	/// The wait for the killed child is itself bounded by <see cref="ReplProcessProbeOptions.Timeout"/>
+	/// and gives up rather than throwing: disposal runs while a test is already failing, and one that
+	/// cannot finish would replace that failure with a hang.
+	/// </para>
 	/// </summary>
 	public async ValueTask DisposeAsync()
 	{
@@ -260,7 +268,16 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		if (!_process.HasExited)
 		{
 			TryKill(_process);
-			await _process.WaitForExitAsync().ConfigureAwait(false);
+			try
+			{
+				await WaitUntilExitedAsync(Deadline(), CancellationToken.None).ConfigureAwait(false);
+			}
+			catch (TimeoutException)
+			{
+				// The kill has been issued and nothing here can do more. Giving up keeps disposal bounded,
+				// which is what stops one process that would not die from hanging the suite that was
+				// trying to clean it up.
+			}
 		}
 
 		_process.Dispose();
@@ -356,11 +373,11 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 	/// the child had already written — intermittently, and on a loaded CI machine first.
 	/// </para>
 	/// <para>
-	/// Bounded rather than <see cref="Process.WaitForExit()"/>, which waits for the same signal without
-	/// a deadline: a descendant that inherited the redirected handles holds them open until it exits,
-	/// so that drain outlives the process it was draining and every deadline above it stops meaning
-	/// anything. Giving up on the grace keeps the deadline; it costs nothing in the normal case, where
-	/// the streams close as the child exits and this returns at once.
+	/// Bounded, and kept separate from waiting for the exit itself, because end-of-stream is not the
+	/// child's to give: a descendant that inherited the redirected handles holds them open for as long
+	/// as it lives. An unbounded drain therefore outlives the process it was draining, and every
+	/// deadline above it stops meaning anything. Giving up on the grace costs nothing in the normal
+	/// case, where the streams close as the child exits and this returns at once.
 	/// </para>
 	/// </summary>
 	private async Task DrainAfterExitAsync(DateTimeOffset deadline, CancellationToken cancellationToken)
@@ -387,6 +404,30 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 		{
 			// A live descendant still holds the handles. Report what did arrive rather than break the
 			// deadline waiting for a stream nothing is going to close.
+		}
+	}
+
+	/// <summary>
+	/// Waits for the child to exit, bounded by <paramref name="deadline"/>.
+	/// <para>
+	/// Polls rather than calling <see cref="Process.WaitForExitAsync"/>, which ends by awaiting
+	/// end-of-stream on the redirected handles whenever asynchronous readers were started — as they
+	/// always are here. A descendant that inherited those handles keeps them open after the child is
+	/// gone, so that wait reports a process as still running for as long as its orphan lives, and a
+	/// deadline placed around it blames the exit for a delay the exit had nothing to do with. Exit
+	/// status is what this method is for; the output settles separately, under its own bound.
+	/// </para>
+	/// </summary>
+	private async Task WaitUntilExitedAsync(DateTimeOffset deadline, CancellationToken cancellationToken)
+	{
+		while (!_process.HasExited)
+		{
+			if (Clock.GetUtcNow() >= deadline)
+			{
+				throw new TimeoutException(Describe($"did not exit within {_options.Timeout}"));
+			}
+
+			await Task.Delay(TimeSpan.FromMilliseconds(25), Clock, cancellationToken).ConfigureAwait(false);
 		}
 	}
 

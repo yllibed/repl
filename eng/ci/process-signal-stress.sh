@@ -72,4 +72,4 @@ run_stress \
   "$integration_iterations" \
   src/Repl.IntegrationTests/Repl.IntegrationTests.csproj \
   "FullyQualifiedName~Given_ProcessSignals|FullyQualifiedName~Given_ProcessSignalHarness|FullyQualifiedName~Given_ProcessProbe" \
-  43
+  49
