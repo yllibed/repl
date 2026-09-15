@@ -21,16 +21,14 @@ public sealed class ReplProcessSignalOptions
 	/// a suite has to be asked for in as many words.
 	/// </para>
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException">The value is neither positive nor <see cref="Timeout.InfiniteTimeSpan"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException">The value cannot bound a wait: it is not positive, or it is too large for the harness to derive its drain bound from. Use <see cref="Timeout.InfiniteTimeSpan"/> for no bound.</exception>
 	public TimeSpan RunTimeout
 	{
 		get;
-		set => field = value > TimeSpan.Zero || value == Timeout.InfiniteTimeSpan
-			? value
-			: throw new ArgumentOutOfRangeException(
-				nameof(value),
-				value,
-				$"{nameof(RunTimeout)} must be positive, or {nameof(Timeout)}.{nameof(Timeout.InfiniteTimeSpan)} to run without a deadline.");
+		// Halved, because disposal waits twice this value: a timeout the drain cannot express would throw
+		// from inside a drain whose exceptions are deliberately swallowed, so the wait would silently not
+		// happen and every run still in flight would be reported as abandoned.
+		set => field = ReplTestTimeout.Validated(value, ReplTestTimeout.MaxSupported / 2, nameof(RunTimeout));
 	} = TimeSpan.FromSeconds(10);
 
 	/// <summary>

@@ -15,17 +15,11 @@ public sealed class ReplProcessProbeOptions
 	/// the moment it started, which is the opposite of what a caller shortening a timeout is asking for.
 	/// </para>
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException">The value is neither positive nor <see cref="Timeout.InfiniteTimeSpan"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException">The value cannot bound a wait: it is not positive, or it is larger than the waiting primitives accept. Use <see cref="Timeout.InfiniteTimeSpan"/> for no bound.</exception>
 	public TimeSpan Timeout
 	{
 		get;
-		set => field = value > TimeSpan.Zero || value == System.Threading.Timeout.InfiniteTimeSpan
-			? value
-			: throw new ArgumentOutOfRangeException(
-				nameof(value),
-				value,
-				$"{nameof(Timeout)} must be positive, or {nameof(System.Threading.Timeout)}."
-				+ $"{nameof(System.Threading.Timeout.InfiniteTimeSpan)} to wait without a deadline.");
+		set => field = ReplTestTimeout.Validated(value, ReplTestTimeout.MaxSupported, nameof(Timeout));
 	} = TimeSpan.FromSeconds(30);
 
 	/// <summary>

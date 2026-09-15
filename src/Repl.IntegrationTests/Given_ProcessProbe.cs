@@ -185,6 +185,17 @@ public sealed class Given_ProcessProbe
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies a probe timeout larger than the waiting primitives accept is refused where it is set. The signal wait hands this value straight to Task.WaitAsync, which refuses anything above uint.MaxValue-1 milliseconds — so the value a caller reaches for when they mean InfiniteTimeSpan would fail the very wait it was meant to bound.")]
+	public void When_TheProbeTimeoutCannotBoundAWait_Then_ItIsRefused()
+	{
+		var options = new ReplProcessProbeOptions();
+
+		var act = () => options.Timeout = TimeSpan.MaxValue;
+
+		act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*at most*");
+	}
+
+	[TestMethod]
 	[DataRow(0, DisplayName = "Zero")]
 	[DataRow(-1, DisplayName = "Negative")]
 	[Description("Regression guard: verifies a probe timeout that cannot bound anything is refused. Every wait on the probe promises a deadline, so a value that produces one in the past has to fail where it was set rather than where it is read.")]

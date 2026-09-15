@@ -633,6 +633,17 @@ public sealed class Given_ProcessSignalHarness
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies a run timeout too large to bound a wait is refused where it is set. Disposal waits twice this value, and Task.WaitAsync refuses anything above uint.MaxValue-1 milliseconds — so an accepted-but-unusable value threw from inside a drain whose catch swallows everything, leaving the drain silently not waiting and every run still in flight reported as abandoned. TimeSpan.MaxValue is the case a caller reaches for when they mean InfiniteTimeSpan.")]
+	public void When_TheRunTimeoutCannotBoundAWait_Then_ItIsRefused()
+	{
+		var act = () => ReplProcessSignalHarness.Create(
+			() => CreateEchoApp(),
+			options => options.RunTimeout = TimeSpan.MaxValue);
+
+		act.Should().Throw<ArgumentOutOfRangeException>().WithMessage("*at most*");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies disposal names the runs it could not stop and that every later harness is refused until they end. A run ignoring its token keeps its scope in the process-wide epoch, so the claim this replaced — that ownership is released and the next harness can still be created — walked the caller into an 'already owned' failure with nothing connecting it to the run that caused it. This is also the only cover for the coordinator's active-scope refusal: the other exclusivity guard reaches the owner branch instead. The elapsed bound is what holds the drain to one deadline rather than one per run.")]
 	public async Task When_RunsCannotBeStopped_Then_TheyAreNamedAndLaterHarnessesAreRefused()
 	{

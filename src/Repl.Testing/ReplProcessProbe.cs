@@ -361,7 +361,8 @@ public sealed class ReplProcessProbe : IAsyncDisposable
 
 		var error = await sender.StandardError.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
 		throw new InvalidOperationException(
-			$"'kill -{number}' failed with exit code {sender.ExitCode} for process {_process.Id}: {error}");
+			Describe($"was not signalled: 'kill -{number}' failed with exit code {sender.ExitCode} for "
+				+ $"process {_process.Id}: {error}"));
 	}
 
 	/// <summary>

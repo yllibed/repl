@@ -496,6 +496,10 @@ public sealed class ReplProcessSignalHarness : IAsyncDisposable
 	// run still has to unwind once it fires. A cooperative run therefore always finishes within this;
 	// only one that never observes its token is still here at the end, which is what it is measuring.
 	// Spent once for the whole drain, not once per run.
+	// Safe to double because RunTimeout's setter refuses anything above half of what a wait can carry.
+	// It has to be: this is evaluated as an argument inside a try whose catch swallows everything, so a
+	// throw here would leave the drain silently not waiting, and every run still in flight reported as
+	// abandoned.
 	private TimeSpan DrainTimeout => _options.RunTimeout + _options.RunTimeout;
 
 	// Every task handed to a caller is observed, whether or not the caller awaited it. A test that
