@@ -986,6 +986,38 @@ public sealed class Given_ExitCodes
 			because: "the operator is the reader here, and the cause is the whole content of the diagnostic");
 	}
 
+	[TestMethod]
+	[Description("The same for an options-group property setter, which reaches the binder through reflection. Reflection wraps what the application threw in its own exception, so unwrapping a single layer would leave the operator with reflection's generic target-of-an-invocation message — true, and useless.")]
+	public async Task When_AnOptionsGroupSetterThrows_Then_TheLocalDiagnosticNamesTheCause()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("work", (FailingOptions options) => options.Label ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out var writer);
+		await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+		writer.ToString().Should().Contain(
+			"setter-cause-detail",
+			because: "reflection's own wrapper is not the diagnostic, it is what hides it");
+	}
+
+	[Repl.Parameters.ReplOptionsGroup]
+	public sealed class FailingOptions
+	{
+		private string? _label;
+
+		public string? Label
+		{
+			get => _label;
+			set
+			{
+				_label = value;
+				throw new InvalidOperationException("setter-cause-detail");
+			}
+		}
+	}
+
 	/// <summary>A dependency whose registration always fails; only its activation path matters.</summary>
 	public interface IFailingDependency;
 

@@ -114,7 +114,6 @@ returned by a creation tool and passed back as an argument, rather than implicit
 | Gap | Why | Tracked |
 | --- | --- | --- |
 | No per-caller command graph | The one variance `2026-07-28` permits is by the authorization presented on the request. Repl has no request-authorization concept yet, so it advertises one graph to everyone. | [#97](https://github.com/yllibed/repl/issues/97) |
-| Explicitly registered prompts cannot inject the MCP capability services | The SDK resolves their parameters from a scope taken from the inner container, which the service overlay does not reach. | [#96](https://github.com/yllibed/repl/issues/96) |
 | `*/list_changed` is advertised on the reusable-options path but never fires there | The SDK forces the flag true for any non-null collection, and the pre-built catalog always supplies one. | [#94](https://github.com/yllibed/repl/issues/94) |
 | A multi-connection custom transport sees considerations this page does not solve | `mcp serve` is one connection per process; a host that multiplexes connections over one options instance owns the isolation questions that follow. See [Transports](mcp-transports.md). | — |
 

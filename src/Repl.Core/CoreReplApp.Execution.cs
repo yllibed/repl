@@ -136,10 +136,23 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	/// somebody other than the operator can withhold that cause — it decides by the exception's type, not
 	/// by this text — and here the reader is the operator, who came for exactly that cause.
 	/// </remarks>
-	private static string DescribeLocally(Exception exception) =>
-		exception is ReplBindingCallbackException { InnerException: { } cause }
-			? cause.Message
-			: exception.Message;
+	private static string DescribeLocally(Exception exception)
+	{
+		var cause = exception is ReplBindingCallbackException { InnerException: { } marked }
+			? marked
+			: exception;
+
+		// Reflection adds its own layer on top of what the application threw — a property setter, an
+		// options-group constructor and a keyed-service factory all reach the binder through it — and
+		// "Exception has been thrown by the target of an invocation" is not the diagnostic the operator
+		// came for. Unwrap until the application's own failure is what remains.
+		while (cause is System.Reflection.TargetInvocationException { InnerException: { } deeper })
+		{
+			cause = deeper;
+		}
+
+		return cause.Message;
+	}
 
 	private async ValueTask<ExecutionOutcome> RunUnderCancellationPolicyAsync(
 		IReadOnlyList<string> args,
