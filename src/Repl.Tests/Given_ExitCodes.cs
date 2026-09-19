@@ -969,6 +969,26 @@ public sealed class Given_ExitCodes
 		return exitCode;
 	}
 
+	[TestMethod]
+	[Description("An activation failure must still tell the operator why. Marking what escapes application code during binding exists so a remote host can withhold it, and the marker is a wrapper — rendering the wrapper's own message here would leave a console operator with the parameter's name and nothing about the cause, which is the diagnostic they came for.")]
+	public async Task When_ADependencyFactoryThrows_Then_TheLocalDiagnosticNamesTheCause()
+	{
+		var sut = ReplApp.Create(services => services.AddSingleton<IFailingDependency>(
+			implementationFactory: static _ => throw new InvalidOperationException("factory-cause-detail")));
+		sut.Map("work", (IFailingDependency dependency) => dependency.ToString() ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out var writer);
+		await sut.RunAsync(["work"], cts.Token).ConfigureAwait(false);
+
+		writer.ToString().Should().Contain(
+			"factory-cause-detail",
+			because: "the operator is the reader here, and the cause is the whole content of the diagnostic");
+	}
+
+	/// <summary>A dependency whose registration always fails; only its activation path matters.</summary>
+	public interface IFailingDependency;
+
 	private static IDisposable OpenSession(out StringWriter writer)
 	{
 		writer = new StringWriter();

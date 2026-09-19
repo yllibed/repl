@@ -55,7 +55,11 @@ internal static class HandlerArgumentBinder
 
 		if (context.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out var globalOptionsServiceType))
 		{
-			var globalOptions = context.ServiceProvider.GetService(globalOptionsServiceType);
+			var globalOptions = Activate(
+				context.ServiceProvider,
+				globalOptionsServiceType,
+				parameter.Name ?? "?",
+				context.CancellationToken);
 			if (globalOptions is not null)
 			{
 				return globalOptions;
@@ -213,7 +217,12 @@ internal static class HandlerArgumentBinder
 
 		if (hasFromServices)
 		{
-			return ResolveExplicitFromServices(parameter, context.ServiceProvider, fromServices!, out resolved);
+			return ResolveExplicitFromServices(
+				parameter,
+				context.ServiceProvider,
+				fromServices!,
+				context.CancellationToken,
+				out resolved);
 		}
 
 		return ResolveImplicitFromContextOrServices(parameter, context, skipContext, out resolved);
@@ -249,9 +258,10 @@ internal static class HandlerArgumentBinder
 		System.Reflection.ParameterInfo parameter,
 		IServiceProvider serviceProvider,
 		FromServicesAttribute fromServices,
+		CancellationToken cancellationToken,
 		out object? resolved)
 	{
-		resolved = ResolveService(parameter.ParameterType, serviceProvider, fromServices.Key);
+		resolved = ResolveService(parameter.ParameterType, serviceProvider, fromServices.Key, cancellationToken);
 		if (resolved is not null)
 		{
 			return true;
@@ -278,7 +288,11 @@ internal static class HandlerArgumentBinder
 		object? contextValue = null;
 		var foundContext = !skipContext
 			&& TryResolveFromContext(parameter.ParameterType, context.ContextValues, out contextValue);
-		var serviceValue = context.ServiceProvider.GetService(parameter.ParameterType);
+		var serviceValue = Activate(
+			context.ServiceProvider,
+			parameter.ParameterType,
+			parameter.Name ?? "?",
+			context.CancellationToken);
 		if (foundContext && serviceValue is not null)
 		{
 			throw new InvalidOperationException(
@@ -320,15 +334,106 @@ internal static class HandlerArgumentBinder
 		return true;
 	}
 
-	private static object? ResolveService(Type parameterType, IServiceProvider serviceProvider, string? key)
+	private static object? ResolveService(
+		Type parameterType,
+		IServiceProvider serviceProvider,
+		string? key,
+		CancellationToken cancellationToken)
 	{
 		if (string.IsNullOrWhiteSpace(key))
 		{
-			return serviceProvider.GetService(parameterType);
+			return Activate(serviceProvider, parameterType, parameterType.Name, cancellationToken);
 		}
 
-		return TryGetKeyedService(serviceProvider, parameterType, key);
+		try
+		{
+			return TryGetKeyedService(serviceProvider, parameterType, key);
+		}
+		catch (Exception exception) when (IsApplicationFailure(exception, cancellationToken))
+		{
+			throw new ReplBindingCallbackException(parameterType.Name, exception);
+		}
 	}
+
+	/// <summary>Constructs an option group, marking anything its constructor raises.</summary>
+	private static object CreateGroupInstance(
+		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
+		Type groupType,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			return Activator.CreateInstance(groupType)!;
+		}
+		catch (Exception exception) when (IsApplicationFailure(exception, cancellationToken))
+		{
+			throw new ReplBindingCallbackException(groupType.Name, exception);
+		}
+	}
+
+	/// <summary>
+	/// Assigns one option-group property, marking anything its setter raises.
+	/// </summary>
+	/// <remarks>
+	/// A setter is application code as much as a service factory is, and reaches the pipeline as the
+	/// same unmarked binding failure. It can expose the same paths and application state.
+	/// </remarks>
+	private static void AssignProperty(
+		PropertyInfo property,
+		object instance,
+		object? value,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			property.SetValue(instance, value);
+		}
+		catch (Exception exception) when (IsApplicationFailure(exception, cancellationToken))
+		{
+			throw new ReplBindingCallbackException(property.Name, exception);
+		}
+	}
+
+	/// <summary>
+	/// Resolves a service, reporting what the container raises as application code failing rather than
+	/// letting it pass for a diagnostic the binder wrote itself.
+	/// </summary>
+	/// <remarks>
+	/// The two are indistinguishable once they reach the pipeline — same outcome kind, commonly the same
+	/// exception type — and they deserve opposite treatment: the binder's own message explains what the
+	/// caller got wrong, while a factory's can name a path or a connection string. Marking the failure
+	/// here is what lets a host publishing to a remote caller keep one and withhold the other. Every
+	/// call the binder makes into application code is marked the same way; a service factory was simply
+	/// the first one found.
+	/// </remarks>
+	private static object? Activate(
+		IServiceProvider serviceProvider,
+		Type serviceType,
+		string parameterName,
+		CancellationToken cancellationToken)
+	{
+		try
+		{
+			return serviceProvider.GetService(serviceType);
+		}
+		catch (Exception exception) when (IsApplicationFailure(exception, cancellationToken))
+		{
+			throw new ReplBindingCallbackException(parameterName, exception);
+		}
+	}
+
+	/// <summary>
+	/// Whether <paramref name="exception"/> is application code failing rather than the caller
+	/// withdrawing.
+	/// </summary>
+	/// <remarks>
+	/// Cancellation is told apart by who asked for it, not by the exception's type. A factory that runs
+	/// its own budget and gives up has failed like any other, and its message deserves the same
+	/// treatment; only the caller abandoning the run is a withdrawal, and that one is not ours to
+	/// relabel.
+	/// </remarks>
+	private static bool IsApplicationFailure(Exception exception, CancellationToken cancellationToken) =>
+		exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested;
 
 	[UnconditionalSuppressMessage(
 		"Trimming",
@@ -602,7 +707,7 @@ internal static class HandlerArgumentBinder
 		InvocationBindingContext context,
 		ref int positionalIndex)
 	{
-		var instance = Activator.CreateInstance(groupType)!;
+		var instance = CreateGroupInstance(groupType, context.CancellationToken);
 
 		foreach (var property in groupType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
 		{
@@ -631,7 +736,7 @@ internal static class HandlerArgumentBinder
 					property.PropertyType,
 					context.NumericFormatProvider,
 					enumIgnoreCase);
-				property.SetValue(instance, converted);
+				AssignProperty(property, instance, converted, context.CancellationToken);
 				continue;
 			}
 
@@ -649,7 +754,7 @@ internal static class HandlerArgumentBinder
 					// Same positional upper-bound parity as the handler-parameter path.
 					ThrowIfExplicitUpperBoundExceeded(
 						context.OptionSchema, propertyName, positionalIndex - positionalStart);
-					property.SetValue(instance, positionalValue);
+					AssignProperty(property, instance, positionalValue, context.CancellationToken);
 					continue;
 				}
 			}
