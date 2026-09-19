@@ -96,14 +96,22 @@ internal static class McpDiscoveryCapabilities
 	/// <summary>
 	/// The frozen answers as a set, for the two places that must agree on them.
 	/// </summary>
+	/// <param name="interactivityMode">How an unanswerable prompt resolves; see <see cref="CreateDiscoveryChannel"/>.</param>
 	/// <remarks>
 	/// Discovery decides what is advertised; execution decides whether an advertised command exists.
 	/// Those are the same question, and answering it twice from two different views is what makes a
 	/// tool visible and uncallable. A fresh dictionary per call because the overlay owns what it is
 	/// given.
+	/// <para>
+	/// The interaction channel belongs in the set for the same reason the capability services do: a
+	/// predicate may ask a question, and the live channel answers from the call's own
+	/// <c>answer.*</c> arguments — which would let a tool argument decide whether the tool it was
+	/// passed to exists.
+	/// </para>
 	/// </remarks>
-	public static Dictionary<Type, object> CreateSessionScopedOverrides() => new()
+	public static Dictionary<Type, object> CreateSessionScopedOverrides(InteractivityMode interactivityMode) => new()
 	{
+		[typeof(IReplInteractionChannel)] = CreateDiscoveryChannel(interactivityMode),
 		[typeof(IMcpClientRoots)] = Roots,
 		[typeof(IMcpSampling)] = Sampling,
 		[typeof(IMcpElicitation)] = Elicitation,
@@ -111,6 +119,18 @@ internal static class McpDiscoveryCapabilities
 		[typeof(IReplSessionState)] = SessionState,
 		[typeof(IReplSessionInfo)] = SessionInfo,
 	};
+
+	/// <summary>
+	/// The channel a presence predicate is asked through: no prefilled answers, and no client behind
+	/// it to elicit or sample from, so a question resolves to its declared default.
+	/// </summary>
+	/// <param name="interactivityMode">
+	/// What a question with no default does. It is the host's configured mode rather than a constant
+	/// so that discovery and execution fail the same way on the same predicate.
+	/// </param>
+	/// <returns>A fresh channel; it holds no answer, so instances are interchangeable.</returns>
+	public static McpInteractionChannel CreateDiscoveryChannel(InteractivityMode interactivityMode) =>
+		new(new Dictionary<string, string>(StringComparer.Ordinal), interactivityMode);
 
 	private sealed class DiscoverySessionState : IReplSessionState
 	{

@@ -547,9 +547,8 @@ internal sealed class McpServerHandler
 	{
 		var overlay = new Dictionary<Type, object>
 		{
-			[typeof(IReplInteractionChannel)] = new McpInteractionChannel(
-				new Dictionary<string, string>(StringComparer.Ordinal),
-				_options.InteractivityMode),
+			[typeof(IReplInteractionChannel)] =
+				McpDiscoveryCapabilities.CreateDiscoveryChannel(_options.InteractivityMode),
 		};
 
 		if (sessionless)
@@ -560,7 +559,8 @@ internal sealed class McpServerHandler
 			// session state is a mutable singleton shared with execution — leaving it live would let a
 			// tools/call decide what the next tools/list advertises. Execution keeps the real services
 			// for binding, and takes these same answers for deciding presence.
-			foreach (var (type, service) in McpDiscoveryCapabilities.CreateSessionScopedOverrides())
+			foreach (var (type, service) in
+				McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode))
 			{
 				overlay[type] = service;
 			}

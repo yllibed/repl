@@ -254,7 +254,9 @@ internal sealed partial class McpToolAdapter
 			// the real client and can report what it is missing. A catalog resolved per session has
 			// nothing to reconcile: it was built from the live view and may vary with it.
 			var presenceServices = _catalogIsFrozen
-				? new McpServiceProviderOverlay(mcpServices, McpDiscoveryCapabilities.CreateSessionScopedOverrides())
+				? new McpServiceProviderOverlay(
+					mcpServices,
+					McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode))
 				: null;
 			var completed = await invocableApp.RunSubInvocationWithOutcomeAsync(
 				effectiveTokens.ToArray(), mcpServices, presenceServices, ct).ConfigureAwait(false);

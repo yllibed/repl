@@ -61,8 +61,10 @@ Two consequences, and they are different problems:
 The discovery view reaches no live session-scoped service at all, rather than neutralising member by
 member: `IsSupported`, `HasSoftRoots`, `Current` and `GetAsync` are all connection state, and
 forwarding any one of them reopens the hole. The frozen set is the four capability services plus
-`IReplSessionState` and `IReplSessionInfo` — every session-scoped input a presence predicate can
-receive by injection.
+`IReplSessionState`, `IReplSessionInfo` and `IReplInteractionChannel` — every session-scoped input a
+presence predicate can receive by injection. The channel is in the set because a predicate may *ask*:
+the live one answers from the call's own `answer.*` arguments, which would let a tool argument decide
+whether the tool it was passed to exists.
 
 A predicate that injects an **application** service of its own is outside that set by construction:
 Repl cannot know which of your singletons is stable and which a command mutates. Gate on something
@@ -90,6 +92,7 @@ them against **fixed answers** instead of against the client:
 | `IsSupported` (roots, sampling, elicitation), `IsLoggingSupported`, `IsProgressSupported` | `true` |
 | `HasSoftRoots` | `false` |
 | `Current`, `GetAsync()` | empty |
+| A question asked through `IReplInteractionChannel` | its declared default — nothing is prefilled, and there is no client to elicit or sample from |
 
 Whatever your predicate returns under those answers is what **every** client is offered. The bucket a
 command lands in therefore follows the predicate's *result*, not which member it reads — a negated

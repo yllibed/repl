@@ -5,6 +5,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
+using Repl.Interaction;
 using Repl.Mcp;
 
 namespace Repl.McpTests;
@@ -337,6 +338,59 @@ public sealed class Given_McpConcurrentSessions
 			recoveredNewer.Select(static tool => tool.Name),
 			because: "the failure withheld the catalog; it must not have left the connections on different ones");
 		recoveredOlder.Should().Contain(tool => string.Equals(tool.Name, "added", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("Regression guard: the interaction channel is a presence input like every other one. Discovery evaluates presence against an empty channel — no prefills, nobody to elicit from — so a module gated on a confirmation that defaults to true is advertised to every modern connection. Execution overlaid the frozen capability answers but left the LIVE channel in place, so the same predicate read the call's own answer.gate and re-decided the module absent: the advertised tool came back as an unknown command, and a tool argument silently decided what existed.")]
+	public async Task When_AModernClientAnswersAGateItIsGatedOn_Then_ItsAnswerCannotRetractTheTool()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("always", () => "ok");
+		app.MapModule(new PromptGatedModule(), (IReplInteractionChannel channel) => AskGate(channel));
+		var handler = CreateHandlerWithAppServices(app);
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		var session = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
+		await using var scope = session.ConfigureAwait(false);
+		session.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
+
+		(await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
+			.Should().Contain(tool => string.Equals(tool.Name, "gated", StringComparison.Ordinal));
+
+		var result = await session.Client.CallToolAsync(
+			toolName: "gated",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal) { ["answer.gate"] = "false" },
+			cancellationToken: cts.Token).ConfigureAwait(false);
+
+		var text = string.Join(
+			separator: '\n',
+			values: result.Content.OfType<TextContentBlock>().Select(static block => block.Text));
+
+		text.Should().Contain(
+			"gate-closed",
+			because: "the answer belongs to the command that was advertised, not to the decision to advertise it");
+		text.Should().NotContain(
+			"unknown_command",
+			because: "a tool argument must not be able to retract the tool it was passed to");
+	}
+
+	// A presence predicate is synchronous by contract, and this channel answers from prefills or a
+	// default without ever going async.
+#pragma warning disable VSTHRD002
+	private static bool AskGate(IReplInteractionChannel channel) =>
+		channel.AskConfirmationAsync(
+			name: "gate",
+			prompt: "Expose the gated module?",
+			defaultValue: true).AsTask().GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+
+	/// <summary>A module gated on the same answer its command accepts.</summary>
+	private sealed class PromptGatedModule : IReplModule
+	{
+		public void Map(IReplMap app) => app
+			.Map("gated", static (IReplInteractionChannel channel) => AskGate(channel) ? "gate-open" : "gate-closed")
+			.WithAnswer(name: "gate", type: "bool");
 	}
 
 	/// <summary>An app whose module appears only once a command has written the session state.</summary>
