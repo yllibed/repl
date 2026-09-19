@@ -44,11 +44,11 @@ public sealed class Given_McpDebounce
 	}
 
 	[TestMethod]
-	[Description("Exception during routing rebuild does not crash the server.")]
-	public void When_RebuildThrows_Then_ServerContinuesWithStaleRoutes()
+	[Description("Exception during routing rebuild does not crash an initialize-era session, which keeps serving its previous catalog. The fallback is bounded to that era on purpose: 2026-07-28 forbids the advertised set from varying per connection, and answering one connection from its own cache is precisely that variance, so a modern request fails closed instead.")]
+	public void When_RebuildThrows_Then_ALegacySessionContinuesWithStaleRoutes()
 	{
 		var fakeTime = new FakeTimeProvider();
-		using var fixture = CreateServerFixture(fakeTime);
+		using var fixture = CreateServerFixture(fakeTime, BuildLegacyClientOptions());
 
 		// Verify initial state — tool is available.
 		var tools = SyncWait(fixture.Client.ListToolsAsync().AsTask());
@@ -70,6 +70,37 @@ public sealed class Given_McpDebounce
 		fixture.Options.CommandFilter = null;
 		var recoveredTools = SyncWait(fixture.Client.ListToolsAsync().AsTask());
 		recoveredTools.Should().Contain(tool => string.Equals(tool.Name, "added-after", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies the availability fallback keeps applying after a visibility retraction. Republishing a served-but-stale snapshot used to overwrite the version it was built at with a zero sentinel, so the retraction watermark was compared against zero and read as older than every retraction ever published. The FIRST failed projection still served the previous catalog and the second surfaced the error instead — a catalog that had been serving a moment earlier became unreachable for as long as the failure lasted. Hiding a command is the retraction: without one the watermark stays at zero, where the sentinel happened to compare equal and the defect is invisible. Initialize-era, because that is the only era the availability fallback applies to.")]
+	public void When_ProjectionKeepsFailingAfterARetraction_Then_ALegacySessionKeepsServingThePreviousCatalog()
+	{
+		var fakeTime = new FakeTimeProvider();
+		using var fixture = CreateServerFixture(fakeTime, BuildLegacyClientOptions());
+		var extra = fixture.App.Map("extra", static () => "x");
+
+		SyncWait(fixture.Client.ListToolsAsync().AsTask())
+			.Should().Contain(tool => string.Equals(tool.Name, "extra", StringComparison.Ordinal));
+
+		// Hiding a mapped command publishes a visibility retraction, which moves the watermark the
+		// availability fallback compares its cached snapshot against.
+		extra.Hidden();
+		SyncWait(fixture.Client.ListToolsAsync().AsTask())
+			.Should().NotContain(tool => string.Equals(tool.Name, "extra", StringComparison.Ordinal));
+
+		// From here every projection throws.
+		fixture.Options.CommandFilter = _ => throw new InvalidOperationException("Simulated rebuild failure");
+		fixture.App.Core.InvalidateRouting();
+		fakeTime.Advance(TimeSpan.FromMilliseconds(150));
+
+		var first = SyncWait(fixture.Client.ListToolsAsync().AsTask());
+		var second = SyncWait(fixture.Client.ListToolsAsync().AsTask());
+
+		first.Should().ContainSingle(tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal));
+		second.Should().ContainSingle(
+			tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal),
+			because: "the second read must not lose the fallback the first one just used");
 	}
 
 	[TestMethod]
@@ -159,6 +190,10 @@ public sealed class Given_McpDebounce
 	// (MCP client) are awaited via bounded Wait() to fail fast on deadlock.
 
 #pragma warning disable VSTHRD002 // Intentional sync-over-async for deterministic time tests.
+	/// <summary>A client that negotiates the initialize era, where the catalog is session state.</summary>
+	private static McpClientOptions BuildLegacyClientOptions() =>
+		new() { ProtocolVersion = McpProtocolRevisions.LastWithSessions };
+
 	private static T SyncWait<T>(Task<T> task)
 	{
 		if (!task.Wait(TimeSpan.FromSeconds(10)))
@@ -172,7 +207,9 @@ public sealed class Given_McpDebounce
 
 	// ── Fixture ─────────────────────────────────────────────────────────
 
-	private static ServerFixture CreateServerFixture(TimeProvider timeProvider)
+	private static ServerFixture CreateServerFixture(
+		TimeProvider timeProvider,
+		McpClientOptions? clientOptions = null)
 	{
 		var app = ReplApp.Create();
 		app.UseMcpServer();
@@ -197,7 +234,8 @@ public sealed class Given_McpDebounce
 		var client = SyncWait(McpClient.CreateAsync(
 			new StreamClientTransport(
 				clientToServer.Writer.AsStream(),
-				serverToClient.Reader.AsStream())));
+				serverToClient.Reader.AsStream()),
+			clientOptions));
 
 		return new ServerFixture(app, options, initialCommand, client, cts, clientToServer, serverToClient, serverTask);
 	}

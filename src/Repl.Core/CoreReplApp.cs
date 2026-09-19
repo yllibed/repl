@@ -608,7 +608,8 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	internal ActiveRoutingGraph ResolveActiveRoutingGraph(bool useDurableCache)
 	{
 		var runtime = _runtimeState.Value;
-		var serviceProvider = runtime?.ServiceProvider ?? _services;
+		// Presence decides the graph, so it is what the cache is keyed on and what the predicates see.
+		var serviceProvider = runtime?.PresenceServiceProvider ?? runtime?.ServiceProvider ?? _services;
 		var channel = ResolveCurrentRuntimeChannel();
 		var cacheVersion = Interlocked.Read(ref _routingCacheVersion);
 		var cacheBucket = _routingCacheByServiceProvider.GetOrCreateValue(serviceProvider);
@@ -666,6 +667,33 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return active;
 	}
 
+	/// <summary>
+	/// Whether any route was ever registered that satisfies <paramref name="predicate"/>, whatever its
+	/// module's presence predicate would decide and whether or not a later registration shadows it.
+	/// </summary>
+	/// <remarks>
+	/// For a caller that must answer what the application <em>can</em> contain rather than what one
+	/// resolution does contain — declaring an optional protocol capability, for instance, which happens
+	/// once and cannot be revised per caller. Blind to presence, because an answer derived from one
+	/// evaluation of the predicates is only as good as that evaluation's inputs and a predicate can
+	/// depend on state the caller does not have; blind to shadowing, because a template registered
+	/// twice resolves to a single route while the shadowed registration is still reachable from any
+	/// resolution that excludes the shadowing module. Yields a verdict rather than the routes so that
+	/// no caller can project command names through it, and resolves, documents and validates nothing.
+	/// </remarks>
+	internal bool AnyRegisteredRoute(Func<RouteDefinition, bool> predicate)
+	{
+		foreach (var route in _routes)
+		{
+			if (predicate(route))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private RouteDefinition[] ResolveActiveRoutes(HashSet<int> activeModuleIds)
 	{
 		var routesByPath = new Dictionary<string, (RouteDefinition Route, int Index)>(StringComparer.OrdinalIgnoreCase);
@@ -715,10 +743,16 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	/// </summary>
 	internal bool IsInteractiveSession => _runtimeState.Value?.IsInteractiveSession == true;
 
-	internal RuntimeStateScope PushRuntimeState(IServiceProvider serviceProvider, bool isInteractiveSession)
+	internal RuntimeStateScope PushRuntimeState(
+		IServiceProvider serviceProvider,
+		bool isInteractiveSession,
+		IServiceProvider? presenceServiceProvider = null)
 	{
 		var previous = _runtimeState.Value;
-		_runtimeState.Value = new InvocationRuntimeState(serviceProvider, isInteractiveSession);
+		_runtimeState.Value = new InvocationRuntimeState(
+			serviceProvider,
+			isInteractiveSession,
+			presenceServiceProvider);
 		return new RuntimeStateScope(_runtimeState, previous);
 	}
 
@@ -880,9 +914,19 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		int ModuleId,
 		Func<ModulePresenceContext, bool> IsPresent);
 
+	/// <param name="ServiceProvider">Resolves handler arguments for this invocation.</param>
+	/// <param name="IsInteractiveSession">Whether the invocation belongs to an interactive session.</param>
+	/// <param name="PresenceServiceProvider">
+	/// Resolves module presence predicates, when they must be decided from something other than what
+	/// binds the handler. A host that publishes a command catalog has to keep the two apart: what it
+	/// advertised was decided from one view of the world, and re-deciding at execution from another
+	/// makes an advertised command unreachable. <see langword="null"/> — the default everywhere except
+	/// that case — means presence and binding share one provider, as they always have.
+	/// </param>
 	internal readonly record struct InvocationRuntimeState(
 		IServiceProvider ServiceProvider,
-		bool IsInteractiveSession);
+		bool IsInteractiveSession,
+		IServiceProvider? PresenceServiceProvider = null);
 
 	private sealed class RoutingCacheEntry(long version, ActiveRoutingGraph graph)
 	{

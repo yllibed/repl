@@ -1,5 +1,6 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
+using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Repl;
@@ -22,15 +23,39 @@ internal sealed partial class McpToolAdapter
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
+	private readonly McpRequestServerAccessor _requestServers;
+	// Whether the catalog this adapter serves was built from the frozen discovery view. A property of
+	// the catalog, not of the request: a reusable BuildMcpServerOptions() result is frozen once and then
+	// serves clients of either era, so asking the request would leave an initialize-era caller unable to
+	// run what that catalog offered it.
+	private readonly bool _catalogIsFrozen;
 	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, ReplDocCommand> _toolRoutes = new(StringComparer.OrdinalIgnoreCase);
 	private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _staticToolResults = new(StringComparer.OrdinalIgnoreCase);
 
-	public McpToolAdapter(ICoreReplApp app, ReplMcpServerOptions options, IServiceProvider services)
+	public McpToolAdapter(
+		ICoreReplApp app,
+		ReplMcpServerOptions options,
+		IServiceProvider services,
+		McpRequestServerAccessor requestServers,
+		bool catalogIsFrozen = false)
 	{
 		_app = app;
 		_options = options;
 		_services = services;
+		_requestServers = requestServers;
+		_catalogIsFrozen = catalogIsFrozen;
 	}
+
+	/// <summary>
+	/// Binds the flowing async context to <paramref name="request"/> before dispatching a command.
+	/// </summary>
+	/// <remarks>
+	/// The pre-built primitives (<see cref="ReplMcpServerTool"/> and friends) are dispatched straight
+	/// by the SDK on the <c>BuildMcpServerOptions</c> path, bypassing <see cref="McpServerHandler"/>'s
+	/// request handlers entirely. Without this, capability services resolved from DI would have no
+	/// request to resolve against and would report every client capability as unavailable.
+	/// </remarks>
+	internal void BindRequest(MessageContext request) => _requestServers.BindRequest(request);
 
 	internal string ForcedOutputMimeType
 	{
@@ -121,7 +146,7 @@ internal sealed partial class McpToolAdapter
 		var (tokens, prefills) = PrepareExecution(command, arguments);
 		var invocation = await ExecuteThroughPipelineAsync(tokens, prefills, server, progressToken, ct)
 			.ConfigureAwait(false);
-		var output = invocation.Output;
+		var output = invocation.ExitCode == 0 ? invocation.Output : DescribeFailure(invocation);
 		if (string.IsNullOrWhiteSpace(output))
 		{
 			output = invocation.ExitCode == 0
@@ -129,7 +154,8 @@ internal sealed partial class McpToolAdapter
 				: $"Command failed with exit code {invocation.ExitCode}.";
 		}
 
-		return BuildToolResult(output, invocation.ExitCode, _options.PagedResultTextMode);
+		return BuildToolResult(
+			output, invocation.ExitCode, _options.PagedResultTextMode, invocation.UndeliveredMessages);
 	}
 
 	internal async Task<McpResourceReadInvocation> InvokeResourceAsync(
@@ -156,18 +182,12 @@ internal sealed partial class McpToolAdapter
 
 		if (invocation.ExitCode != 0)
 		{
-			var error = invocation.Output;
-			if (string.IsNullOrWhiteSpace(error))
-			{
-				error = invocation.Error;
-			}
-
-			if (string.IsNullOrWhiteSpace(error))
-			{
-				error = $"Command failed with exit code {invocation.ExitCode}.";
-			}
-
-			return new McpResourceReadInvocation(error, TextPlainMimeType, IsError: true);
+			// A failed read has no body to carry what the command reported — the success path's body has
+			// to match the advertised MIME type — so the surfaced error is the only place left for it.
+			return new McpResourceReadInvocation(
+				AppendMessages(DescribeFailure(invocation), invocation.UndeliveredMessages),
+				TextPlainMimeType,
+				IsError: true);
 		}
 
 		if (string.IsNullOrWhiteSpace(invocation.Output))
@@ -191,6 +211,8 @@ internal sealed partial class McpToolAdapter
 		var invocableApp = _app as ISubInvocableReplApp
 			?? throw new InvalidOperationException("MCP tool adapter requires an app that supports sub-invocation.");
 
+		await McpClientRootsService.PrimeFromServicesAsync(_services, ct).ConfigureAwait(false);
+
 		var outputWriter = new StringWriter();
 		var errorWriter = captureCommandOutput ? outputWriter : new StringWriter();
 		var inputReader = new StringReader(string.Empty);
@@ -203,8 +225,11 @@ internal sealed partial class McpToolAdapter
 			{
 				[typeof(IReplInteractionChannel)] = interactionChannel,
 			});
-		using var feedbackScope = (_services.GetService(typeof(IMcpFeedback)) as McpFeedbackService)
-			?.PushProgressToken(progressToken);
+		var feedbackService = _services.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
+		using var feedbackScope = feedbackService?.PushProgressToken(progressToken);
+		// Messages the client cannot receive as notifications ride back in the tool result instead,
+		// so no feedback is lost on a request that never asked for log notifications.
+		using var undeliveredScope = feedbackService?.PushUndeliveredMessages();
 
 		// Force JSON output — agents consume structured data, not human tables/banners.
 		var effectiveTokens = new List<string>(tokens.Count + 1) { $"--output:{ForcedOutputFormat}" };
@@ -224,26 +249,97 @@ internal sealed partial class McpToolAdapter
 		{
 			ReplSessionIO.IsProgrammatic = true;
 			using var invocationContract = ReplSessionIO.PushProgrammaticInvocationContract(ProgrammaticInvocationContractVersion);
-			var exitCode = await invocableApp.RunSubInvocationAsync(
-				effectiveTokens.ToArray(), mcpServices, ct).ConfigureAwait(false);
+			// Presence is decided from the same answers that built this catalog, so what was advertised
+			// is what can be called. Binding keeps the live services, so the command that runs still sees
+			// the real client and can report what it is missing. A catalog resolved per session has
+			// nothing to reconcile: it was built from the live view and may vary with it.
+			var presenceServices = _catalogIsFrozen
+				? new McpServiceProviderOverlay(
+					mcpServices,
+					McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode))
+				: null;
+			var completed = await invocableApp.RunSubInvocationWithOutcomeAsync(
+				effectiveTokens.ToArray(), mcpServices, presenceServices, ct).ConfigureAwait(false);
 
 			var output = outputWriter.ToString().Trim();
 			var error = captureCommandOutput ? string.Empty : errorWriter.ToString().Trim();
-			return new McpPipelineInvocation(output, error, exitCode);
+			var undelivered = undeliveredScope?.Messages.Drain() ?? [];
+			return new McpPipelineInvocation(
+				output, error, completed.ExitCode, completed.Kind, completed.Failure, undelivered);
 		}
 	}
 
 	internal readonly record struct McpResourceReadInvocation(string Text, string MimeType, bool IsError);
 
-	private readonly record struct McpPipelineInvocation(string Output, string Error, int ExitCode);
+	private readonly record struct McpPipelineInvocation(
+		string Output,
+		string Error,
+		int ExitCode,
+		ReplExecutionOutcomeKind Kind,
+		Exception? Failure,
+		IReadOnlyList<string> UndeliveredMessages);
 
-	private static CallToolResult BuildToolResult(string output, int exitCode, McpPagedResultTextMode pagedTextMode)
+	/// <summary>
+	/// What a failed run is allowed to tell the client.
+	/// </summary>
+	/// <remarks>
+	/// The line is not the kind of failure but who the text was written for. A handler that returns a
+	/// failure result, and the framework's own refusals — unknown command, a binding diagnostic naming
+	/// what could not be converted — were all authored for whoever called, so they travel unchanged; an
+	/// agent uses them to correct itself. What the framework rendered from an exception that escaped
+	/// code nobody meant to surface does not: such messages routinely carry a filesystem path, a
+	/// parameter and its full CLR type, or a connection string. On a console the reader is the
+	/// operator; over MCP it is a remote client, which is the whole difference.
+	/// <para>
+	/// Two exceptions are themselves addressed to the client and keep their message: an
+	/// <see cref="McpException"/>, which the SDK passes through verbatim precisely because raising one
+	/// is deliberate, and an <see cref="McpInteractionException"/>, which exists to tell the caller
+	/// which answer it failed to supply. Withholding those would leave a documented interaction mode
+	/// unable to say what it needs.
+	/// </para>
+	/// </remarks>
+	private static string DescribeFailure(in McpPipelineInvocation invocation)
+	{
+		var withheld = $"Command failed with exit code {invocation.ExitCode}.";
+		if (WithholdsFailureText(invocation))
+		{
+			return withheld;
+		}
+
+		if (!string.IsNullOrWhiteSpace(invocation.Output))
+		{
+			return invocation.Output;
+		}
+
+		return string.IsNullOrWhiteSpace(invocation.Error) ? withheld : invocation.Error;
+	}
+
+	private static bool WithholdsFailureText(in McpPipelineInvocation invocation)
+	{
+		// Marked at the binder because nothing downstream can tell application code failing from a
+		// diagnostic the binder wrote itself — same outcome kind, commonly the same exception type.
+		if (invocation.Failure is ReplBindingCallbackException)
+		{
+			return true;
+		}
+
+		return invocation.Kind is ReplExecutionOutcomeKind.HandlerException
+			&& invocation.Failure is not (McpException or McpInteractionException);
+	}
+
+	private static CallToolResult BuildToolResult(
+		string output,
+		int exitCode,
+		McpPagedResultTextMode pagedTextMode,
+		IReadOnlyList<string> undeliveredMessages)
 	{
 		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
 		{
 			return new CallToolResult
 			{
-				Content = [new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) }],
+				Content = WithMessages(
+					new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) },
+					undeliveredMessages),
 				StructuredContent = structuredContent,
 				IsError = false,
 			};
@@ -251,9 +347,88 @@ internal sealed partial class McpToolAdapter
 
 		return new CallToolResult
 		{
-			Content = [new TextContentBlock { Text = output }],
+			Content = WithMessages(new TextContentBlock { Text = output }, undeliveredMessages),
 			IsError = exitCode != 0,
 		};
+	}
+
+	/// <summary>
+	/// Flattens a failed invocation's text blocks into one message: the payload, unwrapped, followed by
+	/// any feedback the client could not receive as a notification.
+	/// </summary>
+	/// <remarks>
+	/// The inverse of <see cref="WithMessages"/>, for the two callers that surface a failure as an
+	/// exception rather than a result. A failure is where those messages matter most — they are usually
+	/// what explains it — and there is no content array left to put them in.
+	/// </remarks>
+	internal static string BuildErrorMessage(IReadOnlyList<TextContentBlock> blocks, string fallback)
+	{
+		if (blocks.Count == 0)
+		{
+			return fallback;
+		}
+
+		var primary = McpJsonStringOutput.UnwrapJsonStringLiteral(blocks[0].Text);
+		if (blocks.Count == 1)
+		{
+			return primary;
+		}
+
+		var message = new System.Text.StringBuilder(primary);
+		for (var i = 1; i < blocks.Count; i++)
+		{
+			message.Append(Environment.NewLine).Append(blocks[i].Text);
+		}
+
+		return message.ToString();
+	}
+
+	/// <summary>
+	/// Appends <paramref name="messages"/> after <paramref name="primary"/>, one per line, returning
+	/// <paramref name="primary"/> unchanged when there is nothing to append.
+	/// </summary>
+	internal static string AppendMessages(string primary, IReadOnlyList<string> messages)
+	{
+		if (messages.Count == 0)
+		{
+			return primary;
+		}
+
+		var builder = new System.Text.StringBuilder(primary);
+		foreach (var message in messages)
+		{
+			builder.Append(Environment.NewLine).Append(message);
+		}
+
+		return builder.ToString();
+	}
+
+	/// <summary>
+	/// Appends messages the client could not receive as notifications, as a trailing content block.
+	/// </summary>
+	/// <remarks>
+	/// The command's own payload stays the first block (and <c>StructuredContent</c> is untouched), so
+	/// a caller reading the primary result is unaffected. Only requests that asked for no log level
+	/// carry anything here — a client receiving message notifications would otherwise see each one
+	/// twice. Resource reads deliberately get no such block: their body must match the advertised
+	/// MIME type.
+	/// </remarks>
+	private static List<ContentBlock> WithMessages(
+		TextContentBlock primary,
+		IReadOnlyList<string> undeliveredMessages)
+	{
+		if (undeliveredMessages.Count == 0)
+		{
+			return [primary];
+		}
+
+		var blocks = new List<ContentBlock>(undeliveredMessages.Count + 1) { primary };
+		foreach (var message in undeliveredMessages)
+		{
+			blocks.Add(new TextContentBlock { Text = message });
+		}
+
+		return blocks;
 	}
 
 	private static string BuildPagedTextContent(

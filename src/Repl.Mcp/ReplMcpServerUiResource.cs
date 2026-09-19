@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -57,6 +57,7 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 		RequestContext<ReadResourceRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
+		_adapter.BindRequest(request);
 		var arguments = ExtractArguments(request.Params.Uri);
 
 		var result = await _adapter.InvokeAsync(
@@ -68,15 +69,19 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 				allowStaticResults: false)
 			.ConfigureAwait(false);
 
+		// Materialised once, before the error branch: a failed read has no body to carry the feedback
+		// the adapter appended, so the surfaced error is the only place left for it.
+		var blocks = result.Content?.OfType<TextContentBlock>().ToArray() ?? [];
+
 		if (result.IsError == true)
 		{
-			var errorText = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text
-				?? "UI resource read failed.";
-			throw new McpException(errorText);
+			throw new McpException(McpToolAdapter.BuildErrorMessage(blocks, "UI resource read failed."));
 		}
 
-		var text = result.Content?.OfType<TextContentBlock>().FirstOrDefault()?.Text ?? "";
-		return new ReadResourceResult
+		// Only the payload on success: the body has to match the advertised MIME type, so any trailing
+		// feedback block is deliberately dropped here.
+		var text = blocks.Length > 0 ? blocks[0].Text : "";
+		return McpCacheHints.MarkPrivateToThisClient(request, new ReadResourceResult
 		{
 			Contents =
 			[
@@ -88,7 +93,7 @@ internal sealed partial class ReplMcpServerUiResource : McpServerResource
 					Meta = McpAppMetadata.BuildResourceMeta(_options.ResourceOptions),
 				},
 			],
-		};
+		});
 	}
 
 	private Dictionary<string, JsonElement> ExtractArguments(string uri)

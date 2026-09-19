@@ -2,6 +2,18 @@
 
 This page explains how to make modules appear/disappear dynamically at runtime.
 
+> **Serving MCP?** On revision `2026-07-28` the advertised tool set must not vary per connection or
+> change as a side effect of another request, so discovery answers every session-scoped question with
+> fixed answers: capability checks read as supported, soft roots as absent, the root list as empty,
+> **and the session state as empty**. Whatever your predicate returns under those answers is what
+> every client is offered, so a negated gate such as `!roots.IsSupported` matches for nobody even
+> though it reads a capability — and the sign-in flow below reveals nothing, because the state it
+> writes is not what discovery reads. Gate on something that does not change, or map the command
+> unconditionally and refuse inside it. A command that *is* advertised stays callable, so refusing
+> inside it is what the caller can act on. The predicate still runs everywhere else, and the earlier
+> revisions are unaffected — see
+> [Conformance](mcp-conformance.md#what-this-means-when-you-write-commands).
+
 ## Why
 
 Sometimes the command surface depends on session state:
@@ -81,6 +93,11 @@ Example flow:
 2. User runs `auth login` (updates session state).
 3. App invalidates routing cache.
 4. Signed-in module becomes present on next command resolution.
+
+This flow works in the console, over the earlier MCP revisions, and anywhere else. It does **not**
+change what an MCP client on `2026-07-28` is offered: that revision forbids the advertised set from
+moving as a side effect of another request, which is exactly what step 2 would be. See the note at the
+top of this page.
 
 ## Conflict policy
 

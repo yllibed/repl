@@ -255,7 +255,8 @@ public sealed class Given_McpResourceParameters
 	public async Task When_ResourceRouteIsUnknown_Then_AdapterReturnsTextError()
 	{
 		await using var services = new ServiceCollection().BuildServiceProvider();
-		var adapter = new McpToolAdapter(ReplApp.Create().Core, new ReplMcpServerOptions(), services);
+		var adapter = new McpToolAdapter(
+			ReplApp.Create().Core, new ReplMcpServerOptions(), services, new McpRequestServerAccessor());
 
 		var result = await adapter.InvokeResourceAsync(
 			"missing",
