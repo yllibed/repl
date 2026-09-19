@@ -396,8 +396,7 @@ internal sealed class McpServerHandler
 				return refreshed.Snapshot;
 			}
 
-			var previousEntry = context.SnapshotCache;
-			var previousSnapshot = previousEntry?.Snapshot;
+			var previousSnapshot = context.SnapshotCache?.Snapshot;
 			try
 			{
 				var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
@@ -419,6 +418,7 @@ internal sealed class McpServerHandler
 				// next request retries without requiring another routing mutation. The entry keeps the
 				// version it was built at, because the retraction comparison reads it: a sentinel version
 				// would count as older than every retraction and take the fallback away after the first.
+				// Initialize-era only — see IsFallbackEligible.
 				// Re-read rather than reuse the filter's value: nothing holds the retraction watermark
 				// still between the two, and a retraction that lands in between must fail closed with the
 				// original failure rather than serve a catalog it has just withdrawn.
@@ -619,11 +619,27 @@ internal sealed class McpServerHandler
 	/// Whether a failed projection may serve this connection's previous catalog instead.
 	/// </summary>
 	/// <remarks>
-	/// A catalog retracted for visibility is never re-served: that failure has to fail closed, since
-	/// the retraction is the whole point.
+	/// Only on the initialize era, where the catalog is session state and a set that differs per
+	/// connection is the point. On <c>2026-07-28</c> the advertised set MUST NOT vary per connection,
+	/// and serving one its own previous catalog is exactly that variance: a connection that had not
+	/// read the catalog since a routing change keeps its older set while another already serves the
+	/// newer one, and the failure freezes the difference in place for as long as it lasts. Buying
+	/// availability that way spends the guarantee on the thing the guarantee exists to prevent, so a
+	/// modern request fails instead and retries on the next one.
+	/// <para>
+	/// Sharing one last-known-good catalog across modern connections is not the way out either: the
+	/// snapshot carries the executable primitives, which captured the services of whichever connection
+	/// built it — including its roots. Converging the advertised set that way would hand one
+	/// connection another's workspace.
+	/// </para>
+	/// <para>
+	/// On either era, a catalog retracted for visibility is never re-served: that failure has to fail
+	/// closed, since the retraction is the whole point.
+	/// </para>
 	/// </remarks>
 	private bool IsFallbackEligible(McpSessionContext context, bool sessionless) =>
-		context.SnapshotCache is { } candidate
+		!sessionless
+		&& context.SnapshotCache is { } candidate
 		&& candidate.Sessionless == sessionless
 		&& Volatile.Read(ref _snapshotState).LastVisibilityRetractionVersion <= candidate.Version;
 

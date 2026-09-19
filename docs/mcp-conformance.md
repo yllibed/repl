@@ -72,6 +72,14 @@ What stays allowed is a set that **changes over time** for everyone: `Invalidate
 application-global, and the resulting `notifications/*/list_changed` reaches every connection with the
 same new graph.
 
+When a rebuild **fails**, the eras diverge for that same reason. An initialize-era session keeps
+serving its previous catalog until the failure clears — there the catalog is session state, and a set
+that differs per connection is the point. A `2026-07-28` request fails instead: answering it from its
+own cache is the per-connection variance above, because a connection that had not read the catalog
+since the last change would keep its older set while another already serves the newer one, and the
+failure would hold that difference in place for as long as it lasts. Failing is transient — the next
+request retries, without needing another `InvalidateRouting()`.
+
 ### What this means when you write commands
 
 Module presence predicates still work, and still work on both eras. On `2026-07-28` discovery runs
