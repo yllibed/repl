@@ -73,6 +73,37 @@ public sealed class Given_McpDebounce
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies the availability fallback keeps applying after a visibility retraction. Republishing a served-but-stale snapshot used to overwrite the version it was built at with a zero sentinel, so the retraction watermark was compared against zero and read as older than every retraction ever published. The FIRST failed projection still served the previous catalog and the second surfaced the error instead — a catalog that had been serving a moment earlier became unreachable for as long as the failure lasted. Hiding a command is the retraction: without one the watermark stays at zero, where the sentinel happened to compare equal and the defect is invisible.")]
+	public void When_ProjectionKeepsFailingAfterARetraction_Then_ThePreviousCatalogKeepsServing()
+	{
+		var fakeTime = new FakeTimeProvider();
+		using var fixture = CreateServerFixture(fakeTime);
+		var extra = fixture.App.Map("extra", static () => "x");
+
+		SyncWait(fixture.Client.ListToolsAsync().AsTask())
+			.Should().Contain(tool => string.Equals(tool.Name, "extra", StringComparison.Ordinal));
+
+		// Hiding a mapped command publishes a visibility retraction, which moves the watermark the
+		// availability fallback compares its cached snapshot against.
+		extra.Hidden();
+		SyncWait(fixture.Client.ListToolsAsync().AsTask())
+			.Should().NotContain(tool => string.Equals(tool.Name, "extra", StringComparison.Ordinal));
+
+		// From here every projection throws.
+		fixture.Options.CommandFilter = _ => throw new InvalidOperationException("Simulated rebuild failure");
+		fixture.App.Core.InvalidateRouting();
+		fakeTime.Advance(TimeSpan.FromMilliseconds(150));
+
+		var first = SyncWait(fixture.Client.ListToolsAsync().AsTask());
+		var second = SyncWait(fixture.Client.ListToolsAsync().AsTask());
+
+		first.Should().ContainSingle(tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal));
+		second.Should().ContainSingle(
+			tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal),
+			because: "the second read must not lose the fallback the first one just used");
+	}
+
+	[TestMethod]
 	[Description("Pausing immediately before invalidation publication leaves readers on the complete old version/watermark pair; releasing publication exposes the complete new pair atomically.")]
 	public void When_VisibilityRetractionPublicationIsPaused_Then_ReaderObservesOnlyCompleteStates()
 	{
