@@ -20,6 +20,18 @@ If your tool list is static, stay with the default setup from [mcp-overview.md](
 
 ## Client roots
 
+> **⚠️ Deprecation notice (SEP-2577):** the MCP specification (2026-07-28) deprecates the
+> Roots feature, and the SDK may remove it in a future version. Repl keeps supporting it
+> **for existing hosts and applications only.** New applications should take the workspace as an
+> **explicit command parameter**, or mint a handle from a setup command and pass it back — that is
+> what SEP-2567 prescribes now that the protocol has no sessions to hang such state on. See
+> [mcp-reference.md](mcp-reference.md#sdk-and-protocol-versions) for the version posture.
+>
+> [Soft roots](#soft-roots-fallback) are **not** the modern answer: they are the same
+> connection-scoped state by another name, and they are scoped to the process rather than the
+> connection when a host reuses one `BuildMcpServerOptions()` result. Treat them as a legacy
+> compatibility feature for clients that lack native roots.
+
 A **root** is a URI the client declares as being in scope for the session — typically an opened project folder, a working directory, or a boundary for what the agent should inspect or modify.
 
 Roots give the server session-specific workspace context without inventing a custom protocol. When the client supports native MCP roots, `Repl.Mcp` exposes them through `IMcpClientRoots`.
@@ -39,16 +51,22 @@ app.Map("workspace roots", async (IMcpClientRoots roots, CancellationToken ct) =
 | Member | Meaning |
 |---|---|
 | `IsSupported` | The connected client supports native MCP roots |
-| `Current` | Current effective roots for the session |
+| `Current` | Roots already resolved for the current scope — the session under `mcp serve`, this request on a reused `BuildMcpServerOptions()` result, where it is empty until `GetAsync` has been called. Under `mcp serve`, soft roots stand in while nothing native has been resolved, so an empty answer means the roots in force are empty rather than unresolved; call `GetAsync` when you need the failure itself |
 | `GetAsync()` | Refreshes native roots if supported |
 | `HasSoftRoots` | Fallback roots were initialized manually |
-| `SetSoftRoots()` / `ClearSoftRoots()` | Manage fallback roots for the current session |
+| `SetSoftRoots()` / `ClearSoftRoots()` | Manage fallback roots — per connection under `mcp serve`, per process when a host reuses one `BuildMcpServerOptions()` result |
 
 > **Why `IMcpClientRoots` is MCP-only:** Roots are session-scoped MCP data. They don't make sense as a generic `Repl.Core` concept for terminal or non-MCP execution. That's why the interface lives in `Repl.Mcp` and is injected only for MCP sessions.
 
 ## Session-aware routing
 
 Because `IMcpClientRoots` is injectable, you can use it in command handlers and in module presence predicates. That lets you expose tools only when a certain MCP capability or session state is available.
+
+> **On revision `2026-07-28` this stops varying by client.** Discovery there runs presence predicates
+> against fixed answers — capability checks read as supported, soft roots as absent, the root list as
+> empty — so whatever the predicate returns is what every client is offered. The predicate still runs
+> normally on the earlier revisions and outside MCP. See
+> [Conformance](mcp-conformance.md#what-this-means-when-you-write-commands).
 
 ```csharp
 using Repl.Mcp;
@@ -60,12 +78,14 @@ app.MapModule(
 
 > **How this works internally:** The MCP integration builds its documentation model and MCP surfaces using the current MCP session service provider, not just the app root service provider. This makes session-scoped services like `IMcpClientRoots` visible to module presence predicates, tool handlers, prompt handlers, and resource handlers.
 
-Typical session-aware conditions:
+Typical session-aware conditions, with what each becomes on `2026-07-28`:
 
-- Roots are available
-- Soft roots were initialized
-- The current tenant or login is known
-- A module should appear only for one agent session
+| Condition | On `2026-07-28` |
+| --- | --- |
+| Roots are available | Always true, so the module is advertised to every client |
+| Soft roots were initialized | Always false, so the module is advertised to none |
+| The current tenant or login is known | Unchanged — application state, not a per-connection MCP answer |
+| A module should appear only for one agent session | Not expressible: the advertised set must not vary per connection |
 
 ### MCP-only vs workspace-aware commands
 
@@ -78,6 +98,9 @@ app.MapModule(
 ```
 
 Use when: the command helps an agent initialize MCP session state or depends directly on MCP capabilities.
+
+This gate asks whether the service exists at all rather than what it answers, so it is unaffected by
+the fixed answers above: it stays true inside MCP on every revision and false outside it.
 
 **Pattern 2: Workspace-aware** — the command works both inside and outside MCP:
 
@@ -113,6 +136,11 @@ app.MapModule(
     new WorkspaceModule(),
     (IMcpClientRoots roots) => roots.IsSupported || roots.HasSoftRoots);
 
+// On revision 2026-07-28 both predicates above resolve to constants during discovery:
+// IsSupported answers true and HasSoftRoots answers false, so SoftRootsInitModule is
+// advertised to no client and WorkspaceModule to every client. Map the bootstrap module
+// unconditionally if you serve that revision — see docs/mcp-conformance.md.
+
 sealed class SoftRootsInitModule : IReplModule
 {
     public void Map(IReplMap app)
@@ -147,6 +175,12 @@ app.UseMcpServer(o =>
     o.DynamicToolCompatibility = DynamicToolCompatibilityMode.DiscoverAndCallShim;
 });
 ```
+
+> **Initialize-era only.** On `2026-07-28` the bootstrap does not run and the first `tools/list`
+> already returns the real catalog: that revision forbids the advertised set from changing as a side
+> effect of another request on the connection, which is exactly what the two-step bootstrap does. The
+> shim exists for clients that do not refresh on `list_changed`, and those are initialize-era clients.
+> See [Conformance](mcp-conformance.md#what-differs-by-revision).
 
 When enabled:
 
