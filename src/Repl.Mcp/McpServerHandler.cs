@@ -41,7 +41,6 @@ internal sealed class McpServerHandler
 	// Global routing version: bumped by InvalidateRouting for every session; each session's
 	// context caches the snapshot it built at a given version.
 	private SnapshotVersionState _snapshotState = new(Version: 1, LastVisibilityRetractionVersion: 0);
-	private McpSessionContext.SnapshotCacheEntry? _lastGoodSessionlessSnapshot;
 	// One handler can serve several concurrent sessions; everything session-owned lives in
 	// McpSessionContext, and this list (guarded by _attachLock) tracks every ACTIVE session
 	// for server-initiated notifications and subscription lifetime.
@@ -403,7 +402,6 @@ internal sealed class McpServerHandler
 			{
 				var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
 					.ConfigureAwait(false);
-				RememberSharedFallback(built, snapshotVersion, sessionless);
 				return built;
 			}
 			catch (OperationCanceledException)
@@ -415,14 +413,20 @@ internal sealed class McpServerHandler
 				ThrowSanitizedIfAClientAlreadyHasASchema(previousSnapshot);
 				throw;
 			}
-			catch (Exception) when (
-				ResolveFallback(context, sessionless) is not null)
+			catch (Exception) when (IsFallbackEligible(context, sessionless))
 			{
 				// Preserve availability for transient projection failures, but republish as stale so the
 				// next request retries without requiring another routing mutation. The entry keeps the
 				// version it was built at, because the retraction comparison reads it: a sentinel version
 				// would count as older than every retraction and take the fallback away after the first.
-				var fallback = ResolveFallback(context, sessionless)!;
+				// Re-read rather than reuse the filter's value: nothing holds the retraction watermark
+				// still between the two, and a retraction that lands in between must fail closed with the
+				// original failure rather than serve a catalog it has just withdrawn.
+				if (context.SnapshotCache is not { } fallback || !IsFallbackEligible(context, sessionless))
+				{
+					throw;
+				}
+
 				context.PublishStaleSnapshot(fallback.Snapshot, fallback.Version, fallback.Sessionless);
 				return fallback.Snapshot;
 			}
@@ -611,48 +615,17 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	// The fallback every modern connection shares, so a transient failure cannot leave two of them
-	// serving different sets. The initialize era keeps using each connection's own previous catalog.
-	private void RememberSharedFallback(McpGeneratedSnapshot built, long version, bool sessionless)
-	{
-		if (sessionless)
-		{
-			Volatile.Write(
-				ref _lastGoodSessionlessSnapshot,
-				new McpSessionContext.SnapshotCacheEntry(built, version, IsStale: false, Sessionless: true));
-		}
-	}
-
 	/// <summary>
-	/// What a failed projection may serve instead, or <see langword="null"/> when nothing may.
+	/// Whether a failed projection may serve this connection's previous catalog instead.
 	/// </summary>
 	/// <remarks>
-	/// Availability is preserved on both revisions, but not from the same place. The initialize era
-	/// falls back to the connection's own previous catalog, which is what that revision serves anyway.
-	/// On <c>2026-07-28</c> the advertised set must not vary per connection, and a per-session fallback
-	/// is precisely how it would: one connection would keep its previous catalog while another, whose
-	/// build succeeded or which connected later, serves the new one. Modern connections therefore share
-	/// one last-known-good catalog, so a transient failure moves all of them together or none.
-	/// <para>
-	/// Either way a catalog retracted for visibility is never re-served: that failure has to fail
-	/// closed, since the retraction is the whole point.
-	/// </para>
+	/// A catalog retracted for visibility is never re-served: that failure has to fail closed, since
+	/// the retraction is the whole point.
 	/// </remarks>
-	private McpSessionContext.SnapshotCacheEntry? ResolveFallback(McpSessionContext context, bool sessionless)
-	{
-		var candidate = sessionless
-			? Volatile.Read(ref _lastGoodSessionlessSnapshot)
-			: context.SnapshotCache;
-
-		if (candidate is null || candidate.Sessionless != sessionless)
-		{
-			return null;
-		}
-
-		return Volatile.Read(ref _snapshotState).LastVisibilityRetractionVersion <= candidate.Version
-			? candidate
-			: null;
-	}
+	private bool IsFallbackEligible(McpSessionContext context, bool sessionless) =>
+		context.SnapshotCache is { } candidate
+		&& candidate.Sessionless == sessionless
+		&& Volatile.Read(ref _snapshotState).LastVisibilityRetractionVersion <= candidate.Version;
 
 	internal sealed record SnapshotVersionState(
 		long Version,

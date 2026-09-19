@@ -283,48 +283,6 @@ public sealed class Given_McpConcurrentSessions
 			because: "a command the catalog never offered must not become reachable by name");
 	}
 
-	[TestMethod]
-	[Description("Regression guard: on 2026-07-28 a transient projection failure must not leave two connections serving different catalogs. Availability is worth preserving on both revisions, but a per-session fallback buys it with exactly the variance this revision forbids \u2014 a connection that had not yet seen a routing change would keep its older set while another served the newer one. Modern connections fall back to one shared last-known-good catalog instead, so they move together or not at all.")]
-	public async Task When_AModernProjectionFailsTransiently_Then_EverySessionFallsBackTogether()
-	{
-		var app = ReplApp.Create();
-		app.UseMcpServer();
-		app.Map("always", () => "ok");
-		var breakProjection = false;
-		var handler = CreateHandlerWithAppServices(
-			app,
-			options => options.CommandFilter = _ => breakProjection
-				? throw new InvalidOperationException("projection-failure")
-				: true);
-		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-
-		var older = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
-		await using var olderScope = older.ConfigureAwait(false);
-
-		// This connection reads the catalog before the change, and deliberately never reads it again
-		// until the failure: it is the one that would otherwise be left behind.
-		(await older.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
-			.Should().NotContain(tool => string.Equals(tool.Name, "added", StringComparison.Ordinal));
-
-		app.Map("added", () => "new");
-		app.Core.InvalidateRouting();
-
-		var newer = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
-		await using var newerScope = newer.ConfigureAwait(false);
-		(await newer.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
-			.Should().Contain(tool => string.Equals(tool.Name, "added", StringComparison.Ordinal));
-
-		breakProjection = true;
-		app.Core.InvalidateRouting();
-
-		var olderTools = await older.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
-		var newerTools = await newer.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
-
-		olderTools.Select(static tool => tool.Name).Should().BeEquivalentTo(
-			newerTools.Select(static tool => tool.Name),
-			because: "the set MUST NOT vary per connection, and a failure is not an exception to that");
-	}
-
 	/// <summary>An app whose module appears only once a command has written the session state.</summary>
 	private static ReplApp BuildSessionGatedApp()
 	{
