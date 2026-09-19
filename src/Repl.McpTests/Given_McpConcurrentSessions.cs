@@ -393,6 +393,45 @@ public sealed class Given_McpConcurrentSessions
 			.WithAnswer(name: "gate", type: "bool");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: global options are an application-global presence input, and a tool call must not change what they report. Launched as `--env prod mcp serve`, a module gated on the option is advertised; the tool call is a sub-invocation carrying no globals, and it used to reset the explicit-key set, so a predicate reading HasValue re-decided the module absent and the advertised tool came back as an unknown command. The value never moved — only the claim that it had been provided.")]
+	public async Task When_AModernClientCallsAToolGatedOnALaunchGlobal_Then_TheCommandRuns()
+	{
+		var app = ReplApp.Create();
+		app.Options(options => options.Parsing.AddGlobalOption<string>("env"));
+		app.UseMcpServer();
+		app.Map("always", () => "ok");
+		app.MapModule(new RootsGatedModule(), (IGlobalOptionsAccessor globals) => globals.HasValue("env"));
+
+		// Establish the launch baseline the way `--env prod mcp serve` does, without starting a
+		// second server: the handler below reads the same snapshot that run leaves behind.
+		await app.RunAsync(["--env", "prod", "always", "--no-logo"]).ConfigureAwait(false);
+
+		var handler = CreateHandlerWithAppServices(app);
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var session = await StartSessionAsync(handler, clientOptions: null, cts.Token).ConfigureAwait(false);
+		await using var scope = session.ConfigureAwait(false);
+		session.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
+
+		(await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
+			.Should().Contain(tool => string.Equals(tool.Name, "gated", StringComparison.Ordinal));
+
+		var result = await session.Client.CallToolAsync(
+			toolName: "gated",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
+			cancellationToken: cts.Token).ConfigureAwait(false);
+
+		var text = string.Join(
+			separator: ' ',
+			values: result.Content.OfType<TextContentBlock>().Select(static block => block.Text));
+
+		text.Should().Contain(
+			"roots-only",
+			because: "the launch global is still in effect, so the advertised command must still exist");
+		result.IsError.Should().BeFalse(
+			because: "a sub-invocation carrying no globals must not retract what the launch provided");
+	}
+
 	/// <summary>An app whose module appears only once a command has written the session state.</summary>
 	private static ReplApp BuildSessionGatedApp()
 	{

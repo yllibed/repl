@@ -335,7 +335,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken,
 		IServiceProvider? presenceServiceProvider = null)
 	{
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions); // volatile ref swap — safe under concurrent sub-invocations
+			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation); // volatile ref swap — safe under concurrent sub-invocations
 			if (!isSubInvocation)
 			{
 				_globalOptionsSnapshot.SetSessionBaseline();

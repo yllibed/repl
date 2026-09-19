@@ -68,7 +68,10 @@ whether the tool it was passed to exists.
 
 A predicate that injects an **application** service of its own is outside that set by construction:
 Repl cannot know which of your singletons is stable and which a command mutates. Gate on something
-that does not change, or keep the command mapped unconditionally and fail inside it.
+that does not change, or keep the command mapped unconditionally and fail inside it. Framework services
+stay Repl's responsibility: a predicate gating on a launch global — `--env prod mcp serve` — reads the
+same values, and the same `HasValue`, during a tool call as it did during discovery. A sub-invocation
+carries its own tokens but cannot retract what the session provided.
 
 What stays allowed is a set that **changes over time** for everyone: `InvalidateRouting()` is
 application-global, and the resulting `notifications/*/list_changed` reaches every connection with the
