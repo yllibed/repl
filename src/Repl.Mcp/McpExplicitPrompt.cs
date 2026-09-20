@@ -1,4 +1,4 @@
-using ModelContextProtocol;
+﻿using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -85,6 +85,25 @@ internal sealed class McpExplicitPrompt(
 			});
 		}
 
-		return new GetPromptResult { Messages = messages, Description = result.Description };
+		return WithMessages(result, messages);
 	}
+
+	/// <summary>Carries the result the handler produced onto an extended message list.</summary>
+	/// <remarks>
+	/// Rebuilt rather than mutated, because a handler is free to hand back an instance it reuses
+	/// across calls — appending to that one would make the notice permanent, and cumulative. Rebuilding
+	/// in turn means carrying every field the application set: a rebuild that names them by hand drops
+	/// the ones it forgets in silence, which is how <c>_meta</c> stopped reaching the client.
+	/// <see cref="GetPromptResult"/> is sealed, so these four are the whole surface, and
+	/// <c>Given_McpUserFeedback.When_TheSdkPromptResultCarriesAField_Then_TheWrapperCopiesIt</c> goes
+	/// red if the SDK grows a fifth.
+	/// </remarks>
+	private static GetPromptResult WithMessages(GetPromptResult result, IList<PromptMessage> messages) =>
+		new()
+		{
+			Messages = messages,
+			Description = result.Description,
+			Meta = result.Meta,
+			ResultType = result.ResultType,
+		};
 }

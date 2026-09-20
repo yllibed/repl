@@ -1,9 +1,10 @@
-using Repl.Parameters;
+﻿using Repl.Parameters;
 using Microsoft.Extensions.DependencyInjection;
 using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Reflection;
 using System.Globalization;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -823,6 +824,81 @@ public sealed class Given_McpUserFeedback
 				"prompt-notice",
 				because: "a modern request that declared no log level has nowhere else to receive it");
 		}
+	}
+
+	[TestMethod]
+	[Description("Regression guard: appending feedback to an explicitly registered prompt's result must not cost the rest of it. The wrapper rebuilds the result to extend its messages, and a rebuild that names fields by hand drops the ones it forgot without a trace — here _meta, which the handler set and the client was meant to read.")]
+	public async Task When_AnExplicitPromptReportsBesideMetadata_Then_TheWholeResultSurvives()
+	{
+		var session = await McpTestFixture.CreateAsync(
+			_ => { },
+			options => options.Prompt(
+				"brief",
+				static async Task<GetPromptResult> (IMcpFeedback feedback, CancellationToken cancellationToken) =>
+				{
+					await feedback.SendMessageAsync(
+						McpMessageLevel.Warning,
+						"prompt-notice",
+						cancellationToken).ConfigureAwait(false);
+
+					return new GetPromptResult
+					{
+						Description = "kept-description",
+						Meta = new JsonObject { ["sentinel"] = "kept" },
+						Messages =
+						[
+							new PromptMessage
+							{
+								Role = Role.User,
+								Content = new TextContentBlock { Text = "drafted" },
+							},
+						],
+					};
+				})).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			// The precondition the rebuild depends on: without a declared log level there is no
+			// notification channel, so the notice has to ride in the result and the wrapper runs.
+			session.Client.NegotiatedProtocolVersion.Should().Be(McpProtocolRevisions.Sessionless);
+
+			var result = await session.Client.GetPromptAsync(
+				"brief",
+				arguments: null,
+				cancellationToken: CancellationToken.None).ConfigureAwait(false);
+
+			var text = string.Join(
+				separator: '\n',
+				values: result.Messages.Select(static m => (m.Content as TextContentBlock)?.Text ?? string.Empty));
+
+			text.Should().Contain("drafted", because: "the payload the handler produced comes first");
+			text.Should().Contain("prompt-notice", because: "the notice rides after it");
+
+			result.Description.Should().Be(
+				"kept-description",
+				because: "the handler described its own prompt");
+			// Read the node out before asserting: a null-conditional chain short-circuits Should() too,
+			// and the SDK stamps its own serverInfo entry, so a non-null _meta proves nothing here.
+			var sentinel = result.Meta?["sentinel"]?.GetValue<string>();
+			sentinel.Should().Be(
+				"kept",
+				because: "only the wrapper stood between the metadata the handler set and the client");
+		}
+	}
+
+	[TestMethod]
+	[Description("Contract guard on the SDK surface rather than on one result: McpExplicitPrompt rebuilds a GetPromptResult field by field, so a field a later SDK adds would be dropped from every prompt result carrying feedback, and nothing would say so. When this goes red after an SDK bump, copy the new field in the wrapper before widening the list here.")]
+	public void When_TheSdkPromptResultCarriesAField_Then_TheWrapperCopiesIt()
+	{
+		var carried = typeof(GetPromptResult)
+			.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+			.Where(static property => property.CanWrite)
+			.Select(static property => property.Name)
+			.Order(StringComparer.Ordinal);
+
+		carried.Should().Equal(
+			["Description", "Messages", "Meta", "ResultType"],
+			because: "McpExplicitPrompt.GetAsync copies exactly these when it appends feedback");
 	}
 
 	[TestMethod]
