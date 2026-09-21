@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Repl.Tests;
@@ -1000,6 +1000,53 @@ public sealed class Given_ExitCodes
 		writer.ToString().Should().Contain(
 			"setter-cause-detail",
 			because: "reflection's own wrapper is not the diagnostic, it is what hides it");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: application code failing while it supplies a parameter is the application failing, not the caller's input being invalid, and the two must not render alike. The marker wrapping those failures derives from InvalidOperationException — the one type this pipeline renders as a validation result — so marking them quietly moved every service factory, options-group constructor and property setter out of execution_error and into the bucket that tells a caller they typed something wrong.")]
+	public async Task When_ADependencyFactoryThrows_Then_TheOutcomeIsAnExecutionError()
+	{
+		var recorder = new OutcomeRecorder();
+		var sut = ReplApp.Create(services => services.AddSingleton<IFailingDependency>(
+			implementationFactory: static _ => throw new IOException("factory-cause-detail")));
+		sut.Options(options =>
+		{
+			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
+			options.Output.BannerEnabled = false;
+			options.ExitCodes.Resolver = recorder.Record;
+		});
+		sut.Map("work", (IFailingDependency dependency) => dependency.ToString() ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out _);
+		await sut.RunAsync(["work"], cts.Token).ConfigureAwait(false);
+
+		// Not IOE-derived on purpose: an InvalidOperationException from a factory renders as a
+		// validation result on either side of the marker, so it cannot tell the two apart.
+		var result = recorder.Last!.Result.Should().BeAssignableTo<IReplResult>().Subject;
+		result.Kind.Should().Be(
+			"error",
+			because: "the caller's input was never in question — the application's own factory threw");
+		result.Code.Should().Be("execution_error");
+	}
+
+	[TestMethod]
+	[Description("The same rule through reflection: an options-group property setter that throws reaches the binder wrapped in reflection's own exception, which classified as an execution error before the marker existed. Marking it moved it to validation, so two shapes of one cause — a factory and a setter — stopped sharing one classification.")]
+	public async Task When_AnOptionsGroupSetterThrows_Then_TheOutcomeIsAnExecutionError()
+	{
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder);
+		sut.Map("work", (FailingOptions options) => options.Label ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out _);
+		await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+		var result = recorder.Last!.Result.Should().BeAssignableTo<IReplResult>().Subject;
+		result.Kind.Should().Be(
+			"error",
+			because: "reflection carrying the failure does not make it the caller's mistake");
+		result.Code.Should().Be("execution_error");
 	}
 
 	[Repl.Parameters.ReplOptionsGroup]

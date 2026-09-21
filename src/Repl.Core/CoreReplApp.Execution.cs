@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -908,6 +908,17 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		{
 			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			throw;
+		}
+		// Ahead of the InvalidOperationException arm below, which the marker derives from. A validation
+		// result says the caller's input was wrong; this one says application code threw while supplying
+		// a parameter, and the caller has no way to act on it. Classified by WHO failed rather than by
+		// what type they threw, so a factory, an options-group constructor and a property setter answer
+		// alike — the binder's own diagnostics about bad input keep the arm below to themselves.
+		catch (ReplBindingCallbackException ex)
+		{
+			return (await RenderFailureAsync(
+					Results.Error("execution_error", DescribeLocally(ex)), ex, bound, globalOptions, serviceProvider, cancellationToken)
+				.ConfigureAwait(false), false);
 		}
 		catch (InvalidOperationException ex)
 		{
