@@ -662,4 +662,140 @@ public sealed class Given_SessionScopedServices
 		var waitForCleanup = async () => await host.WaitForDeferredCleanupAsync().ConfigureAwait(false);
 		await waitForCleanup.Should().NotThrowAsync().ConfigureAwait(false);
 	}
+
+	private sealed class ThrowingAsyncScopedProbe : IAsyncDisposable
+	{
+		public ValueTask DisposeAsync() => throw new InvalidOperationException("dispose-boom");
+	}
+
+	[TestMethod]
+	[Description("The command gate must be released even when a command's own deferred scope disposal throws: DisposeAsync marks the session disposed while command A holds the gate, so releasing A's scope becomes A's own responsibility in its finally. If a Scoped IAsyncDisposable throws there, the gate must still be released — otherwise command B, already queued behind A, waits forever: the CommandTimeout-linked token does not exist yet at that point, it is created only once RunWithinGateAsync is reached.")]
+	public async Task When_DeferredScopeDisposalFails_Then_TheCommandGateIsStillReleased()
+	{
+		var aStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var releaseA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create(services => services.AddScoped<ThrowingAsyncScopedProbe>())
+				.UseDefaultInteractive();
+			app.Map("a", async (ThrowingAsyncScopedProbe _) =>
+			{
+				aStarted.TrySetResult();
+#pragma warning disable VSTHRD003
+				await releaseA.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+				return "a-done";
+			});
+			app.Map("b", () => "b-done");
+			return app;
+		}, options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var session = await host.OpenSessionAsync();
+		var runningA = session.RunCommandAsync("a --no-logo").AsTask();
+		await aStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+		// Queues behind A on the command gate.
+		var runningB = session.RunCommandAsync("b --no-logo").AsTask();
+
+		// Disposes the session while A holds the gate — defers releasing A's scope to A's own finally.
+		var disposeSession = session.DisposeAsync().AsTask();
+
+		releaseA.TrySetResult();
+
+		// VSTHRD003: both tasks were started above, on this same thread, before this point.
+#pragma warning disable VSTHRD003
+		var actA = async () => await runningA.ConfigureAwait(false);
+		await actA.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("dispose-boom")
+			.ConfigureAwait(false);
+
+		// B must not hang on the gate A held — it must be released and B must observe disposal instead.
+		var actB = async () => await runningB.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		await actB.Should().ThrowAsync<ObjectDisposedException>().ConfigureAwait(false);
+
+		await disposeSession.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Narrowing the open-vs-dispose race to a single locked check-and-register step is not enough on its own: the rejected-open cleanup it guards must also refuse to dispose an app another, still-registered session already owns. Reproduces autocarl's exact shape — session A holds a live command on a shared ReplApp while session B is still opening (blocked inside the app factory) when the host is disposed; B's rejected open must not tear the shared app root out from under A's in-flight command.")]
+	public async Task When_TheHostIsDisposedWhileAnotherOpenIsRejected_Then_ASharedAppRootSurvivesForTheOtherSession()
+	{
+		var probe = new SingletonProbe();
+		var app = ReplApp.Create(services => services.AddSingleton(_ => probe)).UseDefaultInteractive();
+		var aStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var releaseA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		app.Map("block", async (SingletonProbe before) =>
+		{
+			aStarted.TrySetResult();
+#pragma warning disable VSTHRD003
+			await releaseA.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+			// Resolved after the host disposal call below has already returned: proves the shared app
+			// root was not disposed out from under this still-running command by B's rejected open.
+			return before.Disposed.ToString();
+		});
+
+		var bFactoryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var releaseBFactory = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var factoryCalls = 0;
+		var host = ReplTestHost.Create(
+			() =>
+			{
+				if (Interlocked.Increment(ref factoryCalls) == 2)
+				{
+					bFactoryEntered.TrySetResult();
+#pragma warning disable VSTHRD002
+					releaseBFactory.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+				}
+
+				return app;
+			},
+			options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var sessionA = await host.OpenSessionAsync();
+		var runningA = sessionA.RunCommandAsync("block --no-logo").AsTask();
+		await aStarted.Task.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+		// VSTHRD003: the task is started right here — the factory blocks the pool thread Task.Run gives
+		// it, so this test drives release/disposal from its own thread while the open is in flight.
+#pragma warning disable VSTHRD003
+		var openingB = Task.Run(async () => await host.OpenSessionAsync().ConfigureAwait(false));
+#pragma warning restore VSTHRD003
+		await bFactoryEntered.Task.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+		// A's command is still running, so the host schedules the shared app's disposal as deferred
+		// instead of performing it now — this call must return without waiting for A.
+		await host.DisposeAsync().ConfigureAwait(false);
+
+		// B's StartAsync now resumes and reaches the disposed re-check with its own new scope on the
+		// SAME shared app: the fix must see A's app already registered and leave it alone.
+		releaseBFactory.TrySetResult();
+#pragma warning disable VSTHRD003
+		var actB = async () => await openingB.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		await actB.Should().ThrowAsync<ObjectDisposedException>().ConfigureAwait(false);
+
+		await AssertSharedAppSurvivesForAAndIsEventuallyReleasedAsync(host, probe, releaseA, runningA).ConfigureAwait(false);
+	}
+
+	private static async Task AssertSharedAppSurvivesForAAndIsEventuallyReleasedAsync(
+		ReplTestHost host,
+		SingletonProbe probe,
+		TaskCompletionSource releaseA,
+		Task<CommandExecution> runningA)
+	{
+		releaseA.TrySetResult();
+		var completedA = await runningA.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+		completedA.ExitCode.Should().Be(
+			0,
+			"the shared app root must still be alive for A's in-flight command after B's rejected open: {0}",
+			completedA.OutputText);
+
+		// The app is still expected to be released eventually, once A's own deferred scope release lets
+		// the host's originally scheduled cleanup proceed — not leaked just because B backed off.
+		await host.WaitForDeferredCleanupAsync().WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+		probe.Disposed.Should().BeTrue("the shared app root must still be released once every session using it is done");
+	}
 }

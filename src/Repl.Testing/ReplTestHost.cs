@@ -30,6 +30,13 @@ public sealed class ReplTestHost : IAsyncDisposable
 	// throwing — is observable through WaitForDeferredCleanupAsync instead of becoming an unobserved
 	// task exception, since DisposeAsync itself has already returned success by the time these run.
 	private readonly ConcurrentBag<Task> _deferredAppDisposals = new();
+	// Guards _disposed together with every registration into _sessions/_apps/_pendingServiceDisposals, so
+	// OpenSessionAsync and DisposeAsync can never interleave: either an open's registrations all land
+	// before DisposeAsync's own drain (below) and are then part of what it sees, or DisposeAsync's flip
+	// runs first and the open always takes the rejection branch instead — closing the race a post-hoc
+	// re-check of _disposed alone could only ever narrow. Held only across synchronous dictionary/field
+	// operations, never across an await.
+	private readonly Lock _gate = new();
 	private bool _disposed;
 
 	private ReplTestHost(Func<ReplApp> appFactory, ReplScenarioOptions options)
@@ -86,30 +93,59 @@ public sealed class ReplTestHost : IAsyncDisposable
 			_options,
 			cancellationToken).ConfigureAwait(false);
 
-		// Re-checked after StartAsync ran — it and the factory above can both take arbitrarily long — so
-		// a host disposed while this was in flight cannot let the app and session just produced escape
-		// untracked past that disposal. Narrows the race rather than closing it outright: a concurrent
-		// DisposeAsync could still finish its own iteration in the gap between this check and the
-		// registrations below, though that gap is now a few in-memory operations instead of an
-		// arbitrarily long factory call.
-		if (_disposed)
+		// The disposed check and every registration below run as one atomic step under _gate — the same
+		// lock DisposeAsync's own drain takes — so StartAsync running arbitrarily long above can no longer
+		// let a disposed-in-the-meantime host register (or half-register) this app and session.
+		bool disposed;
+		bool duplicateSessionId = false;
+		lock (_gate)
 		{
-			await handle.DisposeAsync().ConfigureAwait(false);
-			await DisposeAppAsync(app).ConfigureAwait(false);
-			ThrowIfDisposed();
+			disposed = _disposed;
+			if (!disposed)
+			{
+				_apps.TryAdd(app, 0);
+				// Recorded regardless of what happens to the handle afterward — including a caller
+				// disposing it directly, which would otherwise remove it from _sessions before its
+				// deferred scope release runs.
+				_pendingServiceDisposals.GetOrAdd(app, static _ => new ConcurrentQueue<Task>())
+					.Enqueue(handle.ServicesDisposed);
+				duplicateSessionId = !_sessions.TryAdd(handle.SessionId, handle);
+			}
 		}
 
-		_apps.TryAdd(app, 0);
-		// Recorded regardless of what happens to the handle afterward — including a caller disposing it
-		// directly, which would otherwise remove it from _sessions before its deferred scope release runs.
-		_pendingServiceDisposals.GetOrAdd(app, static _ => new ConcurrentQueue<Task>()).Enqueue(handle.ServicesDisposed);
-		if (!_sessions.TryAdd(handle.SessionId, handle))
+		if (disposed)
+		{
+			await RejectOpenAsync(app, handle).ConfigureAwait(false);
+		}
+
+		if (duplicateSessionId)
 		{
 			await handle.DisposeAsync().ConfigureAwait(false);
 			throw new InvalidOperationException($"A session with id '{handle.SessionId}' already exists.");
 		}
 
 		return handle;
+	}
+
+	/// <summary>
+	/// Cleans up a session and its app after <see cref="OpenSessionAsync"/> observed the host already
+	/// disposed, then rethrows as <see cref="ObjectDisposedException"/>.
+	/// </summary>
+	private async ValueTask RejectOpenAsync(ReplApp app, ReplSessionHandle handle)
+	{
+		await handle.DisposeAsync().ConfigureAwait(false);
+		// _apps.TryAdd claims disposal ownership rather than merely checking membership: an app no earlier
+		// session ever registered is this rejected open's own responsibility, but one already registered —
+		// shared with a session DisposeAsync's own drain already knows about — must be left alone. _apps is
+		// never cleared (see DisposeAsync), so this claim stays meaningful for the host's whole remaining
+		// (disposed) lifetime, and disposing it here too would tear it out from under that other session's
+		// still-running command.
+		if (_apps.TryAdd(app, 0))
+		{
+			await DisposeAppAsync(app).ConfigureAwait(false);
+		}
+
+		ThrowIfDisposed();
 	}
 
 	/// <summary>
@@ -156,19 +192,31 @@ public sealed class ReplTestHost : IAsyncDisposable
 	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
-		if (_disposed)
+		ReplSessionHandle[] sessionsSnapshot;
+		lock (_gate)
 		{
-			return;
+			if (_disposed)
+			{
+				return;
+			}
+
+			_disposed = true;
+			sessionsSnapshot = [.. _sessions.Values];
 		}
 
-		_disposed = true;
-		foreach (var session in _sessions.Values)
+		foreach (var session in sessionsSnapshot)
 		{
 			await session.DisposeAsync().ConfigureAwait(false);
 		}
 
 		_sessions.Clear();
 
+		// _apps is read here but deliberately never cleared (nor is _pendingServiceDisposals): a
+		// concurrent OpenSessionAsync whose own _gate section ran before the flip above is guaranteed by
+		// that same lock to have finished registering into both before this line runs, so the live read
+		// below already sees it. One that instead observes _disposed == true relies on _apps.TryAdd still
+		// reporting "already present" for an app registered here — clearing it would make that claim-check
+		// always succeed, racing this method's own disposal of the same app. See OpenSessionAsync.
 		foreach (var app in _apps.Keys)
 		{
 			var pending = _pendingServiceDisposals.TryGetValue(app, out var queue)
@@ -190,9 +238,6 @@ public sealed class ReplTestHost : IAsyncDisposable
 
 			await DisposeAppAsync(app).ConfigureAwait(false);
 		}
-
-		_apps.Clear();
-		_pendingServiceDisposals.Clear();
 	}
 
 	/// <summary>

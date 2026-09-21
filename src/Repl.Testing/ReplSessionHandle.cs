@@ -129,16 +129,25 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		finally
 		{
 			var after = Interlocked.Add(ref _serviceLifecycle, -CommandInFlight);
-			if ((after & DisposalRequested) != 0)
+			try
 			{
-				// DisposeAsync ran while this command held the gate and deferred to it rather than
-				// disposing _services out from under a run in progress. Finish that disposal now, still
-				// inside the gate, so a caller queued behind this one hits the re-check above instead of
-				// a provider that is only half torn down.
-				await DisposeServicesOnceAsync().ConfigureAwait(false);
+				if ((after & DisposalRequested) != 0)
+				{
+					// DisposeAsync ran while this command held the gate and deferred to it rather than
+					// disposing _services out from under a run in progress. Finish that disposal now,
+					// still inside the gate, so a caller queued behind this one hits the re-check above
+					// instead of a provider that is only half torn down.
+					await DisposeServicesOnceAsync().ConfigureAwait(false);
+				}
 			}
-
-			_commandGate.Release();
+			finally
+			{
+				// In its own inner finally: a scoped disposable throwing from DisposeServicesOnceAsync
+				// must not skip this. The gate has no timeout of its own — CommandTimeout only links a
+				// token once RunWithinGateAsync is reached — so a queued caller left waiting here would
+				// hang until the process ends rather than reach the in-gate ThrowIfDisposed re-check.
+				_commandGate.Release();
+			}
 		}
 	}
 
