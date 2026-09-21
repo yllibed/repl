@@ -681,7 +681,7 @@ public sealed class ReplApp : IReplApp
 			}
 
 			// The session overlay composes on top of the session scope, so overlay lookups that fall
-			// through to the caller provider observe this session Scoped instances.
+			// through to the caller provider observe this session's Scoped instances.
 			return await RunInSessionScopeAsync(
 				services,
 				runOptions.SessionScope,
@@ -690,6 +690,7 @@ public sealed class ReplApp : IReplApp
 				cancellationToken).ConfigureAwait(false);
 		}
 	}
+
 	/// <summary>
 	/// Runs one session inside its own DI scope, so Scoped services resolve per session and scoped
 	/// disposables are released when the session ends.
@@ -712,6 +713,12 @@ public sealed class ReplApp : IReplApp
 		var resolved = sessionScope ?? SessionScopeBehavior.PerRun;
 		if (resolved is not (SessionScopeBehavior.PerRun or SessionScopeBehavior.CallerOwned))
 		{
+			// ParamName names this private helper's own parameter, not ReplRunOptions.SessionScope: MA0015
+			// rejects nameof-ing a symbol that is not actually a parameter of the enclosing method, and
+			// resolving that properly means hoisting this check into a helper that takes ReplRunOptions
+			// directly — which ripples into RunHostedLifecycleOutcomeAsync's signature and all three call
+			// sites for a ParamName mismatch nothing currently depends on. The message text already
+			// names the public property correctly.
 			throw new ArgumentOutOfRangeException(
 				nameof(sessionScope),
 				resolved,
@@ -1076,7 +1083,7 @@ public sealed class ReplApp : IReplApp
 		services.AddReplLogging();
 		services.TryAddSingleton(core);
 		services.TryAddSingleton<ICoreReplApp>(core);
-		// Scoped, not singleton: Run* opens one scope per session, so this is the framework own
+		// Scoped, not singleton: Run* opens one scope per session, so this is the framework's own
 		// per-session service and a second session no longer reads what the first one stored. With a
 		// provider that cannot scope, it resolves from the root exactly as it did before.
 		services.TryAddScoped<IReplSessionState, InMemoryReplSessionState>();

@@ -50,10 +50,6 @@ public sealed class Given_McpSessionScopes
 
 	private sealed class RecordingSessionState : IReplSessionState
 	{
-		public static int Constructed;
-
-		public RecordingSessionState() => Interlocked.Increment(ref Constructed);
-
 		private readonly Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
 
 		public bool TryGet<T>(string key, out T? value)
@@ -257,7 +253,6 @@ public sealed class Given_McpSessionScopes
 	[Description("A consumer who registers their own IReplSessionState must get it on MCP too. Seeding the session's override map with a framework instance would win unconditionally over the container, so the one transport where per-connection state matters most would silently run a different implementation from the one the app composed.")]
 	public async Task When_AConsumerRegistersItsOwnSessionState_Then_McpResolvesIt()
 	{
-		RecordingSessionState.Constructed = 0;
 		var app = ReplApp.Create(services => services.AddScoped<IReplSessionState, RecordingSessionState>());
 		app.UseMcpServer();
 		app.Map("kind", (IReplSessionState state) => state.GetType().Name);
@@ -269,8 +264,9 @@ public sealed class Given_McpSessionScopes
 
 		var reported = await CallAsync(session.Client, "kind", token: cts.Token).ConfigureAwait(false);
 
-		reported.Should().Contain(nameof(RecordingSessionState));
-		RecordingSessionState.Constructed.Should().BeGreaterThan(0);
+		reported.Should().Contain(
+			nameof(RecordingSessionState),
+			"a framework instance seeded in the override map would win unconditionally over the container");
 	}
 
 	[TestMethod]

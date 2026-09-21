@@ -212,8 +212,7 @@ internal sealed partial class McpToolAdapter
 
 		await McpClientRootsService.PrimeFromServicesAsync(_services, ct).ConfigureAwait(false);
 
-		var outputWriter = new StringWriter();
-		var errorWriter = captureCommandOutput ? outputWriter : new StringWriter();
+		var capture = CommandOutputCapture.Create(captureCommandOutput);
 		var feedback = _services.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
 		var interactionChannel = new McpInteractionChannel(
 			prefills, _options.InteractivityMode, server, progressToken, feedback);
@@ -232,12 +231,11 @@ internal sealed partial class McpToolAdapter
 		var effectiveTokens = new List<string>(tokens.Count + 1) { $"--output:{ForcedOutputFormat}" };
 		effectiveTokens.AddRange(tokens);
 
-		var completed = await RunSubInvocationAsync(
-				invocableApp, effectiveTokens, mcpServices, outputWriter, errorWriter, captureCommandOutput, ct)
+		var completed = await RunSubInvocationAsync(invocableApp, effectiveTokens, mcpServices, capture, ct)
 			.ConfigureAwait(false);
 
-		var output = outputWriter.ToString().Trim();
-		var error = captureCommandOutput ? string.Empty : errorWriter.ToString().Trim();
+		var output = capture.Output.ToString().Trim();
+		var error = capture.CaptureCommandOutput ? string.Empty : capture.Error.ToString().Trim();
 		var undelivered = undeliveredScope?.Messages.Drain() ?? [];
 		return new McpPipelineInvocation(
 			output, error, completed.ExitCode, completed.Kind, completed.Failure, undelivered);
@@ -248,22 +246,20 @@ internal sealed partial class McpToolAdapter
 		ISubInvocableReplApp invocableApp,
 		List<string> effectiveTokens,
 		IServiceProvider mcpServices,
-		StringWriter outputWriter,
-		StringWriter errorWriter,
-		bool captureCommandOutput,
+		CommandOutputCapture capture,
 		CancellationToken ct)
 	{
 		var inputReader = new StringReader(string.Empty);
 		// Command-backed resources expose the rendered return value as the resource body.
 		// Low-level handler writes to IReplIoContext.Output/Error are side-channel output, not resource content.
-		var commandOutput = captureCommandOutput ? outputWriter : TextWriter.Null;
+		var commandOutput = capture.CaptureCommandOutput ? capture.Output : TextWriter.Null;
 		using (ReplSessionIO.SetSession(
-			output: outputWriter,
+			output: capture.Output,
 			input: inputReader,
 			ansiMode: Rendering.AnsiMode.Never,
 			sessionId: $"mcp-{Guid.NewGuid():N}",
 			commandOutput: commandOutput,
-			error: errorWriter,
+			error: capture.Error,
 			isHostedSession: true,
 			// Minted for this call alone; inference would read it as a lifetime we own and never release.
 			removeSessionOnDispose: true))
@@ -293,6 +289,20 @@ internal sealed partial class McpToolAdapter
 		ReplExecutionOutcomeKind Kind,
 		Exception? Failure,
 		IReadOnlyList<string> UndeliveredMessages);
+
+	/// <summary>
+	/// The two writers one pipeline run captures, and whether they are the same one. Bundled instead of
+	/// three positional parameters — two of them adjacent <see cref="StringWriter"/>s — because a
+	/// transposed pair compiles silently and a bare bool flag is unreadable at a call site.
+	/// </summary>
+	private readonly record struct CommandOutputCapture(StringWriter Output, StringWriter Error, bool CaptureCommandOutput)
+	{
+		public static CommandOutputCapture Create(bool captureCommandOutput)
+		{
+			var output = new StringWriter();
+			return new CommandOutputCapture(output, captureCommandOutput ? output : new StringWriter(), captureCommandOutput);
+		}
+	}
 
 	/// <summary>
 	/// What a failed run is allowed to tell the client.

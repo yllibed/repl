@@ -87,7 +87,7 @@ public sealed class Given_SessionScopedServices
 	{
 		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
 		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
-		var scopeFactory = (IServiceScopeFactory)sut.Services.GetService(typeof(IServiceScopeFactory))!;
+		var scopeFactory = sut.Services.GetRequiredService<IServiceScopeFactory>();
 		var callerScope = scopeFactory.CreateAsyncScope();
 		await using (callerScope.ConfigureAwait(false))
 		{
@@ -172,7 +172,7 @@ public sealed class Given_SessionScopedServices
 	}
 
 	[TestMethod]
-	[Description("Guards the scope boundary on the hosted-service path: the run pipeline is wrapped in the session scope but HostedServiceLifecycleCoordinator.StartAsync is not, so a hosted service resolves from the unscoped provider and must NOT see the command Scoped instance. Placing the scope around the whole hosted branch instead would tie app-level services to a session lifetime.")]
+	[Description("Guards the scope boundary on the hosted-service path: the run pipeline is wrapped in the session scope but HostedServiceLifecycleCoordinator.StartAsync is not, so a hosted service resolves from the unscoped provider and must NOT see the command's Scoped instance. Placing the scope around the whole hosted branch instead would tie app-level services to a session lifetime.")]
 	public void When_HostedServicesRun_Then_TheyStartOutsideTheSessionScope()
 	{
 		var observed = new List<Guid>();
@@ -305,7 +305,7 @@ public sealed class Given_SessionScopedServices
 	}
 
 	[TestMethod]
-	[Description("Guards the framework own per-session service: IReplSessionState is documented as a per-session state container, so two sessions of one app must not read each other writes. Registered as a singleton it was one process-wide bag shared by every concurrent Telnet, WebSocket and MCP client.")]
+	[Description("Guards the framework's own per-session service: IReplSessionState is documented as a per-session state container, so two sessions of one app must not read each other's writes. Registered as a singleton it was one process-wide bag shared by every concurrent Telnet, WebSocket and MCP client.")]
 	public void When_TwoRunsShareOneApp_Then_SessionStateIsNotShared()
 	{
 		var sut = ReplApp.Create();
@@ -321,7 +321,7 @@ public sealed class Given_SessionScopedServices
 
 		write.ExitCode.Should().Be(0, "run output was: {0}", write.Text);
 		read.ExitCode.Should().Be(0, "run output was: {0}", read.Text);
-		read.Text.Trim().Should().Be("(none)", "a later session must not read an earlier session state");
+		read.Text.Trim().Should().Be("(none)", "a later session must not read an earlier session's state");
 	}
 
 	private sealed class SessionStateCapturingSingleton(IReplSessionState state)
