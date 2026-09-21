@@ -221,10 +221,7 @@ internal sealed partial class McpToolAdapter
 			prefills, _options.InteractivityMode, server, progressToken, feedback);
 		var mcpServices = new McpServiceProviderOverlay(
 			_services,
-			new Dictionary<Type, object>
-			{
-				[typeof(IReplInteractionChannel)] = interactionChannel,
-			});
+			new Dictionary<Type, object> { [typeof(IReplInteractionChannel)] = interactionChannel });
 		var feedbackService = _services.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
 		using var feedbackScope = feedbackService?.PushProgressToken(progressToken);
 		// Messages the client cannot receive as notifications ride back in the tool result instead,
@@ -245,7 +242,9 @@ internal sealed partial class McpToolAdapter
 			sessionId: $"mcp-{Guid.NewGuid():N}",
 			commandOutput: commandOutput,
 			error: errorWriter,
-			isHostedSession: true))
+			isHostedSession: true,
+			// Minted for this call alone; inference would read it as a lifetime we own and never release.
+			removeSessionOnDispose: true))
 		{
 			ReplSessionIO.IsProgrammatic = true;
 			using var invocationContract = ReplSessionIO.PushProgrammaticInvocationContract(ProgrammaticInvocationContractVersion);

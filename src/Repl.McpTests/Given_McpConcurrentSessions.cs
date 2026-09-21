@@ -1,4 +1,4 @@
-using System.IO.Pipelines;
+﻿using System.IO.Pipelines;
 using System.Text;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
@@ -430,6 +430,35 @@ public sealed class Given_McpConcurrentSessions
 			because: "the launch global is still in effect, so the advertised command must still exist");
 		result.IsError.Should().BeFalse(
 			because: "a sub-invocation carrying no globals must not retract what the launch provided");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: an invocation must release the session registration it minted. Every MCP invocation opens a session under a fresh identifier so the command sees isolated I/O, and ReplSessionIO removes a registration on dispose only when the caller supplied no identifier — the flag means the caller owns the lifetime. That is right for a transport host, which removes its own; here the identifier is a throwaway, so every tool call, resource read and prompt get left an entry in a process-wide dictionary that nothing would ever remove, on the one path built to run as a long-lived server.")]
+	public async Task When_AToolCallCompletes_Then_ItsSessionRegistrationIsReleased()
+	{
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		string? observed = null;
+		var session = await McpTestFixture.CreateAsync(
+			app => app.Map("work", () =>
+			{
+				observed = ReplSessionIO.CurrentSessionId;
+				return "ok";
+			})).ConfigureAwait(false);
+
+		await using (session.ConfigureAwait(false))
+		{
+			await session.Client.CallToolAsync(
+				toolName: "work",
+				arguments: new Dictionary<string, object?>(StringComparer.Ordinal),
+				cancellationToken: cts.Token).ConfigureAwait(false);
+		}
+
+		// Read from inside the command: the identifier is minted per invocation and never surfaces.
+		var sessionId = observed;
+		sessionId.Should().NotBeNullOrWhiteSpace(
+			because: "the command runs inside the session whose lifetime is under test");
+		ReplSessionIO.TryGetSession(sessionId ?? string.Empty, out _).Should().BeFalse(
+			because: "the invocation that minted the identifier is the only thing that can release it");
 	}
 
 	/// <summary>An app whose module appears only once a command has written the session state.</summary>
