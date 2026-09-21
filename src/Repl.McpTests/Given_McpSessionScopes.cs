@@ -1,6 +1,7 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using Repl.Mcp;
 
 namespace Repl.McpTests;
@@ -230,6 +231,50 @@ public sealed class Given_McpSessionScopes
 		reported.Should().Contain(nameof(RecordingSessionState));
 		RecordingSessionState.Constructed.Should().BeGreaterThan(0);
 	}
+
+	[TestMethod]
+	[Description("Pins the documented carve-out on the reusable BuildMcpServerOptions() path: that server has no connection row, so its one handler-lifetime context — and therefore one DI scope — is shared by every connection it serves, exactly as its native roots cache and soft roots are. Stated here so it stays a known limitation rather than becoming a silent cross-client leak.")]
+	public async Task When_ConnectionsShareAReusableOptionsResult_Then_TheyShareOneScope()
+	{
+		var app = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		app.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		var options = app.BuildMcpServerOptions();
+
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var first = await StartSharedAsync(options, cts.Token).ConfigureAwait(false);
+		await using var firstScope = first.ConfigureAwait(false);
+		var second = await StartSharedAsync(options, cts.Token).ConfigureAwait(false);
+		await using var secondScope = second.ConfigureAwait(false);
+
+		var fromFirst = await CallAsync(first.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+		var fromSecond = await CallAsync(second.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+
+		fromFirst.Should().NotBeNullOrWhiteSpace();
+		fromFirst.Should().Be(
+			fromSecond,
+			"a reused options result has one context for every connection, so it has one scope too");
+	}
+
+	private static Task<McpPipeSession> StartSharedAsync(
+		McpServerOptions mcpOptions,
+		CancellationToken cancellationToken) =>
+		McpPipeSession.StartAsync(
+			async (io, token) =>
+			{
+				var transport = new StreamServerTransport(io.InputStream, io.OutputStream, "shared-options-server");
+				var server = McpServer.Create(transport, mcpOptions);
+				try
+				{
+					await server.RunAsync(token).ConfigureAwait(false);
+				}
+				finally
+				{
+					await server.DisposeAsync().ConfigureAwait(false);
+					await transport.DisposeAsync().ConfigureAwait(false);
+				}
+			},
+			clientOptions: null,
+			cancellationToken);
 
 	private static McpServerHandler CreateHandler(ReplApp app) =>
 		new(
