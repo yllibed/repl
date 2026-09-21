@@ -248,6 +248,48 @@ public sealed class Given_SessionScopedServices
 	}
 
 	[TestMethod]
+	[Description("Guards the deferred half of disposal: DisposeAsync returning early while a command is still running must not be the ONLY disposal attempt. The command's own finally must finish the job once it completes, so a Scoped disposable it resolved is still released deterministically rather than left for the process to reclaim.")]
+	public async Task When_SessionIsDisposedWhileACommandRuns_Then_ScopedDisposablesAreStillReleased()
+	{
+		var disposed = new List<Guid>();
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var host = ReplTestHost.Create(
+			() =>
+			{
+				var app = ReplApp.Create(services =>
+					services.AddScoped(_ => new DisposableProbe(disposed))).UseDefaultInteractive();
+				app.Map("block", async (DisposableProbe probe) =>
+				{
+					started.TrySetResult();
+
+#pragma warning disable VSTHRD003
+					await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+					return probe.Id.ToString();
+				});
+				return app;
+			},
+			options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var session = await host.OpenSessionAsync();
+		var running = session.RunCommandAsync("block --no-logo").AsTask();
+		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+		var dispose = session.DisposeAsync().AsTask();
+		await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(5)));
+		disposed.Should().BeEmpty("disposal must not race the command that is still using the scope");
+
+		release.TrySetResult();
+		var completed = await running.WaitAsync(TimeSpan.FromSeconds(30));
+		await dispose.WaitAsync(TimeSpan.FromSeconds(30));
+
+		completed.ExitCode.Should().Be(0, "run output was: {0}", completed.OutputText);
+		disposed.Should().ContainSingle(
+			"the deferred command must finish the disposal DisposeAsync could not do while it was running");
+	}
+
+	[TestMethod]
 	[Description("Guards the framework own per-session service: IReplSessionState is documented as a per-session state container, so two sessions of one app must not read each other writes. Registered as a singleton it was one process-wide bag shared by every concurrent Telnet, WebSocket and MCP client.")]
 	public void When_TwoRunsShareOneApp_Then_SessionStateIsNotShared()
 	{

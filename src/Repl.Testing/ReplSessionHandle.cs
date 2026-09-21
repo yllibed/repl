@@ -15,7 +15,20 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	private readonly IReadOnlyDictionary<string, string>? _sessionAnswers;
 	private readonly SemaphoreSlim _commandGate = new(initialCount: 1, maxCount: 1);
 	private readonly string _sessionId;
-	private bool _disposed;
+	private int _disposed;
+
+	// Coordinates disposal with a command that is still running, without a check-then-act race: bit 0
+	// latches "disposal was requested", the rest counts commands currently executing against _services
+	// (0 or 1 — _commandGate allows only one at a time, but a counter rather than a single bit keeps the
+	// arithmetic below correct however many false starts land here). Both DisposeAsync and a running
+	// command's own finally mutate this with one Interlocked op apiece; whichever one's read-modify-write
+	// observes the other side's contribution already applied is the one that defers, and the one that
+	// observes it absent is the one that disposes — so exactly one side ever does, never zero, never two
+	// without DisposeServicesOnceAsync's own guard catching the duplicate.
+	private int _serviceLifecycle;
+	private int _servicesDisposeClaimed;
+	private const int DisposalRequested = 1;
+	private const int CommandInFlight = 2;
 
 	private ReplSessionHandle(
 		ReplTestHost owner,
@@ -86,55 +99,103 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		await _commandGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
+			// Registered as in-flight BEFORE the re-check below, not after: this is what DisposeAsync's
+			// own Interlocked.Or observes to decide whether it or this command owns disposing _services,
+			// and that decision must already account for this command — otherwise a DisposeAsync racing
+			// in between the check and the registration could dispose _services while this command still
+			// believes it is clear to run.
+			Interlocked.Add(ref _serviceLifecycle, CommandInFlight);
+
 			// Re-checked inside the gate: a caller that passed the check above can be queued here while
-			// the session is disposed, and must not go on to run against a disposed scope.
+			// the session is disposed, and must not go on to run against a disposed scope. Guaranteed
+			// visible by now if a concurrent DisposeAsync's Or already observed the increment above,
+			// because Interlocked operations on _serviceLifecycle are full fences on both sides.
 			ThrowIfDisposed();
 
-			var startedAt = DateTimeOffset.UtcNow;
-			using var output = new StringWriter();
-			var host = new TestSessionHost(_sessionId, output);
-			var observer = new SessionExecutionObserver();
-			var args = BuildArgsWithAnswers(ReplTestText.Tokenize(commandText), _sessionAnswers, answers);
-			using var timeout = ReplTestTimeout.CreateSource(_options.CommandTimeout, cancellationToken);
-			var token = timeout?.Token ?? cancellationToken;
-
-			_app.Core.ExecutionObserver = observer;
-			int exitCode;
-			try
-			{
-				exitCode = await _app.RunAsync(args, host, _services, _runOptions, token).ConfigureAwait(false);
-			}
-			catch (OperationCanceledException) when (ReplTestTimeout.Expired(timeout, cancellationToken))
-			{
-				throw CreateTimeoutException(commandText);
-			}
-			finally
-			{
-				_app.Core.ExecutionObserver = null;
-			}
-
-			ThrowIfCancelledByTimeout(observer, timeout, commandText, cancellationToken);
-
-			var outputText = output.ToString();
-			if (_options.NormalizeAnsi)
-			{
-				outputText = ReplTestText.NormalizeOutput(outputText);
-			}
-
-			var timeline = BuildTimeline(outputText, observer.Events, observer.LastResult);
-			return new CommandExecution(
-				commandText,
-				exitCode,
-				outputText,
-				observer.LastResult,
-				observer.Events.ToArray(),
-				timeline,
-				startedAt,
-				DateTimeOffset.UtcNow);
+			return await RunWithinGateAsync(commandText, answers, cancellationToken).ConfigureAwait(false);
 		}
 		finally
 		{
+			var after = Interlocked.Add(ref _serviceLifecycle, -CommandInFlight);
+			if ((after & DisposalRequested) != 0)
+			{
+				// DisposeAsync ran while this command held the gate and deferred to it rather than
+				// disposing _services out from under a run in progress. Finish that disposal now, still
+				// inside the gate, so a caller queued behind this one hits the re-check above instead of
+				// a provider that is only half torn down.
+				await DisposeServicesOnceAsync().ConfigureAwait(false);
+			}
+
 			_commandGate.Release();
+		}
+	}
+
+	/// <summary>Runs one command's pipeline once the gate and the in-flight registration are held.</summary>
+	private async ValueTask<CommandExecution> RunWithinGateAsync(
+		string commandText,
+		IReadOnlyDictionary<string, string>? answers,
+		CancellationToken cancellationToken)
+	{
+		var startedAt = DateTimeOffset.UtcNow;
+		using var output = new StringWriter();
+		var host = new TestSessionHost(_sessionId, output);
+		var observer = new SessionExecutionObserver();
+		var args = BuildArgsWithAnswers(ReplTestText.Tokenize(commandText), _sessionAnswers, answers);
+		using var timeout = ReplTestTimeout.CreateSource(_options.CommandTimeout, cancellationToken);
+		var token = timeout?.Token ?? cancellationToken;
+
+		_app.Core.ExecutionObserver = observer;
+		int exitCode;
+		try
+		{
+			exitCode = await _app.RunAsync(args, host, _services, _runOptions, token).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (ReplTestTimeout.Expired(timeout, cancellationToken))
+		{
+			throw CreateTimeoutException(commandText);
+		}
+		finally
+		{
+			_app.Core.ExecutionObserver = null;
+		}
+
+		ThrowIfCancelledByTimeout(observer, timeout, commandText, cancellationToken);
+
+		var outputText = output.ToString();
+		if (_options.NormalizeAnsi)
+		{
+			outputText = ReplTestText.NormalizeOutput(outputText);
+		}
+
+		var timeline = BuildTimeline(outputText, observer.Events, observer.LastResult);
+		return new CommandExecution(
+			commandText,
+			exitCode,
+			outputText,
+			observer.LastResult,
+			observer.Events.ToArray(),
+			timeline,
+			startedAt,
+			DateTimeOffset.UtcNow);
+	}
+
+	/// <summary>Disposes <see cref="_services"/> exactly once, however many callers request it.</summary>
+	private async ValueTask DisposeServicesOnceAsync()
+	{
+		if (Interlocked.Exchange(ref _servicesDisposeClaimed, 1) != 0)
+		{
+			return;
+		}
+
+		switch (_services)
+		{
+			case IAsyncDisposable asyncDisposable:
+				// Releases the session DI scope, disposing its Scoped services.
+				await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+				break;
+			case IDisposable disposable:
+				disposable.Dispose();
+				break;
 		}
 	}
 
@@ -167,59 +228,32 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	/// scope — disposing every <c>Scoped</c> service it resolved. Disposing twice is a no-op.
 	/// </summary>
 	/// <remarks>
-	/// Does not wait for a command that is still running: an orphaned run would make this hang. Such a
-	/// run keeps the scope instead of having it disposed underneath it, so the scope outlives this
-	/// handle in that case.
+	/// Never waits on a command that is still running — that would turn an <c>await using</c> into a
+	/// hang for the lifetime of an orphaned run. It also never simply abandons that command's scope:
+	/// disposal is handed to whichever side, this method or the running command's own <c>finally</c>,
+	/// is the one still active when the other checks. See <see cref="_serviceLifecycle"/>.
 	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
-		if (_disposed)
+		if (Interlocked.Exchange(ref _disposed, 1) != 0)
 		{
 			return;
 		}
 
-		_disposed = true;
 		_owner.RemoveSession(SessionId);
 		ReplSessionIO.RemoveSession(SessionId);
 
-		// The gate is taken, never waited on. Waiting would turn an await using into a hang whenever a
-		// command is still running — an orphaned timed-out run holds the gate until it finishes on its
-		// own. Commands queued behind it stop at the re-check inside the gate instead.
-		var held = await _commandGate.WaitAsync(TimeSpan.Zero).ConfigureAwait(false);
-		try
+		var before = Interlocked.Or(ref _serviceLifecycle, DisposalRequested);
+		if ((before & CommandInFlight) == 0)
 		{
-			if (!held)
-			{
-				// A command is mid-run and resolving from this very provider. Disposing it here would
-				// pull the scope out from under that command, so its services start throwing
-				// ObjectDisposedException and its scoped disposables die while it still holds them.
-				// The orphan keeps the scope instead: it outlives the handle rather than faulting, and
-				// the process reclaims it. Leaking a test session's scope is the lesser harm.
-				return;
-			}
-
-			switch (_services)
-			{
-				case IAsyncDisposable asyncDisposable:
-					// Releases the session DI scope, disposing its Scoped services.
-					await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-					break;
-				case IDisposable disposable:
-					disposable.Dispose();
-					break;
-			}
+			// No command was registered as in-flight at the moment this bit was set: none can appear
+			// afterward, since ThrowIfDisposed now observes _disposed and refuses every later one before
+			// it reaches the increment that would make it visible here. This call owns the disposal.
+			await DisposeServicesOnceAsync().ConfigureAwait(false);
 		}
-		finally
-		{
-			if (held)
-			{
-				_commandGate.Release();
-			}
-		}
-
-		// The semaphore is deliberately not disposed: disposing it while a caller is queued on
-		// WaitAsync strands that caller forever, and it owns no unmanaged resource here because
-		// AvailableWaitHandle is never used.
+		// Otherwise a command holds the gate right now. Its own finally, decrementing _serviceLifecycle
+		// on the way out, is guaranteed to observe DisposalRequested — set here, and never cleared — and
+		// disposes on this call's behalf before releasing the gate.
 	}
 
 	internal static ValueTask<ReplSessionHandle> StartAsync(
@@ -319,7 +353,7 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 
 	private void ThrowIfDisposed()
 	{
-		ObjectDisposedException.ThrowIf(_disposed, this);
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 	}
 
 	private sealed class TestSessionHost(string sessionId, TextWriter output) : IReplSessionHost
