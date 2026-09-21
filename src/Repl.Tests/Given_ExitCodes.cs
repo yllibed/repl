@@ -1049,6 +1049,92 @@ public sealed class Given_ExitCodes
 		result.Code.Should().Be("execution_error");
 	}
 
+	[TestMethod]
+	[Description("Regression guard: a callback that cancels on a token of its own, while the caller's is still live, has failed like any other and must be classified as one. Reflection wraps what a setter throws in its own exception, so the marker's who-cancelled test never sees the OperationCanceledException underneath — it marks, which is the right answer here and is worth pinning, because the same blindness is what a reviewer reads as a withdrawal being mislabelled.")]
+	public async Task When_AnOptionsGroupSetterCancelsItself_Then_TheOutcomeIsAnExecutionError()
+	{
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder);
+		sut.Map("work", (SelfCancellingOptions options) => options.Label ?? "ok");
+
+		using var session = OpenSession(out _);
+		await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+		cts.IsCancellationRequested.Should().BeFalse(because: "nobody asked this run to stop");
+		var result = recorder.Last!.Result.Should().BeAssignableTo<IReplResult>().Subject;
+		result.Kind.Should().Be("error");
+		result.Code.Should().Be(
+			"execution_error",
+			because: "a callback giving up on its own budget is the application failing");
+	}
+
+	[TestMethod]
+	[Description("And the converse: when the caller is the one who withdrew, the run stops rather than reporting a failure — even though the withdrawal reaches the binder through reflection's wrapper, which the marker's test does not look through. The answer is reached at the pipeline boundary, on the caller's own token, rather than at the marker; this pins the behaviour so a later change to either one cannot quietly turn a withdrawal into an execution error.")]
+	public async Task When_TheCallerWithdrawsDuringAnOptionsGroupSetter_Then_TheRunIsCancelled()
+	{
+		using var cts = new CancellationTokenSource();
+		WithdrawingOptions.Withdrawal = cts;
+		try
+		{
+			var recorder = new OutcomeRecorder();
+			var sut = CreateApp(recorder);
+			sut.Map("work", (WithdrawingOptions options) => options.Label ?? "ok");
+
+			using var session = OpenSession(out _);
+			await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+			recorder.Last!.Kind.Should().Be(
+				ReplExecutionOutcomeKind.Cancelled,
+				because: "the caller withdrew, and application code obliged");
+		}
+		finally
+		{
+			WithdrawingOptions.Withdrawal = null;
+		}
+	}
+
+	/// <summary>A setter that gives up on its own, the way a callback running its own budget would.</summary>
+	[Repl.Parameters.ReplOptionsGroup]
+	public sealed class SelfCancellingOptions
+	{
+		private string? _label;
+
+		public string? Label
+		{
+			get => _label;
+			set
+			{
+				_label = value;
+				throw new OperationCanceledException(new CancellationToken(canceled: true));
+			}
+		}
+	}
+
+	/// <summary>A setter that observes the caller withdrawing and stops.</summary>
+	[Repl.Parameters.ReplOptionsGroup]
+	public sealed class WithdrawingOptions
+	{
+		internal static CancellationTokenSource? Withdrawal;
+
+		private string? _label;
+
+		public string? Label
+		{
+			get => _label;
+			set
+			{
+				_label = value;
+				if (Withdrawal is not { } withdrawal)
+				{
+					return;
+				}
+
+				withdrawal.Cancel();
+				throw new OperationCanceledException(withdrawal.Token);
+			}
+		}
+	}
 	[Repl.Parameters.ReplOptionsGroup]
 	public sealed class FailingOptions
 	{
