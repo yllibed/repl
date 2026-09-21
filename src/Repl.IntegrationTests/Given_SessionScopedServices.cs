@@ -67,6 +67,21 @@ public sealed class Given_SessionScopedServices
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies an undefined SessionScopeBehavior is rejected instead of falling through a negative test into PerRun, where it would silently nest a scope inside a caller who may have asked to own it — hiding the caller's own scoped instances rather than sharing them, the same class of risk ProcessSignalHandling's own undefined-value rejection guards.")]
+	public async Task When_TheSessionScopeIsUndefined_Then_TheRunIsRejected()
+	{
+		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+
+		Func<Task> act = () => sut.RunAsync(
+				["scoped", "--no-logo"],
+				new ReplRunOptions { SessionScope = (SessionScopeBehavior)42 })
+			.AsTask();
+
+		await act.Should().ThrowAsync<ArgumentOutOfRangeException>().ConfigureAwait(false);
+	}
+
+	[TestMethod]
 	[Description("Guards the CallerOwned opt-out: a caller whose provider already represents the session scope (Blazor circuit, per-request scope, multi-run session owners) must keep its own Scoped instances across runs — the entry points must not open a nested sibling scope that would hide them.")]
 	public async Task When_CallerOwnsTheSessionScope_Then_RunsShareTheCallerScopedInstances()
 	{
@@ -142,7 +157,7 @@ public sealed class Given_SessionScopedServices
 			disposed.Should().NotContain(Guid.Parse(id));
 		}
 
-		disposed.Should().Contain(Guid.Parse(id));
+		disposed.Should().ContainSingle(guid => guid == Guid.Parse(id));
 	}
 
 	private sealed class ScopeObservingHostedService(IServiceProvider services, List<Guid> observed) : IHostedService
