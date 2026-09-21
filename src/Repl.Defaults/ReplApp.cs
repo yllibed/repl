@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -24,6 +25,11 @@ public sealed class ReplApp : IReplApp
 	// resolution at registration time happens outside any session.
 	private ServiceProvider? _sharedProvider;
 	private ProcessSignalHandlingMode _defaultProcessSignalHandling = ProcessSignalHandlingMode.None;
+	// Tracks which providers RunInSessionScopeAsync has already warned about, so a long-lived host
+	// issuing many one-shot runs against the same scope-less provider gets the diagnostic once rather
+	// than once per run. Keyed by identity and weakly held, the same shape CoreReplApp uses for its
+	// routing cache, so this is never what keeps a caller-supplied provider alive.
+	private static readonly ConditionalWeakTable<IServiceProvider, object> DiagnosedUnscopedProviders = new();
 
 	// Extension packages (e.g. Repl.Spectre) park per-app configuration here so it stays
 	// reachable even when the shared provider was materialized before the Use* call —
@@ -712,9 +718,28 @@ public sealed class ReplApp : IReplApp
 				$"ReplRunOptions.{nameof(ReplRunOptions.SessionScope)} is not a defined {nameof(SessionScopeBehavior)}.");
 		}
 
-		if (resolved == SessionScopeBehavior.CallerOwned
-			|| services.GetService(typeof(IServiceScopeFactory)) is not IServiceScopeFactory scopeFactory)
+		if (resolved == SessionScopeBehavior.CallerOwned)
 		{
+			return await run(services, cancellationToken).ConfigureAwait(false);
+		}
+
+		if (services.GetService(typeof(IServiceScopeFactory)) is not IServiceScopeFactory scopeFactory)
+		{
+			// Degrading silently here reproduces #70's own symptom on the release that fixes it: every
+			// session sharing one Scoped instance. CallerOwned above is a deliberate, silent opt-out by
+			// design — this is the OTHER case, a provider that was never given a scope to begin with,
+			// which one release note is not enough to make every caller check for.
+			if (DiagnosedUnscopedProviders.TryAdd(services, services))
+			{
+				ProcessSignalCoordinator.WriteDiagnostic(
+					"Warning: the service provider passed to Run* has no IServiceScopeFactory, so "
+					+ "Scoped services resolve unscoped — one instance shared by every session, "
+					+ "the exact defect ReplRunOptions.SessionScope exists to prevent. Register "
+					+ "Microsoft.Extensions.DependencyInjection's ServiceCollection.BuildServiceProvider() "
+					+ "result (which always supplies one), or pass SessionScopeBehavior.CallerOwned "
+					+ "if this provider deliberately IS the session scope.");
+			}
+
 			return await run(services, cancellationToken).ConfigureAwait(false);
 		}
 

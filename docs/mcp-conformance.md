@@ -129,6 +129,7 @@ returned by a creation tool and passed back as an argument, rather than implicit
 | --- | --- | --- |
 | No per-caller command graph | The one variance `2026-07-28` permits is by the authorization presented on the request. Repl has no request-authorization concept yet, so it advertises one graph to everyone. | [#97](https://github.com/yllibed/repl/issues/97) |
 | `*/list_changed` is advertised on the reusable-options path but never fires there | The SDK forces the flag true for any non-null collection, and the pre-built catalog always supplies one. | [#94](https://github.com/yllibed/repl/issues/94) |
+| A `Scoped` DI registration is shared by every client on the reusable-options path | That path has one handler-lifetime context serving all connections, so it has no per-connection scope to give `Scoped` — one instance lives for the process, same as the native roots cache and soft roots on the same path. A `Scoped` auth-context or cart registered there leaks between clients. See [best-practices.md](best-practices.md#pick-the-lifetime-that-matches-the-boundary). | — |
 | A multi-connection custom transport sees considerations this page does not solve | `mcp serve` is one connection per process; a host that multiplexes connections over one options instance owns the isolation questions that follow. See [Transports](mcp-transports.md). | — |
 
 ## Extensions and SEPs

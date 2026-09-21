@@ -112,14 +112,19 @@ presence predicate's services from the same scope, so a command that was adverti
 The MCP SDK opens a scope of its own per request (`McpServerOptions.ScopeRequests`, default `true`) and
 exposes it as `RequestContext.Services`. Repl does not run commands in it: that scope descends from the
 application root and is a sibling of the connection's, so adopting it would give the catalog and the
-command two different instances of the same service.
+command two different instances of the same service. `BuildDynamicServerOptions` — the `mcp serve` path
+that owns a real connection context — sets `ScopeRequests = false`, so the SDK does not open that
+sibling scope there to begin with.
 
-Under stateless HTTP hosting the two coincide — the SDK builds one short-lived server per request over
-`HttpContext.RequestServices` — so the connection scope *is* the request scope there, with nothing extra
-to configure.
-
-A server created from a reused `BuildMcpServerOptions()` result has everything above except the
-connection row; see the known limitation above. That matters especially when using dynamic tools,
-roots, or session-specific modules.
+A server created from a reused `BuildMcpServerOptions()` result — which is how an ASP.NET Core or other
+custom-transport host reaches Repl — has everything above **except the connection row**: see the known
+limitation above. There is no per-connection context to give a DI scope to either, so `Scoped` resolves
+once from the application root and is shared by every client the process serves, for as long as it runs.
+That is true under stateless HTTP hosting too, even though the SDK itself builds one short-lived server
+per request there: Repl's own scope is a property of the *context* it built at construction, not of the
+SDK's per-request server, so it does not follow the SDK's request boundary. A host that needs real
+per-connection or per-request isolation on this path has to build it itself — for example by calling
+`BuildMcpServerOptions()` fresh per connection rather than reusing one result — which is exactly the
+"multiplexes connections over one options instance" case flagged as a caller responsibility below.
 
 For those higher-level patterns, see [mcp-advanced.md](mcp-advanced.md).

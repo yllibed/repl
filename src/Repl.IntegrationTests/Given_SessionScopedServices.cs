@@ -392,4 +392,50 @@ public sealed class Given_SessionScopedServices
 			.ConfigureAwait(false);
 		probe.Disposed.Should().BeTrue();
 	}
+
+	// Deliberately not built via ServiceCollection.BuildServiceProvider(): the point of this provider is
+	// that it supplies no IServiceScopeFactory, which is exactly the case RunInSessionScopeAsync degrades
+	// for — a caller-supplied provider that was never given a scope, as opposed to CallerOwned, where the
+	// caller opted out on purpose.
+	private sealed class ScopeLessServiceProvider(ReplApp app) : IServiceProvider
+	{
+		public object? GetService(Type serviceType) =>
+			serviceType == typeof(IServiceScopeFactory) ? null : app.Services.GetService(serviceType);
+	}
+
+	[TestMethod]
+	[Description("Issue #70's own symptom must not reappear silently: a caller-supplied provider with no IServiceScopeFactory makes every session share one Scoped instance, exactly what SessionScope exists to prevent. Unlike SessionScopeBehavior.CallerOwned, which is a deliberate and silent opt-out, this is a provider nobody chose to leave unscoped, so it must say so.")]
+	public async Task When_ProviderHasNoScopeFactory_Then_ARunTimeDiagnosticNamesTheDefect()
+	{
+		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		var services = new ScopeLessServiceProvider(sut);
+		using var diagnostics = new StringWriter();
+		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: diagnostics);
+
+		var exitCode = await sut.RunAsync(["scoped", "--no-logo"], services).ConfigureAwait(false);
+
+		exitCode.Should().Be(0);
+		diagnostics.ToString().Should().Contain(
+			"IServiceScopeFactory",
+			"a provider left unscoped by accident must say so, not silently reproduce #70");
+	}
+
+	[TestMethod]
+	[Description("The diagnostic for a scope-less provider must not repeat on every run: a long-lived host issuing many one-shot runs against the same provider would otherwise get one warning per run forever.")]
+	public async Task When_TheSameScopeLessProviderRunsTwice_Then_TheDiagnosticFiresOnlyOnce()
+	{
+		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		var services = new ScopeLessServiceProvider(sut);
+		using var diagnostics = new StringWriter();
+		using var session = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: diagnostics);
+
+		await sut.RunAsync(["scoped", "--no-logo"], services).ConfigureAwait(false);
+		await sut.RunAsync(["scoped", "--no-logo"], services).ConfigureAwait(false);
+
+		var text = diagnostics.ToString();
+		var occurrences = text.Split("IServiceScopeFactory", StringSplitOptions.None).Length - 1;
+		occurrences.Should().Be(1, "the same provider must not be warned about twice");
+	}
 }

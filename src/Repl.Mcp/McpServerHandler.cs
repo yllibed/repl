@@ -209,6 +209,13 @@ internal sealed class McpServerHandler
 			ToolCollection = _toolListChanged,
 			ResourceCollection = _resourceListChanged,
 			PromptCollection = _promptListChanged,
+			// This path owns a real per-connection context (CreateSessionContext(McpRootsScope.Connection)
+			// in RunAsync) with its own DI scope; commands run inside it, never inside the SDK's own
+			// per-request scope. Leaving ScopeRequests at its true default would still have the SDK open
+			// and discard one of those on every request for nothing. BuildStaticServerOptions, which has
+			// no connection to scope to, does not set this — a host reusing that result owns request
+			// scoping itself, and this handler must not silently decide that for it.
+			ScopeRequests = false,
 		};
 	}
 
