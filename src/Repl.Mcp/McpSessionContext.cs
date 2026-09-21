@@ -1,4 +1,6 @@
-﻿namespace Repl.Mcp;
+﻿using Microsoft.Extensions.DependencyInjection;
+
+namespace Repl.Mcp;
 
 /// <summary>
 /// State owned by one MCP transport session, or — on the reusable-options path — by the handler
@@ -8,7 +10,7 @@
 /// One <see cref="McpServerHandler"/> can serve several concurrent sessions, so anything
 /// that varies per client lives here instead of on the handler: hard/soft roots, the
 /// generated snapshot cache (the tool graph can be gated on session capabilities), the
-/// compatibility-shim intro state, and the session's service overlay. The context is
+/// compatibility-shim intro state, the session's DI scope, and its service overlay. The context is
 /// registered in the provider passed to <c>McpServer.Create</c>, so request handlers
 /// recover their originating session through <c>request.Server.Services</c> — never
 /// through a destination-bound per-request server used as a surrogate session key.
@@ -21,14 +23,16 @@ internal sealed class McpSessionContext : IDisposable
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
 
+	private readonly AsyncServiceScope? _scope;
+
 	public McpSessionContext(
 		McpClientRootsService roots,
-		IReadOnlyDictionary<Type, object> overrides,
-		IServiceProvider services)
+		IServiceProvider services,
+		AsyncServiceScope? scope)
 	{
 		Roots = roots;
-		Overrides = overrides;
 		Services = services;
+		_scope = scope;
 	}
 
 	/// <summary>Session-owned hard/soft roots.</summary>
@@ -36,41 +40,6 @@ internal sealed class McpSessionContext : IDisposable
 
 	/// <summary>Per-session service overlay handed to <c>McpServer.Create</c>.</summary>
 	public IServiceProvider Services { get; }
-
-	/// <summary>The session-owned services layered over whatever provider sits beneath them.</summary>
-	public IReadOnlyDictionary<Type, object> Overrides { get; }
-
-	/// <summary>
-	/// Layers this session services over the provider the SDK opened for one request, so a Scoped
-	/// registration resolves per invocation while this session capability services keep answering.
-	/// </summary>
-	/// <remarks>
-	/// The SDK creates an <c>AsyncServiceScope</c> per request handler invocation —
-	/// <c>McpServerOptions.ScopeRequests</c> defaults to <see langword="true"/> — and exposes it as
-	/// <c>MessageContext.Services</c>. That scope descends from the APPLICATION root, so it carries
-	/// none of this session services: re-applying them on top is what keeps a handler injecting
-	/// <see cref="IMcpClientRoots"/> resolvable. Falls back to the session provider when there is no
-	/// request scope to layer over, which is every path the SDK does not dispatch.
-	/// </remarks>
-	public IServiceProvider ComposeOver(IServiceProvider? requestServices) =>
-		requestServices is null || ReferenceEquals(requestServices, Services)
-			? Services
-			: new McpServiceProviderOverlay(requestServices, Overrides);
-
-	/// <summary>
-	/// Layers the session that <paramref name="sessionServices"/> belongs to over
-	/// <paramref name="requestServices"/>, or returns it unchanged when it belongs to no session.
-	/// </summary>
-	/// <remarks>
-	/// Every execution path resolves its provider through here, so the layering order — session
-	/// services above, the SDK per-request scope below — is stated once. A provider that carries no
-	/// <see cref="McpSessionContext"/> is one of the prebuilt paths that never had a session to begin
-	/// with, and is handed back untouched.
-	/// </remarks>
-	public static IServiceProvider Compose(IServiceProvider sessionServices, IServiceProvider? requestServices) =>
-		sessionServices.GetService(typeof(McpSessionContext)) is McpSessionContext session
-			? session.ComposeOver(requestServices)
-			: sessionServices;
 
 	/// <summary>Serializes snapshot builds for this session.</summary>
 	public SemaphoreSlim SnapshotGate { get; } = new(initialCount: 1, maxCount: 1);
@@ -108,7 +77,14 @@ internal sealed class McpSessionContext : IDisposable
 	/// <summary>Re-arms the compatibility-shim intro after a routing invalidation.</summary>
 	public void ResetCompatibilityIntro() => Interlocked.Exchange(ref _compatibilityIntroServed, 0);
 
-	public void Dispose() => SnapshotGate.Dispose();
+	public void Dispose()
+	{
+		SnapshotGate.Dispose();
+		// Releases this session's Scoped services. Disposed synchronously because the context is,
+		// which is the reason the scope is stored rather than awaited: nothing on an MCP connection
+		// teardown path is async, and a Scoped disposable here is an application object, not I/O.
+		_scope?.Dispose();
+	}
 
 	/// <summary>
 	/// A generated snapshot and the routing version it was built at, published as ONE value.

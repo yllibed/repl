@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -88,17 +89,22 @@ internal sealed class McpServerHandler
 			[typeof(IMcpSampling)] = _sampling,
 			[typeof(IMcpElicitation)] = _elicitation,
 			[typeof(IMcpFeedback)] = _feedback,
-			// Session state belongs to the SESSION, not to the per-invocation scope the SDK opens and
-			// disposes around each request: on the initialize era a command writes it and calls
-			// InvalidateRouting(), and the next tools/list has to see what it wrote. Holding it here also
-			// stops it falling through to the application root, where one bag was shared by every
-			// connection at once.
-			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
 		};
+
+		// One DI scope per session, so a Scoped registration is per connection here just as it is per
+		// Run* on the other transports — and so discovery and execution read the SAME instance, which
+		// is what lets a module presence predicate gate on one. Resolving IReplSessionState from it
+		// rather than overriding it also keeps a consumer's own implementation reachable under MCP.
+		// A provider without scope support runs unscoped, as the Run* paths do.
+		var scope = _services.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory
+			? scopeFactory.CreateAsyncScope()
+			: (AsyncServiceScope?)null;
+		var sessionServices = scope?.ServiceProvider ?? _services;
+
 		var context = new McpSessionContext(
 			roots,
-			overlayServices,
-			new McpServiceProviderOverlay(_services, overlayServices));
+			new McpServiceProviderOverlay(sessionServices, overlayServices),
+			scope);
 		// The context rides in its own overlay so request handlers can recover their
 		// originating session through the server's provider (the dictionary is captured by
 		// reference, making this two-phase registration safe).

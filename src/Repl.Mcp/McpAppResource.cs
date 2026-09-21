@@ -84,11 +84,8 @@ internal sealed class McpAppResource : McpServerResource
 		// every command-backed path gets has to be repeated here: roots primed so a handler reading
 		// Current sees them, and a buffer open so feedback the client cannot receive as a notification
 		// is not simply lost.
-		// The session layered over the scope the SDK opened for this read, so a Scoped registration
-		// resolves per invocation while the session's own capability services keep answering.
-		var invocationServices = McpSessionContext.Compose(_services, request.Services);
-		await McpClientRootsService.PrimeFromServicesAsync(invocationServices, cancellationToken).ConfigureAwait(false);
-		var feedbackService = invocationServices.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
+		await McpClientRootsService.PrimeFromServicesAsync(_services, cancellationToken).ConfigureAwait(false);
+		var feedbackService = _services.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
 		using var undelivered = feedbackService?.PushUndeliveredMessages();
 
 		string html;
@@ -97,7 +94,7 @@ internal sealed class McpAppResource : McpServerResource
 			html = await McpAppResourceInvoker
 				.InvokeAsync(
 					_registration.Handler,
-					invocationServices,
+					_services,
 					new McpAppResourceContext(request.Params.Uri),
 					request,
 					cancellationToken)

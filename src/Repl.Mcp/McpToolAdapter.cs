@@ -210,18 +210,17 @@ internal sealed partial class McpToolAdapter
 		var invocableApp = _app as ISubInvocableReplApp
 			?? throw new InvalidOperationException("MCP tool adapter requires an app that supports sub-invocation.");
 
-		// This session's services, layered over the scope the SDK opened for THIS request, so a Scoped
-		// registration resolves per invocation instead of once for the whole application.
-		var invocationServices = ResolveInvocationServices();
-		await McpClientRootsService.PrimeFromServicesAsync(invocationServices, ct).ConfigureAwait(false);
+		await McpClientRootsService.PrimeFromServicesAsync(_services, ct).ConfigureAwait(false);
 
 		var outputWriter = new StringWriter();
 		var errorWriter = captureCommandOutput ? outputWriter : new StringWriter();
-		var feedback = invocationServices.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
+		var feedback = _services.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
 		var interactionChannel = new McpInteractionChannel(
 			prefills, _options.InteractivityMode, server, progressToken, feedback);
+		// Over the SESSION's services, which carry its DI scope: discovery resolved the command graph
+		// from the same provider, so what was advertised resolves the same instances when it runs.
 		var mcpServices = new McpServiceProviderOverlay(
-			invocationServices,
+			_services,
 			new Dictionary<Type, object> { [typeof(IReplInteractionChannel)] = interactionChannel });
 		var feedbackService = feedback as McpFeedbackService;
 		using var feedbackScope = feedbackService?.PushProgressToken(progressToken);
@@ -243,13 +242,6 @@ internal sealed partial class McpToolAdapter
 		return new McpPipelineInvocation(
 			output, error, completed.ExitCode, completed.Kind, completed.Failure, undelivered);
 	}
-
-	/// <summary>
-	/// Resolves the provider one invocation runs against: this session's services, layered over the
-	/// per-invocation scope the SDK opened for the flowing request.
-	/// </summary>
-	private IServiceProvider ResolveInvocationServices() =>
-		McpSessionContext.Compose(_services, _requestServers.Current?.Services);
 
 	/// <summary>Runs the command with the captured I/O and throwaway session registration of one call.</summary>
 	private async Task<SubInvocationOutcome> RunSubInvocationAsync(
