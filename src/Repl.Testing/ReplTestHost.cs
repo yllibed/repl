@@ -56,6 +56,10 @@ public sealed class ReplTestHost : IAsyncDisposable
 		CancellationToken cancellationToken = default)
 	{
 		ThrowIfDisposed();
+		// Before the factory call, not after: the factory can carry arbitrary caller side effects, and
+		// a canceled open must not run them for a session that will never exist — nor track an app for
+		// disposal that nothing would ever trigger, since no session would be created to release it.
+		cancellationToken.ThrowIfCancellationRequested();
 		descriptor ??= new SessionDescriptor();
 		var app = _appFactory();
 		_apps.TryAdd(app, 0);
@@ -124,7 +128,11 @@ public sealed class ReplTestHost : IAsyncDisposable
 		}
 
 		_disposed = true;
-		foreach (var session in _sessions.Values)
+		// Captured before disposing: ReplSessionHandle.DisposeAsync can defer releasing its DI scope to
+		// a command that was still running when it was called (see ReplSessionHandle), and this list is
+		// what lets the app-root loop below tell which apps that affects, after _sessions is cleared.
+		var sessions = _sessions.Values.ToArray();
+		foreach (var session in sessions)
 		{
 			await session.DisposeAsync().ConfigureAwait(false);
 		}
@@ -133,6 +141,16 @@ public sealed class ReplTestHost : IAsyncDisposable
 
 		foreach (var app in _apps.Keys)
 		{
+			// An app whose session deferred its own scope release to a command still in flight must not
+			// have its root disposed here either: that command's scope is a child of this root, and
+			// disposing the root out from under it is the same hazard ReplSessionHandle.DisposeAsync
+			// itself refuses to create. Never WAIT for that command the way it never does — leaving the
+			// root undisposed alongside the deferred scope is the lesser harm; the process reclaims both.
+			if (Array.Exists(sessions, s => ReferenceEquals(s.App, app) && !s.ServicesDisposed.IsCompleted))
+			{
+				continue;
+			}
+
 			switch (app.Services)
 			{
 				case IAsyncDisposable asyncDisposable:

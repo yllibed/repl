@@ -29,6 +29,12 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	private int _servicesDisposeClaimed;
 	private const int DisposalRequested = 1;
 	private const int CommandInFlight = 2;
+	// Completed once _services has actually been disposed — whether DisposeAsync did it directly, or a
+	// command still running at the time did it later in its own finally. The owning ReplTestHost reads
+	// this (never awaits it) to decide whether this session's app root is safe to dispose yet: awaiting
+	// it would reintroduce, at the host level, the exact unbounded wait DisposeAsync itself refuses to
+	// take on an orphaned command.
+	private readonly TaskCompletionSource _servicesDisposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 	private ReplSessionHandle(
 		ReplTestHost owner,
@@ -53,6 +59,16 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	/// lifetime.
 	/// </summary>
 	public string SessionId => _sessionId;
+
+	/// <summary>The app this session was opened against — <see cref="ReplTestHost"/> uses this to
+	/// correlate a session with the app root it may still be using at disposal time.</summary>
+	internal ReplApp App => _app;
+
+	/// <summary>
+	/// Completes once this session's DI scope has actually been released — including when
+	/// <see cref="DisposeAsync"/> deferred that to a command that was still running when it was called.
+	/// </summary>
+	internal Task ServicesDisposed => _servicesDisposed.Task;
 
 	/// <summary>
 	/// Runs a command in this session.
@@ -187,15 +203,25 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 			return;
 		}
 
-		switch (_services)
+		try
 		{
-			case IAsyncDisposable asyncDisposable:
-				// Releases the session DI scope, disposing its Scoped services.
-				await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-				break;
-			case IDisposable disposable:
-				disposable.Dispose();
-				break;
+			switch (_services)
+			{
+				case IAsyncDisposable asyncDisposable:
+					// Releases the session DI scope, disposing its Scoped services.
+					await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+					break;
+				case IDisposable disposable:
+					disposable.Dispose();
+					break;
+			}
+		}
+		finally
+		{
+			// Signaled from the one caller whose CAS above actually won, whichever of the two that
+			// turns out to be — DisposeAsync itself, or the command that was still running when it was
+			// called. ReplTestHost reads this to know its root provider is now safe to dispose.
+			_servicesDisposed.TrySetResult();
 		}
 	}
 

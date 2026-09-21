@@ -453,4 +453,45 @@ public sealed class Given_SessionScopedServices
 		var occurrences = text.Split("IServiceScopeFactory", StringSplitOptions.None).Length - 1;
 		occurrences.Should().Be(1, "the same provider must not be warned about twice");
 	}
+
+	[TestMethod]
+	[Description("Disposing the host while one of its sessions has deferred scope disposal to a still-running command must not dispose that session's app root out from under it: the command's own scope is a child of that root, so a singleton the command resolves after the host disposal call returns must still resolve without throwing ObjectDisposedException. Reproduces the shape autocarl's earlier finding pointed at one level up — the same hazard, at the app-root boundary instead of the session-scope boundary.")]
+	public async Task When_TheHostIsDisposedWhileACommandRuns_Then_ItsAppRootSurvivesUntilTheCommandFinishes()
+	{
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create(services => services.AddSingleton<SingletonProbe>())
+				.UseDefaultInteractive();
+			app.Map("block", async (SingletonProbe before) =>
+			{
+				started.TrySetResult();
+
+#pragma warning disable VSTHRD003
+				await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+
+				// Resolved AFTER release, once the host's own DisposeAsync call below has already
+				// returned: this is what proves the app root was not disposed out from under this
+				// command. A disposed root would make this throw ObjectDisposedException instead.
+				return before.Disposed.ToString();
+			});
+			return app;
+		}, options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var session = await host.OpenSessionAsync();
+		var running = session.RunCommandAsync("block --no-logo").AsTask();
+		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+		await host.DisposeAsync();
+
+		release.TrySetResult();
+		var completed = await running.WaitAsync(TimeSpan.FromSeconds(30));
+
+		completed.ExitCode.Should().Be(
+			0,
+			"the singleton must still resolve after host disposal returns while this command was in flight: {0}",
+			completed.OutputText);
+	}
 }

@@ -869,8 +869,33 @@ public sealed class ReplApp : IReplApp
 	/// This provider is reused for both module resolution and runtime execution,
 	/// ensuring DI-resolved modules share the same service instances as handlers.
 	/// </summary>
-	private ServiceProvider EnsureSharedProvider() =>
-		_sharedProvider ??= _services.BuildServiceProvider();
+	private ServiceProvider EnsureSharedProvider()
+	{
+		if (_sharedProvider is { } existing)
+		{
+			return existing;
+		}
+
+		// `??=` is a check-then-assign, not an atomic publish — two concurrent first callers (a
+		// caller-owned host opening several sessions against one shared app, a supported shape) could
+		// each build a provider and each assign, silently orphaning whichever one lost the race along
+		// with any disposable singleton it had already started constructing. CompareExchange publishes
+		// exactly one; the loser, having resolved nothing yet, is disposed unused rather than kept.
+		var candidate = _services.BuildServiceProvider();
+		var winner = Interlocked.CompareExchange(ref _sharedProvider, candidate, comparand: null);
+		if (winner is not null)
+		{
+			// EnsureSharedProvider is itself synchronous, reached from a plain property getter with no
+			// async context to hand this off to; nothing was ever resolved from the losing candidate, so
+			// disposing it releases only the empty engine it built, never anything with real cleanup work.
+#pragma warning disable MA0045
+			candidate.Dispose();
+#pragma warning restore MA0045
+			return winner;
+		}
+
+		return candidate;
+	}
 
 	private TModule ResolveModuleFromServices<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule

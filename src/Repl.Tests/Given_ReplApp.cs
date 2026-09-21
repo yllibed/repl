@@ -1,5 +1,6 @@
 using System.Reflection;
 using AwesomeAssertions;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Repl.Tests;
 
@@ -465,6 +466,17 @@ public sealed class Given_ReplApp
 			modifiers: null);
 
 		addAccessor.Should().NotBeNull();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: ReplApp.Services must publish exactly one root provider even when several callers race to build it — a caller-owned host that opens more than one session against one shared app (a supported shape: Repl.Testing's own CreateProbeHost pattern) resolves Services from more than one thread. The lazy '??=' this used to read from is a check-then-assign, not an atomic publish, so a race could build two providers and silently orphan whichever one lost — along with any disposable singleton the loser had already started constructing.")]
+	public async Task When_ServicesIsRacedFromManyThreads_Then_EveryCallerObservesTheSameProvider()
+	{
+		var sut = ReplApp.Create(services => services.AddSingleton<object>());
+
+		var providers = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(() => sut.Services)));
+
+		providers.Should().OnlyContain(provider => ReferenceEquals(provider, providers[0]));
 	}
 
 	private sealed class StubTransformer : IOutputTransformer
