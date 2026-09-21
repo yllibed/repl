@@ -1,8 +1,12 @@
+﻿using System.Collections.Concurrent;
+
 namespace Repl;
 
 internal sealed class DefaultsSessionState : IReplSessionState
 {
-	private readonly Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
+	// Every concurrent Telnet, WebSocket and MCP session can resolve this state, so writes from
+	// two sessions race. An unsynchronised Dictionary corrupts its bucket table under that.
+	private readonly ConcurrentDictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
 
 	public bool TryGet<T>(string key, out T? value)
 	{
@@ -33,7 +37,7 @@ internal sealed class DefaultsSessionState : IReplSessionState
 	public bool Remove(string key)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(key);
-		return _values.Remove(key);
+		return _values.TryRemove(key, out _);
 	}
 
 	public void Clear() => _values.Clear();
