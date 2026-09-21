@@ -25,20 +25,24 @@ public sealed class Given_SessionScopedServices
 		public void Dispose() => disposed.Add(Id);
 	}
 
-	private static ReplTestHost CreateProbeHost(List<Guid>? disposedTracker = null) =>
-		ReplTestHost.Create(() =>
+	// ONE app for every session this host opens. ReplTestHost invokes the factory per session, so
+	// returning a fresh ReplApp would give each session its own container — and then two sessions
+	// resolve distinct instances whatever lifetime is registered, which makes a cross-session
+	// isolation assertion pass on a full revert of the feature it claims to guard.
+	private static ReplTestHost CreateProbeHost(List<Guid>? disposedTracker = null)
+	{
+		var app = ReplApp.Create(services =>
 		{
-			var app = ReplApp.Create(services =>
-			{
-				services.AddScoped<ScopedProbe>();
-				services.AddTransient<TransientProbe>();
-				services.AddScoped(_ => new DisposableProbe(disposedTracker ?? []));
-			}).UseDefaultInteractive();
-			app.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
-			app.Map("transient", (TransientProbe probe) => probe.Id.ToString());
-			app.Map("disposable", (DisposableProbe probe) => probe.Id.ToString());
-			return app;
-		});
+			services.AddScoped<ScopedProbe>();
+			services.AddTransient<TransientProbe>();
+			services.AddScoped(_ => new DisposableProbe(disposedTracker ?? []));
+		}).UseDefaultInteractive();
+		app.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		app.Map("transient", (TransientProbe probe) => probe.Id.ToString());
+		app.Map("disposable", (DisposableProbe probe) => probe.Id.ToString());
+
+		return ReplTestHost.Create(() => app);
+	}
 
 	private static async Task<string> RunAndCaptureAsync(ReplSessionHandle session, string command)
 	{
@@ -161,7 +165,10 @@ public sealed class Given_SessionScopedServices
 		{
 			services.AddScoped<ScopedProbe>();
 			services.AddSingleton(observed);
-			services.AddSingleton<IHostedService, ScopeObservingHostedService>();
+			// Scoped, not singleton: a singleton is always constructed in the root and always injected
+			// the root provider, so it reports the same instance wherever the scope boundary sits and
+			// the assertion below could never fail.
+			services.AddScoped<IHostedService, ScopeObservingHostedService>();
 		});
 		sut.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
 		var options = new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.Head };
@@ -230,11 +237,14 @@ public sealed class Given_SessionScopedServices
 		var disposedInTime = await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(5))) == dispose;
 
 		release.TrySetResult();
-		await Task.WhenAny(running, Task.Delay(TimeSpan.FromSeconds(30)));
+		var completed = await running.WaitAsync(TimeSpan.FromSeconds(30));
 		await dispose.WaitAsync(TimeSpan.FromSeconds(30));
 
 		disposedInTime.Should().BeTrue(
 			"disposing a session must not wait unbounded on a command that is still running");
+		completed.ExitCode.Should().Be(
+			0,
+			"disposal must not tear the session scope out from under the command that is still using it");
 	}
 
 	[TestMethod]

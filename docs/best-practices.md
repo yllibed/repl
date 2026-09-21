@@ -112,7 +112,7 @@ Note: DI singleton factories are resolved lazily, so the values are available af
 | Lifetime | Resolves once per | Use it for |
 |---|---|---|
 | `Singleton` | application | caches, clients, anything shared by every session |
-| `Scoped` | **session** — one `Run*` call: a CLI invocation, an interactive run, a Telnet or WebSocket connection; under MCP, one tool call | per-user state: auth context, a cart, a unit of work |
+| `Scoped` | **session** — one `Run*` call: a CLI invocation, an interactive run, a Telnet or WebSocket connection; under MCP, one client connection | per-user state: auth context, a cart, a unit of work |
 | `Transient` | resolution | cheap stateless helpers |
 
 A `Scoped` disposable is disposed when its session ends, so session resources do not accumulate for the

@@ -101,21 +101,22 @@ every request rather than once per connection. So the boundaries are not all the
 | Isolated per | What |
 |---|---|
 | Request | Client capabilities, the requested log level, the destination for sampling, elicitation and progress, and — on a reused `BuildMcpServerOptions()` result — native roots, resolved once per request and never cached across connections |
-| Invocation | I/O capture — each tool call gets its own capture scope, not one per connection — **and the DI scope**: a `Scoped` registration resolves once per tool call, prompt fetch or resource read, and its disposables are released when that call returns |
-| Connection (`mcp serve` only) | The MCP session object, the native roots cache, soft roots, session-aware routing state, and `IReplSessionState` |
+| Invocation | I/O capture — each tool call gets its own capture scope, not one per connection |
+| Connection (`mcp serve` only) | The MCP session object, the native roots cache, soft roots, session-aware routing state, `IReplSessionState`, and **the DI scope**: a `Scoped` registration resolves once per connection, and its disposables are released when the connection ends |
 
-The DI scope is the SDK's own: `McpServerOptions.ScopeRequests` defaults to `true`, so it opens an
-`AsyncServiceScope` per request handler invocation and disposes it when the handler returns. Repl runs
-the command inside that scope with the session's services layered over it. That is why the unit is the
-invocation and not the connection — `2026-07-28` has no connection to scope to — and it is also what
-makes a future ASP.NET Core host behave correctly for free, since there the scope becomes the HTTP
-request's own.
+The DI scope is the connection's, for the same reason it is the session's on every other transport: a
+`Scoped` service is where per-user state lives, and state that resets between two calls of one client
+is not per-user state. It is also what keeps discovery and execution honest — both resolve a module
+presence predicate's services from the same scope, so a command that was advertised can be called.
 
-`IReplSessionState` is the exception, and deliberately so: it is Repl's session abstraction rather than
-a user service lifetime. On the initialize era a command writes it and calls `InvalidateRouting()`, and
-the next `tools/list` on that connection has to see what it wrote. What that means for the advertised
-tool set on each revision — and what to reach for instead on `2026-07-28` — is in
-[Conformance](mcp-conformance.md#tool-list-invariance-on-2026-07-28).
+The MCP SDK opens a scope of its own per request (`McpServerOptions.ScopeRequests`, default `true`) and
+exposes it as `RequestContext.Services`. Repl does not run commands in it: that scope descends from the
+application root and is a sibling of the connection's, so adopting it would give the catalog and the
+command two different instances of the same service.
+
+Under stateless HTTP hosting the two coincide — the SDK builds one short-lived server per request over
+`HttpContext.RequestServices` — so the connection scope *is* the request scope there, with nothing extra
+to configure.
 
 A server created from a reused `BuildMcpServerOptions()` result has everything above except the
 connection row; see the known limitation above. That matters especially when using dynamic tools,
