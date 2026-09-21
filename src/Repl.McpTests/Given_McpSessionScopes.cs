@@ -27,6 +27,22 @@ public sealed class Given_McpSessionScopes
 		public void Dispose() => disposed.Add(Id);
 	}
 
+	/// <summary>
+	/// Disposable only asynchronously, which is the shape Microsoft DI refuses to release through a
+	/// synchronous scope disposal — the canonical example being the unit of work the lifetime guidance
+	/// recommends registering <c>Scoped</c>.
+	/// </summary>
+	private sealed class AsyncOnlyProbe(List<Guid> disposed) : IAsyncDisposable
+	{
+		public Guid Id { get; } = Guid.NewGuid();
+
+		public ValueTask DisposeAsync()
+		{
+			disposed.Add(Id);
+			return ValueTask.CompletedTask;
+		}
+	}
+
 	private sealed class GatedModule : IReplModule
 	{
 		public void Map(IReplMap app) => app.Map("secret", () => "classified").ReadOnly();
@@ -122,6 +138,31 @@ public sealed class Given_McpSessionScopes
 		reported.Should().Contain(
 			disposed[0].ToString(),
 			"the disposed instance must be the one the command was handed");
+	}
+
+	[TestMethod]
+	[Description("The DI scope must be released asynchronously: Microsoft DI's ServiceProviderEngineScope throws InvalidOperationException from a synchronous Dispose() when it holds a service that implements only IAsyncDisposable, which is exactly the shape of a unit-of-work the lifetime guidance recommends registering Scoped. A synchronous release would fault RunAsync at connection teardown instead of running the command.")]
+	public async Task When_AConnectionEndsWithAnAsyncOnlyScopedService_Then_TeardownDoesNotThrow()
+	{
+		var disposed = new List<Guid>();
+		var app = ReplApp.Create(services => services.AddScoped(_ => new AsyncOnlyProbe(disposed)));
+		app.UseMcpServer();
+		app.Map("disposable", (AsyncOnlyProbe probe) => probe.Id.ToString());
+
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var handler = CreateHandler(app);
+
+		var session = await StartAsync(handler, cts.Token).ConfigureAwait(false);
+		var teardown = async () =>
+		{
+			await CallAsync(session.Client, "disposable", token: cts.Token).ConfigureAwait(false);
+			await session.DisposeAsync().ConfigureAwait(false);
+		};
+
+		await teardown.Should().NotThrowAsync(
+			"the connection's own AsyncServiceScope must be released with DisposeAsync, not Dispose")
+			.ConfigureAwait(false);
+		disposed.Should().ContainSingle();
 	}
 
 	[TestMethod]
@@ -233,7 +274,7 @@ public sealed class Given_McpSessionScopes
 	}
 
 	[TestMethod]
-	[Description("Pins the documented carve-out on the reusable BuildMcpServerOptions() path: that server has no connection row, so its one handler-lifetime context — and therefore one DI scope — is shared by every connection it serves, exactly as its native roots cache and soft roots are. Stated here so it stays a known limitation rather than becoming a silent cross-client leak.")]
+	[Description("Pins the documented carve-out on the reusable BuildMcpServerOptions() path: that server has no connection row, so its one handler-lifetime context resolves Scoped registrations straight from the app root — no owned scope to dispose, so one root-cached instance is shared by every connection it serves, exactly as its native roots cache and soft roots are. Stated here so it stays a known limitation rather than becoming a silent cross-client leak.")]
 	public async Task When_ConnectionsShareAReusableOptionsResult_Then_TheyShareOneScope()
 	{
 		var app = ReplApp.Create(services => services.AddScoped<ScopedProbe>());

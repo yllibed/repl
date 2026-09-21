@@ -18,7 +18,7 @@ namespace Repl.Mcp;
 /// through the per-request <see cref="McpRequestServerAccessor"/> binding, which is
 /// finer-grained than the session.
 /// </remarks>
-internal sealed class McpSessionContext : IDisposable
+internal sealed class McpSessionContext : IAsyncDisposable
 {
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
@@ -77,13 +77,17 @@ internal sealed class McpSessionContext : IDisposable
 	/// <summary>Re-arms the compatibility-shim intro after a routing invalidation.</summary>
 	public void ResetCompatibilityIntro() => Interlocked.Exchange(ref _compatibilityIntroServed, 0);
 
-	public void Dispose()
+	public async ValueTask DisposeAsync()
 	{
 		SnapshotGate.Dispose();
-		// Releases this session's Scoped services. Disposed synchronously because the context is,
-		// which is the reason the scope is stored rather than awaited: nothing on an MCP connection
-		// teardown path is async, and a Scoped disposable here is an application object, not I/O.
-		_scope?.Dispose();
+		// Releases this session's Scoped services. Must be awaited: a consumer may register the unit
+		// of work the lifetime guidance recommends Scoped as IAsyncDisposable only, and Microsoft DI's
+		// ServiceProviderEngineScope.Dispose() throws InvalidOperationException rather than skip it —
+		// which would otherwise fault RunAsync at every connection's teardown.
+		if (_scope is { } scope)
+		{
+			await scope.DisposeAsync().ConfigureAwait(false);
+		}
 	}
 
 	/// <summary>

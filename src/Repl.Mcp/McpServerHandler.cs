@@ -34,7 +34,9 @@ internal sealed class McpServerHandler
 	private readonly McpFeedbackService _feedback;
 	// Context for work that belongs to no MCP session: eager fail-fast validation, the pre-built
 	// catalog behind BuildMcpServerOptions, and the snapshot test seams. One per handler, sharing its
-	// lifetime, so nothing disposes it. See McpRootsScope for what that costs anything stored here.
+	// lifetime, so nothing disposes it — and CreateSessionContext deliberately opens it no DI scope to
+	// dispose, since a handler-lifetime temporary with no owner would only ever leak one. See
+	// McpRootsScope for what that costs anything stored here.
 	private readonly McpSessionContext _catalogContext;
 	private readonly Lock _refreshLock = new();
 	private readonly Lock _attachLock = new();
@@ -91,12 +93,17 @@ internal sealed class McpServerHandler
 			[typeof(IMcpFeedback)] = _feedback,
 		};
 
-		// One DI scope per session, so a Scoped registration is per connection here just as it is per
+		// One DI scope per CONNECTION, so a Scoped registration is per connection here just as it is per
 		// Run* on the other transports — and so discovery and execution read the SAME instance, which
 		// is what lets a module presence predicate gate on one. Resolving IReplSessionState from it
 		// rather than overriding it also keeps a consumer's own implementation reachable under MCP.
-		// A provider without scope support runs unscoped, as the Run* paths do.
-		var scope = _services.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory
+		// A provider without scope support runs unscoped, as the Run* paths do. The catalog context
+		// (McpRootsScope.Request) stands in for no session at all — it is a handler-lifetime temporary
+		// with no owner to dispose a scope for, so it resolves straight from _services instead. On the
+		// reusable-options path that also means Scoped resolves once from the root, matching the
+		// single-context, single-instance-for-every-connection carve-out that path already documents.
+		var scope = rootsScope == McpRootsScope.Connection
+			&& _services.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory
 			? scopeFactory.CreateAsyncScope()
 			: (AsyncServiceScope?)null;
 		var sessionServices = scope?.ServiceProvider ?? _services;
@@ -145,18 +152,21 @@ internal sealed class McpServerHandler
 			: new StdioServerTransport(serverName);
 		try
 		{
-			using var context = CreateSessionContext(McpRootsScope.Connection);
-			var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
-			AttachSession(context, server);
+			var context = CreateSessionContext(McpRootsScope.Connection);
+			await using (context.ConfigureAwait(false))
+			{
+				var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
+				AttachSession(context, server);
 
-			try
-			{
-				await server.RunAsync(ct).ConfigureAwait(false);
-			}
-			finally
-			{
-				DetachSession(context);
-				await server.DisposeAsync().ConfigureAwait(false);
+				try
+				{
+					await server.RunAsync(ct).ConfigureAwait(false);
+				}
+				finally
+				{
+					DetachSession(context);
+					await server.DisposeAsync().ConfigureAwait(false);
+				}
 			}
 		}
 		finally
