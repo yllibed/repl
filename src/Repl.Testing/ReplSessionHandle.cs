@@ -163,8 +163,14 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Ends the session and removes it from its host. Disposing twice is a no-op.
+	/// Ends the session, removes it from its host, and releases the session's dependency-injection
+	/// scope — disposing every <c>Scoped</c> service it resolved. Disposing twice is a no-op.
 	/// </summary>
+	/// <remarks>
+	/// Does not wait for a command that is still running: an orphaned run would make this hang. Such a
+	/// run keeps the scope instead of having it disposed underneath it, so the scope outlives this
+	/// handle in that case.
+	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
 		if (_disposed)
@@ -176,13 +182,22 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		_owner.RemoveSession(SessionId);
 		ReplSessionIO.RemoveSession(SessionId);
 
-		// Best-effort: holding the gate keeps a command that starts between two runs from racing
-		// scoped disposal. Never WAIT for one that is already running — an orphaned timed-out run
-		// holds the gate until it finishes on its own, and waiting would turn an await using into a
-		// hang. Commands queued behind it stop at the re-check inside the gate instead.
+		// The gate is taken, never waited on. Waiting would turn an await using into a hang whenever a
+		// command is still running — an orphaned timed-out run holds the gate until it finishes on its
+		// own. Commands queued behind it stop at the re-check inside the gate instead.
 		var held = await _commandGate.WaitAsync(TimeSpan.Zero).ConfigureAwait(false);
 		try
 		{
+			if (!held)
+			{
+				// A command is mid-run and resolving from this very provider. Disposing it here would
+				// pull the scope out from under that command, so its services start throwing
+				// ObjectDisposedException and its scoped disposables die while it still holds them.
+				// The orphan keeps the scope instead: it outlives the handle rather than faulting, and
+				// the process reclaims it. Leaking a test session's scope is the lesser harm.
+				return;
+			}
+
 			switch (_services)
 			{
 				case IAsyncDisposable asyncDisposable:
@@ -351,69 +366,22 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	// open a fresh scope — and fresh Scoped instances — per command.
 	private sealed class SessionScopedTestServices : IServiceProvider, IAsyncDisposable
 	{
-		private readonly AsyncServiceScope? _scope;
-		private readonly IServiceProvider _inner;
-		private readonly InMemorySessionState _sessionState = new();
+		private readonly AsyncServiceScope _scope;
 
-		private SessionScopedTestServices(AsyncServiceScope? scope, IServiceProvider inner)
-		{
-			_scope = scope;
-			_inner = inner;
-		}
+		private SessionScopedTestServices(AsyncServiceScope scope) => _scope = scope;
 
-		public static SessionScopedTestServices Create(ReplApp app)
-		{
-			var root = app.Services;
-			if (root.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory)
-			{
-				var scope = scopeFactory.CreateAsyncScope();
-				return new SessionScopedTestServices(scope, scope.ServiceProvider);
-			}
+		// ReplApp.Services is always a built ServiceProvider, which always supplies the factory, so
+		// there is no scope-less case to fall back to here — unlike the Run* paths, which take whatever
+		// provider a caller hands them.
+		public static SessionScopedTestServices Create(ReplApp app) =>
+			new(app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope());
 
-			return new SessionScopedTestServices(scope: null, root);
-		}
+		// IReplSessionState is resolved from the scope like everything else, rather than masked with a
+		// harness-owned bag: the registration is Scoped, so the scope already gives this session its own
+		// — and masking it would run a consumer's own implementation in production while this harness
+		// silently exercised a different one.
+		public object? GetService(Type serviceType) => _scope.ServiceProvider.GetService(serviceType);
 
-		public object? GetService(Type serviceType) =>
-			serviceType == typeof(IReplSessionState) ? _sessionState : _inner.GetService(serviceType);
-
-		public ValueTask DisposeAsync() => _scope?.DisposeAsync() ?? ValueTask.CompletedTask;
-	}
-
-	private sealed class InMemorySessionState : IReplSessionState
-	{
-		private readonly Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
-
-		public bool TryGet<T>(string key, out T? value)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			if (_values.TryGetValue(key, out var existing) && existing is T typed)
-			{
-				value = typed;
-				return true;
-			}
-
-			value = default;
-			return false;
-		}
-
-		public T? Get<T>(string key)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			return TryGet<T>(key, out var value) ? value : default;
-		}
-
-		public void Set<T>(string key, T value)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			_values[key] = value;
-		}
-
-		public bool Remove(string key)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			return _values.Remove(key);
-		}
-
-		public void Clear() => _values.Clear();
+		public ValueTask DisposeAsync() => _scope.DisposeAsync();
 	}
 }
