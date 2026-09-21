@@ -60,10 +60,6 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	/// </summary>
 	public string SessionId => _sessionId;
 
-	/// <summary>The app this session was opened against — <see cref="ReplTestHost"/> uses this to
-	/// correlate a session with the app root it may still be using at disposal time.</summary>
-	internal ReplApp App => _app;
-
 	/// <summary>
 	/// Completes once this session's DI scope has actually been released — including when
 	/// <see cref="DisposeAsync"/> deferred that to a command that was still running when it was called.

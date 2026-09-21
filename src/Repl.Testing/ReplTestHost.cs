@@ -18,6 +18,13 @@ public sealed class ReplTestHost : IAsyncDisposable
 	// SAME app for every session (so several sessions can share one container) must count as one entry,
 	// not one per session, or the second session's own scope would be torn down with the first's.
 	private readonly ConcurrentDictionary<ReplApp, byte> _apps = new(ReferenceEqualityComparer.Instance);
+	// Every session ever opened against an app contributes its ServicesDisposed task here, at open time
+	// — independent of _sessions, which a session leaves as soon as ITS OWN DisposeAsync is called, even
+	// while its command is still running and its scope release is deferred. Without this, a caller that
+	// disposes a session handle directly (not through the host) before its command finishes makes that
+	// session invisible to the app-root check below despite its scope still being live.
+	private readonly ConcurrentDictionary<ReplApp, ConcurrentQueue<Task>> _pendingServiceDisposals =
+		new(ReferenceEqualityComparer.Instance);
 	private bool _disposed;
 
 	private ReplTestHost(Func<ReplApp> appFactory, ReplScenarioOptions options)
@@ -69,6 +76,9 @@ public sealed class ReplTestHost : IAsyncDisposable
 			descriptor,
 			_options,
 			cancellationToken).ConfigureAwait(false);
+		// Recorded regardless of what happens to the handle afterward — including a caller disposing it
+		// directly, which would otherwise remove it from _sessions before its deferred scope release runs.
+		_pendingServiceDisposals.GetOrAdd(app, static _ => new ConcurrentQueue<Task>()).Enqueue(handle.ServicesDisposed);
 		if (!_sessions.TryAdd(handle.SessionId, handle))
 		{
 			await handle.DisposeAsync().ConfigureAwait(false);
@@ -128,11 +138,7 @@ public sealed class ReplTestHost : IAsyncDisposable
 		}
 
 		_disposed = true;
-		// Captured before disposing: ReplSessionHandle.DisposeAsync can defer releasing its DI scope to
-		// a command that was still running when it was called (see ReplSessionHandle), and this list is
-		// what lets the app-root loop below tell which apps that affects, after _sessions is cleared.
-		var sessions = _sessions.Values.ToArray();
-		foreach (var session in sessions)
+		foreach (var session in _sessions.Values)
 		{
 			await session.DisposeAsync().ConfigureAwait(false);
 		}
@@ -141,28 +147,46 @@ public sealed class ReplTestHost : IAsyncDisposable
 
 		foreach (var app in _apps.Keys)
 		{
-			// An app whose session deferred its own scope release to a command still in flight must not
-			// have its root disposed here either: that command's scope is a child of this root, and
-			// disposing the root out from under it is the same hazard ReplSessionHandle.DisposeAsync
-			// itself refuses to create. Never WAIT for that command the way it never does — leaving the
-			// root undisposed alongside the deferred scope is the lesser harm; the process reclaims both.
-			if (Array.Exists(sessions, s => ReferenceEquals(s.App, app) && !s.ServicesDisposed.IsCompleted))
+			var pending = _pendingServiceDisposals.TryGetValue(app, out var queue)
+				? Array.FindAll([.. queue], static t => !t.IsCompleted)
+				: [];
+			if (pending.Length > 0)
 			{
+				// Scheduled, not abandoned: disposing this root now would pull it out from under
+				// whichever session's command is still running and holding a scope that descends from
+				// it — the same hazard ReplSessionHandle.DisposeAsync itself refuses to create. Waiting
+				// HERE would reintroduce, at the host level, the unbounded wait on a possibly-orphaned
+				// command that design already rejected — so the disposal runs once every one of this
+				// app's still-in-flight sessions actually finishes, whenever that turns out to be,
+				// without this call blocking on it.
+				_ = DisposeAppOnceSessionsFinishAsync(app, pending);
 				continue;
 			}
 
-			switch (app.Services)
-			{
-				case IAsyncDisposable asyncDisposable:
-					await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-					break;
-				case IDisposable disposable:
-					disposable.Dispose();
-					break;
-			}
+			await DisposeAppAsync(app).ConfigureAwait(false);
 		}
 
 		_apps.Clear();
+		_pendingServiceDisposals.Clear();
+	}
+
+	private static async Task DisposeAppOnceSessionsFinishAsync(ReplApp app, Task[] pending)
+	{
+		await Task.WhenAll(pending).ConfigureAwait(false);
+		await DisposeAppAsync(app).ConfigureAwait(false);
+	}
+
+	private static async ValueTask DisposeAppAsync(ReplApp app)
+	{
+		switch (app.Services)
+		{
+			case IAsyncDisposable asyncDisposable:
+				await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+				break;
+			case IDisposable disposable:
+				disposable.Dispose();
+				break;
+		}
 	}
 
 	private void ThrowIfDisposed()

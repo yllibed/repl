@@ -483,6 +483,7 @@ public sealed class Given_SessionScopedServices
 	[Description("Disposing the host while one of its sessions has deferred scope disposal to a still-running command must not dispose that session's app root out from under it: the command's own scope is a child of that root, so a singleton the command resolves after the host disposal call returns must still resolve without throwing ObjectDisposedException. Reproduces the shape autocarl's earlier finding pointed at one level up — the same hazard, at the app-root boundary instead of the session-scope boundary.")]
 	public async Task When_TheHostIsDisposedWhileACommandRuns_Then_ItsAppRootSurvivesUntilTheCommandFinishes()
 	{
+		SingletonProbe? probe = null;
 		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var host = ReplTestHost.Create(() =>
@@ -491,6 +492,7 @@ public sealed class Given_SessionScopedServices
 				.UseDefaultInteractive();
 			app.Map("block", async (SingletonProbe before) =>
 			{
+				probe = before;
 				started.TrySetResult();
 
 #pragma warning disable VSTHRD003
@@ -517,6 +519,62 @@ public sealed class Given_SessionScopedServices
 		completed.ExitCode.Should().Be(
 			0,
 			"the singleton must still resolve after host disposal returns while this command was in flight: {0}",
+			completed.OutputText);
+
+		// The command has now finished and its own deferred scope release has run — the app root must
+		// not be abandoned forever just because it was unsafe to dispose at the moment host.DisposeAsync
+		// was called. Polled rather than asserted immediately: disposal is scheduled to run once the
+		// session's own deferred release completes, not synchronously with it.
+		var probeDisposed = () => probe!.Disposed;
+		await Task.Run(async () =>
+		{
+			while (!probeDisposed())
+			{
+				await Task.Delay(10).ConfigureAwait(false);
+			}
+		}).WaitAsync(TimeSpan.FromSeconds(10));
+	}
+
+	[TestMethod]
+	[Description("The other ownership gap: a caller can dispose the SESSION handle directly (not through the host) while its command is still running. ReplSessionHandle.DisposeAsync removes the session from its host immediately, before the deferred scope release happens — so a host disposed afterward must still know that session's app root is not yet safe to dispose, even though the session no longer appears in the host's own tracking.")]
+	public async Task When_ASessionIsDisposedDirectlyWhileItsCommandRuns_Then_TheHostStillWaitsForItsAppRoot()
+	{
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create(services => services.AddSingleton<SingletonProbe>())
+				.UseDefaultInteractive();
+			app.Map("block", async (SingletonProbe before) =>
+			{
+				started.TrySetResult();
+
+#pragma warning disable VSTHRD003
+				await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+
+				return before.Disposed.ToString();
+			});
+			return app;
+		}, options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var session = await host.OpenSessionAsync();
+		var running = session.RunCommandAsync("block --no-logo").AsTask();
+		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+		// Disposes the SESSION directly, not the host — this is what removes it from the host's
+		// _sessions before the command has released its scope.
+		await session.DisposeAsync();
+
+		// Now the host, which no longer has this session in _sessions at all.
+		await host.DisposeAsync();
+
+		release.TrySetResult();
+		var completed = await running.WaitAsync(TimeSpan.FromSeconds(30));
+
+		completed.ExitCode.Should().Be(
+			0,
+			"the app root must still be alive when the command resolves the singleton after release: {0}",
 			completed.OutputText);
 	}
 }
