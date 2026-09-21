@@ -410,6 +410,15 @@ public sealed class ReplApp : IReplApp
 	{
 		if (runOptions.HostedServiceLifecycle is HostedServiceLifecycleMode.None or HostedServiceLifecycleMode.Guest)
 		{
+			// Checked before RunInSessionScopeAsync, which resolves IServiceScopeFactory and creates a
+			// scope unconditionally: for an already-cancelled token that would run scope-creation side
+			// effects (or throw, for a caller-supplied provider that is itself disposed) instead of
+			// honouring ExitCodes.Cancelled the same way the IReplHost and hosted overloads already do.
+			if (_core.TryObserveCallerCancellation(cancellationToken) is { } cancelledEarly)
+			{
+				return cancelledEarly;
+			}
+
 			return await RunInSessionScopeAsync(
 				services,
 				runOptions.SessionScope,
