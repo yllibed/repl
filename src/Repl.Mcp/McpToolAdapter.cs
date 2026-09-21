@@ -210,16 +210,18 @@ internal sealed partial class McpToolAdapter
 		var invocableApp = _app as ISubInvocableReplApp
 			?? throw new InvalidOperationException("MCP tool adapter requires an app that supports sub-invocation.");
 
-		await McpClientRootsService.PrimeFromServicesAsync(_services, ct).ConfigureAwait(false);
+		// This session's services, layered over the scope the SDK opened for THIS request, so a Scoped
+		// registration resolves per invocation instead of once for the whole application.
+		var invocationServices = ResolveInvocationServices();
+		await McpClientRootsService.PrimeFromServicesAsync(invocationServices, ct).ConfigureAwait(false);
 
 		var outputWriter = new StringWriter();
 		var errorWriter = captureCommandOutput ? outputWriter : new StringWriter();
-		var inputReader = new StringReader(string.Empty);
-		var feedback = _services.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
+		var feedback = invocationServices.GetService(typeof(IMcpFeedback)) as IMcpFeedback;
 		var interactionChannel = new McpInteractionChannel(
 			prefills, _options.InteractivityMode, server, progressToken, feedback);
 		var mcpServices = new McpServiceProviderOverlay(
-			_services,
+			invocationServices,
 			new Dictionary<Type, object> { [typeof(IReplInteractionChannel)] = interactionChannel });
 		var feedbackService = feedback as McpFeedbackService;
 		using var feedbackScope = feedbackService?.PushProgressToken(progressToken);
@@ -231,6 +233,35 @@ internal sealed partial class McpToolAdapter
 		var effectiveTokens = new List<string>(tokens.Count + 1) { $"--output:{ForcedOutputFormat}" };
 		effectiveTokens.AddRange(tokens);
 
+		var completed = await RunSubInvocationAsync(
+				invocableApp, effectiveTokens, mcpServices, outputWriter, errorWriter, captureCommandOutput, ct)
+			.ConfigureAwait(false);
+
+		var output = outputWriter.ToString().Trim();
+		var error = captureCommandOutput ? string.Empty : errorWriter.ToString().Trim();
+		var undelivered = undeliveredScope?.Messages.Drain() ?? [];
+		return new McpPipelineInvocation(
+			output, error, completed.ExitCode, completed.Kind, completed.Failure, undelivered);
+	}
+
+	/// <summary>
+	/// Resolves the provider one invocation runs against: this session's services, layered over the
+	/// per-invocation scope the SDK opened for the flowing request.
+	/// </summary>
+	private IServiceProvider ResolveInvocationServices() =>
+		McpSessionContext.Compose(_services, _requestServers.Current?.Services);
+
+	/// <summary>Runs the command with the captured I/O and throwaway session registration of one call.</summary>
+	private async Task<SubInvocationOutcome> RunSubInvocationAsync(
+		ISubInvocableReplApp invocableApp,
+		List<string> effectiveTokens,
+		IServiceProvider mcpServices,
+		StringWriter outputWriter,
+		StringWriter errorWriter,
+		bool captureCommandOutput,
+		CancellationToken ct)
+	{
+		var inputReader = new StringReader(string.Empty);
 		// Command-backed resources expose the rendered return value as the resource body.
 		// Low-level handler writes to IReplIoContext.Output/Error are side-channel output, not resource content.
 		var commandOutput = captureCommandOutput ? outputWriter : TextWriter.Null;
@@ -256,14 +287,8 @@ internal sealed partial class McpToolAdapter
 					mcpServices,
 					McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode))
 				: null;
-			var completed = await invocableApp.RunSubInvocationWithOutcomeAsync(
+			return await invocableApp.RunSubInvocationWithOutcomeAsync(
 				effectiveTokens.ToArray(), mcpServices, presenceServices, ct).ConfigureAwait(false);
-
-			var output = outputWriter.ToString().Trim();
-			var error = captureCommandOutput ? string.Empty : errorWriter.ToString().Trim();
-			var undelivered = undeliveredScope?.Messages.Drain() ?? [];
-			return new McpPipelineInvocation(
-				output, error, completed.ExitCode, completed.Kind, completed.Failure, undelivered);
 		}
 	}
 

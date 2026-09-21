@@ -38,13 +38,17 @@ internal sealed class McpExplicitPrompt(
 		// incapable.
 		servers.BindRequest(request);
 
-		// The SDK resolves this handler's parameters from the request's own provider, and nothing on
-		// this path sets one — so a prompt injecting a capability service could not be invoked at all.
-		// Every other execution path reaches the handler through the adapter, which supplies them.
-		request.Services = services;
+		// The SDK resolves this handler's parameters from the request's own provider: the scope it
+		// opened for this invocation, which descends from the application root and so carries none of
+		// the session's services — a prompt injecting a capability service could not be invoked at all.
+		// The session is layered OVER that scope rather than replacing it, so a Scoped registration
+		// still resolves per invocation. Every other execution path composes the same way through the
+		// adapter.
+		var invocationServices = McpSessionContext.Compose(services, request.Services);
+		request.Services = invocationServices;
 
-		await McpClientRootsService.PrimeFromServicesAsync(services, cancellationToken).ConfigureAwait(false);
-		var feedbackService = services.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
+		await McpClientRootsService.PrimeFromServicesAsync(invocationServices, cancellationToken).ConfigureAwait(false);
+		var feedbackService = invocationServices.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
 		using var undelivered = feedbackService?.PushUndeliveredMessages();
 
 		GetPromptResult result;

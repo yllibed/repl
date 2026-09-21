@@ -21,9 +21,13 @@ internal sealed class McpSessionContext : IDisposable
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
 
-	public McpSessionContext(McpClientRootsService roots, IServiceProvider services)
+	public McpSessionContext(
+		McpClientRootsService roots,
+		IReadOnlyDictionary<Type, object> overrides,
+		IServiceProvider services)
 	{
 		Roots = roots;
+		Overrides = overrides;
 		Services = services;
 	}
 
@@ -32,6 +36,41 @@ internal sealed class McpSessionContext : IDisposable
 
 	/// <summary>Per-session service overlay handed to <c>McpServer.Create</c>.</summary>
 	public IServiceProvider Services { get; }
+
+	/// <summary>The session-owned services layered over whatever provider sits beneath them.</summary>
+	public IReadOnlyDictionary<Type, object> Overrides { get; }
+
+	/// <summary>
+	/// Layers this session services over the provider the SDK opened for one request, so a Scoped
+	/// registration resolves per invocation while this session capability services keep answering.
+	/// </summary>
+	/// <remarks>
+	/// The SDK creates an <c>AsyncServiceScope</c> per request handler invocation —
+	/// <c>McpServerOptions.ScopeRequests</c> defaults to <see langword="true"/> — and exposes it as
+	/// <c>MessageContext.Services</c>. That scope descends from the APPLICATION root, so it carries
+	/// none of this session services: re-applying them on top is what keeps a handler injecting
+	/// <see cref="IMcpClientRoots"/> resolvable. Falls back to the session provider when there is no
+	/// request scope to layer over, which is every path the SDK does not dispatch.
+	/// </remarks>
+	public IServiceProvider ComposeOver(IServiceProvider? requestServices) =>
+		requestServices is null || ReferenceEquals(requestServices, Services)
+			? Services
+			: new McpServiceProviderOverlay(requestServices, Overrides);
+
+	/// <summary>
+	/// Layers the session that <paramref name="sessionServices"/> belongs to over
+	/// <paramref name="requestServices"/>, or returns it unchanged when it belongs to no session.
+	/// </summary>
+	/// <remarks>
+	/// Every execution path resolves its provider through here, so the layering order — session
+	/// services above, the SDK per-request scope below — is stated once. A provider that carries no
+	/// <see cref="McpSessionContext"/> is one of the prebuilt paths that never had a session to begin
+	/// with, and is handed back untouched.
+	/// </remarks>
+	public static IServiceProvider Compose(IServiceProvider sessionServices, IServiceProvider? requestServices) =>
+		sessionServices.GetService(typeof(McpSessionContext)) is McpSessionContext session
+			? session.ComposeOver(requestServices)
+			: sessionServices;
 
 	/// <summary>Serializes snapshot builds for this session.</summary>
 	public SemaphoreSlim SnapshotGate { get; } = new(initialCount: 1, maxCount: 1);

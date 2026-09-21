@@ -88,8 +88,17 @@ internal sealed class McpServerHandler
 			[typeof(IMcpSampling)] = _sampling,
 			[typeof(IMcpElicitation)] = _elicitation,
 			[typeof(IMcpFeedback)] = _feedback,
+			// Session state belongs to the SESSION, not to the per-invocation scope the SDK opens and
+			// disposes around each request: on the initialize era a command writes it and calls
+			// InvalidateRouting(), and the next tools/list has to see what it wrote. Holding it here also
+			// stops it falling through to the application root, where one bag was shared by every
+			// connection at once.
+			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
 		};
-		var context = new McpSessionContext(roots, new McpServiceProviderOverlay(_services, overlayServices));
+		var context = new McpSessionContext(
+			roots,
+			overlayServices,
+			new McpServiceProviderOverlay(_services, overlayServices));
 		// The context rides in its own overlay so request handlers can recover their
 		// originating session through the server's provider (the dictionary is captured by
 		// reference, making this two-phase registration safe).
