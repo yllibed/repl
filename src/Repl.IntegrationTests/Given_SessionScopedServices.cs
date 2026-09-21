@@ -196,4 +196,44 @@ public sealed class Given_SessionScopedServices
 		second.ExitCode.Should().Be(0, "run output was: {0}", second.Text);
 		first.Text.Trim().Should().NotBe(second.Text.Trim());
 	}
+
+	[TestMethod]
+	[Description("Regression guard for the session command gate: taking the gate before disposing the session scope must not let a still-running command block disposal indefinitely. DisposeAsync waits on the gate, so an unbounded wait turns an orphaned command into a hung await using, and disposing the semaphore while a caller is queued on it strands that caller forever.")]
+	public async Task When_ACommandIsStillRunning_Then_DisposingTheSessionDoesNotHang()
+	{
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var host = ReplTestHost.Create(
+			() =>
+			{
+				var app = ReplApp.Create().UseDefaultInteractive();
+				app.Map("block", async () =>
+				{
+					started.TrySetResult();
+
+					// VSTHRD003: the test owns both sources; this command exists to hold the session command
+					// gate open until the test releases it.
+#pragma warning disable VSTHRD003
+					await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+					return "done";
+				});
+				return app;
+			},
+			options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var session = await host.OpenSessionAsync();
+		var running = session.RunCommandAsync("block --no-logo").AsTask();
+		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+		var dispose = session.DisposeAsync().AsTask();
+		var disposedInTime = await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(5))) == dispose;
+
+		release.TrySetResult();
+		await Task.WhenAny(running, Task.Delay(TimeSpan.FromSeconds(30)));
+		await dispose.WaitAsync(TimeSpan.FromSeconds(30));
+
+		disposedInTime.Should().BeTrue(
+			"disposing a session must not wait unbounded on a command that is still running");
+	}
 }

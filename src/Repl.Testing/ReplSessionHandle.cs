@@ -86,6 +86,10 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		await _commandGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
+			// Re-checked inside the gate: a caller that passed the check above can be queued here while
+			// the session is disposed, and must not go on to run against a disposed scope.
+			ThrowIfDisposed();
+
 			var startedAt = DateTimeOffset.UtcNow;
 			using var output = new StringWriter();
 			var host = new TestSessionHost(_sessionId, output);
@@ -172,21 +176,35 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		_owner.RemoveSession(SessionId);
 		ReplSessionIO.RemoveSession(SessionId);
 
-		// Take the command gate before disposing the session scope so an in-flight command
-		// (for example an orphaned timed-out run) cannot race scoped-service disposal.
-		await _commandGate.WaitAsync().ConfigureAwait(false);
-		switch (_services)
+		// Best-effort: holding the gate keeps a command that starts between two runs from racing
+		// scoped disposal. Never WAIT for one that is already running — an orphaned timed-out run
+		// holds the gate until it finishes on its own, and waiting would turn an await using into a
+		// hang. Commands queued behind it stop at the re-check inside the gate instead.
+		var held = await _commandGate.WaitAsync(TimeSpan.Zero).ConfigureAwait(false);
+		try
 		{
-			case IAsyncDisposable asyncDisposable:
-				// Releases the session DI scope, disposing its Scoped services.
-				await asyncDisposable.DisposeAsync().ConfigureAwait(false);
-				break;
-			case IDisposable disposable:
-				disposable.Dispose();
-				break;
+			switch (_services)
+			{
+				case IAsyncDisposable asyncDisposable:
+					// Releases the session DI scope, disposing its Scoped services.
+					await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+					break;
+				case IDisposable disposable:
+					disposable.Dispose();
+					break;
+			}
+		}
+		finally
+		{
+			if (held)
+			{
+				_commandGate.Release();
+			}
 		}
 
-		_commandGate.Dispose();
+		// The semaphore is deliberately not disposed: disposing it while a caller is queued on
+		// WaitAsync strands that caller forever, and it owns no unmanaged resource here because
+		// AvailableWaitHandle is never used.
 	}
 
 	internal static ValueTask<ReplSessionHandle> StartAsync(
