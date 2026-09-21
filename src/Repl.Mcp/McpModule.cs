@@ -17,7 +17,10 @@ internal sealed class McpModule(ReplMcpServerOptions options) : IReplModule
 					// instance captured at registration time, so both configuration
 					// paths converge on a single options instance.
 					var resolved = services.GetService(typeof(ReplMcpServerOptions)) as ReplMcpServerOptions ?? options;
-					var handler = new McpServerHandler(app, resolved, services);
+					// services is this command's own Run*-opened scope, spanning the whole "mcp serve"
+					// invocation — i.e. this entire connection — so the handler must reuse it rather than
+					// opening a second, sibling scope. See McpServerHandler's constructor doc.
+					var handler = new McpServerHandler(app, resolved, services, servicesAreSessionScoped: true);
 					await handler.RunAsync(io, ct).ConfigureAwait(false);
 					return Results.Exit(0);
 				})

@@ -26,6 +26,7 @@ internal sealed class McpServerHandler
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
+	private readonly bool _servicesAreSessionScoped;
 	private readonly TimeProvider _timeProvider;
 	private readonly char _separator;
 	private readonly McpRequestServerAccessor _requestServers = new();
@@ -63,14 +64,35 @@ internal sealed class McpServerHandler
 	private readonly McpServerResourceCollection _resourceListChanged = new();
 	private readonly McpServerPrimitiveCollection<McpServerPrompt> _promptListChanged = new();
 
+	/// <param name="app">The core Repl app.</param>
+	/// <param name="options">MCP server configuration.</param>
+	/// <param name="services">
+	/// Services for this handler. Used directly, or as the root a per-connection scope is created from —
+	/// see <paramref name="servicesAreSessionScoped"/>.
+	/// </param>
+	/// <param name="servicesAreSessionScoped">
+	/// True when <paramref name="services"/> already IS one connection's lifetime-scoped DI container —
+	/// e.g. Run*'s own per-run scope, handed down through the <c>mcp serve</c> CLI command — so
+	/// <see cref="RunAsync"/> must reuse it as-is instead of resolving its <see cref="IServiceScopeFactory"/>
+	/// and opening a second, sibling scope: that factory is itself a singleton bound to the true
+	/// application root, so a scope built from it never nests inside the one <paramref name="services"/>
+	/// already is, and any Scoped instance established by the run's own middleware or command pipeline
+	/// before this handler ran would be invisible to MCP discovery and tool execution. Default <c>false</c>
+	/// (create a new per-connection scope from <paramref name="services"/>) matches every other caller —
+	/// <see cref="McpReplExtensions.BuildMcpServerOptions(ReplApp,Action{ReplMcpServerOptions}?)"/>'s
+	/// application-root provider, and this repository's own tests exercising session-scope behavior in
+	/// isolation.
+	/// </param>
 	public McpServerHandler(
 		ICoreReplApp app,
 		ReplMcpServerOptions options,
-		IServiceProvider services)
+		IServiceProvider services,
+		bool servicesAreSessionScoped = false)
 	{
 		_app = app;
 		_options = options;
 		_services = services;
+		_servicesAreSessionScoped = servicesAreSessionScoped;
 		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		_separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
 		// Sampling/elicitation/feedback are stateless (they resolve the request-bound server
@@ -102,7 +124,12 @@ internal sealed class McpServerHandler
 		// with no owner to dispose a scope for, so it resolves straight from _services instead. On the
 		// reusable-options path that also means Scoped resolves once from the root, matching the
 		// single-context, single-instance-for-every-connection carve-out that path already documents.
+		// _servicesAreSessionScoped skips scope creation even for a connection context: _services is
+		// already the one scope this whole run uses (see the constructor doc), and IServiceScopeFactory
+		// is itself a singleton bound to the application root — a scope built from it would be a SIBLING
+		// of _services, not nested inside it, splitting one connection across two unrelated Scoped graphs.
 		var scope = rootsScope == McpRootsScope.Connection
+			&& !_servicesAreSessionScoped
 			&& _services.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory
 			? scopeFactory.CreateAsyncScope()
 			: (AsyncServiceScope?)null;
@@ -145,15 +172,22 @@ internal sealed class McpServerHandler
 		Justification = "MCP server handler runs in a context where all types are preserved.")]
 	public async Task RunAsync(IReplIoContext io, CancellationToken ct)
 	{
-		var serverOptions = BuildDynamicServerOptions();
-		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
-		var transport = _options.TransportFactory is { } factory
-			? factory(serverName, io)
-			: new StdioServerTransport(serverName);
+		// Created before BuildDynamicServerOptions, not after: that call's eager warm-up resolves
+		// presence-predicate dependencies, and they must see THIS connection's scope — the one
+		// discovery and every execution use afterward — rather than the handler-lifetime catalog
+		// context, which would hand a Scoped predicate dependency a different instance than the
+		// connection it is gating ever sees again. Disposed last (the outermost finally below),
+		// preserving the same unwind order server/transport already used before this changed: server,
+		// then transport, then context.
+		var context = CreateSessionContext(McpRootsScope.Connection);
 		try
 		{
-			var context = CreateSessionContext(McpRootsScope.Connection);
-			await using (context.ConfigureAwait(false))
+			var serverOptions = BuildDynamicServerOptions(context.Services);
+			var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
+			var transport = _options.TransportFactory is { } factory
+				? factory(serverName, io)
+				: new StdioServerTransport(serverName);
+			try
 			{
 				var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
 				AttachSession(context, server);
@@ -168,14 +202,21 @@ internal sealed class McpServerHandler
 					await server.DisposeAsync().ConfigureAwait(false);
 				}
 			}
+			finally
+			{
+				await transport.DisposeAsync().ConfigureAwait(false);
+			}
 		}
 		finally
 		{
-			await transport.DisposeAsync().ConfigureAwait(false);
+			await context.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
-	internal McpServerOptions BuildDynamicServerOptions()
+	/// <summary>Builds the dynamic <c>mcp serve</c> options, warming up presence predicates against
+	/// <paramref name="services"/> — the connection's own scope, so a Scoped predicate dependency sees
+	/// the same instance during warm-up as discovery and execution see afterward.</summary>
+	internal McpServerOptions BuildDynamicServerOptions(IServiceProvider services)
 	{
 		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
@@ -186,8 +227,11 @@ internal sealed class McpServerHandler
 		if (_options.CommandFilter is null)
 		{
 			// No request is flowing at construction, so this warm-up builds the legacy view; the first
-			// modern request rebuilds for its own era.
-			_ = CreateDocumentationModel(_catalogContext.Services, sessionless: false);
+			// modern request rebuilds for its own era. Against the connection's own services, passed in
+			// by the caller — not _catalogContext, which is the reusable-options path's handler-lifetime
+			// stand-in for a session and would hand a Scoped predicate dependency a different instance
+			// than the one this connection's discovery and execution resolve afterward.
+			_ = CreateDocumentationModel(services, sessionless: false);
 		}
 
 		return new McpServerOptions

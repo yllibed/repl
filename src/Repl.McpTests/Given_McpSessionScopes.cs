@@ -197,6 +197,48 @@ public sealed class Given_McpSessionScopes
 		body.Should().Contain("classified", "what discovery advertised has to run");
 	}
 
+	private sealed class ConstructionTrackingProbe
+	{
+		public Guid Id { get; } = Guid.NewGuid();
+	}
+
+	[TestMethod]
+	[Description("BuildDynamicServerOptions's eager warm-up (CreateDocumentationModel, run once per connection so fail-fast validation still happens when no CommandFilter defers it) evaluates every presence predicate, including one gated on a Scoped dependency. That resolution must happen against THIS connection's own scope — the one discovery and execution use afterward — not a different one: otherwise warm-up silently constructs a second, wasted instance nothing ever reads, and this connection's Scoped graph is already split in two before its first real request.")]
+	public async Task When_APresencePredicateGatesOnAScopedService_Then_WarmUpSharesTheConnectionsInstance()
+	{
+		// Recorded inside the DI factory itself, not by a method the test calls afterward: what this
+		// test cares about is how many DISTINCT instances DI ever built for the connection, and a second,
+		// wasted one built by warm-up in the wrong scope would never otherwise be observed — nothing reads
+		// the discarded model it contributes to. A Scoped registration invokes this factory at most once
+		// per scope, so the entry count IS the distinct-scope count.
+		var constructed = new List<Guid>();
+		var app = ReplApp.Create(services => services.AddScoped(_ =>
+		{
+			var probe = new ConstructionTrackingProbe();
+			constructed.Add(probe.Id);
+			return probe;
+		}));
+		app.UseMcpServer();
+		app.Map("id", (ConstructionTrackingProbe probe) => probe.Id.ToString());
+		// Always true: only the ACT of evaluating the predicate — which forces probe to resolve — matters
+		// here, not the value it returns.
+		app.MapModule(new GatedModule(), (ConstructionTrackingProbe probe) => probe.Id != Guid.Empty);
+
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var handler = CreateHandler(app);
+		var session = await StartAsync(handler, cts.Token).ConfigureAwait(false);
+		await using var scope = session.ConfigureAwait(false);
+
+		var reported = await CallAsync(session.Client, "id", token: cts.Token).ConfigureAwait(false);
+
+		constructed.Should().ContainSingle(
+			"warm-up's presence-predicate resolution and this tool call must share the SAME connection "
+			+ "scope; a second entry means warm-up built its own, separate instance in a different scope");
+		reported.Should().Contain(
+			constructed[0].ToString(),
+			"the one instance DI ever built for this connection must be the one the tool call observes");
+	}
+
 	[TestMethod]
 	[Description("Guards the composition order. The session's capability services are layered OVER its DI scope, so a command resolves both; get it backwards and IMcpClientRoots resolves nothing — and because McpServiceProviderOverlay also answers IServiceProviderIsService, a declared capability is reclassified as a client-supplied argument and the primitive stops being invocable.")]
 	public async Task When_ACommandInjectsACapabilityService_Then_ItResolvesAlongsideTheSessionScope()
@@ -342,6 +384,36 @@ public sealed class Given_McpSessionScopes
 		fromFirst.Should().NotBe(
 			fromSecond,
 			"a distinct IServiceProvider supplied per options build must give each its own Scoped instance");
+	}
+
+	[TestMethod]
+	[Description("The mcp serve CLI command hands McpServerHandler the scope Run* already opened for that whole invocation — one connection, one Run* scope — so RunAsync must reuse it instead of resolving a second one from IServiceScopeFactory, which is itself a singleton bound to the application root and would build a SIBLING, not a nested child. Reproduces the shape Codex found: a Scoped instance a caller's own middleware or command pipeline resolves BEFORE this handler runs must still be the one MCP discovery and tool execution see afterward.")]
+	public async Task When_ServicesAreAlreadySessionScoped_Then_TheConnectionReusesThatSameScope()
+	{
+		var app = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		app.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+
+		// Stands in for the outer Run*-opened scope McpModule hands down for "mcp serve": resolving here,
+		// before the handler ever runs, is what a caller's own middleware or command pipeline would do.
+		var outerScope = app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+		await using var outerScopeOwner = outerScope.ConfigureAwait(false);
+		var establishedBeforehand = outerScope.ServiceProvider.GetRequiredService<ScopedProbe>().Id;
+
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var handler = new McpServerHandler(
+			app.Core,
+			new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory },
+			outerScope.ServiceProvider,
+			servicesAreSessionScoped: true);
+		var session = await StartAsync(handler, cts.Token).ConfigureAwait(false);
+		await using var scope = session.ConfigureAwait(false);
+
+		var reported = await CallAsync(session.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+
+		reported.Should().Contain(
+			establishedBeforehand.ToString(),
+			"the connection must reuse the caller's own already-open scope, not a new sibling one, so "
+			+ "state established before RunAsync ran is still visible to discovery and execution");
 	}
 
 	private static Task<McpPipeSession> StartSharedAsync(
