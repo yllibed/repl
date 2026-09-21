@@ -122,9 +122,18 @@ limitation above. There is no per-connection context to give a DI scope to eithe
 once from the application root and is shared by every client the process serves, for as long as it runs.
 That is true under stateless HTTP hosting too, even though the SDK itself builds one short-lived server
 per request there: Repl's own scope is a property of the *context* it built at construction, not of the
-SDK's per-request server, so it does not follow the SDK's request boundary. A host that needs real
-per-connection or per-request isolation on this path has to build it itself — for example by calling
-`BuildMcpServerOptions()` fresh per connection rather than reusing one result — which is exactly the
-"multiplexes connections over one options instance" case flagged as a caller responsibility below.
+SDK's per-request server, so it does not follow the SDK's request boundary.
+
+**Calling `BuildMcpServerOptions()` again for each connection does not isolate `Scoped` either.** The
+`ReplApp` overload always passes that app's one `Services` root (`app.Services`, cached for the app's
+whole lifetime), so two calls against the same `ReplApp` still share the same root — and therefore the
+same `Scoped` instances — no matter how often the method runs. Genuine per-connection isolation on this
+path requires the host to supply a **different** `IServiceProvider` per connection, through the
+`ICoreReplApp.BuildMcpServerOptions(configure, services)` overload: build a scope yourself (for example
+`app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope()`), pass its
+`ServiceProvider` in for that connection, and dispose the scope yourself when the connection ends — Repl
+does not manage that scope's lifetime on this path, the same way it does not manage the connection
+itself. This is the "multiplexes connections over one options instance" case flagged as a caller
+responsibility below, made concrete.
 
 For those higher-level patterns, see [mcp-advanced.md](mcp-advanced.md).

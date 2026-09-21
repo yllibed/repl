@@ -183,6 +183,12 @@ public sealed class ReplApp : IReplApp
 	/// <summary>
 	/// Maps a module resolved through runtime DI activation.
 	/// </summary>
+	/// <remarks>
+	/// <typeparamref name="TModule"/> is constructed once, here, before any session exists — the same
+	/// timing as a singleton. A constructor dependency registered <c>Scoped</c> is captured at that one
+	/// resolution and shared by every session afterward. Keep <c>Scoped</c> services out of a module's
+	/// constructor; inject them into the handler that needs them instead, where they resolve per session.
+	/// </remarks>
 	public ReplApp MapModule<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule
 	{
@@ -433,6 +439,13 @@ public sealed class ReplApp : IReplApp
 		SessionScopeBehavior? sessionScope,
 		CancellationToken cancellationToken)
 	{
+		// Validated before hosted services start: on this path RunInSessionScopeAsync's own check is
+		// reached only after HostedServiceLifecycleCoordinator.StartAsync below, so an undefined value
+		// would otherwise run real startup (and rollback/shutdown) side effects before the option error
+		// surfaces, unlike the non-hosted path. The resolved value is unused here — opening the scope
+		// still happens once the pipeline actually runs below.
+		ValidateSessionScope(sessionScope);
+
 		IReadOnlyList<IHostedService> started = [];
 		ExecutionOutcome? outcome = null;
 		Exception? propagating = null;
@@ -700,11 +713,15 @@ public sealed class ReplApp : IReplApp
 	/// the session scope — a Blazor circuit, an ASP.NET request scope, or a session owner spanning
 	/// several one-shot runs. A provider without scope support runs unscoped, as before.
 	/// </remarks>
-	private static async ValueTask<T> RunInSessionScopeAsync<T>(
-		IServiceProvider services,
-		SessionScopeBehavior? sessionScope,
-		Func<IServiceProvider, CancellationToken, ValueTask<T>> run,
-		CancellationToken cancellationToken)
+	// Split from RunInSessionScopeAsync so the hosted-lifecycle path can validate before starting
+	// anything: HostedServiceLifecycleCoordinator.StartAsync runs before this helper's own scope-creation
+	// body would ever be reached, so a caller reaching RunHostedLifecycleOutcomeAsync must resolve and
+	// validate SessionScope first, standalone, to fail exactly as fast as the non-hosted path does.
+	//
+	// ParamName below names this parameter, not ReplRunOptions.SessionScope: MA0015 rejects nameof-ing a
+	// symbol that is not actually a parameter of the enclosing method, and both call sites would need
+	// their own equally-wrong local name. The message text already names the public property correctly.
+	private static SessionScopeBehavior ValidateSessionScope(SessionScopeBehavior? sessionScope)
 	{
 		// Rejected rather than treated as PerRun, for the reason the process-signal mode above states:
 		// numeric configuration or deserialization can produce an undefined value, and falling through a
@@ -713,17 +730,22 @@ public sealed class ReplApp : IReplApp
 		var resolved = sessionScope ?? SessionScopeBehavior.PerRun;
 		if (resolved is not (SessionScopeBehavior.PerRun or SessionScopeBehavior.CallerOwned))
 		{
-			// ParamName names this private helper's own parameter, not ReplRunOptions.SessionScope: MA0015
-			// rejects nameof-ing a symbol that is not actually a parameter of the enclosing method, and
-			// resolving that properly means hoisting this check into a helper that takes ReplRunOptions
-			// directly — which ripples into RunHostedLifecycleOutcomeAsync's signature and all three call
-			// sites for a ParamName mismatch nothing currently depends on. The message text already
-			// names the public property correctly.
 			throw new ArgumentOutOfRangeException(
 				nameof(sessionScope),
 				resolved,
 				$"ReplRunOptions.{nameof(ReplRunOptions.SessionScope)} is not a defined {nameof(SessionScopeBehavior)}.");
 		}
+
+		return resolved;
+	}
+
+	private static async ValueTask<T> RunInSessionScopeAsync<T>(
+		IServiceProvider services,
+		SessionScopeBehavior? sessionScope,
+		Func<IServiceProvider, CancellationToken, ValueTask<T>> run,
+		CancellationToken cancellationToken)
+	{
+		var resolved = ValidateSessionScope(sessionScope);
 
 		if (resolved == SessionScopeBehavior.CallerOwned)
 		{

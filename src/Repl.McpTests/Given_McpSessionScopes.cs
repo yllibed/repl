@@ -292,6 +292,58 @@ public sealed class Given_McpSessionScopes
 			"a reused options result has one context for every connection, so it has one scope too");
 	}
 
+	[TestMethod]
+	[Description("Guards against advice this branch's own docs once gave and had to retract: calling app.BuildMcpServerOptions() again — a genuinely fresh McpServerOptions and McpServerHandler each time, not the one-instance-shared-across-connections shape the carve-out test above pins — still shares Scoped, because the ReplApp overload always passes that app's one cached Services root. Each fresh options build gets its own McpServerHandler and its own catalog context, but that context resolves Scoped directly from the SAME root either way.")]
+	public async Task When_BuildMcpServerOptionsIsCalledFreshPerConnection_Then_ScopedIsStillShared()
+	{
+		var app = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		app.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		var first = await StartSharedAsync(app.BuildMcpServerOptions(), cts.Token).ConfigureAwait(false);
+		await using var firstScope = first.ConfigureAwait(false);
+		var second = await StartSharedAsync(app.BuildMcpServerOptions(), cts.Token).ConfigureAwait(false);
+		await using var secondScope = second.ConfigureAwait(false);
+
+		var fromFirst = await CallAsync(first.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+		var fromSecond = await CallAsync(second.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+
+		fromFirst.Should().NotBeNullOrWhiteSpace();
+		fromFirst.Should().Be(
+			fromSecond,
+			"two fresh BuildMcpServerOptions() calls against one app still share its one Services root");
+	}
+
+	[TestMethod]
+	[Description("Pins the documented workaround for the carve-out above: calling BuildMcpServerOptions(configure) again on the SAME ReplApp does NOT isolate Scoped (it always passes that app's one Services root), but the ICoreReplApp overload accepts an explicit IServiceProvider — so a host that builds and passes a genuinely different scope per connection gets real isolation on the reused-options path, at the cost of owning that scope's lifetime itself.")]
+	public async Task When_DifferentScopesAreSuppliedPerOptionsBuild_Then_EachGetsItsOwnScopedInstance()
+	{
+		var app = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		app.Map("scoped", (ScopedProbe probe) => probe.Id.ToString());
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		var scopeA = app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+		await using var scopeAOwner = scopeA.ConfigureAwait(false);
+		var scopeB = app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope();
+		await using var scopeBOwner = scopeB.ConfigureAwait(false);
+
+		var optionsA = app.Core.BuildMcpServerOptions(configure: null, scopeA.ServiceProvider);
+		var optionsB = app.Core.BuildMcpServerOptions(configure: null, scopeB.ServiceProvider);
+
+		var first = await StartSharedAsync(optionsA, cts.Token).ConfigureAwait(false);
+		await using var firstScope = first.ConfigureAwait(false);
+		var second = await StartSharedAsync(optionsB, cts.Token).ConfigureAwait(false);
+		await using var secondScope = second.ConfigureAwait(false);
+
+		var fromFirst = await CallAsync(first.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+		var fromSecond = await CallAsync(second.Client, "scoped", token: cts.Token).ConfigureAwait(false);
+
+		fromFirst.Should().NotBeNullOrWhiteSpace();
+		fromFirst.Should().NotBe(
+			fromSecond,
+			"a distinct IServiceProvider supplied per options build must give each its own Scoped instance");
+	}
+
 	private static Task<McpPipeSession> StartSharedAsync(
 		McpServerOptions mcpOptions,
 		CancellationToken cancellationToken) =>

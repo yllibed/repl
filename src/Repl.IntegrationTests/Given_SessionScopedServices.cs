@@ -355,6 +355,31 @@ public sealed class Given_SessionScopedServices
 			"a singleton holds the scope it was first resolved in, so it still sees that session");
 	}
 
+	private sealed class ScopedProbeCapturingModule(ScopedProbe probe) : IReplModule
+	{
+		public void Map(IReplMap map)
+		{
+			map.Map("id", () => probe.Id.ToString());
+		}
+	}
+
+	[TestMethod]
+	[Description("Documents the module twin of the singleton-capture trap: MapModule<T>() resolves T once, at mapping time, before any session exists — the same timing as a singleton. A constructor dependency registered Scoped is captured at that one resolution and shared by every session afterward, contradicting the per-session promise a reader would expect from the lifetime table. Keep Scoped dependencies out of a module's constructor; inject them into the handler instead.")]
+	public void When_AModuleConstructorInjectsAScopedService_Then_EverySessionSeesTheSameCapturedInstance()
+	{
+		var sut = ReplApp.Create(services => services.AddScoped<ScopedProbe>());
+		sut.MapModule<ScopedProbeCapturingModule>();
+
+		var first = ConsoleCaptureHelper.Capture(() => sut.Run(["id", "--no-logo"]));
+		var second = ConsoleCaptureHelper.Capture(() => sut.Run(["id", "--no-logo"]));
+
+		first.ExitCode.Should().Be(0, "run output was: {0}", first.Text);
+		second.ExitCode.Should().Be(0, "run output was: {0}", second.Text);
+		first.Text.Trim().Should().Be(
+			second.Text.Trim(),
+			"MapModule<T>() resolves T once at mapping time, so a Scoped constructor dependency is captured just like a singleton's would be");
+	}
+
 	private sealed class SingletonProbe : IDisposable
 	{
 		public bool Disposed { get; private set; }

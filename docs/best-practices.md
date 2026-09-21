@@ -136,6 +136,14 @@ resolved it, and keeps it for the life of the application — silently, because 
 without `ValidateScopes`. Inject the scoped service into the handler instead, or register the holder
 `Scoped` too.
 
+The same trap catches a **module's own constructor**. `MapModule<TModule>()` resolves `TModule` once,
+at mapping time — before any session exists — the same way a singleton would. A module constructor
+that takes a `Scoped` auth-context or cart captures it exactly as the singleton case above does, and
+every session's handlers then share that one instance. The [module example above](#structure-commands-with-modules)
+avoids this because its handlers take `IContactStore` as a **handler parameter**, resolved fresh per
+invocation — not as a constructor dependency. Keep any `Scoped` service out of a module's constructor;
+inject it into the handler that needs it instead.
+
 When your caller's provider already represents the session — a Blazor circuit, an ASP.NET request scope,
 or a session owner running several one-shot calls — set
 `ReplRunOptions.SessionScope = SessionScopeBehavior.CallerOwned` so the run resolves from it directly
