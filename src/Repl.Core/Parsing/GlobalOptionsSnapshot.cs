@@ -1,4 +1,4 @@
-namespace Repl;
+﻿namespace Repl;
 
 internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGlobalOptionsAccessor
 {
@@ -27,10 +27,35 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 		_currentValues = baseline;
 	}
 
-	internal void Update(IReadOnlyDictionary<string, IReadOnlyList<string>> parsedValues)
+	/// <param name="parsedValues">The globals this invocation carried on its own tokens.</param>
+	/// <param name="preserveSessionExplicitKeys">
+	/// Whether the session's own globals count as explicitly provided. A sub-invocation carries only
+	/// its own tokens, but the session's values stay in effect — they are merged in below.
+	/// Explicitness has to travel with them, or <see cref="HasValue"/> denies an option whose value
+	/// <see cref="GetValue{T}"/> still returns, and a module presence predicate reading it decides
+	/// differently depending on which invocation ran last. A top-level run passes
+	/// <see langword="false"/>: it is about to become the baseline itself, and carrying the previous
+	/// one's keys into <see cref="SetSessionBaseline"/> is the leak that method exists to prevent.
+	/// The interactive resolver is the third caller and also passes <see langword="false"/>: each
+	/// committed line is a fresh invocation, so a baseline-only key is in force without having been
+	/// provided on it — which is what <see cref="HasValue"/> reports.
+	/// </param>
+	internal void Update(
+		IReadOnlyDictionary<string, IReadOnlyList<string>> parsedValues,
+		bool preserveSessionExplicitKeys = false)
 	{
-		_explicitKeys = new HashSet<string>(parsedValues.Keys, StringComparer.OrdinalIgnoreCase);
-		var merged = new Dictionary<string, IReadOnlyList<string>>(_sessionBaseline, StringComparer.OrdinalIgnoreCase);
+		var baseline = _sessionBaseline;
+		var explicitKeys = new HashSet<string>(parsedValues.Keys, StringComparer.OrdinalIgnoreCase);
+		if (preserveSessionExplicitKeys)
+		{
+			foreach (var key in baseline.Keys)
+			{
+				explicitKeys.Add(key);
+			}
+		}
+
+		_explicitKeys = explicitKeys;
+		var merged = new Dictionary<string, IReadOnlyList<string>>(baseline, StringComparer.OrdinalIgnoreCase);
 		foreach (var (key, value) in parsedValues)
 		{
 			merged[key] = value;

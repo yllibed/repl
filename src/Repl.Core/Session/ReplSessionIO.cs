@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 
 namespace Repl;
 
@@ -262,6 +262,13 @@ internal static class ReplSessionIO
 	/// Activates a hosted session on the current async context.
 	/// Dispose the returned scope to deactivate.
 	/// </summary>
+	/// <remarks>
+	/// <c>removeSessionOnDispose</c> says whether disposing the scope also unregisters the session.
+	/// Left unset, ownership is inferred: a caller supplying its own <c>sessionId</c> is taken to own
+	/// the lifetime and unregister it itself, which is what a transport host does at shutdown. State
+	/// it instead when the identifier is a throwaway minted for one invocation — inference cannot tell
+	/// the two apart, and guessing wrong leaves an entry nothing will ever remove.
+	/// </remarks>
 	public static IDisposable SetSession(
 		TextWriter output,
 		TextReader input,
@@ -269,7 +276,8 @@ internal static class ReplSessionIO
 		string? sessionId = null,
 		TextWriter? commandOutput = null,
 		TextWriter? error = null,
-		bool isHostedSession = true)
+		bool isHostedSession = true,
+		bool? removeSessionOnDispose = null)
 	{
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(input);
@@ -323,7 +331,7 @@ internal static class ReplSessionIO
 			previousIsProgrammatic,
 			previousProgrammaticInvocationContractVersion,
 			previousSessionId,
-			removeSessionOnDispose: string.IsNullOrWhiteSpace(sessionId),
+			removeSessionOnDispose: removeSessionOnDispose ?? string.IsNullOrWhiteSpace(sessionId),
 			sessionIdToRemove: resolvedSessionId);
 	}
 

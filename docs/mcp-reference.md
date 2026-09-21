@@ -4,7 +4,7 @@
 >
 > **Purpose:** Complete reference for MCP server features. Consult, don't read end-to-end.
 > **Prerequisite:** [MCP overview](mcp-overview.md)
-> **Related:** [Advanced patterns](mcp-advanced.md) · [Sampling & elicitation](mcp-agent-capabilities.md) · [Transports](mcp-transports.md)
+> **Related:** [Advanced patterns](mcp-advanced.md) · [Sampling & elicitation](mcp-agent-capabilities.md) · [Transports](mcp-transports.md) · [Conformance](mcp-conformance.md)
 
 ## Rich descriptions
 
@@ -289,6 +289,13 @@ The interaction channel is the preferred API when the feedback should stay porta
 | `WriteWarningAsync(...)` | warning-level message notification |
 | `WriteProblemAsync(...)` | error-level message notification |
 
+Those notification rows describe an initialize-era session. On `2026-07-28` a request that declared no
+`_meta/io.modelcontextprotocol/logLevel` must not receive message notifications at all, so the same
+calls are appended to the tool result instead — see
+[SDK and protocol versions](#sdk-and-protocol-versions). A resource read that _succeeds_ has nowhere
+to put them — its body must match the advertised MIME type — so it drops them; a read that fails
+carries them in the surfaced error, which is the only place left for them.
+
 Notes:
 
 - `ClearProgressAsync()` clears local host rendering. MCP clients typically just stop receiving progress updates and then see the final tool result.
@@ -511,6 +518,94 @@ side-channel command output and are not included in `resources/read` bodies.
 ## Client compatibility
 
 Feature support varies across agents. Check [mcp-availability.com](https://mcp-availability.com/) for current data.
+
+### SDK and protocol versions
+
+- Repl.Mcp builds on the official C# SDK (`ModelContextProtocol`), currently at **2.2.0**. The SDK negotiates the protocol version with each client, including fallback to the legacy `initialize` handshake for older hosts.
+- **Roots, Sampling, and Logging** are deprecated by MCP specification 2026-07-28 (SEP-2577). Repl.Mcp keeps supporting them **for existing hosts and applications only** — new applications should not adopt these features (the SDK may remove them) and should prefer Repl's portable abstractions such as `IReplInteractionChannel`. The designated successor for server-initiated flows (SEP-2322, multi-round-trip requests) shipped experimentally in the SDK 2.0 preview line and is stable as of 2.2.0; Repl has not adopted it yet.
+- **Discovery notifications** follow the negotiated revision. Repl drives the SDK's own fan-out rather than broadcasting itself, so an initialize-era client keeps receiving unsolicited `*/list_changed` while a `2026-07-28` client receives only the notification types it requested through `subscriptions/listen`, each tagged with its listen request id (SEP-2575). A modern client that opens no subscription receives none — which is what the specification requires. List results carry `ttlMs: 0`, so such a client re-lists on demand rather than caching.
+- **User feedback** (`notice` / `warning` / `problem`, and `IMcpFeedback.SendMessageAsync`) follows the same split. On `2026-07-28`, `logging/setLevel` is gone and a server must not emit `notifications/message` for a request that declared no `_meta/io.modelcontextprotocol/logLevel`. Messages that cannot be delivered as notifications are appended to the **tool result** instead, after the command's own payload, so no host loses them. Appending is additive: an explicitly registered prompt that returns its own `GetPromptResult` keeps the description and `_meta` it set, alongside the appended notices. The exception is a resource read that succeeds: its result is a typed body, so buffered feedback is dropped rather than appended — a read that _fails_ carries it in the surfaced error. Initialize-era clients keep the session-wide `logging/setLevel` behaviour unchanged. Note that the SDK's own client cannot request a level on `2026-07-28` at all, so in practice modern hosts see feedback in the tool result.
+- **MCP Tasks**: the SDK reorganized Tasks into `ModelContextProtocol.Extensions.Tasks` and dropped the per-tool execution augmentation (`Tool.Execution`) from the protocol surface, so `.LongRunning()` commands no longer advertise task support at the protocol level. The annotation stays in Repl's own model (help/docs); protocol-level task support can return once Repl integrates the Tasks extension, store, and get/update/cancel lifecycle (tracked in issue #72).
+
+### Upgrading from the 1.x SDK
+
+Eight things change for an application that already references `Repl.Mcp`. The first two are build
+breaks; the rest are behaviour a consumer meets at runtime.
+
+**The SDK moves to 2.x.** `ModelContextProtocol` is a transitively public dependency, so a consumer
+that also references it directly has to move with this package. There is no compatibility shim: the
+1.x and 2.x assemblies cannot coexist in one dependency graph.
+
+**`IMcpFeedback.SendMessageAsync` takes `McpMessageLevel`** instead of the SDK's `LoggingLevel`. The
+members and their numeric values are identical, so the swap is mechanical. It is not cosmetic,
+though: `LoggingLevel` carries the SDK's `MCP9005` deprecation, and a `#pragma` inside Repl never
+covered a _consumer's_ compilation — anyone building with warnings as errors got a hard error on a
+Repl signature.
+
+**Tool results can carry more content blocks than before.** A message a command reported that the
+client could not receive as a notification is appended to the tool result. The command's own payload
+stays the first block and `StructuredContent` is untouched, so a caller reading either is unaffected
+— but a test asserting the result has exactly one content block will now fail. See the **User feedback**
+bullet under [SDK and protocol versions](#sdk-and-protocol-versions) for when this happens.
+
+**Module presence no longer varies with the client on `2026-07-28`.** That revision requires the
+advertised set not to vary per-connection, nor to change as a side effect of another request on the
+connection, so discovery there runs every presence predicate against fixed answers: `IsSupported`,
+`IsLoggingSupported` and `IsProgressSupported` are true, `HasSoftRoots` is false, `Current` and
+`GetAsync()` are empty. The predicate still runs normally on the earlier revisions and outside MCP.
+
+Whatever the predicate returns under those answers is what every client is offered, so read the rule
+off the **result**, not off the member:
+
+- Comes out true (`roots.IsSupported`, `sampling.IsSupported`): advertised to **every** client, and
+  the command now has to fail with a clear error when the capability is in fact missing rather than
+  rely on being absent.
+- Comes out false (`!roots.IsSupported`, `roots.HasSoftRoots`, `roots.Current.Count > 0`): advertised
+  to **no** client, disappearing with no error to explain it. Map those commands unconditionally. The
+  soft-roots bootstrap gates on `!roots.IsSupported` and falls here despite reading a capability.
+
+On a reused `BuildMcpServerOptions()` result this applies to **every** client, including an
+initialize-era one: that catalog is built once, before any request names an era, so it is built with
+the modern view and served as-is to whoever connects. The per-era behaviour above is what `mcp serve`
+gives you, where the catalog is built per connection.
+
+Execution is untouched: `SetSoftRoots` still works, and `IMcpClientRoots.Current` answers with the
+connection's real roots under `mcp serve` — on a reused `BuildMcpServerOptions()` result it answers
+empty until this request has called `GetAsync`, as the bullet below already states. See
+[Conformance](mcp-conformance.md#tool-list-invariance-on-2026-07-28).
+
+**`.LongRunning()` no longer advertises task support on the protocol surface**, because SDK 2.x
+removed the per-tool execution augmentation. The annotation still carries into help and documentation;
+protocol-level task support returns with issue #72.
+
+**`IsLoggingSupported` is `false` for every SDK-client request on `2026-07-28`.** A command that
+guards expensive work on it will now skip that work against a modern host. Messages sent anyway ride
+back in the tool result, so the usual fix is to stop guarding — except during a resource read, where
+there is nowhere to put them and they are dropped.
+
+**Native roots are resolved per request on a reused `BuildMcpServerOptions()` result.** Previously one
+connection's `roots/list` answer was cached for the life of the options instance and handed to every
+other connection; it is now fetched at most once per request and forgotten with it. Two consequences
+for a command on that hosting path: `GetAsync` costs a round-trip per request rather than one in
+total, and `Current` answers empty until _this_ request has called `GetAsync`.
+
+Under `mcp serve` the cost is unchanged — one `roots/list` per connection — but `Current` now falls
+back to soft roots while nothing native has been resolved, whether because it has not been asked yet
+or because the client could not be reached. An empty answer therefore means the roots in force are
+empty, not that resolving them failed; a client that genuinely answers with zero roots is still told
+apart, since that answer counts as resolved. Call `GetAsync` when the difference matters: it resolves
+on demand and surfaces the failure instead of absorbing it.
+
+**An uncaught exception no longer reaches the client as text.** A command that throws, or an
+application callback that fails while supplying a parameter — a service factory, an options-group
+constructor, a property setter — is surfaced to an MCP client as `Command failed with exit code N.`
+The framework renders that message for an operator at a console, and it routinely carries a path, a
+parameter and its CLR type, or a connection string; over MCP the reader is a remote client instead.
+Feedback the application itself reported still travels, because the application wrote it for that
+reader — so return an error from the command when the client needs to know why. Nothing changes
+locally: the console still names the cause. One detail for a host reading outcomes directly, such as
+an `ExitCodes.Resolver` — a binding-callback failure now carries `ReplBindingCallbackException` on
+`ReplExecutionOutcome.Exception`, with the application's own exception in `InnerException`.
 
 | Feature | Claude Desktop | Claude Code | Codex | VS Code Copilot | Cursor | Continue |
 |---|---|---|---|---|---|---|

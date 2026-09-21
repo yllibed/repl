@@ -615,6 +615,34 @@ public sealed class Given_GlobalOptionsAccessor
 	}
 
 	[TestMethod]
+	[Description("Regression guard: a sub-invocation preserved the baseline VALUE but dropped its explicitness. Update merges parsed values over the session baseline, then replaced the explicit-key set with the sub-invocation's own keys — so HasValue denied an option whose value GetValue still returned. A module presence predicate reading HasValue then decided differently depending on whether a top-level run or a sub-invocation went last, which is how an MCP catalog advertises a tool its own execution rejects as unknown.")]
+	public async Task When_SubInvocationAfterRun_Then_BaselineGlobalOptionsAreStillExplicit()
+	{
+		bool? capturedHasTenant = null;
+		string? capturedTenant = null;
+		var sut = ReplApp.Create();
+		sut.UseGlobalOptions<TestGlobalOptions>();
+		sut.Map("show", (TestGlobalOptions opts) => $"{opts.Tenant}");
+		sut.Map("check", (IGlobalOptionsAccessor globals) =>
+		{
+			capturedHasTenant = globals.HasValue("tenant");
+			capturedTenant = globals.GetValue<string>("tenant");
+			return "ok";
+		});
+
+		// Top-level Run establishes the baseline with --tenant acme.
+		ConsoleCaptureHelper.Capture(
+			() => sut.Run(["show", "--tenant", "acme", "--no-logo"]));
+
+		await sut.Core.RunSubInvocationAsync(
+			["--no-logo", "check"], sut.Services).ConfigureAwait(false);
+
+		capturedTenant.Should().Be("acme");
+		capturedHasTenant.Should().BeTrue(
+			because: "the value is still in effect, so denying it was provided contradicts GetValue");
+	}
+
+	[TestMethod]
 	[Description("Sub-invocation does not reset baseline for subsequent sub-invocations.")]
 	public async Task When_MultipleSubInvocations_Then_BaselineRemainsStable()
 	{

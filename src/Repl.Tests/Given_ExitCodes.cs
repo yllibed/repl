@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Repl.Tests;
@@ -968,6 +968,191 @@ public sealed class Given_ExitCodes
 		output = writer.ToString();
 		return exitCode;
 	}
+
+	[TestMethod]
+	[Description("An activation failure must still tell the operator why. Marking what escapes application code during binding exists so a remote host can withhold it, and the marker is a wrapper — rendering the wrapper's own message here would leave a console operator with the parameter's name and nothing about the cause, which is the diagnostic they came for.")]
+	public async Task When_ADependencyFactoryThrows_Then_TheLocalDiagnosticNamesTheCause()
+	{
+		var sut = ReplApp.Create(services => services.AddSingleton<IFailingDependency>(
+			implementationFactory: static _ => throw new InvalidOperationException("factory-cause-detail")));
+		sut.Map("work", (IFailingDependency dependency) => dependency.ToString() ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out var writer);
+		await sut.RunAsync(["work"], cts.Token).ConfigureAwait(false);
+
+		writer.ToString().Should().Contain(
+			"factory-cause-detail",
+			because: "the operator is the reader here, and the cause is the whole content of the diagnostic");
+	}
+
+	[TestMethod]
+	[Description("The same for an options-group property setter, which reaches the binder through reflection. Reflection wraps what the application threw in its own exception, so unwrapping a single layer would leave the operator with reflection's generic target-of-an-invocation message — true, and useless.")]
+	public async Task When_AnOptionsGroupSetterThrows_Then_TheLocalDiagnosticNamesTheCause()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("work", (FailingOptions options) => options.Label ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out var writer);
+		await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+		writer.ToString().Should().Contain(
+			"setter-cause-detail",
+			because: "reflection's own wrapper is not the diagnostic, it is what hides it");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: application code failing while it supplies a parameter is the application failing, not the caller's input being invalid, and the two must not render alike. The marker wrapping those failures derives from InvalidOperationException — the one type this pipeline renders as a validation result — so marking them quietly moved every service factory, options-group constructor and property setter out of execution_error and into the bucket that tells a caller they typed something wrong.")]
+	public async Task When_ADependencyFactoryThrows_Then_TheOutcomeIsAnExecutionError()
+	{
+		var recorder = new OutcomeRecorder();
+		var sut = ReplApp.Create(services => services.AddSingleton<IFailingDependency>(
+			implementationFactory: static _ => throw new IOException("factory-cause-detail")));
+		sut.Options(options =>
+		{
+			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
+			options.Output.BannerEnabled = false;
+			options.ExitCodes.Resolver = recorder.Record;
+		});
+		sut.Map("work", (IFailingDependency dependency) => dependency.ToString() ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out _);
+		await sut.RunAsync(["work"], cts.Token).ConfigureAwait(false);
+
+		// Not IOE-derived on purpose: an InvalidOperationException from a factory renders as a
+		// validation result on either side of the marker, so it cannot tell the two apart.
+		var result = recorder.Last!.Result.Should().BeAssignableTo<IReplResult>().Subject;
+		result.Kind.Should().Be(
+			"error",
+			because: "the caller's input was never in question — the application's own factory threw");
+		result.Code.Should().Be("execution_error");
+	}
+
+	[TestMethod]
+	[Description("The same rule through reflection: an options-group property setter that throws reaches the binder wrapped in reflection's own exception, which classified as an execution error before the marker existed. Marking it moved it to validation, so two shapes of one cause — a factory and a setter — stopped sharing one classification.")]
+	public async Task When_AnOptionsGroupSetterThrows_Then_TheOutcomeIsAnExecutionError()
+	{
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder);
+		sut.Map("work", (FailingOptions options) => options.Label ?? "ok");
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		using var session = OpenSession(out _);
+		await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+		var result = recorder.Last!.Result.Should().BeAssignableTo<IReplResult>().Subject;
+		result.Kind.Should().Be(
+			"error",
+			because: "reflection carrying the failure does not make it the caller's mistake");
+		result.Code.Should().Be("execution_error");
+	}
+
+	[TestMethod]
+	[Description("Regression guard: a callback that cancels on a token of its own, while the caller's is still live, has failed like any other and must be classified as one. Reflection wraps what a setter throws in its own exception, so the marker's who-cancelled test never sees the OperationCanceledException underneath — it marks, which is the right answer here and is worth pinning, because the same blindness is what a reviewer reads as a withdrawal being mislabelled.")]
+	public async Task When_AnOptionsGroupSetterCancelsItself_Then_TheOutcomeIsAnExecutionError()
+	{
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder);
+		sut.Map("work", (SelfCancellingOptions options) => options.Label ?? "ok");
+
+		using var session = OpenSession(out _);
+		await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+		cts.IsCancellationRequested.Should().BeFalse(because: "nobody asked this run to stop");
+		var result = recorder.Last!.Result.Should().BeAssignableTo<IReplResult>().Subject;
+		result.Kind.Should().Be("error");
+		result.Code.Should().Be(
+			"execution_error",
+			because: "a callback giving up on its own budget is the application failing");
+	}
+
+	[TestMethod]
+	[Description("And the converse: when the caller is the one who withdrew, the run stops rather than reporting a failure — even though the withdrawal reaches the binder through reflection's wrapper, which the marker's test does not look through. The answer is reached at the pipeline boundary, on the caller's own token, rather than at the marker; this pins the behaviour so a later change to either one cannot quietly turn a withdrawal into an execution error.")]
+	public async Task When_TheCallerWithdrawsDuringAnOptionsGroupSetter_Then_TheRunIsCancelled()
+	{
+		using var cts = new CancellationTokenSource();
+		WithdrawingOptions.Withdrawal = cts;
+		try
+		{
+			var recorder = new OutcomeRecorder();
+			var sut = CreateApp(recorder);
+			sut.Map("work", (WithdrawingOptions options) => options.Label ?? "ok");
+
+			using var session = OpenSession(out _);
+			await sut.RunAsync(["work", "--label", "x"], cts.Token).ConfigureAwait(false);
+
+			recorder.Last!.Kind.Should().Be(
+				ReplExecutionOutcomeKind.Cancelled,
+				because: "the caller withdrew, and application code obliged");
+		}
+		finally
+		{
+			WithdrawingOptions.Withdrawal = null;
+		}
+	}
+
+	/// <summary>A setter that gives up on its own, the way a callback running its own budget would.</summary>
+	[Repl.Parameters.ReplOptionsGroup]
+	public sealed class SelfCancellingOptions
+	{
+		private string? _label;
+
+		public string? Label
+		{
+			get => _label;
+			set
+			{
+				_label = value;
+				throw new OperationCanceledException(new CancellationToken(canceled: true));
+			}
+		}
+	}
+
+	/// <summary>A setter that observes the caller withdrawing and stops.</summary>
+	[Repl.Parameters.ReplOptionsGroup]
+	public sealed class WithdrawingOptions
+	{
+		internal static CancellationTokenSource? Withdrawal;
+
+		private string? _label;
+
+		public string? Label
+		{
+			get => _label;
+			set
+			{
+				_label = value;
+				if (Withdrawal is not { } withdrawal)
+				{
+					return;
+				}
+
+				withdrawal.Cancel();
+				throw new OperationCanceledException(withdrawal.Token);
+			}
+		}
+	}
+	[Repl.Parameters.ReplOptionsGroup]
+	public sealed class FailingOptions
+	{
+		private string? _label;
+
+		public string? Label
+		{
+			get => _label;
+			set
+			{
+				_label = value;
+				throw new InvalidOperationException("setter-cause-detail");
+			}
+		}
+	}
+
+	/// <summary>A dependency whose registration always fails; only its activation path matters.</summary>
+	public interface IFailingDependency;
 
 	private static IDisposable OpenSession(out StringWriter writer)
 	{

@@ -1,4 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -53,11 +53,25 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken = default) =>
 		ExecuteCoreAsync(args, serviceProvider, isSubInvocation: true, cancellationToken);
 
-	ValueTask<int> ISubInvocableReplApp.RunSubInvocationAsync(
+	async ValueTask<SubInvocationOutcome> ISubInvocableReplApp.RunSubInvocationWithOutcomeAsync(
 		string[] args,
 		IServiceProvider serviceProvider,
-		CancellationToken cancellationToken) =>
-		RunSubInvocationAsync(args, serviceProvider, cancellationToken);
+		IServiceProvider? presenceServiceProvider,
+		CancellationToken cancellationToken)
+	{
+		var outcome = await RunUnderCancellationPolicyAsync(
+				args,
+				serviceProvider,
+				isSubInvocation: true,
+				cancellationToken,
+				presenceServiceProvider)
+			.ConfigureAwait(false);
+
+		return new SubInvocationOutcome(
+			ResolveProcessExitCode(outcome, isSubInvocation: true),
+			outcome.Kind,
+			outcome.Exception);
+	}
 
 	private async ValueTask<int> ExecuteCoreAsync(
 		IReadOnlyList<string> args,
@@ -107,11 +121,39 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return ExecutionOutcome.Cancelled(new OperationCanceledException(cancellationToken));
 	}
 
+	/// <summary>
+	/// What a failure says to the operator running this process.
+	/// </summary>
+	/// <remarks>
+	/// <see cref="ReplBindingCallbackException"/> is a wrapper whose own message names only what could
+	/// not be supplied; the cause is inside it. Marking the failure exists so a host publishing to
+	/// somebody other than the operator can withhold that cause — it decides by the exception's type, not
+	/// by this text — and here the reader is the operator, who came for exactly that cause.
+	/// </remarks>
+	private static string DescribeLocally(Exception exception)
+	{
+		var cause = exception is ReplBindingCallbackException { InnerException: { } marked }
+			? marked
+			: exception;
+
+		// Reflection adds its own layer on top of what the application threw — a property setter, an
+		// options-group constructor and a keyed-service factory all reach the binder through it — and
+		// "Exception has been thrown by the target of an invocation" is not the diagnostic the operator
+		// came for. Unwrap until the application's own failure is what remains.
+		while (cause is System.Reflection.TargetInvocationException { InnerException: { } deeper })
+		{
+			cause = deeper;
+		}
+
+		return cause.Message;
+	}
+
 	private async ValueTask<ExecutionOutcome> RunUnderCancellationPolicyAsync(
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
 		bool isSubInvocation,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IServiceProvider? presenceServiceProvider = null)
 	{
 		_options.Interaction.SetObserver(observer: ExecutionObserver);
 		try
@@ -120,7 +162,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			{
 				// Inside the try so a token cancelled before the run follows the same Cancelled policy.
 				cancellationToken.ThrowIfCancellationRequested();
-				return await ExecuteCoreOutcomeAsync(args, serviceProvider, isSubInvocation, cancellationToken)
+				return await ExecuteCoreOutcomeAsync(
+						args,
+						serviceProvider,
+						isSubInvocation,
+						cancellationToken,
+						presenceServiceProvider)
 					.ConfigureAwait(false);
 			}
 			catch (OperationCanceledException ex) when (IsConvertibleCancellation(isSubInvocation, cancellationToken))
@@ -156,7 +203,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
 		bool isSubInvocation,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IServiceProvider? presenceServiceProvider = null)
 	{
 		if (ReplSessionIO.IsProgrammatic && !ReplSessionIO.HasCurrentProgrammaticInvocationContract)
 		{
@@ -179,7 +227,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			return globalDiagnostics;
 		}
 
-		return await ExecuteParsedCoreAsync(globalOptions, serviceProvider, isSubInvocation, cancellationToken)
+		return await ExecuteParsedCoreAsync(
+				globalOptions,
+				serviceProvider,
+				isSubInvocation,
+				cancellationToken,
+				presenceServiceProvider)
 			.ConfigureAwait(false);
 	}
 
@@ -273,14 +326,18 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		GlobalInvocationOptions globalOptions,
 		IServiceProvider serviceProvider,
 		bool isSubInvocation,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken,
+		IServiceProvider? presenceServiceProvider = null)
 	{
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions); // volatile ref swap — safe under concurrent sub-invocations
+			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation); // volatile ref swap — safe under concurrent sub-invocations
 			if (!isSubInvocation)
 			{
 				_globalOptionsSnapshot.SetSessionBaseline();
 			}
-			using var runtimeStateScope = PushRuntimeState(serviceProvider, isInteractiveSession: false);
+			using var runtimeStateScope = PushRuntimeState(
+				serviceProvider,
+				isInteractiveSession: false,
+				presenceServiceProvider);
 			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
 			var ambiguousOutcome = await TryHandleAmbiguousPrefixAsync(
@@ -838,7 +895,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			// keys on `bound`, so a service factory that cancels before binding completes is a
 			// BindingError. The interactive loop keeps its own Ctrl+C semantics.
 			return (await RenderFailureAsync(
-					Results.Error("execution_error", ex.Message), ex, bound, globalOptions, serviceProvider, cancellationToken)
+					Results.Error("execution_error", DescribeLocally(ex)), ex, bound, globalOptions, serviceProvider, cancellationToken)
 				.ConfigureAwait(false), false);
 		}
 		catch (OperationCanceledException)
@@ -846,10 +903,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			throw;
 		}
+		// Ahead of the InvalidOperationException arm below, which the marker derives from. A validation
+		// result says the caller's input was wrong; this one says application code threw while supplying
+		// a parameter, and the caller has no way to act on it. Classified by WHO failed rather than by
+		// what type they threw, so a factory, an options-group constructor and a property setter answer
+		// alike — the binder's own diagnostics about bad input keep the arm below to themselves.
+		catch (ReplBindingCallbackException ex)
+		{
+			return (await RenderFailureAsync(
+					Results.Error("execution_error", DescribeLocally(ex)), ex, bound, globalOptions, serviceProvider, cancellationToken)
+				.ConfigureAwait(false), false);
+		}
 		catch (InvalidOperationException ex)
 		{
 			return (await RenderFailureAsync(
-					Results.Validation(ex.Message), ex, bound, globalOptions, serviceProvider, cancellationToken)
+					Results.Validation(DescribeLocally(ex)), ex, bound, globalOptions, serviceProvider, cancellationToken)
 				.ConfigureAwait(false), false);
 		}
 		catch (Exception ex)

@@ -8,14 +8,22 @@
 
 See also: [sample 08-mcp-server](../samples/08-mcp-server/) for a working example that uses all three in a CSV import and feedback workflow.
 
+> **⚠️ Deprecation notice (SEP-2577):** the MCP specification (2026-07-28) deprecates the
+> Sampling and Logging features that `IMcpSampling` and `IMcpFeedback` build on, and the
+> SDK may remove them in a future version. Repl keeps supporting them **for existing hosts
+> and applications only** — new applications should not adopt these interfaces directly and
+> should prefer the portable `IReplInteractionChannel`, which degrades gracefully across
+> CLI, REPL, hosted sessions, and MCP. See
+> [mcp-reference.md](mcp-reference.md#sdk-and-protocol-versions) for the version posture.
+
 ## Overview
 
 Repl provides three MCP-oriented injectable interfaces:
 
 | Interface | MCP capability | What it does |
 |---|---|---|
-| `IMcpSampling` | [Sampling](https://modelcontextprotocol.io/specification/2025-11-05/client/sampling) | Ask the connected LLM to generate a completion |
-| `IMcpElicitation` | [Elicitation](https://modelcontextprotocol.io/specification/2025-11-05/client/elicitation) | Ask the user for structured input through the agent client |
+| `IMcpSampling` | [Sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling) | Ask the connected LLM to generate a completion |
+| `IMcpElicitation` | [Elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) | Ask the user for structured input through the agent client |
 | `IMcpFeedback` | Progress + logging/message notifications | Send MCP-specific runtime feedback during a tool call |
 
 They work like `IMcpClientRoots` — inject them into any command handler, check capability flags, and use them. They are automatically excluded from MCP tool schemas.
@@ -238,11 +246,14 @@ public interface IMcpFeedback
         CancellationToken cancellationToken = default);
 
     ValueTask SendMessageAsync(
-        LoggingLevel level,
+        McpMessageLevel level,
         object? data,
         CancellationToken cancellationToken = default);
 }
 ```
+
+`McpMessageLevel` is Repl's own enum (`Debug` … `Emergency`), so this signature does not expose the
+SDK's deprecated `LoggingLevel` to your build.
 
 Use it when:
 
@@ -256,10 +267,13 @@ Use it when:
 app.Map("sync contacts",
     async (IMcpFeedback feedback, CancellationToken ct) =>
 {
-    if (feedback.IsLoggingSupported)
-    {
-        await feedback.SendMessageAsync(LoggingLevel.Info, "Starting sync.", ct);
-    }
+    // Sending unconditionally is fine: a message the client cannot receive as a notification
+    // is carried back in the tool result instead. Check IsLoggingSupported only when you want
+    // to skip work that would otherwise be wasted — it reports that a threshold exists, not
+    // that this particular message clears it.
+    // That buffer keeps every level, including Debug: it exists only for a request that declared
+    // no log level, and it is not filtered. Internal diagnostics belong on ILogger, not here.
+    await feedback.SendMessageAsync(McpMessageLevel.Info, "Starting sync.", ct);
 
     if (feedback.IsProgressSupported)
     {
@@ -322,7 +336,11 @@ if (!elicitation.IsSupported)
 For `IMcpFeedback`, the same idea applies:
 
 - check `IsProgressSupported` before sending MCP-only progress directly
-- check `IsLoggingSupported` before sending MCP-only messages directly
+- `IsLoggingSupported` tells you whether a message would arrive as a **notification**; it is `false`
+  on `2026-07-28` unless the request declared a log level. A message sent anyway rides back in the
+  tool or prompt result, so treat it as a hint rather than a gate — with one exception: a resource
+  read that **succeeds** keeps only its body, whose type is advertised, and drops the feedback on
+  purpose. A read that fails carries it in the surfaced error
 - prefer `IReplInteractionChannel` when the feedback should still render well outside MCP
 
 ## Client compatibility

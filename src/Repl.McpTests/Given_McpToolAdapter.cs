@@ -633,7 +633,8 @@ public sealed class Given_McpToolAdapter
 					})
 				.WithOption("hidden", static option => option.Hidden());
 			await using var services = new ServiceCollection().BuildServiceProvider();
-			var adapter = new McpToolAdapter(app.Core, new ReplMcpServerOptions(), services);
+			var adapter = new McpToolAdapter(
+				app.Core, new ReplMcpServerOptions(), services, new McpRequestServerAccessor());
 			adapter.RegisterRoute(
 				"deploy",
 				new ReplDocCommand(

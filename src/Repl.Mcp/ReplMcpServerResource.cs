@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
@@ -68,6 +68,7 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 		RequestContext<ReadResourceRequestParams> request,
 		CancellationToken cancellationToken = default)
 	{
+		_adapter.BindRequest(request);
 		var arguments = ExtractArguments(request.Params.Uri);
 
 		var result = await _adapter.InvokeResourceAsync(
@@ -82,7 +83,7 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 		{
 			throw new McpException(result.Text);
 		}
-		return new ReadResourceResult
+		return McpCacheHints.MarkPrivateToThisClient(request, new ReadResourceResult
 		{
 			Contents =
 			[
@@ -93,7 +94,7 @@ internal sealed partial class ReplMcpServerResource : McpServerResource
 					Text = result.Text,
 				},
 			],
-		};
+		});
 	}
 
 	private Dictionary<string, JsonElement> ExtractArguments(string uri)
