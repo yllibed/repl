@@ -25,6 +25,11 @@ public sealed class ReplTestHost : IAsyncDisposable
 	// session invisible to the app-root check below despite its scope still being live.
 	private readonly ConcurrentDictionary<ReplApp, ConcurrentQueue<Task>> _pendingServiceDisposals =
 		new(ReferenceEqualityComparer.Instance);
+	// App-root disposals DisposeAsync scheduled rather than awaited, because a session's command was
+	// still running at the time. Retained so a failure during one of them — a singleton's Dispose()
+	// throwing — is observable through WaitForDeferredCleanupAsync instead of becoming an unobserved
+	// task exception, since DisposeAsync itself has already returned success by the time these run.
+	private readonly ConcurrentBag<Task> _deferredAppDisposals = new();
 	private bool _disposed;
 
 	private ReplTestHost(Func<ReplApp> appFactory, ReplScenarioOptions options)
@@ -69,13 +74,32 @@ public sealed class ReplTestHost : IAsyncDisposable
 		cancellationToken.ThrowIfCancellationRequested();
 		descriptor ??= new SessionDescriptor();
 		var app = _appFactory();
-		_apps.TryAdd(app, 0);
+		// Tracked only once StartAsync actually succeeds, not right after the factory call: StartAsync
+		// cannot fail once it has forced app.Services open (every throw in it — null checks, the
+		// cancellation re-check, a bad descriptor — happens before that), so a failure here means
+		// nothing Repl controls has touched the provider yet. Tracking (and, on the disposal race below,
+		// disposing) it anyway would force it open for nothing, solely to immediately tear it back down.
 		var handle = await ReplSessionHandle.StartAsync(
 			this,
 			app,
 			descriptor,
 			_options,
 			cancellationToken).ConfigureAwait(false);
+
+		// Re-checked after StartAsync ran — it and the factory above can both take arbitrarily long — so
+		// a host disposed while this was in flight cannot let the app and session just produced escape
+		// untracked past that disposal. Narrows the race rather than closing it outright: a concurrent
+		// DisposeAsync could still finish its own iteration in the gap between this check and the
+		// registrations below, though that gap is now a few in-memory operations instead of an
+		// arbitrarily long factory call.
+		if (_disposed)
+		{
+			await handle.DisposeAsync().ConfigureAwait(false);
+			await DisposeAppAsync(app).ConfigureAwait(false);
+			ThrowIfDisposed();
+		}
+
+		_apps.TryAdd(app, 0);
 		// Recorded regardless of what happens to the handle afterward — including a caller disposing it
 		// directly, which would otherwise remove it from _sessions before its deferred scope release runs.
 		_pendingServiceDisposals.GetOrAdd(app, static _ => new ConcurrentQueue<Task>()).Enqueue(handle.ServicesDisposed);
@@ -158,8 +182,9 @@ public sealed class ReplTestHost : IAsyncDisposable
 				// HERE would reintroduce, at the host level, the unbounded wait on a possibly-orphaned
 				// command that design already rejected — so the disposal runs once every one of this
 				// app's still-in-flight sessions actually finishes, whenever that turns out to be,
-				// without this call blocking on it.
-				_ = DisposeAppOnceSessionsFinishAsync(app, pending);
+				// without this call blocking on it. Retained rather than discarded (see
+				// _deferredAppDisposals) so a failure in it is observable instead of unobserved.
+				_deferredAppDisposals.Add(DisposeAppOnceSessionsFinishAsync(app, pending));
 				continue;
 			}
 
@@ -169,6 +194,19 @@ public sealed class ReplTestHost : IAsyncDisposable
 		_apps.Clear();
 		_pendingServiceDisposals.Clear();
 	}
+
+	/// <summary>
+	/// Awaits every app-root disposal <see cref="DisposeAsync"/> scheduled rather than performed
+	/// directly, because a session's command was still running at the time it was called.
+	/// </summary>
+	/// <remarks>
+	/// <see cref="DisposeAsync"/> itself never waits for these — doing so would hang for as long as an
+	/// orphaned command does, exactly what that design avoids. Call this afterward only when a test
+	/// needs to know deferred cleanup has actually finished, or to surface a cleanup failure that would
+	/// otherwise never reach anything: <see cref="DisposeAsync"/> has already returned success by the
+	/// time a deferred disposal runs, so nothing else observes it.
+	/// </remarks>
+	public Task WaitForDeferredCleanupAsync() => Task.WhenAll(_deferredAppDisposals);
 
 	private static async Task DisposeAppOnceSessionsFinishAsync(ReplApp app, Task[] pending)
 	{

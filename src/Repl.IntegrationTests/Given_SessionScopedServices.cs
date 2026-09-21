@@ -577,4 +577,89 @@ public sealed class Given_SessionScopedServices
 			"the app root must still be alive when the command resolves the singleton after release: {0}",
 			completed.OutputText);
 	}
+
+	private sealed class ThrowingSingleton : IDisposable
+	{
+		public void Dispose() => throw new InvalidOperationException("cleanup deliberately failed");
+	}
+
+	[TestMethod]
+	[Description("A failure during a deferred app-root disposal must be observable, not merely retained: DisposeAsync has already returned success by the time a deferred cleanup runs, so nothing but WaitForDeferredCleanupAsync gives a caller any way to learn a singleton's Dispose() threw during it.")]
+	public async Task When_ADeferredAppDisposalFails_Then_WaitForDeferredCleanupAsyncSurfacesIt()
+	{
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create(services => services.AddSingleton<ThrowingSingleton>())
+				.UseDefaultInteractive();
+			app.Map("block", async (ThrowingSingleton _) =>
+			{
+				started.TrySetResult();
+#pragma warning disable VSTHRD003
+				await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+				return "done";
+			});
+			return app;
+		}, options => options.CommandTimeout = TimeSpan.FromMinutes(5));
+
+		var session = await host.OpenSessionAsync();
+		var running = session.RunCommandAsync("block --no-logo").AsTask();
+		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+		var disposeHost = async () => await host.DisposeAsync().ConfigureAwait(false);
+		await disposeHost.Should().NotThrowAsync(
+			"the failure has not happened yet — cleanup is deferred until the command finishes")
+			.ConfigureAwait(false);
+
+		release.TrySetResult();
+		await running.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+
+		var waitForCleanup = async () => await host.WaitForDeferredCleanupAsync().ConfigureAwait(false);
+		await waitForCleanup.Should().ThrowAsync<InvalidOperationException>()
+			.WithMessage("cleanup deliberately failed")
+			.ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("A canceled open, after a slow app factory already ran, must still surface OperationCanceledException and leave the host in a state where every later operation — DisposeAsync, WaitForDeferredCleanupAsync — completes cleanly, whether or not the orphaned app it produced was tracked. Tracking it (the pre-fix behavior) is not independently observable through black-box assertions here — building and disposing a container with nothing ever resolved from it has no side effect this test can see — so the actual 'not tracked' claim rests on reading StartAsync: every one of its throw points runs before it forces app.Services open, so a failure here means nothing was ever built for this ordering to avoid touching. That reasoning is what the code comment on the fix states; this test pins the behavior a caller can actually observe.")]
+	public async Task When_TheOpenIsCanceledWhileTheFactoryRuns_Then_TheHostStaysUsableAfterward()
+	{
+		var factoryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var releaseFactory = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var host = ReplTestHost.Create(() =>
+		{
+			factoryEntered.TrySetResult();
+#pragma warning disable VSTHRD002
+			releaseFactory.Task.GetAwaiter().GetResult();
+#pragma warning restore VSTHRD002
+			return ReplApp.Create().UseDefaultInteractive();
+		});
+
+		using var cts = new CancellationTokenSource();
+		// VSTHRD003: the task is started right here, on the line above the analyzer flags — the factory
+		// blocks the pool thread Task.Run gives it, so this test drives release/cancellation from its
+		// own thread while that call is in flight.
+#pragma warning disable VSTHRD003
+		var opening = Task.Run(async () => await host.OpenSessionAsync(cancellationToken: cts.Token).ConfigureAwait(false));
+#pragma warning restore VSTHRD003
+		await factoryEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+		await cts.CancelAsync();
+		releaseFactory.TrySetResult();
+
+		// VSTHRD003: same task, already started above; this lambda only exists to hand it to the
+		// assertion helper.
+#pragma warning disable VSTHRD003
+		var act = async () => await opening.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+		await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+
+		// Whatever the outcome for the orphaned app, the host itself must remain fully usable: disposal
+		// and the deferred-cleanup wait both have to complete cleanly afterward.
+		var dispose = async () => await host.DisposeAsync().ConfigureAwait(false);
+		await dispose.Should().NotThrowAsync().ConfigureAwait(false);
+		var waitForCleanup = async () => await host.WaitForDeferredCleanupAsync().ConfigureAwait(false);
+		await waitForCleanup.Should().NotThrowAsync().ConfigureAwait(false);
+	}
 }
