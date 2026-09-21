@@ -567,26 +567,20 @@ internal sealed class McpServerHandler
 		IServiceProvider sessionServices,
 		bool sessionless)
 	{
-		var overlay = new Dictionary<Type, object>
-		{
-			[typeof(IReplInteractionChannel)] =
-				McpDiscoveryCapabilities.CreateDiscoveryChannel(_options.InteractivityMode),
-		};
-
-		if (sessionless)
-		{
-			// On a modern revision the advertised set must not vary per connection nor as a side effect
-			// of another request, so discovery sees constants that reach no live service at all. It is
-			// not only the capability services: a presence predicate receives whatever it declares, and
-			// session state is a mutable singleton shared with execution — leaving it live would let a
-			// tools/call decide what the next tools/list advertises. Execution keeps the real services
-			// for binding, and takes these same answers for deciding presence.
-			foreach (var (type, service) in
-				McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode))
+		// On a modern revision the advertised set must not vary per connection nor as a side effect of
+		// another request, so discovery sees constants that reach no live service at all. It is not only
+		// the capability services: a presence predicate receives whatever it declares, and session state
+		// is a mutable singleton shared with execution — leaving it live would let a tools/call decide
+		// what the next tools/list advertises. Execution keeps the real services for binding, and takes
+		// these same answers for deciding presence. The frozen set carries the channel too, so there it
+		// is the whole overlay; elsewhere the channel alone is overlaid and the rest stays live.
+		IReadOnlyDictionary<Type, object> overlay = sessionless
+			? McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode)
+			: new Dictionary<Type, object>
 			{
-				overlay[type] = service;
-			}
-		}
+				[typeof(IReplInteractionChannel)] =
+					McpDiscoveryCapabilities.CreateDiscoveryChannel(_options.InteractivityMode),
+			};
 
 		return new McpServiceProviderOverlay(sessionServices, overlay);
 	}

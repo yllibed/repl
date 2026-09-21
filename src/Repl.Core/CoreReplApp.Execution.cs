@@ -53,12 +53,6 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken = default) =>
 		ExecuteCoreAsync(args, serviceProvider, isSubInvocation: true, cancellationToken);
 
-	ValueTask<int> ISubInvocableReplApp.RunSubInvocationAsync(
-		string[] args,
-		IServiceProvider serviceProvider,
-		CancellationToken cancellationToken) =>
-		RunSubInvocationAsync(args, serviceProvider, cancellationToken);
-
 	async ValueTask<SubInvocationOutcome> ISubInvocableReplApp.RunSubInvocationWithOutcomeAsync(
 		string[] args,
 		IServiceProvider serviceProvider,

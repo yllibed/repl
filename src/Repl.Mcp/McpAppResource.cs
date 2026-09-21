@@ -57,7 +57,7 @@ internal sealed class McpAppResource : McpServerResource
 	/// failure without feedback would explain itself, which no caller could account for.
 	/// </para>
 	/// </remarks>
-	private static void ThrowWithBufferedFeedback(
+	private static void ThrowIfFeedbackBuffered(
 		Exception exception,
 		McpFeedbackService.UndeliveredMessageScope undelivered)
 	{
@@ -107,7 +107,7 @@ internal sealed class McpAppResource : McpServerResource
 		catch (Exception exception) when (undelivered is not null
 			&& (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested))
 		{
-			ThrowWithBufferedFeedback(exception, undelivered);
+			ThrowIfFeedbackBuffered(exception, undelivered);
 			throw;
 		}
 

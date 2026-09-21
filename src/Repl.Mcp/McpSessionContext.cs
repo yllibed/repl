@@ -1,4 +1,4 @@
-namespace Repl.Mcp;
+﻿namespace Repl.Mcp;
 
 /// <summary>
 /// State owned by one MCP transport session, or — on the reusable-options path — by the handler
@@ -99,6 +99,5 @@ internal sealed class McpSessionContext : IDisposable
 		McpServerHandler.McpGeneratedSnapshot Snapshot,
 		long Version,
 		bool IsStale,
-		bool Sessionless)
-;
+		bool Sessionless);
 }

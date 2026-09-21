@@ -149,9 +149,8 @@ internal sealed partial class McpToolAdapter
 		var output = invocation.ExitCode == 0 ? invocation.Output : DescribeFailure(invocation);
 		if (string.IsNullOrWhiteSpace(output))
 		{
-			output = invocation.ExitCode == 0
-				? "OK"
-				: $"Command failed with exit code {invocation.ExitCode}.";
+			// Only a success reaches here: DescribeFailure names the exit code when it has nothing else.
+			output = "OK";
 		}
 
 		return BuildToolResult(
@@ -222,7 +221,7 @@ internal sealed partial class McpToolAdapter
 		var mcpServices = new McpServiceProviderOverlay(
 			_services,
 			new Dictionary<Type, object> { [typeof(IReplInteractionChannel)] = interactionChannel });
-		var feedbackService = _services.GetService(typeof(IMcpFeedback)) as McpFeedbackService;
+		var feedbackService = feedback as McpFeedbackService;
 		using var feedbackScope = feedbackService?.PushProgressToken(progressToken);
 		// Messages the client cannot receive as notifications ride back in the tool result instead,
 		// so no feedback is lost on a request that never asked for log notifications.

@@ -1,4 +1,4 @@
-using Repl.Interaction;
+﻿using Repl.Interaction;
 using Repl.Terminal;
 
 namespace Repl.Mcp;
@@ -98,10 +98,8 @@ internal static class McpDiscoveryCapabilities
 	/// </summary>
 	/// <param name="interactivityMode">How an unanswerable prompt resolves; see <see cref="CreateDiscoveryChannel"/>.</param>
 	/// <remarks>
-	/// Discovery decides what is advertised; execution decides whether an advertised command exists.
-	/// Those are the same question, and answering it twice from two different views is what makes a
-	/// tool visible and uncallable. A fresh dictionary per call because the overlay owns what it is
-	/// given.
+	/// Both views must answer alike, for the reason the type remarks give. A fresh dictionary per call,
+	/// because the overlay owns what it is given.
 	/// <para>
 	/// The interaction channel belongs in the set for the same reason the capability services do: a
 	/// predicate may ask a question, and the live channel answers from the call's own
@@ -109,7 +107,8 @@ internal static class McpDiscoveryCapabilities
 	/// passed to exists.
 	/// </para>
 	/// </remarks>
-	public static Dictionary<Type, object> CreateSessionScopedOverrides(InteractivityMode interactivityMode) => new()
+	public static IReadOnlyDictionary<Type, object> CreateSessionScopedOverrides(
+		InteractivityMode interactivityMode) => new Dictionary<Type, object>
 	{
 		[typeof(IReplInteractionChannel)] = CreateDiscoveryChannel(interactivityMode),
 		[typeof(IMcpClientRoots)] = Roots,
