@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 
 namespace Repl.Testing;
 
@@ -161,23 +161,32 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	/// <summary>
 	/// Ends the session and removes it from its host. Disposing twice is a no-op.
 	/// </summary>
-	public ValueTask DisposeAsync()
+	public async ValueTask DisposeAsync()
 	{
 		if (_disposed)
 		{
-			return ValueTask.CompletedTask;
+			return;
 		}
 
 		_disposed = true;
 		_owner.RemoveSession(SessionId);
 		ReplSessionIO.RemoveSession(SessionId);
-		if (_services is IDisposable disposable)
+
+		// Take the command gate before disposing the session scope so an in-flight command
+		// (for example an orphaned timed-out run) cannot race scoped-service disposal.
+		await _commandGate.WaitAsync().ConfigureAwait(false);
+		switch (_services)
 		{
-			disposable.Dispose();
+			case IAsyncDisposable asyncDisposable:
+				// Releases the session DI scope, disposing its Scoped services.
+				await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+				break;
+			case IDisposable disposable:
+				disposable.Dispose();
+				break;
 		}
 
 		_commandGate.Dispose();
-		return ValueTask.CompletedTask;
 	}
 
 	internal static ValueTask<ReplSessionHandle> StartAsync(
@@ -196,10 +205,10 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		var sessionId = $"session-{Guid.NewGuid():N}";
 		ReplSessionIO.EnsureSession(sessionId);
 		var app = appFactory();
-		var runOptions = descriptor.BuildRunOptions(options);
-		var serviceCollection = new ServiceCollection();
-		serviceCollection.AddSingleton<IReplSessionState, InMemorySessionState>();
-		var services = serviceCollection.BuildServiceProvider();
+		// The handle owns the session DI scope (each command is a separate one-shot run),
+		// so every run opts out of per-run scoping.
+		var runOptions = descriptor.BuildRunOptions(options) with { SessionScope = SessionScopeBehavior.CallerOwned };
+		var services = SessionScopedTestServices.Create(app);
 		var handle = new ReplSessionHandle(owner, app, options, services, runOptions, descriptor.Answers, sessionId);
 		return ValueTask.FromResult(handle);
 	}
@@ -315,6 +324,41 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 				_events.Add(evt);
 			}
 		}
+	}
+
+	// One logical test session spans several one-shot Run* calls, so the handle owns the session
+	// DI scope itself: the provider is built over a scope of the APP services (user registrations
+	// become visible to session commands, and Scoped instances are shared across the session
+	// commands) and every run uses SessionScopeBehavior.CallerOwned so the Run* entry points do not
+	// open a fresh scope — and fresh Scoped instances — per command.
+	private sealed class SessionScopedTestServices : IServiceProvider, IAsyncDisposable
+	{
+		private readonly AsyncServiceScope? _scope;
+		private readonly IServiceProvider _inner;
+		private readonly InMemorySessionState _sessionState = new();
+
+		private SessionScopedTestServices(AsyncServiceScope? scope, IServiceProvider inner)
+		{
+			_scope = scope;
+			_inner = inner;
+		}
+
+		public static SessionScopedTestServices Create(ReplApp app)
+		{
+			var root = app.Services;
+			if (root.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory)
+			{
+				var scope = scopeFactory.CreateAsyncScope();
+				return new SessionScopedTestServices(scope, scope.ServiceProvider);
+			}
+
+			return new SessionScopedTestServices(scope: null, root);
+		}
+
+		public object? GetService(Type serviceType) =>
+			serviceType == typeof(IReplSessionState) ? _sessionState : _inner.GetService(serviceType);
+
+		public ValueTask DisposeAsync() => _scope?.DisposeAsync() ?? ValueTask.CompletedTask;
 	}
 
 	private sealed class InMemorySessionState : IReplSessionState

@@ -73,7 +73,7 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 | WebSocket session hosting | ❌ | ❌ | ✅ `Repl.WebSocket` |
 | Telnet session hosting | ❌ | ❌ | ✅ `Repl.Telnet` |
 | Terminal metadata negotiation | ❌ | ❌ | ✅ NAWS, TTYPE, DTTERM |
-| Per-session DI & state | ❌ | ❌ | ✅ `IReplSessionState` |
+| Per-session DI & state | ❌ | ❌ | ✅ DI scope per session + `IReplSessionState` |
 | Window size detection | ❌ | ✅ `Console` only | ✅ Local + remote |
 | Transport-agnostic host | ❌ | ❌ | ✅ `StreamedReplHost` |
 

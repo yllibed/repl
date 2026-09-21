@@ -1,4 +1,4 @@
-namespace Repl;
+﻿namespace Repl;
 
 /// <summary>
 /// Runtime execution options for a single REPL run.
@@ -15,6 +15,11 @@ public sealed record ReplRunOptions
 	/// Gets or sets the hosted-service lifecycle behavior.
 	/// </summary>
 	public HostedServiceLifecycleMode HostedServiceLifecycle { get; init; } = HostedServiceLifecycleMode.None;
+
+	/// <summary>
+	/// Gets or sets how this run manages the session dependency-injection scope.
+	/// </summary>
+	public SessionScopeBehavior SessionScope { get; init; } = SessionScopeBehavior.PerRun;
 
 	/// <summary>
 	/// Gets or sets the ANSI support mode for the session.
