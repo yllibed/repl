@@ -424,7 +424,7 @@ public sealed class ReplApp : IReplApp
 	private async ValueTask<ExecutionOutcome> RunHostedLifecycleOutcomeAsync(
 		string[] args,
 		IServiceProvider services,
-		SessionScopeBehavior sessionScope,
+		SessionScopeBehavior? sessionScope,
 		CancellationToken cancellationToken)
 	{
 		IReadOnlyList<IHostedService> started = [];
@@ -695,11 +695,24 @@ public sealed class ReplApp : IReplApp
 	/// </remarks>
 	private static async ValueTask<T> RunInSessionScopeAsync<T>(
 		IServiceProvider services,
-		SessionScopeBehavior sessionScope,
+		SessionScopeBehavior? sessionScope,
 		Func<IServiceProvider, CancellationToken, ValueTask<T>> run,
 		CancellationToken cancellationToken)
 	{
-		if (sessionScope == SessionScopeBehavior.CallerOwned
+		// Rejected rather than treated as PerRun, for the reason the process-signal mode above states:
+		// numeric configuration or deserialization can produce an undefined value, and falling through a
+		// negative test would nest a scope inside a caller who asked to own it — silently duplicating
+		// their scoped graph instead of sharing it.
+		var resolved = sessionScope ?? SessionScopeBehavior.PerRun;
+		if (resolved is not (SessionScopeBehavior.PerRun or SessionScopeBehavior.CallerOwned))
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(sessionScope),
+				resolved,
+				$"ReplRunOptions.{nameof(ReplRunOptions.SessionScope)} is not a defined {nameof(SessionScopeBehavior)}.");
+		}
+
+		if (resolved == SessionScopeBehavior.CallerOwned
 			|| services.GetService(typeof(IServiceScopeFactory)) is not IServiceScopeFactory scopeFactory)
 		{
 			return await run(services, cancellationToken).ConfigureAwait(false);
@@ -982,7 +995,7 @@ public sealed class ReplApp : IReplApp
 	{
 		var defaults = new Dictionary<Type, object>
 		{
-			[typeof(IReplSessionState)] = new DefaultsSessionState(),
+			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
 			[typeof(IHistoryProvider)] = new InMemoryHistoryProvider(),
 			[typeof(TimeProvider)] = TimeProvider.System,
 			[typeof(IReplKeyReader)] = new ConsoleKeyReader(),
@@ -1041,7 +1054,7 @@ public sealed class ReplApp : IReplApp
 		// Scoped, not singleton: Run* opens one scope per session, so this is the framework own
 		// per-session service and a second session no longer reads what the first one stored. With a
 		// provider that cannot scope, it resolves from the root exactly as it did before.
-		services.TryAddScoped<IReplSessionState, DefaultsSessionState>();
+		services.TryAddScoped<IReplSessionState, InMemoryReplSessionState>();
 		services.TryAddSingleton<IHistoryProvider, InMemoryHistoryProvider>();
 		services.TryAddSingleton(TimeProvider.System);
 		services.TryAdd(ServiceDescriptor.Singleton<IReplInteractionChannel>(sp =>

@@ -17,9 +17,16 @@ public sealed record ReplRunOptions
 	public HostedServiceLifecycleMode HostedServiceLifecycle { get; init; } = HostedServiceLifecycleMode.None;
 
 	/// <summary>
-	/// Gets or sets how this run manages the session dependency-injection scope.
+	/// Gets how this run manages the session's dependency-injection scope.
+	/// <see langword="null"/> uses the active application profile's default, which is
+	/// <see cref="SessionScopeBehavior.PerRun"/>.
 	/// </summary>
-	public SessionScopeBehavior SessionScope { get; init; } = SessionScopeBehavior.PerRun;
+	/// <remarks>
+	/// Nullable for the same reason as <see cref="ProcessSignalHandling"/>: a composition profile has to
+	/// be able to supply a default, and that is only expressible if "the caller said nothing" is
+	/// distinguishable from an explicit value.
+	/// </remarks>
+	public SessionScopeBehavior? SessionScope { get; init; }
 
 	/// <summary>
 	/// Gets or sets the ANSI support mode for the session.

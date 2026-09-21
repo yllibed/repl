@@ -12,7 +12,7 @@ public sealed class Given_SessionState
 	[Description("Regression guard: IReplSessionState is resolved by every concurrent Telnet, WebSocket and MCP session, so its default implementation must tolerate concurrent writers. An unsynchronised Dictionary does not: concurrent Set can lose entries or corrupt the bucket table during a resize.")]
 	public async Task When_SessionsWriteStateConcurrently_Then_EveryWriteIsReadableAfterwards()
 	{
-		var sut = new DefaultsSessionState();
+		var sut = new InMemoryReplSessionState();
 
 		await Task.WhenAll(Enumerable.Range(0, Writers).Select(writer => Task.Run(() =>
 		{
@@ -37,7 +37,7 @@ public sealed class Given_SessionState
 	[Description("Regression guard: reading session state while another session writes it must neither throw nor observe a torn entry. Enumeration-free readers still fault on a Dictionary being resized underneath them.")]
 	public async Task When_OneSessionReadsWhileAnotherWrites_Then_NoReaderFaults()
 	{
-		var sut = new DefaultsSessionState();
+		var sut = new InMemoryReplSessionState();
 		var faults = new ConcurrentQueue<Exception>();
 		using var done = new CancellationTokenSource();
 
