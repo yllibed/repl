@@ -1,4 +1,4 @@
-using Repl.Interaction;
+﻿using Repl.Interaction;
 
 namespace Repl.Mcp;
 
@@ -32,6 +32,12 @@ public interface IMcpFeedback
 	/// asked for <c>Error</c> leaves this <see langword="true"/> while anything below that level is
 	/// dropped — and dropped messages are <em>not</em> carried back in the tool result, because the
 	/// client asked not to receive them.
+	/// </para>
+	/// <para>
+	/// A module presence predicate reads <see langword="true"/> instead, on every revision: discovery
+	/// on <c>2026-07-28</c> answers every per-connection question with a constant, and this one is
+	/// answered as supported. Whatever the predicate decides under that answer is what every client is
+	/// offered — so gating a module on this member hides it from nobody.
 	/// </para>
 	/// </remarks>
 	bool IsLoggingSupported { get; }

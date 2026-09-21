@@ -1,4 +1,4 @@
-namespace Repl.Mcp;
+﻿namespace Repl.Mcp;
 
 /// <summary>
 /// Provides access to MCP client roots for the current MCP session.
@@ -28,6 +28,11 @@ public interface IMcpClientRoots
 	/// request; soft roots answer only when the client supports no native roots at all. Either way, call
 	/// <see cref="GetAsync"/> when the difference matters: it resolves on demand and surfaces a failure
 	/// instead of absorbing it.
+	/// <para>
+	/// Soft roots are the exception on that path: they are host-set state with no request to belong to,
+	/// so every connection built from one <c>BuildMcpServerOptions()</c> result shares the ones any of
+	/// them set. See the known limitation in <c>docs/mcp-transports.md</c>.
+	/// </para>
 	/// </remarks>
 	IReadOnlyList<McpClientRoot> Current { get; }
 
@@ -37,7 +42,9 @@ public interface IMcpClientRoots
 	ValueTask<IReadOnlyList<McpClientRoot>> GetAsync(CancellationToken cancellationToken = default);
 
 	/// <summary>
-	/// Sets soft roots for the current session.
+	/// Sets soft roots for the current session — which under <c>mcp serve</c> is the connection, and on
+	/// a reused <c>BuildMcpServerOptions()</c> result is every connection built from it. See
+	/// <see cref="Current"/>.
 	/// </summary>
 	void SetSoftRoots(IEnumerable<McpClientRoot> roots);
 

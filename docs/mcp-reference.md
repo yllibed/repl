@@ -529,7 +529,7 @@ Feature support varies across agents. Check [mcp-availability.com](https://mcp-a
 
 ### Upgrading from the 1.x SDK
 
-Seven things change for an application that already references `Repl.Mcp`. The first two are build
+Eight things change for an application that already references `Repl.Mcp`. The first two are build
 breaks; the rest are behaviour a consumer meets at runtime.
 
 **The SDK moves to 2.x.** `ModelContextProtocol` is a transitively public dependency, so a consumer
@@ -595,6 +595,17 @@ or because the client could not be reached. An empty answer therefore means the 
 empty, not that resolving them failed; a client that genuinely answers with zero roots is still told
 apart, since that answer counts as resolved. Call `GetAsync` when the difference matters: it resolves
 on demand and surfaces the failure instead of absorbing it.
+
+**An uncaught exception no longer reaches the client as text.** A command that throws, or an
+application callback that fails while supplying a parameter — a service factory, an options-group
+constructor, a property setter — is surfaced to an MCP client as `Command failed with exit code N.`
+The framework renders that message for an operator at a console, and it routinely carries a path, a
+parameter and its CLR type, or a connection string; over MCP the reader is a remote client instead.
+Feedback the application itself reported still travels, because the application wrote it for that
+reader — so return an error from the command when the client needs to know why. Nothing changes
+locally: the console still names the cause. One detail for a host reading outcomes directly, such as
+an `ExitCodes.Resolver` — a binding-callback failure now carries `ReplBindingCallbackException` on
+`ReplExecutionOutcome.Exception`, with the application's own exception in `InnerException`.
 
 | Feature | Claude Desktop | Claude Code | Codex | VS Code Copilot | Cursor | Continue |
 |---|---|---|---|---|---|---|

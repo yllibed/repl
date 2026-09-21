@@ -1,4 +1,4 @@
-namespace Repl;
+﻿namespace Repl;
 
 internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGlobalOptionsAccessor
 {
@@ -36,6 +36,9 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	/// differently depending on which invocation ran last. A top-level run passes
 	/// <see langword="false"/>: it is about to become the baseline itself, and carrying the previous
 	/// one's keys into <see cref="SetSessionBaseline"/> is the leak that method exists to prevent.
+	/// The interactive resolver is the third caller and also passes <see langword="false"/>: each
+	/// committed line is a fresh invocation, so a baseline-only key is in force without having been
+	/// provided on it — which is what <see cref="HasValue"/> reports.
 	/// </param>
 	internal void Update(
 		IReadOnlyDictionary<string, IReadOnlyList<string>> parsedValues,

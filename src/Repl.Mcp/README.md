@@ -8,10 +8,10 @@ Use `Repl.Mcp` when you already have, or want to build, a Repl command graph and
 
 ## Upgrading from a 1.x SDK build
 
-This version builds on `ModelContextProtocol` **2.x**. Five things change for an application already
-using `Repl.Mcp`; the repository's
+This version builds on `ModelContextProtocol` **2.x**. The changes a consumer meets first are below;
+the repository's
 [MCP reference](https://github.com/yllibed/repl/blob/main/docs/mcp-reference.md#upgrading-from-the-1x-sdk)
-carries the full list.
+carries all eight.
 
 - **The SDK moves to 2.x.** It is a transitively public dependency, so a consumer referencing it
   directly moves with this package. The 1.x and 2.x assemblies cannot coexist.
@@ -20,6 +20,11 @@ carries the full list.
 - **Tool results can carry extra content blocks.** A message the client could not receive as a
   notification is appended after the command's payload. The payload stays the first block and
   `StructuredContent` is untouched, but a test asserting exactly one block will fail.
+- **An uncaught exception no longer reaches the client as text.** A command that throws, or an
+  application callback that fails while supplying a parameter, is surfaced as `Command failed with
+  exit code N.` — the framework renders that message for an operator, and over MCP the reader is a
+  remote client. Feedback the application reported itself still travels; return an error from the
+  command when the client needs the reason.
 - **`.LongRunning()` no longer advertises task support on the protocol surface**, because SDK 2.x
   removed the per-tool execution augmentation. The annotation still reaches help and documentation.
 - **Module presence no longer varies with the client on `2026-07-28`**, which requires the advertised
