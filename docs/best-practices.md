@@ -107,6 +107,27 @@ services.AddSingleton<ITenantClient>(sp =>
 
 Note: DI singleton factories are resolved lazily, so the values are available after global option parsing completes. However, singleton factories capture values once — in interactive mode, global options can change between commands. If your service needs to see updated values per command, inject `IGlobalOptionsAccessor` directly and read values at call time instead of capturing them in a factory. See [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers).
 
+## Pick the lifetime that matches the boundary
+
+| Lifetime | Resolves once per | Use it for |
+|---|---|---|
+| `Singleton` | application | caches, clients, anything shared by every session |
+| `Scoped` | **session** — one `Run*` call: a CLI invocation, an interactive run, a Telnet or WebSocket connection; under MCP, one tool call | per-user state: auth context, a cart, a unit of work |
+| `Transient` | resolution | cheap stateless helpers |
+
+A `Scoped` disposable is disposed when its session ends, so session resources do not accumulate for the
+life of a long-running host.
+
+The trap worth naming: a **singleton** that injects a `Scoped` service captures whichever scope first
+resolved it, and keeps it for the life of the application — silently, because the provider is built
+without `ValidateScopes`. Inject the scoped service into the handler instead, or register the holder
+`Scoped` too.
+
+When your caller's provider already represents the session — a Blazor circuit, an ASP.NET request scope,
+or a session owner running several one-shot calls — set
+`ReplRunOptions.SessionScope = SessionScopeBehavior.CallerOwned` so the run resolves from it directly
+instead of nesting a second scope inside it, which would hide the caller's own scoped instances.
+
 ## Group related options with `[ReplOptionsGroup]`
 
 When a command has many options, group them into a class instead of listing them all as handler parameters. This keeps handlers clean and makes option sets reusable across commands.
