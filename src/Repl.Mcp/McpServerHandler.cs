@@ -396,44 +396,66 @@ internal sealed class McpServerHandler
 				return refreshed.Snapshot;
 			}
 
-			var previousSnapshot = context.SnapshotCache?.Snapshot;
-			try
-			{
-				var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
-					.ConfigureAwait(false);
-				return built;
-			}
-			catch (OperationCanceledException)
-			{
-				throw;
-			}
-			catch (HiddenRequiredOptionException)
-			{
-				ThrowSanitizedIfAClientAlreadyHasASchema(previousSnapshot);
-				throw;
-			}
-			catch (Exception) when (IsFallbackEligible(context, sessionless))
-			{
-				// Preserve availability for transient projection failures, but republish as stale so the
-				// next request retries without requiring another routing mutation. The entry keeps the
-				// version it was built at, because the retraction comparison reads it: a sentinel version
-				// would count as older than every retraction and take the fallback away after the first.
-				// Initialize-era only — see IsFallbackEligible.
-				// Re-read rather than reuse the filter's value: nothing holds the retraction watermark
-				// still between the two, and a retraction that lands in between must fail closed with the
-				// original failure rather than serve a catalog it has just withdrawn.
-				if (context.SnapshotCache is not { } fallback || !IsFallbackEligible(context, sessionless))
-				{
-					throw;
-				}
-
-				context.PublishStaleSnapshot(fallback.Snapshot, fallback.Version, fallback.Sessionless);
-				return fallback.Snapshot;
-			}
+			return await BuildOrServePreviousAsync(context, snapshotVersion, sessionless, cancellationToken)
+				.ConfigureAwait(false);
 		}
 		finally
 		{
 			context.SnapshotGate.Release();
+		}
+	}
+
+	/// <summary>
+	/// Builds this request's snapshot, or serves the connection's previous one when the build fails
+	/// and the era allows it.
+	/// </summary>
+	/// <remarks>
+	/// Split from <see cref="GetSnapshotAsync"/>, which owns the cache fast path and the gate, so the
+	/// three failure arms keep the reasoning that distinguishes them.
+	/// </remarks>
+	private async ValueTask<McpGeneratedSnapshot> BuildOrServePreviousAsync(
+		McpSessionContext context,
+		long snapshotVersion,
+		bool sessionless,
+		CancellationToken cancellationToken)
+	{
+		var previousSnapshot = context.SnapshotCache?.Snapshot;
+		try
+		{
+			var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
+				.ConfigureAwait(false);
+			return built;
+		}
+		// Filtered on the caller's own token, like every other cancellation catch here: a projection
+		// awaits the roots fetch, which runs on its own budget rather than the caller's token, so the
+		// budget expiring arrives as a cancellation nobody asked for. Unfiltered, it rethrew past the
+		// availability fallback below and took a catalog this connection was serving with it.
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			throw;
+		}
+		catch (HiddenRequiredOptionException)
+		{
+			ThrowSanitizedIfAClientAlreadyHasASchema(previousSnapshot);
+			throw;
+		}
+		catch (Exception) when (IsFallbackEligible(context, sessionless))
+		{
+			// Preserve availability for transient projection failures, but republish as stale so the
+			// next request retries without requiring another routing mutation. The entry keeps the
+			// version it was built at, because the retraction comparison reads it: a sentinel version
+			// would count as older than every retraction and take the fallback away after the first.
+			// Initialize-era only — see IsFallbackEligible.
+			// Re-read rather than reuse the filter's value: nothing holds the retraction watermark
+			// still between the two, and a retraction that lands in between must fail closed with the
+			// original failure rather than serve a catalog it has just withdrawn.
+			if (context.SnapshotCache is not { } fallback || !IsFallbackEligible(context, sessionless))
+			{
+				throw;
+			}
+
+			context.PublishStaleSnapshot(fallback.Snapshot, fallback.Version, fallback.Sessionless);
+			return fallback.Snapshot;
 		}
 	}
 

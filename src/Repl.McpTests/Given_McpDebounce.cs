@@ -1,4 +1,4 @@
-using System.IO.Pipelines;
+﻿using System.IO.Pipelines;
 using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -70,6 +70,29 @@ public sealed class Given_McpDebounce
 		fixture.Options.CommandFilter = null;
 		var recoveredTools = SyncWait(fixture.Client.ListToolsAsync().AsTask());
 		recoveredTools.Should().Contain(tool => string.Equals(tool.Name, "added-after", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("Regression guard: an availability fallback must not be lost because the failure arrived as a cancellation nobody asked for. The roots fetch a legacy projection awaits runs on its own budget, independent of the caller's token, so the budget expiring surfaces as an OperationCanceledException while the request's own token is still live — and the unfiltered cancellation arm sat above the fallback, rethrowing past a catalog this connection had been serving a moment earlier. Cancellation is told apart by who asked for it, not by the exception's type, which is the rule the roots service and the App resource path already apply.")]
+	public void When_AProjectionIsCancelledByNobody_Then_ALegacySessionKeepsServingThePreviousCatalog()
+	{
+		var fakeTime = new FakeTimeProvider();
+		using var fixture = CreateServerFixture(fakeTime, BuildLegacyClientOptions());
+
+		SyncWait(fixture.Client.ListToolsAsync().AsTask())
+			.Should().ContainSingle(tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal));
+
+		// A foreign, already-cancelled token: the shape the roots budget produces when it expires, on a
+		// caller whose own token was never touched.
+		fixture.Options.CommandFilter = _ => throw new OperationCanceledException(new CancellationToken(canceled: true));
+		fixture.App.Core.InvalidateRouting();
+		fakeTime.Advance(TimeSpan.FromMilliseconds(150));
+
+		var stale = SyncWait(fixture.Client.ListToolsAsync().AsTask());
+
+		stale.Should().ContainSingle(
+			tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal),
+			because: "this connection had a serve-able catalog and nobody withdrew the request");
 	}
 
 	[TestMethod]
