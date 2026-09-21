@@ -236,4 +236,55 @@ public sealed class Given_SessionScopedServices
 		disposedInTime.Should().BeTrue(
 			"disposing a session must not wait unbounded on a command that is still running");
 	}
+
+	[TestMethod]
+	[Description("Guards the framework own per-session service: IReplSessionState is documented as a per-session state container, so two sessions of one app must not read each other writes. Registered as a singleton it was one process-wide bag shared by every concurrent Telnet, WebSocket and MCP client.")]
+	public void When_TwoRunsShareOneApp_Then_SessionStateIsNotShared()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("remember {value}", (IReplSessionState state, string value) =>
+		{
+			state.Set("carried", value);
+			return "stored";
+		});
+		sut.Map("recall", (IReplSessionState state) => state.Get<string>("carried") ?? "(none)");
+
+		var write = ConsoleCaptureHelper.Capture(() => sut.Run(["remember", "alpha", "--no-logo"]));
+		var read = ConsoleCaptureHelper.Capture(() => sut.Run(["recall", "--no-logo"]));
+
+		write.ExitCode.Should().Be(0, "run output was: {0}", write.Text);
+		read.ExitCode.Should().Be(0, "run output was: {0}", read.Text);
+		read.Text.Trim().Should().Be("(none)", "a later session must not read an earlier session state");
+	}
+
+	private sealed class SessionStateCapturingSingleton(IReplSessionState state)
+	{
+		public IReplSessionState Captured { get; } = state;
+	}
+
+	[TestMethod]
+	[Description("Documents the known consequence of making IReplSessionState scoped: a SINGLETON that injects it captures, for the life of the app, whichever session scope first resolved it, silently, because the provider is built without ValidateScopes. This test exists so the trap is discoverable and so enabling scope validation later is a deliberate change rather than an accident. Inject IReplSessionState into the handler, or register the holder scoped.")]
+	public void When_ASingletonInjectsSessionState_Then_ItCapturesTheFirstSessionInstance()
+	{
+		var sut = ReplApp.Create(services => services.AddSingleton<SessionStateCapturingSingleton>());
+
+		// Resolves the singleton inside the FIRST session, which is what pins that session scope to it.
+		sut.Map("write {value}", (SessionStateCapturingSingleton holder, string value) =>
+		{
+			holder.Captured.Set("carried", value);
+			return "stored";
+		});
+		sut.Map(
+			"captured",
+			(SessionStateCapturingSingleton holder) => holder.Captured.Get<string>("carried") ?? "(none)");
+
+		var write = ConsoleCaptureHelper.Capture(() => sut.Run(["write", "alpha", "--no-logo"]));
+		var captured = ConsoleCaptureHelper.Capture(() => sut.Run(["captured", "--no-logo"]));
+
+		write.ExitCode.Should().Be(0, "run output was: {0}", write.Text);
+		captured.ExitCode.Should().Be(0, "run output was: {0}", captured.Text);
+		captured.Text.Trim().Should().Be(
+			"alpha",
+			"a singleton holds the scope it was first resolved in, so it still sees that session");
+	}
 }

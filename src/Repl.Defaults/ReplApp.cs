@@ -1038,7 +1038,10 @@ public sealed class ReplApp : IReplApp
 		services.AddReplLogging();
 		services.TryAddSingleton(core);
 		services.TryAddSingleton<ICoreReplApp>(core);
-		services.TryAddSingleton<IReplSessionState, DefaultsSessionState>();
+		// Scoped, not singleton: Run* opens one scope per session, so this is the framework own
+		// per-session service and a second session no longer reads what the first one stored. With a
+		// provider that cannot scope, it resolves from the root exactly as it did before.
+		services.TryAddScoped<IReplSessionState, DefaultsSessionState>();
 		services.TryAddSingleton<IHistoryProvider, InMemoryHistoryProvider>();
 		services.TryAddSingleton(TimeProvider.System);
 		services.TryAdd(ServiceDescriptor.Singleton<IReplInteractionChannel>(sp =>
