@@ -339,4 +339,57 @@ public sealed class Given_SessionScopedServices
 			"alpha",
 			"a singleton holds the scope it was first resolved in, so it still sees that session");
 	}
+
+	private sealed class SingletonProbe : IDisposable
+	{
+		public bool Disposed { get; private set; }
+
+		public void Dispose() => Disposed = true;
+	}
+
+	[TestMethod]
+	[Description("The host, not only the session, must release what a session's DI scope pulled its app's root provider into building: a singleton registered on the app is constructed once the first session's scope resolves it, and nothing but the host disposing that root provider ever releases it. Reproduces the leak by resolving a disposable singleton, disposing the session, then the host, and asserting it is disposed only at that second point — never left for the process to reclaim.")]
+	public async Task When_TheHostIsDisposed_Then_TheAppRootProviderIsDisposedToo()
+	{
+		var probe = new SingletonProbe();
+		await using var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create(services => services.AddSingleton(_ => probe)).UseDefaultInteractive();
+			app.Map("touch", (SingletonProbe p) => p.Disposed.ToString());
+			return app;
+		});
+
+		var session = await host.OpenSessionAsync();
+		var result = await session.RunCommandAsync("touch --no-logo");
+		result.ExitCode.Should().Be(0, "run output was: {0}", result.OutputText);
+
+		await session.DisposeAsync();
+		probe.Disposed.Should().BeFalse(
+			"disposing the session releases its DI scope, not the app's root provider it descends from");
+
+		await host.DisposeAsync();
+		probe.Disposed.Should().BeTrue(
+			"the host built the app's root provider to open this session and must release it at its own disposal");
+	}
+
+	[TestMethod]
+	[Description("Guards against a double-dispose crash on the shared-app shape this file's own CreateProbeHost helper relies on: several sessions opened against ONE ReplApp must have that app's root provider disposed exactly once when the host is disposed, not once per session.")]
+	public async Task When_SeveralSessionsShareOneApp_Then_TheHostDisposesItsRootProviderOnce()
+	{
+		var probe = new SingletonProbe();
+		var app = ReplApp.Create(services => services.AddSingleton(_ => probe)).UseDefaultInteractive();
+		app.Map("touch", (SingletonProbe p) => p.Disposed.ToString());
+		await using var host = ReplTestHost.Create(() => app);
+
+		await using var sessionA = await host.OpenSessionAsync();
+		await using var sessionB = await host.OpenSessionAsync();
+		(await sessionA.RunCommandAsync("touch --no-logo")).ExitCode.Should().Be(0);
+		(await sessionB.RunCommandAsync("touch --no-logo")).ExitCode.Should().Be(0);
+
+		var dispose = async () => await host.DisposeAsync().ConfigureAwait(false);
+
+		await dispose.Should().NotThrowAsync("one shared app must be disposed once, not once per session")
+			.ConfigureAwait(false);
+		probe.Disposed.Should().BeTrue();
+	}
 }

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 
 namespace Repl.Testing;
 
@@ -11,6 +12,12 @@ public sealed class ReplTestHost : IAsyncDisposable
 	private readonly ReplScenarioOptions _options;
 	private readonly ConcurrentDictionary<string, ReplSessionHandle> _sessions =
 		new(StringComparer.Ordinal);
+	// The host, not the handle, invokes the factory — because that is what lets it see every DISTINCT
+	// ReplApp a session was opened against and dispose each one's root ServiceProvider exactly once at
+	// teardown. Keyed by reference identity, deliberately: a factory that closes over and returns the
+	// SAME app for every session (so several sessions can share one container) must count as one entry,
+	// not one per session, or the second session's own scope would be torn down with the first's.
+	private readonly ConcurrentDictionary<ReplApp, byte> _apps = new(ReferenceEqualityComparer.Instance);
 	private bool _disposed;
 
 	private ReplTestHost(Func<ReplApp> appFactory, ReplScenarioOptions options)
@@ -50,9 +57,11 @@ public sealed class ReplTestHost : IAsyncDisposable
 	{
 		ThrowIfDisposed();
 		descriptor ??= new SessionDescriptor();
+		var app = _appFactory();
+		_apps.TryAdd(app, 0);
 		var handle = await ReplSessionHandle.StartAsync(
 			this,
-			_appFactory,
+			app,
 			descriptor,
 			_options,
 			cancellationToken).ConfigureAwait(false);
@@ -94,8 +103,19 @@ public sealed class ReplTestHost : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Disposes every session this host still owns. Disposing twice is a no-op.
+	/// Disposes every session this host still owns, then the root <see cref="IServiceProvider"/> of
+	/// every distinct <see cref="ReplApp"/> a session was opened against. Disposing twice is a no-op.
 	/// </summary>
+	/// <remarks>
+	/// The app's provider is disposed here, and only here: <see cref="ReplApp"/> exposes no disposal
+	/// surface of its own — 661 call sites of <see cref="ReplApp.Create(Action{Microsoft.Extensions.DependencyInjection.IServiceCollection}?)"/>
+	/// across this repository, none in a <c>using</c>, plus an app registers itself as a singleton in
+	/// its own container, so giving it one would create a self-referential disposal cycle everywhere
+	/// else it is used. This host is the one place that both builds an app's provider (through
+	/// <c>ReplSessionHandle.StartAsync</c>) and knows every one it built, so it is the one place that
+	/// can own releasing them, without changing anything for a caller outside <c>Repl.Testing</c>.
+	/// Apps come after sessions: a session's DI scope is a CHILD of its app's root provider.
+	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
 		if (_disposed)
@@ -110,6 +130,21 @@ public sealed class ReplTestHost : IAsyncDisposable
 		}
 
 		_sessions.Clear();
+
+		foreach (var app in _apps.Keys)
+		{
+			switch (app.Services)
+			{
+				case IAsyncDisposable asyncDisposable:
+					await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+					break;
+				case IDisposable disposable:
+					disposable.Dispose();
+					break;
+			}
+		}
+
+		_apps.Clear();
 	}
 
 	private void ThrowIfDisposed()

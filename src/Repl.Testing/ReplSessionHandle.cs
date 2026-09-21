@@ -256,22 +256,24 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		// disposes on this call's behalf before releasing the gate.
 	}
 
+	// Takes the ReplApp instance rather than the factory that produces it: the host invokes the factory
+	// itself now, so it can track every distinct app a session was opened against and dispose each one's
+	// root provider at its own teardown — see ReplTestHost.DisposeAsync.
 	internal static ValueTask<ReplSessionHandle> StartAsync(
 		ReplTestHost owner,
-		Func<ReplApp> appFactory,
+		ReplApp app,
 		SessionDescriptor descriptor,
 		ReplScenarioOptions options,
 		CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(owner);
-		ArgumentNullException.ThrowIfNull(appFactory);
+		ArgumentNullException.ThrowIfNull(app);
 		ArgumentNullException.ThrowIfNull(descriptor);
 		ArgumentNullException.ThrowIfNull(options);
 		cancellationToken.ThrowIfCancellationRequested();
 
 		var sessionId = $"session-{Guid.NewGuid():N}";
 		ReplSessionIO.EnsureSession(sessionId);
-		var app = appFactory();
 		// The handle owns the session DI scope (each command is a separate one-shot run),
 		// so every run opts out of per-run scoping.
 		var runOptions = descriptor.BuildRunOptions(options) with { SessionScope = SessionScopeBehavior.CallerOwned };
