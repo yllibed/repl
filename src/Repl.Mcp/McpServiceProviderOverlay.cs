@@ -37,7 +37,11 @@ internal sealed class McpServiceProviderOverlay(
 		return inner.GetService(serviceType);
 	}
 
+	// Kept in step with GetService, as the IServiceProviderIsService contract requires: what this overlay
+	// answers itself counts, whatever the wrapped provider says about it.
 	public bool IsService(Type serviceType) =>
-		overrides.ContainsKey(serviceType)
+		serviceType == typeof(IServiceProvider)
+		|| serviceType == typeof(IServiceProviderIsService)
+		|| overrides.ContainsKey(serviceType)
 		|| (inner.GetService(typeof(IServiceProviderIsService)) as IServiceProviderIsService)?.IsService(serviceType) == true;
 }
