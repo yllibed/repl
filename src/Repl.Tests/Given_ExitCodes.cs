@@ -332,6 +332,25 @@ public sealed class Given_ExitCodes
 	}
 
 	[TestMethod]
+	[Description("Regression guard: the RunAsync(args, IServiceProvider, ...) overload must observe an already-cancelled token before RunInSessionScopeAsync's own IServiceScopeFactory lookup and CreateAsyncScope() call, exactly as the IReplHost overload already does. A caller-supplied provider that is itself disposed — a realistic shape when a caller cancels and tears its own provider down together — throws from that lookup instead of letting the run report the configured Cancelled outcome.")]
+	public async Task When_PreCancelledTokenAndTheCallerProviderIsDisposed_Then_CancellationIsObservedBeforeTheProviderIsTouched()
+	{
+		var services = new ServiceCollection().BuildServiceProvider();
+		await services.DisposeAsync().ConfigureAwait(false);
+		using var cts = new CancellationTokenSource();
+		await cts.CancelAsync().ConfigureAwait(false);
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder, options => options.ExitCodes.Cancelled = 130);
+		sut.Map("work", () => "never");
+		using var session = OpenSession(out _);
+
+		var exitCode = await sut.RunAsync(["work"], services, cancellationToken: cts.Token).ConfigureAwait(false);
+
+		exitCode.Should().Be(130);
+		recorder.Last!.Kind.Should().Be(ReplExecutionOutcomeKind.Cancelled);
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies the UsageError code is configurable so that applications can publish their own exit-code contract.")]
 	public void When_UsageErrorIsRemapped_Then_ConfiguredCodeIsReturned()
 	{

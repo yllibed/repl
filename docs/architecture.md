@@ -115,6 +115,11 @@ The toolkit provides two application entry points for different scenarios.
 - Wraps `CoreReplApp` with `Microsoft.Extensions.DependencyInjection`
 - Provides `UseDefaultInteractive()`, `UseCliProfile()`, and other composition profiles
 - Lazily builds a shared `ServiceProvider` for module resolution and handler injection
+- Opens one DI scope per session: each `Run*` call is a session, so `Scoped` services resolve per
+  session and their disposables are released when it ends. `ReplRunOptions.SessionScope` set to
+  `SessionScopeBehavior.CallerOwned` opts out when the caller's provider already *is* the session scope
+  (a Blazor circuit, an ASP.NET request scope, a session owner spanning several one-shot runs).
+  Hosted services start outside that scope, because their lifetime is the application's
 - Best for: standalone CLI/REPL applications with service layers
 
 **`InvalidateRouting()`** — call this when module presence conditions may have changed at runtime (e.g., feature flags toggled, dynamic module discovery). Increments the routing cache version so the next execution re-evaluates all module presence predicates.

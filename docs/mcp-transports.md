@@ -102,10 +102,38 @@ every request rather than once per connection. So the boundaries are not all the
 |---|---|
 | Request | Client capabilities, the requested log level, the destination for sampling, elicitation and progress, and — on a reused `BuildMcpServerOptions()` result — native roots, resolved once per request and never cached across connections |
 | Invocation | I/O capture — each tool call gets its own capture scope, not one per connection |
-| Connection (`mcp serve` only) | The MCP session object, the native roots cache, soft roots, and session-aware routing state |
+| Connection (`mcp serve` only) | The MCP session object, the native roots cache, soft roots, session-aware routing state, `IReplSessionState`, and **the DI scope**: a `Scoped` registration resolves once per connection, and its disposables are released when the connection ends |
 
-A server created from a reused `BuildMcpServerOptions()` result has everything above except the
-connection row; see the known limitation above. That matters especially when using dynamic tools,
-roots, or session-specific modules.
+The DI scope is the connection's, for the same reason it is the session's on every other transport: a
+`Scoped` service is where per-user state lives, and state that resets between two calls of one client
+is not per-user state. It is also what keeps discovery and execution honest — both resolve a module
+presence predicate's services from the same scope, so a command that was advertised can be called.
+
+The MCP SDK opens a scope of its own per request (`McpServerOptions.ScopeRequests`, default `true`) and
+exposes it as `RequestContext.Services`. Repl does not run commands in it: that scope descends from the
+application root and is a sibling of the connection's, so adopting it would give the catalog and the
+command two different instances of the same service. `BuildDynamicServerOptions` — the `mcp serve` path
+that owns a real connection context — sets `ScopeRequests = false`, so the SDK does not open that
+sibling scope there to begin with.
+
+A server created from a reused `BuildMcpServerOptions()` result — which is how an ASP.NET Core or other
+custom-transport host reaches Repl — has everything above **except the connection row**: see the known
+limitation above. There is no per-connection context to give a DI scope to either, so `Scoped` resolves
+once from the application root and is shared by every client the process serves, for as long as it runs.
+That is true under stateless HTTP hosting too, even though the SDK itself builds one short-lived server
+per request there: Repl's own scope is a property of the *context* it built at construction, not of the
+SDK's per-request server, so it does not follow the SDK's request boundary.
+
+**Calling `BuildMcpServerOptions()` again for each connection does not isolate `Scoped` either.** The
+`ReplApp` overload always passes that app's one `Services` root (`app.Services`, cached for the app's
+whole lifetime), so two calls against the same `ReplApp` still share the same root — and therefore the
+same `Scoped` instances — no matter how often the method runs. Genuine per-connection isolation on this
+path requires the host to supply a **different** `IServiceProvider` per connection, through the
+`ICoreReplApp.BuildMcpServerOptions(configure, services)` overload: build a scope yourself (for example
+`app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope()`), pass its
+`ServiceProvider` in for that connection, and dispose the scope yourself when the connection ends — Repl
+does not manage that scope's lifetime on this path, the same way it does not manage the connection
+itself. This is the "multiplexes connections over one options instance" case flagged as a caller
+responsibility below, made concrete.
 
 For those higher-level patterns, see [mcp-advanced.md](mcp-advanced.md).

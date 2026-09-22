@@ -1,8 +1,14 @@
+﻿using System.Collections.Concurrent;
+
 namespace Repl;
 
 internal sealed class InMemoryReplSessionState : IReplSessionState
 {
-	private readonly Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
+	// Registered Scoped, so sessions no longer share an instance — but concurrent calls WITHIN one
+	// session still do: several MCP tool calls run at once on one connection, and a singleton that
+	// captured a scope hands its instance to every later caller. An unsynchronised Dictionary does
+	// not merely interleave under that, it corrupts its bucket table.
+	private readonly ConcurrentDictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
 
 	public bool TryGet<T>(string key, out T? value)
 	{
@@ -33,7 +39,7 @@ internal sealed class InMemoryReplSessionState : IReplSessionState
 	public bool Remove(string key)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(key);
-		return _values.Remove(key);
+		return _values.TryRemove(key, out _);
 	}
 
 	public void Clear() => _values.Clear();

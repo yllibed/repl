@@ -1,6 +1,7 @@
-using System.Diagnostics.CodeAnalysis;
+﻿using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -18,10 +19,17 @@ public sealed class ReplApp : IReplApp
 	private readonly IServiceCollection _services;
 
 	// Lazily built provider shared between MapModule<T>() and Run().
-	// Ensures modules resolved via DI share the same service instances
-	// as handler parameters resolved at runtime.
+	// Singleton services resolved by modules are the same instances handler parameters
+	// see at runtime; Scoped services intentionally differ — handlers resolve them from
+	// the per-session scope opened by Run* (see RunInSessionScopeAsync), while module
+	// resolution at registration time happens outside any session.
 	private ServiceProvider? _sharedProvider;
 	private ProcessSignalHandlingMode _defaultProcessSignalHandling = ProcessSignalHandlingMode.None;
+	// Tracks which providers RunInSessionScopeAsync has already warned about, so a long-lived host
+	// issuing many one-shot runs against the same scope-less provider gets the diagnostic once rather
+	// than once per run. Keyed by identity and weakly held, the same shape CoreReplApp uses for its
+	// routing cache, so this is never what keeps a caller-supplied provider alive.
+	private static readonly ConditionalWeakTable<IServiceProvider, object> DiagnosedUnscopedProviders = new();
 
 	// Extension packages (e.g. Repl.Spectre) park per-app configuration here so it stays
 	// reachable even when the shared provider was materialized before the Use* call —
@@ -175,6 +183,12 @@ public sealed class ReplApp : IReplApp
 	/// <summary>
 	/// Maps a module resolved through runtime DI activation.
 	/// </summary>
+	/// <remarks>
+	/// <typeparamref name="TModule"/> is constructed once, here, before any session exists — the same
+	/// timing as a singleton. A constructor dependency registered <c>Scoped</c> is captured at that one
+	/// resolution and shared by every session afterward. Keep <c>Scoped</c> services out of a module's
+	/// constructor; inject them into the handler that needs them instead, where they resolve per session.
+	/// </remarks>
 	public ReplApp MapModule<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule
 	{
@@ -396,8 +410,20 @@ public sealed class ReplApp : IReplApp
 	{
 		if (runOptions.HostedServiceLifecycle is HostedServiceLifecycleMode.None or HostedServiceLifecycleMode.Guest)
 		{
-			return await _core.RunOutcomeWithServicesAsync(args, services, cancellationToken)
-				.ConfigureAwait(false);
+			// Checked before RunInSessionScopeAsync, which resolves IServiceScopeFactory and creates a
+			// scope unconditionally: for an already-cancelled token that would run scope-creation side
+			// effects (or throw, for a caller-supplied provider that is itself disposed) instead of
+			// honouring ExitCodes.Cancelled the same way the IReplHost and hosted overloads already do.
+			if (_core.TryObserveCallerCancellation(cancellationToken) is { } cancelledEarly)
+			{
+				return cancelledEarly;
+			}
+
+			return await RunInSessionScopeAsync(
+				services,
+				runOptions.SessionScope,
+				(sessionServices, token) => _core.RunOutcomeWithServicesAsync(args, sessionServices, token),
+				cancellationToken).ConfigureAwait(false);
 		}
 
 		// Routed through the policy before starting hosted services, so an already-cancelled caller token
@@ -407,7 +433,8 @@ public sealed class ReplApp : IReplApp
 			return cancelled;
 		}
 
-		return await RunHostedLifecycleOutcomeAsync(args, services, cancellationToken).ConfigureAwait(false);
+		return await RunHostedLifecycleOutcomeAsync(args, services, runOptions.SessionScope, cancellationToken)
+			.ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -418,8 +445,16 @@ public sealed class ReplApp : IReplApp
 	private async ValueTask<ExecutionOutcome> RunHostedLifecycleOutcomeAsync(
 		string[] args,
 		IServiceProvider services,
+		SessionScopeBehavior? sessionScope,
 		CancellationToken cancellationToken)
 	{
+		// Validated before hosted services start: on this path RunInSessionScopeAsync's own check is
+		// reached only after HostedServiceLifecycleCoordinator.StartAsync below, so an undefined value
+		// would otherwise run real startup (and rollback/shutdown) side effects before the option error
+		// surfaces, unlike the non-hosted path. The resolved value is unused here — opening the scope
+		// still happens once the pipeline actually runs below.
+		ValidateSessionScope(sessionScope);
+
 		IReadOnlyList<IHostedService> started = [];
 		ExecutionOutcome? outcome = null;
 		Exception? propagating = null;
@@ -430,8 +465,13 @@ public sealed class ReplApp : IReplApp
 			// rollback survives unreported, unlike one that fails in the normal shutdown below.
 			started = await HostedServiceLifecycleCoordinator.StartAsync(services, cancellationToken)
 				.ConfigureAwait(false);
-			outcome = await _core.RunOutcomeWithServicesAsync(args, services, cancellationToken)
-				.ConfigureAwait(false);
+			// The scope wraps the pipeline only: hosted services are app-level and keep starting from
+			// the unscoped provider above, so their lifetime is not tied to this session.
+			outcome = await RunInSessionScopeAsync(
+				services,
+				sessionScope,
+				(sessionServices, token) => _core.RunOutcomeWithServicesAsync(args, sessionServices, token),
+				cancellationToken).ConfigureAwait(false);
 		}
 		catch (HostedServiceLifecycleException ex)
 		{
@@ -662,9 +702,89 @@ public sealed class ReplApp : IReplApp
 				return _core.ResolveProcessExitCode(cancelled);
 			}
 
-			var sessionProvider = CreateSessionOverlay(services);
-			return await _core.RunWithServicesAsync(args, sessionProvider, cancellationToken)
-				.ConfigureAwait(false);
+			// The session overlay composes on top of the session scope, so overlay lookups that fall
+			// through to the caller provider observe this session's Scoped instances.
+			return await RunInSessionScopeAsync(
+				services,
+				runOptions.SessionScope,
+				(sessionServices, token) =>
+					_core.RunWithServicesAsync(args, CreateSessionOverlay(sessionServices), token),
+				cancellationToken).ConfigureAwait(false);
+		}
+	}
+
+	/// <summary>
+	/// Runs one session inside its own DI scope, so Scoped services resolve per session and scoped
+	/// disposables are released when the session ends.
+	/// </summary>
+	/// <remarks>
+	/// <see cref="SessionScopeBehavior.CallerOwned"/> opts out for a provider that already represents
+	/// the session scope — a Blazor circuit, an ASP.NET request scope, or a session owner spanning
+	/// several one-shot runs. A provider without scope support runs unscoped, as before.
+	/// </remarks>
+	// Split from RunInSessionScopeAsync so the hosted-lifecycle path can validate before starting
+	// anything: HostedServiceLifecycleCoordinator.StartAsync runs before this helper's own scope-creation
+	// body would ever be reached, so a caller reaching RunHostedLifecycleOutcomeAsync must resolve and
+	// validate SessionScope first, standalone, to fail exactly as fast as the non-hosted path does.
+	//
+	// ParamName below names this parameter, not ReplRunOptions.SessionScope: MA0015 rejects nameof-ing a
+	// symbol that is not actually a parameter of the enclosing method, and both call sites would need
+	// their own equally-wrong local name. The message text already names the public property correctly.
+	private static SessionScopeBehavior ValidateSessionScope(SessionScopeBehavior? sessionScope)
+	{
+		// Rejected rather than treated as PerRun, for the reason the process-signal mode above states:
+		// numeric configuration or deserialization can produce an undefined value, and falling through a
+		// negative test would nest a scope inside a caller who asked to own it — silently duplicating
+		// their scoped graph instead of sharing it.
+		var resolved = sessionScope ?? SessionScopeBehavior.PerRun;
+		if (resolved is not (SessionScopeBehavior.PerRun or SessionScopeBehavior.CallerOwned))
+		{
+			throw new ArgumentOutOfRangeException(
+				nameof(sessionScope),
+				resolved,
+				$"ReplRunOptions.{nameof(ReplRunOptions.SessionScope)} is not a defined {nameof(SessionScopeBehavior)}.");
+		}
+
+		return resolved;
+	}
+
+	private static async ValueTask<T> RunInSessionScopeAsync<T>(
+		IServiceProvider services,
+		SessionScopeBehavior? sessionScope,
+		Func<IServiceProvider, CancellationToken, ValueTask<T>> run,
+		CancellationToken cancellationToken)
+	{
+		var resolved = ValidateSessionScope(sessionScope);
+
+		if (resolved == SessionScopeBehavior.CallerOwned)
+		{
+			return await run(services, cancellationToken).ConfigureAwait(false);
+		}
+
+		if (services.GetService(typeof(IServiceScopeFactory)) is not IServiceScopeFactory scopeFactory)
+		{
+			// Degrading silently here reproduces #70's own symptom on the release that fixes it: every
+			// session sharing one Scoped instance. CallerOwned above is a deliberate, silent opt-out by
+			// design — this is the OTHER case, a provider that was never given a scope to begin with,
+			// which one release note is not enough to make every caller check for.
+			if (DiagnosedUnscopedProviders.TryAdd(services, services))
+			{
+				ProcessSignalCoordinator.WriteDiagnostic(
+					"Warning: the service provider passed to Run* has no IServiceScopeFactory, so "
+					+ "Scoped services resolve unscoped — one instance shared by every session, "
+					+ "the exact defect ReplRunOptions.SessionScope exists to prevent. Register "
+					+ "Microsoft.Extensions.DependencyInjection's ServiceCollection.BuildServiceProvider() "
+					+ "result (which always supplies one), or pass SessionScopeBehavior.CallerOwned "
+					+ "if this provider deliberately IS the session scope.");
+			}
+
+			return await run(services, cancellationToken).ConfigureAwait(false);
+		}
+
+		var scope = scopeFactory.CreateAsyncScope();
+		await using (scope.ConfigureAwait(false))
+		{
+			return await run(scope.ServiceProvider, cancellationToken).ConfigureAwait(false);
 		}
 	}
 
@@ -780,8 +900,33 @@ public sealed class ReplApp : IReplApp
 	/// This provider is reused for both module resolution and runtime execution,
 	/// ensuring DI-resolved modules share the same service instances as handlers.
 	/// </summary>
-	private ServiceProvider EnsureSharedProvider() =>
-		_sharedProvider ??= _services.BuildServiceProvider();
+	private ServiceProvider EnsureSharedProvider()
+	{
+		if (_sharedProvider is { } existing)
+		{
+			return existing;
+		}
+
+		// `??=` is a check-then-assign, not an atomic publish — two concurrent first callers (a
+		// caller-owned host opening several sessions against one shared app, a supported shape) could
+		// each build a provider and each assign, silently orphaning whichever one lost the race along
+		// with any disposable singleton it had already started constructing. CompareExchange publishes
+		// exactly one; the loser, having resolved nothing yet, is disposed unused rather than kept.
+		var candidate = _services.BuildServiceProvider();
+		var winner = Interlocked.CompareExchange(ref _sharedProvider, candidate, comparand: null);
+		if (winner is not null)
+		{
+			// EnsureSharedProvider is itself synchronous, reached from a plain property getter with no
+			// async context to hand this off to; nothing was ever resolved from the losing candidate, so
+			// disposing it releases only the empty engine it built, never anything with real cleanup work.
+#pragma warning disable MA0045
+			candidate.Dispose();
+#pragma warning restore MA0045
+			return winner;
+		}
+
+		return candidate;
+	}
 
 	private TModule ResolveModuleFromServices<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TModule>()
 		where TModule : class, IReplModule
@@ -938,7 +1083,7 @@ public sealed class ReplApp : IReplApp
 	{
 		var defaults = new Dictionary<Type, object>
 		{
-			[typeof(IReplSessionState)] = new DefaultsSessionState(),
+			[typeof(IReplSessionState)] = new InMemoryReplSessionState(),
 			[typeof(IHistoryProvider)] = new InMemoryHistoryProvider(),
 			[typeof(TimeProvider)] = TimeProvider.System,
 			[typeof(IReplKeyReader)] = new ConsoleKeyReader(),
@@ -994,7 +1139,10 @@ public sealed class ReplApp : IReplApp
 		services.AddReplLogging();
 		services.TryAddSingleton(core);
 		services.TryAddSingleton<ICoreReplApp>(core);
-		services.TryAddSingleton<IReplSessionState, DefaultsSessionState>();
+		// Scoped, not singleton: Run* opens one scope per session, so this is the framework's own
+		// per-session service and a second session no longer reads what the first one stored. With a
+		// provider that cannot scope, it resolves from the root exactly as it did before.
+		services.TryAddScoped<IReplSessionState, InMemoryReplSessionState>();
 		services.TryAddSingleton<IHistoryProvider, InMemoryHistoryProvider>();
 		services.TryAddSingleton(TimeProvider.System);
 		services.TryAdd(ServiceDescriptor.Singleton<IReplInteractionChannel>(sp =>

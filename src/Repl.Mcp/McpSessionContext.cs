@@ -1,4 +1,6 @@
-﻿namespace Repl.Mcp;
+﻿using Microsoft.Extensions.DependencyInjection;
+
+namespace Repl.Mcp;
 
 /// <summary>
 /// State owned by one MCP transport session, or — on the reusable-options path — by the handler
@@ -8,7 +10,7 @@
 /// One <see cref="McpServerHandler"/> can serve several concurrent sessions, so anything
 /// that varies per client lives here instead of on the handler: hard/soft roots, the
 /// generated snapshot cache (the tool graph can be gated on session capabilities), the
-/// compatibility-shim intro state, and the session's service overlay. The context is
+/// compatibility-shim intro state, the session's DI scope, and its service overlay. The context is
 /// registered in the provider passed to <c>McpServer.Create</c>, so request handlers
 /// recover their originating session through <c>request.Server.Services</c> — never
 /// through a destination-bound per-request server used as a surrogate session key.
@@ -16,15 +18,21 @@
 /// through the per-request <see cref="McpRequestServerAccessor"/> binding, which is
 /// finer-grained than the session.
 /// </remarks>
-internal sealed class McpSessionContext : IDisposable
+internal sealed class McpSessionContext : IAsyncDisposable
 {
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
 
-	public McpSessionContext(McpClientRootsService roots, IServiceProvider services)
+	private readonly AsyncServiceScope? _scope;
+
+	public McpSessionContext(
+		McpClientRootsService roots,
+		IServiceProvider services,
+		AsyncServiceScope? scope)
 	{
 		Roots = roots;
 		Services = services;
+		_scope = scope;
 	}
 
 	/// <summary>Session-owned hard/soft roots.</summary>
@@ -69,7 +77,18 @@ internal sealed class McpSessionContext : IDisposable
 	/// <summary>Re-arms the compatibility-shim intro after a routing invalidation.</summary>
 	public void ResetCompatibilityIntro() => Interlocked.Exchange(ref _compatibilityIntroServed, 0);
 
-	public void Dispose() => SnapshotGate.Dispose();
+	public async ValueTask DisposeAsync()
+	{
+		SnapshotGate.Dispose();
+		// Releases this session's Scoped services. Must be awaited: a consumer may register the unit
+		// of work the lifetime guidance recommends Scoped as IAsyncDisposable only, and Microsoft DI's
+		// ServiceProviderEngineScope.Dispose() throws InvalidOperationException rather than skip it —
+		// which would otherwise fault RunAsync at every connection's teardown.
+		if (_scope is { } scope)
+		{
+			await scope.DisposeAsync().ConfigureAwait(false);
+		}
+	}
 
 	/// <summary>
 	/// A generated snapshot and the routing version it was built at, published as ONE value.

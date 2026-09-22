@@ -45,6 +45,11 @@ public sealed record SessionDescriptor
 	/// <summary>
 	/// Optional session-specific run options customization.
 	/// </summary>
+	/// <remarks>
+	/// <see cref="ReplRunOptions.SessionScope"/> is ignored here: the session handle owns the scope,
+	/// because one test session spans several one-shot runs and each of them would otherwise open — and
+	/// discard — a scope of its own per command.
+	/// </remarks>
 	public Func<ReplRunOptions, ReplRunOptions>? ConfigureRunOptions { get; init; }
 
 	internal ReplRunOptions BuildRunOptions(ReplScenarioOptions scenario)

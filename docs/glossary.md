@@ -56,7 +56,8 @@ Interface for packaging reusable command groups.
 
 ### IReplSessionState
 
-Per-session state container for interactive and hosted sessions.
+Per-session state container for interactive and hosted sessions. Registered `Scoped`, so each
+session gets its own — under MCP, each client connection.
 
 ### Literal segment
 

@@ -486,6 +486,34 @@ public sealed class Given_HostedServicesLifecycle
 		exitCode.ExitCode.Should().Be(70);
 	}
 
+	[TestMethod]
+	[Description("Regression guard: an undefined SessionScope must be rejected before hosted services start, on the hosted-lifecycle path exactly as it already is on the non-hosted one. Validating it only inside RunInSessionScopeAsync — reached after HostedServiceLifecycleCoordinator.StartAsync has already run — lets a malformed configuration value execute real startup (and then shutdown) side effects before the option error is even raised.")]
+	public async Task When_TheSessionScopeIsUndefinedOnTheHostedPath_Then_HostedServicesNeverStart()
+	{
+		var tracker = new LifecycleTracker();
+		var services = new ServiceCollection()
+			.AddSingleton(tracker)
+			.AddSingleton<IHostedService, TrackingHostedService>();
+		using var provider = services.BuildServiceProvider();
+
+		var sut = ReplApp.Create();
+		sut.Map("work", () => "unreachable");
+
+		var act = () => sut.RunAsync(
+			["work", "--no-logo"],
+			provider,
+			new ReplRunOptions
+			{
+				HostedServiceLifecycle = HostedServiceLifecycleMode.Head,
+				SessionScope = (SessionScopeBehavior)42,
+			}).AsTask();
+
+		await act.Should().ThrowAsync<ArgumentOutOfRangeException>().ConfigureAwait(false);
+		tracker.StartCount.Should().Be(
+			0,
+			"the option error must surface before hosted services run any startup side effect");
+	}
+
 	// Cancels the caller's token from inside StartAsync, then observes it: the shape that reaches
 	// ReplApp as a HostedServiceLifecycleException wrapping an OperationCanceledException.
 	private sealed class CallerCancellingHostedService(CancellationTokenSource callerTokenSource) : IHostedService

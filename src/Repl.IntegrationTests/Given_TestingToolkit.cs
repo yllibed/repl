@@ -322,4 +322,22 @@ public sealed class Given_TestingToolkit
 		return app;
 	}
 
+	[TestMethod]
+	[Description("Regression guard: an already-canceled token must stop OpenSessionAsync before it invokes the app factory — not after. Running the factory anyway executes arbitrary caller side effects for a session that will never exist, and tracks the returned app for disposal that nothing will ever trigger, since no session was created to release it.")]
+	public async Task When_TheTokenIsAlreadyCanceled_Then_TheFactoryIsNeverInvoked()
+	{
+		var invocations = 0;
+		await using var host = ReplTestHost.Create(() =>
+		{
+			invocations++;
+			return CreateEchoApp();
+		});
+		using var cts = new CancellationTokenSource();
+		await cts.CancelAsync();
+
+		var open = async () => await host.OpenSessionAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		await open.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+		invocations.Should().Be(0, "a canceled open must not run the factory's side effects at all");
+	}
 }

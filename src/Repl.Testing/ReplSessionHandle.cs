@@ -1,4 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.DependencyInjection;
 
 namespace Repl.Testing;
 
@@ -15,7 +15,26 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	private readonly IReadOnlyDictionary<string, string>? _sessionAnswers;
 	private readonly SemaphoreSlim _commandGate = new(initialCount: 1, maxCount: 1);
 	private readonly string _sessionId;
-	private bool _disposed;
+	private int _disposed;
+
+	// Coordinates disposal with a command that is still running, without a check-then-act race: bit 0
+	// latches "disposal was requested", the rest counts commands currently executing against _services
+	// (0 or 1 — _commandGate allows only one at a time, but a counter rather than a single bit keeps the
+	// arithmetic below correct however many false starts land here). Both DisposeAsync and a running
+	// command's own finally mutate this with one Interlocked op apiece; whichever one's read-modify-write
+	// observes the other side's contribution already applied is the one that defers, and the one that
+	// observes it absent is the one that disposes — so exactly one side ever does, never zero, never two
+	// without DisposeServicesOnceAsync's own guard catching the duplicate.
+	private int _serviceLifecycle;
+	private int _servicesDisposeClaimed;
+	private const int DisposalRequested = 1;
+	private const int CommandInFlight = 2;
+	// Completed once _services has actually been disposed — whether DisposeAsync did it directly, or a
+	// command still running at the time did it later in its own finally. The owning ReplTestHost reads
+	// this (never awaits it) to decide whether this session's app root is safe to dispose yet: awaiting
+	// it would reintroduce, at the host level, the exact unbounded wait DisposeAsync itself refuses to
+	// take on an orphaned command.
+	private readonly TaskCompletionSource _servicesDisposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
 	private ReplSessionHandle(
 		ReplTestHost owner,
@@ -40,6 +59,12 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	/// lifetime.
 	/// </summary>
 	public string SessionId => _sessionId;
+
+	/// <summary>
+	/// Completes once this session's DI scope has actually been released — including when
+	/// <see cref="DisposeAsync"/> deferred that to a command that was still running when it was called.
+	/// </summary>
+	internal Task ServicesDisposed => _servicesDisposed.Task;
 
 	/// <summary>
 	/// Runs a command in this session.
@@ -86,51 +111,122 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		await _commandGate.WaitAsync(cancellationToken).ConfigureAwait(false);
 		try
 		{
-			var startedAt = DateTimeOffset.UtcNow;
-			using var output = new StringWriter();
-			var host = new TestSessionHost(_sessionId, output);
-			var observer = new SessionExecutionObserver();
-			var args = BuildArgsWithAnswers(ReplTestText.Tokenize(commandText), _sessionAnswers, answers);
-			using var timeout = ReplTestTimeout.CreateSource(_options.CommandTimeout, cancellationToken);
-			var token = timeout?.Token ?? cancellationToken;
+			// Registered as in-flight BEFORE the re-check below, not after: this is what DisposeAsync's
+			// own Interlocked.Or observes to decide whether it or this command owns disposing _services,
+			// and that decision must already account for this command — otherwise a DisposeAsync racing
+			// in between the check and the registration could dispose _services while this command still
+			// believes it is clear to run.
+			Interlocked.Add(ref _serviceLifecycle, CommandInFlight);
 
-			_app.Core.ExecutionObserver = observer;
-			int exitCode;
-			try
-			{
-				exitCode = await _app.RunAsync(args, host, _services, _runOptions, token).ConfigureAwait(false);
-			}
-			catch (OperationCanceledException) when (ReplTestTimeout.Expired(timeout, cancellationToken))
-			{
-				throw CreateTimeoutException(commandText);
-			}
-			finally
-			{
-				_app.Core.ExecutionObserver = null;
-			}
+			// Re-checked inside the gate: a caller that passed the check above can be queued here while
+			// the session is disposed, and must not go on to run against a disposed scope. Guaranteed
+			// visible by now if a concurrent DisposeAsync's Or already observed the increment above,
+			// because Interlocked operations on _serviceLifecycle are full fences on both sides.
+			ThrowIfDisposed();
 
-			ThrowIfCancelledByTimeout(observer, timeout, commandText, cancellationToken);
-
-			var outputText = output.ToString();
-			if (_options.NormalizeAnsi)
-			{
-				outputText = ReplTestText.NormalizeOutput(outputText);
-			}
-
-			var timeline = BuildTimeline(outputText, observer.Events, observer.LastResult);
-			return new CommandExecution(
-				commandText,
-				exitCode,
-				outputText,
-				observer.LastResult,
-				observer.Events.ToArray(),
-				timeline,
-				startedAt,
-				DateTimeOffset.UtcNow);
+			return await RunWithinGateAsync(commandText, answers, cancellationToken).ConfigureAwait(false);
 		}
 		finally
 		{
-			_commandGate.Release();
+			var after = Interlocked.Add(ref _serviceLifecycle, -CommandInFlight);
+			try
+			{
+				if ((after & DisposalRequested) != 0)
+				{
+					// DisposeAsync ran while this command held the gate and deferred to it rather than
+					// disposing _services out from under a run in progress. Finish that disposal now,
+					// still inside the gate, so a caller queued behind this one hits the re-check above
+					// instead of a provider that is only half torn down.
+					await DisposeServicesOnceAsync().ConfigureAwait(false);
+				}
+			}
+			finally
+			{
+				// In its own inner finally: a scoped disposable throwing from DisposeServicesOnceAsync
+				// must not skip this. The gate has no timeout of its own — CommandTimeout only links a
+				// token once RunWithinGateAsync is reached — so a queued caller left waiting here would
+				// hang until the process ends rather than reach the in-gate ThrowIfDisposed re-check.
+				_commandGate.Release();
+			}
+		}
+	}
+
+	/// <summary>Runs one command's pipeline once the gate and the in-flight registration are held.</summary>
+	private async ValueTask<CommandExecution> RunWithinGateAsync(
+		string commandText,
+		IReadOnlyDictionary<string, string>? answers,
+		CancellationToken cancellationToken)
+	{
+		var startedAt = DateTimeOffset.UtcNow;
+		using var output = new StringWriter();
+		var host = new TestSessionHost(_sessionId, output);
+		var observer = new SessionExecutionObserver();
+		var args = BuildArgsWithAnswers(ReplTestText.Tokenize(commandText), _sessionAnswers, answers);
+		using var timeout = ReplTestTimeout.CreateSource(_options.CommandTimeout, cancellationToken);
+		var token = timeout?.Token ?? cancellationToken;
+
+		_app.Core.ExecutionObserver = observer;
+		int exitCode;
+		try
+		{
+			exitCode = await _app.RunAsync(args, host, _services, _runOptions, token).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (ReplTestTimeout.Expired(timeout, cancellationToken))
+		{
+			throw CreateTimeoutException(commandText);
+		}
+		finally
+		{
+			_app.Core.ExecutionObserver = null;
+		}
+
+		ThrowIfCancelledByTimeout(observer, timeout, commandText, cancellationToken);
+
+		var outputText = output.ToString();
+		if (_options.NormalizeAnsi)
+		{
+			outputText = ReplTestText.NormalizeOutput(outputText);
+		}
+
+		var timeline = BuildTimeline(outputText, observer.Events, observer.LastResult);
+		return new CommandExecution(
+			commandText,
+			exitCode,
+			outputText,
+			observer.LastResult,
+			observer.Events.ToArray(),
+			timeline,
+			startedAt,
+			DateTimeOffset.UtcNow);
+	}
+
+	/// <summary>Disposes <see cref="_services"/> exactly once, however many callers request it.</summary>
+	private async ValueTask DisposeServicesOnceAsync()
+	{
+		if (Interlocked.Exchange(ref _servicesDisposeClaimed, 1) != 0)
+		{
+			return;
+		}
+
+		try
+		{
+			switch (_services)
+			{
+				case IAsyncDisposable asyncDisposable:
+					// Releases the session DI scope, disposing its Scoped services.
+					await asyncDisposable.DisposeAsync().ConfigureAwait(false);
+					break;
+				case IDisposable disposable:
+					disposable.Dispose();
+					break;
+			}
+		}
+		finally
+		{
+			// Signaled from the one caller whose CAS above actually won, whichever of the two that
+			// turns out to be — DisposeAsync itself, or the command that was still running when it was
+			// called. ReplTestHost reads this to know its root provider is now safe to dispose.
+			_servicesDisposed.TrySetResult();
 		}
 	}
 
@@ -159,47 +255,60 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 	}
 
 	/// <summary>
-	/// Ends the session and removes it from its host. Disposing twice is a no-op.
+	/// Ends the session, removes it from its host, and releases the session's dependency-injection
+	/// scope — disposing every <c>Scoped</c> service it resolved. Disposing twice is a no-op.
 	/// </summary>
-	public ValueTask DisposeAsync()
+	/// <remarks>
+	/// Never waits on a command that is still running — that would turn an <c>await using</c> into a
+	/// hang for the lifetime of an orphaned run. It also never simply abandons that command's scope:
+	/// disposal is handed to whichever side, this method or the running command's own <c>finally</c>,
+	/// is the one still active when the other checks. See <see cref="_serviceLifecycle"/>.
+	/// </remarks>
+	public async ValueTask DisposeAsync()
 	{
-		if (_disposed)
+		if (Interlocked.Exchange(ref _disposed, 1) != 0)
 		{
-			return ValueTask.CompletedTask;
+			return;
 		}
 
-		_disposed = true;
 		_owner.RemoveSession(SessionId);
 		ReplSessionIO.RemoveSession(SessionId);
-		if (_services is IDisposable disposable)
-		{
-			disposable.Dispose();
-		}
 
-		_commandGate.Dispose();
-		return ValueTask.CompletedTask;
+		var before = Interlocked.Or(ref _serviceLifecycle, DisposalRequested);
+		if ((before & CommandInFlight) == 0)
+		{
+			// No command was registered as in-flight at the moment this bit was set: none can appear
+			// afterward, since ThrowIfDisposed now observes _disposed and refuses every later one before
+			// it reaches the increment that would make it visible here. This call owns the disposal.
+			await DisposeServicesOnceAsync().ConfigureAwait(false);
+		}
+		// Otherwise a command holds the gate right now. Its own finally, decrementing _serviceLifecycle
+		// on the way out, is guaranteed to observe DisposalRequested — set here, and never cleared — and
+		// disposes on this call's behalf before releasing the gate.
 	}
 
+	// Takes the ReplApp instance rather than the factory that produces it: the host invokes the factory
+	// itself now, so it can track every distinct app a session was opened against and dispose each one's
+	// root provider at its own teardown — see ReplTestHost.DisposeAsync.
 	internal static ValueTask<ReplSessionHandle> StartAsync(
 		ReplTestHost owner,
-		Func<ReplApp> appFactory,
+		ReplApp app,
 		SessionDescriptor descriptor,
 		ReplScenarioOptions options,
 		CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(owner);
-		ArgumentNullException.ThrowIfNull(appFactory);
+		ArgumentNullException.ThrowIfNull(app);
 		ArgumentNullException.ThrowIfNull(descriptor);
 		ArgumentNullException.ThrowIfNull(options);
 		cancellationToken.ThrowIfCancellationRequested();
 
 		var sessionId = $"session-{Guid.NewGuid():N}";
 		ReplSessionIO.EnsureSession(sessionId);
-		var app = appFactory();
-		var runOptions = descriptor.BuildRunOptions(options);
-		var serviceCollection = new ServiceCollection();
-		serviceCollection.AddSingleton<IReplSessionState, InMemorySessionState>();
-		var services = serviceCollection.BuildServiceProvider();
+		// The handle owns the session DI scope (each command is a separate one-shot run),
+		// so every run opts out of per-run scoping.
+		var runOptions = descriptor.BuildRunOptions(options) with { SessionScope = SessionScopeBehavior.CallerOwned };
+		var services = SessionScopedTestServices.Create(app);
 		var handle = new ReplSessionHandle(owner, app, options, services, runOptions, descriptor.Answers, sessionId);
 		return ValueTask.FromResult(handle);
 	}
@@ -277,7 +386,7 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 
 	private void ThrowIfDisposed()
 	{
-		ObjectDisposedException.ThrowIf(_disposed, this);
+		ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 	}
 
 	private sealed class TestSessionHost(string sessionId, TextWriter output) : IReplSessionHost
@@ -317,41 +426,29 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 		}
 	}
 
-	private sealed class InMemorySessionState : IReplSessionState
+	// One logical test session spans several one-shot Run* calls, so the handle owns the session
+	// DI scope itself: the provider is built over a scope of the APP services (user registrations
+	// become visible to session commands, and Scoped instances are shared across the session
+	// commands) and every run uses SessionScopeBehavior.CallerOwned so the Run* entry points do not
+	// open a fresh scope — and fresh Scoped instances — per command.
+	private sealed class SessionScopedTestServices : IServiceProvider, IAsyncDisposable
 	{
-		private readonly Dictionary<string, object?> _values = new(StringComparer.OrdinalIgnoreCase);
+		private readonly AsyncServiceScope _scope;
 
-		public bool TryGet<T>(string key, out T? value)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			if (_values.TryGetValue(key, out var existing) && existing is T typed)
-			{
-				value = typed;
-				return true;
-			}
+		private SessionScopedTestServices(AsyncServiceScope scope) => _scope = scope;
 
-			value = default;
-			return false;
-		}
+		// ReplApp.Services is always a built ServiceProvider, which always supplies the factory, so
+		// there is no scope-less case to fall back to here — unlike the Run* paths, which take whatever
+		// provider a caller hands them.
+		public static SessionScopedTestServices Create(ReplApp app) =>
+			new(app.Services.GetRequiredService<IServiceScopeFactory>().CreateAsyncScope());
 
-		public T? Get<T>(string key)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			return TryGet<T>(key, out var value) ? value : default;
-		}
+		// IReplSessionState is resolved from the scope like everything else, rather than masked with a
+		// harness-owned bag: the registration is Scoped, so the scope already gives this session its own
+		// — and masking it would run a consumer's own implementation in production while this harness
+		// silently exercised a different one.
+		public object? GetService(Type serviceType) => _scope.ServiceProvider.GetService(serviceType);
 
-		public void Set<T>(string key, T value)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			_values[key] = value;
-		}
-
-		public bool Remove(string key)
-		{
-			ArgumentException.ThrowIfNullOrWhiteSpace(key);
-			return _values.Remove(key);
-		}
-
-		public void Clear() => _values.Clear();
+		public ValueTask DisposeAsync() => _scope.DisposeAsync();
 	}
 }

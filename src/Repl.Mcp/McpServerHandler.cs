@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -25,6 +26,7 @@ internal sealed class McpServerHandler
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
+	private readonly bool _servicesAreSessionScoped;
 	private readonly TimeProvider _timeProvider;
 	private readonly char _separator;
 	private readonly McpRequestServerAccessor _requestServers = new();
@@ -33,7 +35,9 @@ internal sealed class McpServerHandler
 	private readonly McpFeedbackService _feedback;
 	// Context for work that belongs to no MCP session: eager fail-fast validation, the pre-built
 	// catalog behind BuildMcpServerOptions, and the snapshot test seams. One per handler, sharing its
-	// lifetime, so nothing disposes it. See McpRootsScope for what that costs anything stored here.
+	// lifetime, so nothing disposes it — and CreateSessionContext deliberately opens it no DI scope to
+	// dispose, since a handler-lifetime temporary with no owner would only ever leak one. See
+	// McpRootsScope for what that costs anything stored here.
 	private readonly McpSessionContext _catalogContext;
 	private readonly Lock _refreshLock = new();
 	private readonly Lock _attachLock = new();
@@ -60,14 +64,35 @@ internal sealed class McpServerHandler
 	private readonly McpServerResourceCollection _resourceListChanged = new();
 	private readonly McpServerPrimitiveCollection<McpServerPrompt> _promptListChanged = new();
 
+	/// <param name="app">The core Repl app.</param>
+	/// <param name="options">MCP server configuration.</param>
+	/// <param name="services">
+	/// Services for this handler. Used directly, or as the root a per-connection scope is created from —
+	/// see <paramref name="servicesAreSessionScoped"/>.
+	/// </param>
+	/// <param name="servicesAreSessionScoped">
+	/// True when <paramref name="services"/> already IS one connection's lifetime-scoped DI container —
+	/// e.g. Run*'s own per-run scope, handed down through the <c>mcp serve</c> CLI command — so
+	/// <see cref="RunAsync"/> must reuse it as-is instead of resolving its <see cref="IServiceScopeFactory"/>
+	/// and opening a second, sibling scope: that factory is itself a singleton bound to the true
+	/// application root, so a scope built from it never nests inside the one <paramref name="services"/>
+	/// already is, and any Scoped instance established by the run's own middleware or command pipeline
+	/// before this handler ran would be invisible to MCP discovery and tool execution. Default <c>false</c>
+	/// (create a new per-connection scope from <paramref name="services"/>) matches every other caller —
+	/// <see cref="McpReplExtensions.BuildMcpServerOptions(ReplApp,Action{ReplMcpServerOptions}?)"/>'s
+	/// application-root provider, and this repository's own tests exercising session-scope behavior in
+	/// isolation.
+	/// </param>
 	public McpServerHandler(
 		ICoreReplApp app,
 		ReplMcpServerOptions options,
-		IServiceProvider services)
+		IServiceProvider services,
+		bool servicesAreSessionScoped = false)
 	{
 		_app = app;
 		_options = options;
 		_services = services;
+		_servicesAreSessionScoped = servicesAreSessionScoped;
 		_timeProvider = services.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		_separator = McpToolNameFlattener.ResolveSeparator(options.ToolNamingSeparator);
 		// Sampling/elicitation/feedback are stateless (they resolve the request-bound server
@@ -89,7 +114,31 @@ internal sealed class McpServerHandler
 			[typeof(IMcpElicitation)] = _elicitation,
 			[typeof(IMcpFeedback)] = _feedback,
 		};
-		var context = new McpSessionContext(roots, new McpServiceProviderOverlay(_services, overlayServices));
+
+		// One DI scope per CONNECTION, so a Scoped registration is per connection here just as it is per
+		// Run* on the other transports — and so discovery and execution read the SAME instance, which
+		// is what lets a module presence predicate gate on one. Resolving IReplSessionState from it
+		// rather than overriding it also keeps a consumer's own implementation reachable under MCP.
+		// A provider without scope support runs unscoped, as the Run* paths do. The catalog context
+		// (McpRootsScope.Request) stands in for no session at all — it is a handler-lifetime temporary
+		// with no owner to dispose a scope for, so it resolves straight from _services instead. On the
+		// reusable-options path that also means Scoped resolves once from the root, matching the
+		// single-context, single-instance-for-every-connection carve-out that path already documents.
+		// _servicesAreSessionScoped skips scope creation even for a connection context: _services is
+		// already the one scope this whole run uses (see the constructor doc), and IServiceScopeFactory
+		// is itself a singleton bound to the application root — a scope built from it would be a SIBLING
+		// of _services, not nested inside it, splitting one connection across two unrelated Scoped graphs.
+		var scope = rootsScope == McpRootsScope.Connection
+			&& !_servicesAreSessionScoped
+			&& _services.GetService(typeof(IServiceScopeFactory)) is IServiceScopeFactory scopeFactory
+			? scopeFactory.CreateAsyncScope()
+			: (AsyncServiceScope?)null;
+		var sessionServices = scope?.ServiceProvider ?? _services;
+
+		var context = new McpSessionContext(
+			roots,
+			new McpServiceProviderOverlay(sessionServices, overlayServices),
+			scope);
 		// The context rides in its own overlay so request handlers can recover their
 		// originating session through the server's provider (the dictionary is captured by
 		// reference, making this two-phase registration safe).
@@ -123,34 +172,51 @@ internal sealed class McpServerHandler
 		Justification = "MCP server handler runs in a context where all types are preserved.")]
 	public async Task RunAsync(IReplIoContext io, CancellationToken ct)
 	{
-		var serverOptions = BuildDynamicServerOptions();
-		var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
-		var transport = _options.TransportFactory is { } factory
-			? factory(serverName, io)
-			: new StdioServerTransport(serverName);
+		// Created before BuildDynamicServerOptions, not after: that call's eager warm-up resolves
+		// presence-predicate dependencies, and they must see THIS connection's scope — the one
+		// discovery and every execution use afterward — rather than the handler-lifetime catalog
+		// context, which would hand a Scoped predicate dependency a different instance than the
+		// connection it is gating ever sees again. Disposed last (the outermost finally below),
+		// preserving the same unwind order server/transport already used before this changed: server,
+		// then transport, then context.
+		var context = CreateSessionContext(McpRootsScope.Connection);
 		try
 		{
-			using var context = CreateSessionContext(McpRootsScope.Connection);
-			var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
-			AttachSession(context, server);
-
+			var serverOptions = BuildDynamicServerOptions(context.Services);
+			var serverName = serverOptions.ServerInfo?.Name ?? "repl-mcp-server";
+			var transport = _options.TransportFactory is { } factory
+				? factory(serverName, io)
+				: new StdioServerTransport(serverName);
 			try
 			{
-				await server.RunAsync(ct).ConfigureAwait(false);
+				var server = McpServer.Create(transport, serverOptions, serviceProvider: context.Services);
+				AttachSession(context, server);
+
+				try
+				{
+					await server.RunAsync(ct).ConfigureAwait(false);
+				}
+				finally
+				{
+					DetachSession(context);
+					await server.DisposeAsync().ConfigureAwait(false);
+				}
 			}
 			finally
 			{
-				DetachSession(context);
-				await server.DisposeAsync().ConfigureAwait(false);
+				await transport.DisposeAsync().ConfigureAwait(false);
 			}
 		}
 		finally
 		{
-			await transport.DisposeAsync().ConfigureAwait(false);
+			await context.DisposeAsync().ConfigureAwait(false);
 		}
 	}
 
-	internal McpServerOptions BuildDynamicServerOptions()
+	/// <summary>Builds the dynamic <c>mcp serve</c> options, warming up presence predicates against
+	/// <paramref name="services"/> — the connection's own scope, so a Scoped predicate dependency sees
+	/// the same instance during warm-up as discovery and execution see afterward.</summary>
+	internal McpServerOptions BuildDynamicServerOptions(IServiceProvider services)
 	{
 		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
@@ -161,8 +227,11 @@ internal sealed class McpServerHandler
 		if (_options.CommandFilter is null)
 		{
 			// No request is flowing at construction, so this warm-up builds the legacy view; the first
-			// modern request rebuilds for its own era.
-			_ = CreateDocumentationModel(_catalogContext.Services, sessionless: false);
+			// modern request rebuilds for its own era. Against the connection's own services, passed in
+			// by the caller — not _catalogContext, which is the reusable-options path's handler-lifetime
+			// stand-in for a session and would hand a Scoped predicate dependency a different instance
+			// than the one this connection's discovery and execution resolve afterward.
+			_ = CreateDocumentationModel(services, sessionless: false);
 		}
 
 		return new McpServerOptions
@@ -184,6 +253,13 @@ internal sealed class McpServerHandler
 			ToolCollection = _toolListChanged,
 			ResourceCollection = _resourceListChanged,
 			PromptCollection = _promptListChanged,
+			// This path owns a real per-connection context (CreateSessionContext(McpRootsScope.Connection)
+			// in RunAsync) with its own DI scope; commands run inside it, never inside the SDK's own
+			// per-request scope. Leaving ScopeRequests at its true default would still have the SDK open
+			// and discard one of those on every request for nothing. BuildStaticServerOptions, which has
+			// no connection to scope to, does not set this — a host reusing that result owns request
+			// scoping itself, and this handler must not silently decide that for it.
+			ScopeRequests = false,
 		};
 	}
 

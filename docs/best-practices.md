@@ -107,6 +107,52 @@ services.AddSingleton<ITenantClient>(sp =>
 
 Note: DI singleton factories are resolved lazily, so the values are available after global option parsing completes. However, singleton factories capture values once — in interactive mode, global options can change between commands. If your service needs to see updated values per command, inject `IGlobalOptionsAccessor` directly and read values at call time instead of capturing them in a factory. See [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers).
 
+## Pick the lifetime that matches the boundary
+
+| Lifetime | Resolves once per | Use it for |
+|---|---|---|
+| `Singleton` | application | caches, clients, anything shared by every session |
+| `Scoped` | **session** — one `Run*` call: a CLI invocation, an interactive run, a Telnet or WebSocket connection; under MCP, one client connection\* | per-user state: auth context, a cart, a unit of work |
+| `Transient` | resolution | cheap stateless helpers |
+
+A `Scoped` disposable is disposed when its session ends, so session resources do not accumulate for the
+life of a long-running host.
+
+\* **Except a server built from a reused `BuildMcpServerOptions()` result** — the shape ASP.NET Core and
+other custom-transport hosts use. That path has no per-connection context, so it has no per-connection DI
+scope either: one `Scoped` instance is shared by every client it serves, disposed only when the process
+ends. A `Scoped` auth-context or cart registered there leaks between clients. See the [known
+limitation](mcp-conformance.md#deliberate-gaps) and [Isolation boundaries](mcp-transports.md#what-is-isolated-and-at-which-boundary).
+
+Two concurrency notes that follow from the unit being the whole connection rather than one call: several
+MCP tool calls can run at once on one connection, so a `Scoped` instance can be entered concurrently —
+make it thread-safe, or serialize access to it yourself, the way a `DbContext` (a poor fit for concurrent
+entry) would need. And on `mcp serve`, that `Scoped` instance is exactly what carries state from one tool
+call to the next within a connection — the earlier calls in this section describing `Scoped` as
+resolving "once per session" are what makes that possible.
+
+The trap worth naming: a **singleton** that injects a `Scoped` service captures whichever scope first
+resolved it, and keeps it for the life of the application — silently, because the provider is built
+without `ValidateScopes`. Inject the scoped service into the handler instead, or register the holder
+`Scoped` too.
+
+The same trap catches a **module's own constructor**. `MapModule<TModule>()` resolves `TModule` once,
+at mapping time — before any session exists — the same way a singleton would. A module constructor
+that takes a `Scoped` auth-context or cart captures it exactly as the singleton case above does, and
+every session's handlers then share that one instance. The [module example above](#structure-commands-with-modules)
+avoids this because its handlers take `IContactStore` as a **handler parameter**, resolved fresh per
+invocation — not as a constructor dependency. Keep any `Scoped` service out of a module's constructor;
+inject it into the handler that needs it instead.
+
+When your caller's provider already represents the session — a Blazor circuit, an ASP.NET request scope,
+or a session owner running several one-shot calls — set
+`ReplRunOptions.SessionScope = SessionScopeBehavior.CallerOwned` so the run resolves from it directly
+instead of opening a second scope beside it. `IServiceScopeFactory` is itself a singleton, so that second
+scope is not nested inside the caller's — it is a SIBLING rooted at the application root, and it does not
+hide the caller's scoped instances so much as duplicate them: a second unit of work running alongside the
+live one. `SessionScopeBehavior` governs the `Run*` family only; MCP's connection-scoped DI is unconditional
+and has no equivalent opt-out.
+
 ## Group related options with `[ReplOptionsGroup]`
 
 When a command has many options, group them into a class instead of listing them all as handler parameters. This keeps handlers clean and makes option sets reusable across commands.

@@ -45,4 +45,20 @@ public sealed class Given_RunOptions
 
 		options.TerminalOverrides.Should().BeNull();
 	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies a new run-options record leaves the session DI scope behavior unspecified. Nullable for the same reason as ProcessSignalHandling — a composition profile could not supply its own default otherwise, since 'the caller said nothing' would be indistinguishable from an explicit PerRun.")]
+	public void When_CreatingRunOptions_Then_SessionScopeIsNull()
+	{
+		var options = new ReplRunOptions();
+
+		options.SessionScope.Should().BeNull();
+	}
+
+	[TestMethod]
+	[Description("Regression guard: verifies the zero value of the scope-behavior enum is PerRun. Enum zero is what an unset configuration field, a zero-initialized struct, or an explicit default() yields, so it must agree with the value a null SessionScope resolves to rather than silently opting a run out of scoping.")]
+	public void When_UsingDefaultSessionScopeBehavior_Then_ValueIsPerRun()
+	{
+		default(SessionScopeBehavior).Should().Be(SessionScopeBehavior.PerRun);
+	}
 }

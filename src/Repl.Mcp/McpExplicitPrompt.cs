@@ -38,9 +38,12 @@ internal sealed class McpExplicitPrompt(
 		// incapable.
 		servers.BindRequest(request);
 
-		// The SDK resolves this handler's parameters from the request's own provider, and nothing on
-		// this path sets one — so a prompt injecting a capability service could not be invoked at all.
-		// Every other execution path reaches the handler through the adapter, which supplies them.
+		// The SDK resolves this handler's parameters from the request's own provider — a scope it opens
+		// per invocation, descending from the application root and carrying none of this session's
+		// services, so a prompt injecting a capability service could not be invoked at all. Replaced
+		// rather than layered over, because the session's provider already carries the session's own DI
+		// scope: resolving from both would give this prompt different instances from the command graph
+		// that advertised it.
 		request.Services = services;
 
 		await McpClientRootsService.PrimeFromServicesAsync(services, cancellationToken).ConfigureAwait(false);
