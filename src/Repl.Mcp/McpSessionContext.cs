@@ -113,6 +113,13 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	/// pipe, which is what the specification means by a dual-era server. Without the era in the key the
 	/// second request is served the first one's catalog — see
 	/// <c>When_OneConnectionIsServedBothEras_Then_EachGetsItsOwnCatalog</c>.
+	/// <para>
+	/// One slot is still enough, because the order is one-way. <c>initialize</c> supersedes the version
+	/// modern requests established, and after that the SDK rejects any modern request with
+	/// <c>InvalidRequest</c>, so no later modern publication can evict the legacy entry that the
+	/// availability fallback reads. <c>When_ALegacySessionIsNegotiated_Then_TheConnectionCannotReturnToTheModernEra</c>
+	/// pins that premise. If it ever fails, this cache needs one slot per era.
+	/// </para>
 	/// </param>
 	internal sealed record SnapshotCacheEntry(
 		McpServerHandler.McpGeneratedSnapshot Snapshot,
