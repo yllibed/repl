@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Repl.Rendering;
 
 namespace Repl.SpectreTests;
 
@@ -186,7 +187,7 @@ public sealed partial class Given_SpectreHumanOutputJson
 	[Description("Through the pager, which pins the first page's header and drops a repeated one (a bold first line counts as one): a continuation page with other keys must keep its own header, or its rows sit under headings that are not theirs.")]
 	public async Task When_ThePagerAppendsAPageWithOtherKeys_Then_ItsRowsKeepTheirOwnHeader()
 	{
-		var transformer = new SpectreHumanOutputTransformer();
+		var transformer = CreateAnsiTransformer();
 		var first = await transformer.TransformPageAsync(
 			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None)
 			.ConfigureAwait(false);
@@ -207,7 +208,7 @@ public sealed partial class Given_SpectreHumanOutputJson
 	[Description("Through the pager, a continuation page with the same keys at other widths repeats the pinned header, so it adds its data row only.")]
 	public async Task When_ThePagerAppendsAPageWithTheSameKeys_Then_OnlyItsRowIsAdded()
 	{
-		var transformer = new SpectreHumanOutputTransformer();
+		var transformer = CreateAnsiTransformer();
 		var first = await transformer.TransformPageAsync(
 			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None)
 			.ConfigureAwait(false);
@@ -221,6 +222,13 @@ public sealed partial class Given_SpectreHumanOutputJson
 		session.Lines.Should().HaveCount(2, "the first page's row and the continuation's row, with no repeated header");
 		AnsiStyling().Replace(session.Lines[1], string.Empty).Should().Contain("\"bbbbbb\"");
 	}
+
+	// The ANSI pager case, where the bold header line is what the pager detects and pins. Forced, so these
+	// tests do not depend on whether the console running them supports ANSI.
+	private static SpectreHumanOutputTransformer CreateAnsiTransformer() =>
+		new(
+			() => new HumanRenderSettings(Width: 120, UseAnsi: true, Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)),
+			new OutputOptions { AnsiMode = AnsiMode.Always });
 
 	private static ReplPage<JsonObject> SingleRowPage(JsonObject row) =>
 		new([row], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1));
