@@ -20,7 +20,12 @@ namespace Repl.Mcp;
 /// </remarks>
 internal sealed class McpSessionContext : IAsyncDisposable
 {
-	private SnapshotCacheEntry? _snapshotCache;
+	// One entry per protocol era. A connection is served modern requests, then an initialize and legacy
+	// ones, and a modern request accepted before initialize can still publish after the legacy one —
+	// the SDK dispatches a connection's requests concurrently — so one shared slot would let it evict the
+	// legacy entry the availability fallback reads.
+	private SnapshotCacheEntry? _legacySnapshot;
+	private SnapshotCacheEntry? _sessionlessSnapshot;
 	private int _compatibilityIntroServed;
 
 	private readonly AsyncServiceScope? _scope;
@@ -45,17 +50,21 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	public SemaphoreSlim SnapshotGate { get; } = new(initialCount: 1, maxCount: 1);
 
 	/// <summary>
-	/// Cached snapshot paired with the routing version it was built at, or <see langword="null"/>
-	/// before this session's first build.
+	/// This session's cached snapshot for the <paramref name="sessionless"/> era, paired with the routing
+	/// version it was built at, or <see langword="null"/> before that era's first build.
 	/// </summary>
-	public SnapshotCacheEntry? SnapshotCache => Volatile.Read(ref _snapshotCache);
+	public SnapshotCacheEntry? GetSnapshotCache(bool sessionless) => Volatile.Read(ref Slot(sessionless));
+
+	/// <summary>Whether any catalog, of either era, has been published on this session.</summary>
+	public bool HasServedSnapshot =>
+		Volatile.Read(ref _legacySnapshot) is not null || Volatile.Read(ref _sessionlessSnapshot) is not null;
 
 	/// <summary>Publishes <paramref name="snapshot"/> as current for <paramref name="version"/>.</summary>
 	public void PublishSnapshot(
 		McpServerHandler.McpGeneratedSnapshot snapshot,
 		long version,
 		bool sessionless) =>
-		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, version, IsStale: false, sessionless));
+		Volatile.Write(ref Slot(sessionless), new SnapshotCacheEntry(snapshot, version, IsStale: false, sessionless));
 
 	/// <summary>
 	/// Publishes <paramref name="snapshot"/>, built at <paramref name="version"/>, as serve-able but
@@ -65,7 +74,10 @@ internal sealed class McpSessionContext : IAsyncDisposable
 		McpServerHandler.McpGeneratedSnapshot snapshot,
 		long version,
 		bool sessionless) =>
-		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, version, IsStale: true, sessionless));
+		Volatile.Write(ref Slot(sessionless), new SnapshotCacheEntry(snapshot, version, IsStale: true, sessionless));
+
+	private ref SnapshotCacheEntry? Slot(bool sessionless) =>
+		ref sessionless ? ref _sessionlessSnapshot : ref _legacySnapshot;
 
 	/// <summary>
 	/// Claims this session's one-time compatibility-shim intro; <see langword="true"/> for the first
