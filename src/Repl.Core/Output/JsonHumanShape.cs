@@ -30,6 +30,10 @@ internal static class JsonHumanShape
 
 	public static bool IsJson([NotNullWhen(true)] object? value) => value is JsonNode or JsonElement;
 
+	/// <summary>Whether items declared as <paramref name="type"/> are JSON data, nullable elements included.</summary>
+	public static bool IsJsonType(Type type) =>
+		typeof(JsonNode).IsAssignableFrom(type) || (Nullable.GetUnderlyingType(type) ?? type) == typeof(JsonElement);
+
 	/// <summary>
 	/// Reads <paramref name="value"/> as a JSON node. A <see cref="JsonElement"/> is wrapped, and the element
 	/// itself is never modified. A JSON null comes back as a <see langword="null"/> node with
@@ -110,7 +114,8 @@ internal static class JsonHumanShape
 	/// <summary>
 	/// Reads <paramref name="values"/> as rows of JSON objects. The columns are the union of their keys in
 	/// first-seen order, so a key missing from one row leaves its cell empty rather than dropping the row.
-	/// A <see langword="null"/> value is an empty row. Fails if any other value is not a JSON object.
+	/// A JSON null, as a <see langword="null"/> value or a null <see cref="JsonElement"/>, is an empty row. Fails if any other value is not a JSON object, or if no
+	/// row has a key: a table with no columns would show nothing of them.
 	/// </summary>
 	public static bool TryGetObjectRows(
 		IReadOnlyList<object?> values,
@@ -122,7 +127,6 @@ internal static class JsonHumanShape
 		var converted = new JsonObject?[values.Count];
 		var seen = new HashSet<string>(StringComparer.Ordinal);
 		var ordered = new List<string>();
-		var anyRow = false;
 		for (var i = 0; i < values.Count; i++)
 		{
 			if (values[i] is null)
@@ -130,12 +134,23 @@ internal static class JsonHumanShape
 				continue;
 			}
 
-			if (!TryGetNode(values[i], out var node) || node is not JsonObject row)
+			if (!TryGetNode(values[i], out var node))
 			{
 				return false;
 			}
 
-			anyRow = true;
+			// A JsonElement of kind Null (or Undefined, a default element) is no data either: an empty row, like
+			// a CLR null.
+			if (node is null)
+			{
+				continue;
+			}
+
+			if (node is not JsonObject row)
+			{
+				return false;
+			}
+
 			converted[i] = row;
 			foreach (var property in row)
 			{
@@ -146,7 +161,7 @@ internal static class JsonHumanShape
 			}
 		}
 
-		if (!anyRow)
+		if (ordered.Count == 0)
 		{
 			return false;
 		}
@@ -156,9 +171,20 @@ internal static class JsonHumanShape
 		return true;
 	}
 
-	/// <summary>The cell for <paramref name="column"/>: empty when the row does not have the key.</summary>
-	public static string Cell(JsonObject? row, string column) =>
-		row is not null && row.TryGetPropertyValue(column, out var value) ? Literal(value) : string.Empty;
+	/// <summary>
+	/// The cell for <paramref name="column"/>: empty when the row does not have the key. Matched ordinally, the
+	/// way the columns were collected, even in a row built with case-insensitive property names.
+	/// </summary>
+	public static string Cell(JsonObject? row, string column)
+	{
+		if (row is null || row.IndexOf(column) is not (>= 0 and var index))
+		{
+			return string.Empty;
+		}
+
+		var property = row.GetAt(index);
+		return string.Equals(property.Key, column, StringComparison.Ordinal) ? Literal(property.Value) : string.Empty;
+	}
 
 	// Format characters can only appear inside a JSON string here, where \uXXXX is the same character
 	// to a JSON reader. Returns the input unchanged — no allocation — when it has none.

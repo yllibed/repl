@@ -1036,6 +1036,36 @@ public sealed class Given_ResultFlowPager
 		second.ContentLines.Should().Equal("two");
 	}
 
+	[TestMethod]
+	[Description("A continuation header that repeats the pinned one, only padded to other column widths, is still dropped as a duplicate.")]
+	public void When_AContinuationHeaderRepeatsThePinnedOneAtOtherWidths_Then_ItIsDropped()
+	{
+		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  name", "--  ----", "1   a"), header: null);
+		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id   name", "---  ----", "100  b"), first.Header);
+
+		second.ContentLines.Should().Equal("100  b");
+	}
+
+	[TestMethod]
+	[Description("A continuation header that names other columns than the pinned one is kept: without it the page's rows would sit under headings that are not theirs.")]
+	public void When_AContinuationHeaderDiffersFromThePinnedOne_Then_ItIsKept()
+	{
+		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  name", "--  ----", "1   a"), header: null);
+		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "name  id", "----  --", "b     2"), first.Header);
+
+		second.ContentLines.Should().Equal("name  id", "----  --", "b     2");
+	}
+
+	[TestMethod]
+	[Description("A kept continuation header keeps its separator, even when the column widths make that separator identical to the pinned one: without it the header reads as a data row.")]
+	public void When_AKeptContinuationHeaderHasThePinnedSeparator_Then_TheSeparatorIsKeptToo()
+	{
+		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  name", "--  ----", "1   a"), header: null);
+		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  kind", "--  ----", "2   b"), first.Header);
+
+		second.ContentLines.Should().Equal("id  kind", "--  ----", "2   b");
+	}
+
 	private static ValueTask WritePagerAsync(
 		string payload,
 		TextWriter output,

@@ -30,9 +30,13 @@ A handler can return `System.Text.Json.Nodes.JsonNode` (`JsonObject`, `JsonArray
 data rather than the CLR members of those types:
 
 - An object becomes one `key: value` line per field.
-- Rows of objects become a table. Its columns are the union of the rows' keys in first-seen order, and a
-  key missing from a row leaves that cell empty.
-- An array of scalars becomes one value per line.
+- Rows of objects become a table. Its columns are the union of the rows' keys in first-seen order, matched
+  ordinally, and a key missing from a row leaves that cell empty. The rows' keys, not a type, define the
+  columns. So when a page the pager fetches has other columns than the first page, it keeps its own header
+  row, while a header that repeats the first page's is still dropped.
+- An array of scalars becomes one value per line. So do rows that have no keys at all: each reads `{}`.
+- A page declared with a JSON item type, such as `IReplPageSource<JsonNode?>`, renders as JSON even when
+  every item on it is a JSON null.
 - Values are compact JSON literals. So a string shows as `"x"`, an explicit JSON null shows as `null`, and
   a nested object or array shows as itself.
 - A JSON value held by a property of an ordinary result object, or passed as a result's details, shows as

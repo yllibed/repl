@@ -12,9 +12,17 @@ internal static class PagerPayloadParser
 		var lines = SplitLines(payload);
 		var payloadHeader = DetectHeader(lines);
 		var resolvedHeader = header ?? payloadHeader;
-		var headerLineCount = payloadHeader.Lines.Count;
 		var content = new List<string>();
-		for (var i = headerLineCount; i < lines.Count; i++)
+		// A continuation's own header is dropped only when it repeats the pinned one. One that names other
+		// columns stays in the content, separator included even when it matches the pinned one: JSON rows take
+		// their columns from their own keys, so a later page can have others, and its rows would otherwise sit
+		// under headings that are not theirs.
+		if (header is not null && !RepeatsHeader(header, payloadHeader))
+		{
+			content.AddRange(payloadHeader.Lines);
+		}
+
+		for (var i = payloadHeader.Lines.Count; i < lines.Count; i++)
 		{
 			var normalized = NormalizeLine(lines[i]);
 			if (resolvedHeader.NormalizedLines.Contains(normalized)
@@ -50,6 +58,16 @@ internal static class PagerPayloadParser
 			? CreateHeader([lines[0]])
 			: PagerHeader.Empty;
 	}
+
+	// Word by word: a repeated header is padded to its own page's column widths, and its separator line with it.
+	// A label truncated to a different width on each page does not match, so that header is kept, not lost.
+	private static bool RepeatsHeader(PagerHeader pinned, PagerHeader candidate) =>
+		pinned.Lines.Count > 0
+		&& candidate.Lines.Count > 0
+		&& HeaderWords(pinned.Lines[0]).SequenceEqual(HeaderWords(candidate.Lines[0]), StringComparer.Ordinal);
+
+	private static string[] HeaderWords(string line) =>
+		NormalizeLine(line).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
 	private static PagerHeader CreateHeader(string[] lines) =>
 		new(

@@ -222,7 +222,7 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		// Only once the first item is JSON: ordinary collections must not pay for the JSON row scan.
 		if (JsonHumanShape.IsJson(firstNonNull))
 		{
-			return RenderJsonItems(items, includeTableHeader);
+			return RenderJsonItems(items);
 		}
 
 		if (IsSimpleValue(firstNonNull.GetType()))
@@ -251,15 +251,29 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		ResultFlowPageRenderMode mode,
 		bool includeFooter)
 	{
-		var body = page.UntypedItems.Count == 0
-			? "No results."
-			: RenderEnumerable(
-				page.UntypedItems,
-				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
+		var body = RenderPageBody(page, mode);
 		var footer = includeFooter ? RenderPageFooter(page) : string.Empty;
 		return string.IsNullOrWhiteSpace(footer)
 			? body
 			: string.Concat(body, Environment.NewLine, footer);
+	}
+
+	private string RenderPageBody(IReplPage page, ResultFlowPageRenderMode mode)
+	{
+		if (page.UntypedItems.Count == 0)
+		{
+			return "No results.";
+		}
+
+		// By its declared item type: a page of JSON nulls has no item to be recognized by.
+		if (JsonHumanShape.IsJsonType(page.ItemType))
+		{
+			return RenderJsonItems(page.UntypedItems);
+		}
+
+		return RenderEnumerable(
+			page.UntypedItems,
+			includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
 	}
 
 	private static string RenderPageFooter(IReplPage page)
@@ -291,27 +305,24 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		JsonArray { Count: 0 } => "No results.",
 		// Its own path rather than RenderEnumerable, which recognizes JSON by its first non-null item and so
 		// has nothing to go on for an array of nulls.
-		JsonArray jsonArray => RenderJsonItems([.. jsonArray], includeHeader: true),
+		JsonArray jsonArray => RenderJsonItems([.. jsonArray]),
 		_ => JsonHumanShape.Literal(node),
 	};
 
-	private string RenderJsonItems(object?[] items, bool includeHeader) =>
+	// A JSON table always carries its header, continuation pages included: its columns come from its own rows'
+	// keys rather than from a type, so another page's headings could mislabel its cells.
+	private string RenderJsonItems(IReadOnlyList<object?> items) =>
 		JsonHumanShape.TryGetObjectRows(items, out var columns, out var rows)
-			? RenderToString(BuildJsonTable(columns, rows, includeHeader))
+			? RenderToString(BuildJsonTable(columns, rows))
 			: string.Join(
 				Environment.NewLine,
 				items.Select(item => JsonHumanShape.TryLiteral(item, out var literal) ? literal : RenderInlineValue(item)));
 
-	private static Table BuildJsonTable(string[] columns, JsonObject?[] rows, bool includeHeaders)
+	private static Table BuildJsonTable(string[] columns, JsonObject?[] rows)
 	{
 		var table = new Table()
 			.Border(TableBorder.None)
 			.Collapse();
-		if (!includeHeaders)
-		{
-			table.HideHeaders();
-		}
-
 		foreach (var column in columns)
 		{
 			table.AddColumn(new TableColumn($"[bold]{Markup.Escape(JsonHumanShape.Label(column))}[/]"));

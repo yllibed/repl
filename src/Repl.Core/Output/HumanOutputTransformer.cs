@@ -96,17 +96,31 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		ResultFlowPageRenderMode mode,
 		bool includeFooter)
 	{
-		var body = page.UntypedItems.Count == 0
-			? "No results."
-			: RenderCollection(
-				page.UntypedItems,
-				depth: 0,
-				settings,
-				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
+		var body = RenderPageBody(page, settings, mode);
 		var footer = includeFooter ? ResultFlowPageFooterBuilder.RenderHuman(page) : string.Empty;
 		return string.IsNullOrWhiteSpace(footer)
 			? body
 			: string.Concat(body, Environment.NewLine, footer);
+	}
+
+	private static string RenderPageBody(IReplPage page, HumanRenderSettings settings, ResultFlowPageRenderMode mode)
+	{
+		if (page.UntypedItems.Count == 0)
+		{
+			return "No results.";
+		}
+
+		// By its declared item type: a page of JSON nulls has no item to be recognized by.
+		if (JsonHumanShape.IsJsonType(page.ItemType))
+		{
+			return RenderJsonItems(page.UntypedItems, settings);
+		}
+
+		return RenderCollection(
+			page.UntypedItems,
+			depth: 0,
+			settings,
+			includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
 	}
 
 	private static string RenderTopLevelEnumerable(System.Collections.IEnumerable enumerable, HumanRenderSettings settings)
@@ -138,11 +152,13 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		JsonArray { Count: 0 } => "No results.",
 		// Its own path rather than the generic collection one, which recognizes JSON by its first non-null
 		// item and so has nothing to go on for an array of nulls.
-		JsonArray jsonArray => RenderJsonItems([.. jsonArray], settings, includeHeader: true),
+		JsonArray jsonArray => RenderJsonItems([.. jsonArray], settings),
 		_ => JsonHumanShape.Literal(node),
 	};
 
-	private static string RenderJsonItems(object?[] items, HumanRenderSettings settings, bool includeHeader)
+	// A JSON table always carries its header, continuation pages included: its columns come from its own rows'
+	// keys rather than from a type, so another page's headings could mislabel its cells.
+	private static string RenderJsonItems(IReadOnlyList<object?> items, HumanRenderSettings settings)
 	{
 		if (!JsonHumanShape.TryGetObjectRows(items, out var columns, out var rows))
 		{
@@ -153,14 +169,9 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 					: RenderScalar(item, member: null, depth: 0, compactCollection: true, settings.Width, settings)));
 		}
 
-		var tableRows = new List<string[]>(rows.Length + (includeHeader ? 1 : 0));
-		if (includeHeader)
-		{
-			tableRows.Add([.. columns.Select(JsonHumanShape.Label)]);
-		}
-
+		var tableRows = new List<string[]>(rows.Length + 1) { columns.Select(JsonHumanShape.Label).ToArray() };
 		tableRows.AddRange(rows.Select(row => columns.Select(column => JsonHumanShape.Cell(row, column)).ToArray()));
-		return FormatTable(tableRows, settings, includeHeader);
+		return FormatTable(tableRows, settings, includeHeader: true);
 	}
 
 	private static string RenderJsonObject(JsonObject jsonObject, HumanRenderSettings settings)
@@ -272,7 +283,7 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		// Only once the first item is JSON: ordinary collections must not pay for the JSON row scan.
 		if (JsonHumanShape.IsJson(firstNonNull))
 		{
-			text = RenderJsonItems(values, settings, includeHeader);
+			text = RenderJsonItems(values, settings);
 			return true;
 		}
 
