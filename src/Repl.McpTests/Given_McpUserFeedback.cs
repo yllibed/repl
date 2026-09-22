@@ -1024,4 +1024,86 @@ public sealed class Given_McpUserFeedback
 				because: "the handler authored that for whoever called it, and withholding it helps nobody");
 		}
 	}
+
+	[TestMethod]
+	[Description("An explicitly registered prompt can declare an MCP capability service as a parameter. Issue #96 reported this failing the prompts/get request outright; McpExplicitPrompt's replacement of request.Services already resolves it, and this pins that it stays so.")]
+	public async Task When_AnExplicitPromptInjectsSampling_Then_ItResolves()
+	{
+		var text = await GetPromptTextAsync(static (IMcpSampling sampling) => sampling is null ? "null" : "resolved")
+			.ConfigureAwait(false);
+
+		text.Should().Be("resolved");
+	}
+
+	[TestMethod]
+	[Description("A prompt that declares IServiceProvider and resolves a capability service from it must find it. The overlay answered IServiceProvider with the provider it wraps, so a handler asking it for IServiceProvider got the inner container back, which knows nothing of IMcpSampling, IMcpClientRoots, IMcpElicitation or IMcpFeedback.")]
+	public async Task When_AnExplicitPromptResolvesACapabilityThroughItsServiceProvider_Then_ItIsFound()
+	{
+		var text = await GetPromptTextAsync(ResolveSamplingThroughProvider).ConfigureAwait(false);
+
+		text.Should().Be("sp-ok");
+	}
+
+	[TestMethod]
+	[Description("The same as the mcp serve case above, on the reusable BuildMcpServerOptions() path, which issue #96 names as reproducing too: there the SDK dispatches straight into the pre-built prompt, with no Repl request handler in between.")]
+	public async Task When_AReusableOptionsPromptResolvesACapabilityThroughItsServiceProvider_Then_ItIsFound()
+	{
+		var app = ReplApp.Create();
+		var mcpOptions = app.BuildMcpServerOptions(options => options.Prompt("probe", ResolveSamplingThroughProvider));
+
+		var text = await GetReusablePromptTextAsync(mcpOptions).ConfigureAwait(false);
+
+		text.Should().Be("sp-ok");
+	}
+
+	[TestMethod]
+	[Description("The reusable path without an app provider: ICoreReplApp.BuildMcpServerOptions() wraps an empty provider that knows nothing, so the overlay alone has to supply both the capability service and IServiceProvider itself. Pins that a prompt declaring IServiceProvider still binds it as a dependency there. It passed before the overlay's IsService was aligned with its GetService — the SDK binds an IServiceProvider parameter itself, without asking IsService — so this is a guard for the path, not a reproduction.")]
+	public async Task When_APromptDeclaresIServiceProviderWithoutAnAppProvider_Then_ItIsBoundAsADependency()
+	{
+		var app = ReplApp.Create();
+		var mcpOptions = app.Core.BuildMcpServerOptions(options => options.Prompt("probe", ResolveSamplingThroughProvider));
+
+		var text = await GetReusablePromptTextAsync(mcpOptions).ConfigureAwait(false);
+
+		text.Should().Be("sp-ok");
+	}
+
+	private static readonly Func<IServiceProvider, string> ResolveSamplingThroughProvider =
+		static services => services.GetService(typeof(IMcpSampling)) is null ? "sp-null" : "sp-ok";
+
+	private static async Task<string> GetReusablePromptTextAsync(McpServerOptions mcpOptions)
+	{
+		var session = await McpPipeSession.StartAsync(
+			async (io, token) =>
+			{
+				var transport = new StreamServerTransport(io.InputStream, io.OutputStream, "reusable-options-server");
+				var server = McpServer.Create(transport, mcpOptions);
+				try
+				{
+					await server.RunAsync(token).ConfigureAwait(false);
+				}
+				finally
+				{
+					await server.DisposeAsync().ConfigureAwait(false);
+					await transport.DisposeAsync().ConfigureAwait(false);
+				}
+			},
+			clientOptions: null,
+			CancellationToken.None).ConfigureAwait(false);
+		await using (session.ConfigureAwait(false))
+		{
+			var result = await session.Client.GetPromptAsync("probe", arguments: null).ConfigureAwait(false);
+			return string.Join('\n', result.Messages.Select(static m => (m.Content as TextContentBlock)?.Text ?? string.Empty));
+		}
+	}
+
+	private static async Task<string> GetPromptTextAsync(Delegate handler)
+	{
+		var session = await McpTestFixture.CreateAsync(_ => { }, options => options.Prompt("probe", handler)).ConfigureAwait(false);
+		await using (session.ConfigureAwait(false))
+		{
+			var result = await session.Client.GetPromptAsync("probe", arguments: null).ConfigureAwait(false);
+			return string.Join('\n', result.Messages.Select(static m => (m.Content as TextContentBlock)?.Text ?? string.Empty));
+		}
+	}
 }

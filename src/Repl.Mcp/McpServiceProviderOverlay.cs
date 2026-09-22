@@ -12,6 +12,11 @@ namespace Repl.Mcp;
 /// parameter is a dependency or a client-supplied argument, so without this a prompt declaring
 /// <c>IMcpFeedback</c> is classified as taking an argument named "feedback" and cannot be invoked at
 /// all.
+/// <para>
+/// It answers <see cref="IServiceProvider"/> with itself for the same reason. Handing back the provider
+/// it wraps would give a caller that asks for the provider — a prompt handler declaring
+/// <see cref="IServiceProvider"/>, say — a container that has never heard of the services added here.
+/// </para>
 /// </remarks>
 internal sealed class McpServiceProviderOverlay(
 	IServiceProvider inner,
@@ -19,7 +24,7 @@ internal sealed class McpServiceProviderOverlay(
 {
 	public object? GetService(Type serviceType)
 	{
-		if (serviceType == typeof(IServiceProviderIsService))
+		if (serviceType == typeof(IServiceProviderIsService) || serviceType == typeof(IServiceProvider))
 		{
 			return this;
 		}
@@ -32,7 +37,11 @@ internal sealed class McpServiceProviderOverlay(
 		return inner.GetService(serviceType);
 	}
 
+	// Kept in step with GetService, as the IServiceProviderIsService contract requires: what this overlay
+	// answers itself counts, whatever the wrapped provider says about it.
 	public bool IsService(Type serviceType) =>
-		overrides.ContainsKey(serviceType)
+		serviceType == typeof(IServiceProvider)
+		|| serviceType == typeof(IServiceProviderIsService)
+		|| overrides.ContainsKey(serviceType)
 		|| (inner.GetService(typeof(IServiceProviderIsService)) as IServiceProviderIsService)?.IsService(serviceType) == true;
 }
