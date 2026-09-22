@@ -882,50 +882,23 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("Pins the premise that makes one snapshot slot per session enough. A connection can be served both eras, but only in one direction: modern requests, then an initialize handshake that supersedes their version, then legacy requests only — the SDK rejects a modern request once a session has negotiated its version. So no legacy entry is ever evicted by a later modern one, and neither alternating rebuilds nor a lost legacy fallback can happen. If the SDK ever lets one connection go back to the modern era, this fails, and the cache needs one slot per era (#101).")]
-	public async Task When_ALegacySessionIsNegotiated_Then_TheConnectionCannotReturnToTheModernEra()
+	[Description("Publishing one era's catalog must not evict the other's. A connection is served modern requests, then an initialize and legacy ones — and a modern request accepted before initialize can still be in flight, since the SDK dispatches one connection's requests concurrently. With one slot, that late modern publication replaced the legacy entry the availability fallback reads, so a legacy build that then failed transiently found only an opposite-era catalog and failed closed.")]
+	public async Task When_BothErasPublishOnOneSession_Then_EachKeepsItsOwnEntry()
 	{
 		var app = ReplApp.Create();
-		app.UseMcpServer();
-		app.Map("always", () => "ok");
-		var handler = CreateHandler(app);
+		var roots = new McpClientRootsService(app.Core, new McpRequestServerAccessor(), McpRootsScope.Connection);
+		var context = new McpSessionContext(roots, McpTestFixture.EmptyServices, scope: null);
+		await using var owner = context.ConfigureAwait(false);
+		var legacy = new McpServerHandler.McpGeneratedSnapshot(null!, [], [], []);
+		var modern = new McpServerHandler.McpGeneratedSnapshot(null!, [], [], []);
 
-		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-		var clientToServer = new Pipe();
-		var serverToClient = new Pipe();
-		var io = new McpRawIo(clientToServer, serverToClient);
-		var serverTask = handler.RunAsync(
-			new McpTestFixture.PipeIoContext(
-				clientToServer.Reader.AsStream(),
-				serverToClient.Writer.AsStream()),
-			cts.Token);
-		var modernMeta = new JsonObject
-		{
-			["io.modelcontextprotocol/protocolVersion"] = McpProtocolRevisions.Sessionless,
-			["io.modelcontextprotocol/clientCapabilities"] = new JsonObject(),
-		};
+		context.PublishSnapshot(legacy, version: 1, sessionless: false);
+		context.PublishSnapshot(modern, version: 1, sessionless: true);
 
-		try
-		{
-			ToolNames(await io.CallAsync(id: 1, method: "tools/list", meta: modernMeta.DeepClone().AsObject(), cancellationToken: cts.Token).ConfigureAwait(false))
-				.Should().Contain("always", "the connection starts in the modern era");
-			await io.InitializeLegacyAsync(id: 2, cts.Token).ConfigureAwait(false);
-			ToolNames(await io.CallAsync(id: 3, method: "tools/list", meta: null, cancellationToken: cts.Token).ConfigureAwait(false))
-				.Should().Contain("always", "initialize supersedes the modern version");
-
-			var backToModern = await io.CallAsync(id: 4, method: "tools/list", meta: modernMeta.DeepClone().AsObject(), cancellationToken: cts.Token).ConfigureAwait(false);
-
-			// Read into a local first: a null-conditional chain ending in .Should() would skip the assertion
-			// entirely when there is no error at all — the one outcome this test exists to catch.
-			var errorCode = backToModern["error"]?["code"]?.GetValue<int>();
-			errorCode.Should().Be(
-				(int)McpErrorCode.InvalidRequest,
-				"a negotiated session must not change protocol versions");
-		}
-		finally
-		{
-			await StopRawServerAsync(cts, io, serverTask).ConfigureAwait(false);
-		}
+		var legacyEntry = context.GetSnapshotCache(sessionless: false);
+		legacyEntry.Should().NotBeNull("the modern publication must leave the legacy entry in place");
+		legacyEntry!.Snapshot.Should().BeSameAs(legacy);
+		context.GetSnapshotCache(sessionless: true)!.Snapshot.Should().BeSameAs(modern);
 	}
 
 	private static async Task StopRawServerAsync(CancellationTokenSource cts, McpRawIo io, Task serverTask)
