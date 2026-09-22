@@ -5,6 +5,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Text.Json.Nodes;
 
 namespace Repl.Spectre;
 
@@ -58,6 +59,9 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 			IReplPage page => RenderPage(page),
 			IReplResult replResult => RenderReplResult(replResult),
 			string text => text,
+			// Before the enumerable arm: a JsonObject enumerates as key/value pairs, and reflecting over
+			// those walks JsonNode's Root and Parent, which point back at each other.
+			_ when JsonHumanShape.TryGetNode(value, out var node) => RenderJson(node),
 			System.Collections.IEnumerable enumerable => RenderEnumerable(enumerable),
 			_ when TryRenderObject(value, out var objectText) => objectText,
 			_ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
@@ -215,6 +219,12 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 			return "No results.";
 		}
 
+		// Only once the first item is JSON: ordinary collections must not pay for the JSON row scan.
+		if (JsonHumanShape.IsJson(firstNonNull))
+		{
+			return RenderJsonItems(items, includeTableHeader);
+		}
+
 		if (IsSimpleValue(firstNonNull.GetType()))
 		{
 			return string.Join(
@@ -270,6 +280,55 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		}
 
 		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}.";
+	}
+
+	private string RenderJson(JsonNode? node) => node switch
+	{
+		JsonObject { Count: 0 } => "{}",
+		JsonObject jsonObject => RenderToString(BuildLabelValueGrid(
+			[.. jsonObject.Select(static property =>
+				(JsonHumanShape.Label(property.Key), JsonHumanShape.Literal(property.Value))),])),
+		JsonArray { Count: 0 } => "No results.",
+		// Its own path rather than RenderEnumerable, which recognizes JSON by its first non-null item and so
+		// has nothing to go on for an array of nulls.
+		JsonArray jsonArray => RenderJsonItems([.. jsonArray], includeHeader: true),
+		_ => JsonHumanShape.Literal(node),
+	};
+
+	private string RenderJsonItems(object?[] items, bool includeHeader) =>
+		JsonHumanShape.TryGetObjectRows(items, out var columns, out var rows)
+			? RenderToString(BuildJsonTable(columns, rows, includeHeader))
+			: string.Join(
+				Environment.NewLine,
+				items.Select(item => JsonHumanShape.TryLiteral(item, out var literal) ? literal : RenderInlineValue(item)));
+
+	private static Table BuildJsonTable(string[] columns, JsonObject?[] rows, bool includeHeaders)
+	{
+		var table = new Table()
+			.Border(TableBorder.None)
+			.Collapse();
+		if (!includeHeaders)
+		{
+			table.HideHeaders();
+		}
+
+		foreach (var column in columns)
+		{
+			table.AddColumn(new TableColumn($"[bold]{Markup.Escape(JsonHumanShape.Label(column))}[/]"));
+		}
+
+		foreach (var row in rows)
+		{
+			var cells = new IRenderable[columns.Length];
+			for (var i = 0; i < columns.Length; i++)
+			{
+				cells[i] = CreateTableCell(JsonHumanShape.Cell(row, columns[i]), table.Rows.Count, i);
+			}
+
+			table.AddRow(cells);
+		}
+
+		return table;
 	}
 
 	private bool TryRenderObject(object value, out string text)
@@ -425,6 +484,11 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 			return new Text(text);
 		}
 
+		if (JsonHumanShape.TryGetNode(value, out var node))
+		{
+			return new Text(JsonHumanShape.Literal(node));
+		}
+
 		if (value is System.Collections.IEnumerable enumerable)
 		{
 			var lines = RenderNestedEnumerableLines(enumerable);
@@ -459,6 +523,11 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		if (value is string text)
 		{
 			return text;
+		}
+
+		if (JsonHumanShape.TryGetNode(value, out var node))
+		{
+			return JsonHumanShape.Literal(node);
 		}
 
 		if (value is System.Collections.IEnumerable enumerable)

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json.Nodes;
 
 namespace Repl;
 
@@ -52,32 +53,16 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			return ValueTask.FromResult(text);
 		}
 
+		// Before the enumerable branch: a JsonObject enumerates as key/value pairs, and reflecting over
+		// those would show JsonNode's CLR members instead of the data.
+		if (JsonHumanShape.TryGetNode(value, out var node))
+		{
+			return ValueTask.FromResult(RenderJson(node, settings));
+		}
+
 		if (value is System.Collections.IEnumerable enumerable)
 		{
-			var lines = enumerable
-				.Cast<object?>()
-				.ToArray();
-			if (lines.Length == 0)
-			{
-				return ValueTask.FromResult("No results.");
-			}
-
-			if (TryRenderTable(lines, settings, includeHeader: true, out var tableText))
-			{
-				return ValueTask.FromResult(tableText);
-			}
-
-			var scalarLines = lines
-				.Select(item => RenderScalar(item, member: null, depth: 0, compactCollection: false, settings.Width, settings))
-				.Where(item => !string.IsNullOrWhiteSpace(item))
-				.ToArray();
-
-			if (scalarLines.Length == 0)
-			{
-				return ValueTask.FromResult("No results.");
-			}
-
-			return ValueTask.FromResult(string.Join(Environment.NewLine, scalarLines));
+			return ValueTask.FromResult(RenderTopLevelEnumerable(enumerable, settings));
 		}
 
 		if (TryRenderObject(value, settings, out var objectText))
@@ -124,6 +109,79 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			: string.Concat(body, Environment.NewLine, footer);
 	}
 
+	private static string RenderTopLevelEnumerable(System.Collections.IEnumerable enumerable, HumanRenderSettings settings)
+	{
+		var lines = enumerable
+			.Cast<object?>()
+			.ToArray();
+		if (lines.Length == 0)
+		{
+			return "No results.";
+		}
+
+		if (TryRenderTable(lines, settings, includeHeader: true, out var tableText))
+		{
+			return tableText;
+		}
+
+		var scalarLines = lines
+			.Select(item => RenderScalar(item, member: null, depth: 0, compactCollection: false, settings.Width, settings))
+			.Where(item => !string.IsNullOrWhiteSpace(item))
+			.ToArray();
+
+		return scalarLines.Length == 0 ? "No results." : string.Join(Environment.NewLine, scalarLines);
+	}
+
+	private static string RenderJson(JsonNode? node, HumanRenderSettings settings) => node switch
+	{
+		JsonObject jsonObject => RenderJsonObject(jsonObject, settings),
+		JsonArray { Count: 0 } => "No results.",
+		// Its own path rather than the generic collection one, which recognizes JSON by its first non-null
+		// item and so has nothing to go on for an array of nulls.
+		JsonArray jsonArray => RenderJsonItems([.. jsonArray], settings, includeHeader: true),
+		_ => JsonHumanShape.Literal(node),
+	};
+
+	private static string RenderJsonItems(object?[] items, HumanRenderSettings settings, bool includeHeader)
+	{
+		if (!JsonHumanShape.TryGetObjectRows(items, out var columns, out var rows))
+		{
+			return string.Join(
+				Environment.NewLine,
+				items.Select(item => JsonHumanShape.TryLiteral(item, out var literal)
+					? literal
+					: RenderScalar(item, member: null, depth: 0, compactCollection: true, settings.Width, settings)));
+		}
+
+		var tableRows = new List<string[]>(rows.Length + (includeHeader ? 1 : 0));
+		if (includeHeader)
+		{
+			tableRows.Add([.. columns.Select(JsonHumanShape.Label)]);
+		}
+
+		tableRows.AddRange(rows.Select(row => columns.Select(column => JsonHumanShape.Cell(row, column)).ToArray()));
+		return FormatTable(tableRows, settings, includeHeader);
+	}
+
+	private static string RenderJsonObject(JsonObject jsonObject, HumanRenderSettings settings)
+	{
+		if (jsonObject.Count == 0)
+		{
+			return "{}";
+		}
+
+		var entries = new List<RenderedEntry>(jsonObject.Count);
+		foreach (var property in jsonObject)
+		{
+			entries.Add(new RenderedEntry(
+				JsonHumanShape.Label(property.Key),
+				JsonHumanShape.Literal(property.Value),
+				IsMultiline: false));
+		}
+
+		return RenderEntries(entries, settings);
+	}
+
 	private static bool TryRenderObject(object value, HumanRenderSettings settings, out string text)
 	{
 		var members = GetDisplayMembers(value.GetType());
@@ -137,6 +195,12 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		foreach (var member in members)
 		{
 			var memberValue = member.Property.GetValue(value);
+			if (JsonHumanShape.TryGetNode(memberValue, out var jsonValue))
+			{
+				entries.Add(new RenderedEntry(member.Label, JsonHumanShape.Literal(jsonValue), IsMultiline: false));
+				continue;
+			}
+
 			if (memberValue is System.Collections.IEnumerable collectionValue
 				&& memberValue is not string)
 			{
@@ -205,6 +269,13 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			return false;
 		}
 
+		// Only once the first item is JSON: ordinary collections must not pay for the JSON row scan.
+		if (JsonHumanShape.IsJson(firstNonNull))
+		{
+			text = RenderJsonItems(values, settings, includeHeader);
+			return true;
+		}
+
 		if (IsSimpleValue(firstNonNull.GetType()))
 		{
 			text = string.Join(
@@ -220,16 +291,20 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			return false;
 		}
 
-		var rows = BuildTableRows(values, members, settings, includeHeader);
+		text = FormatTable(BuildTableRows(values, members, settings, includeHeader), settings, includeHeader);
+		return true;
+	}
+
+	private static string FormatTable(List<string[]> rows, HumanRenderSettings settings, bool includeHeader)
+	{
 		var style = includeHeader && settings.UseAnsi
 			? TextTableStyle.ForHeader(settings.Palette.TableHeaderStyle)
 			: TextTableStyle.None;
-		text = TextTableFormatter.FormatRows(
+		return TextTableFormatter.FormatRows(
 			rows,
 			settings.Width,
 			includeHeaderSeparator: includeHeader && !settings.UseAnsi,
 			style);
-		return true;
 	}
 
 	private static List<string[]> BuildTableRows(
@@ -310,6 +385,11 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		if (value is string text)
 		{
 			return text;
+		}
+
+		if (JsonHumanShape.TryGetNode(value, out var node))
+		{
+			return JsonHumanShape.Literal(node);
 		}
 
 		var valueType = value.GetType();
@@ -424,6 +504,11 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 		if (result.Details is IReplPage page)
 		{
 			return $"{message}{Environment.NewLine}{RenderPage(page, settings)}";
+		}
+
+		if (JsonHumanShape.TryGetNode(result.Details, out var jsonDetails))
+		{
+			return $"{message}{Environment.NewLine}{RenderJson(jsonDetails, settings)}";
 		}
 
 		if (TryRenderDictionary(result.Details, settings, out var dictionaryText))

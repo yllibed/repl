@@ -23,6 +23,27 @@ The active output format is resolved in this order:
 | `yaml`     | YAML serialization.                  |
 | `markdown` | Markdown table/document rendering.   |
 
+### JSON results
+
+A handler can return `System.Text.Json.Nodes.JsonNode` (`JsonObject`, `JsonArray`, `JsonValue`) or a
+`JsonElement`, including as rows of an `IReplPageSource<T>`. `human` and `spectre` then render the JSON
+data rather than the CLR members of those types:
+
+- An object becomes one `key: value` line per field.
+- Rows of objects become a table. Its columns are the union of the rows' keys in first-seen order, and a
+  key missing from a row leaves that cell empty.
+- An array of scalars becomes one value per line.
+- Values are compact JSON literals. So a string shows as `"x"`, an explicit JSON null shows as `null`, and
+  a nested object or array shows as itself.
+- A JSON value held by a property of an ordinary result object, or passed as a result's details, shows as
+  a compact literal too.
+
+In JSON strings and keys, control characters and Unicode format characters (such as bidirectional
+overrides) are escaped. So a payload can neither drive the terminal nor make it display something other
+than the data. Non-ASCII text stays readable. This covers JSON values only: a plain CLR `string` in a
+result is still written as-is. The `json` format and MCP output are unchanged, and `markdown` does not
+special-case JSON yet.
+
 ### Format aliases
 
 The built-in aliases are:
