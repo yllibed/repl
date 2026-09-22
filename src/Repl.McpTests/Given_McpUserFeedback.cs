@@ -1051,6 +1051,28 @@ public sealed class Given_McpUserFeedback
 		var app = ReplApp.Create();
 		var mcpOptions = app.BuildMcpServerOptions(options => options.Prompt("probe", ResolveSamplingThroughProvider));
 
+		var text = await GetReusablePromptTextAsync(mcpOptions).ConfigureAwait(false);
+
+		text.Should().Be("sp-ok");
+	}
+
+	[TestMethod]
+	[Description("The reusable path without an app provider: ICoreReplApp.BuildMcpServerOptions() wraps an empty provider that knows nothing, so the overlay alone has to supply both the capability service and IServiceProvider itself. Pins that a prompt declaring IServiceProvider still binds it as a dependency there. It passed before the overlay's IsService was aligned with its GetService — the SDK binds an IServiceProvider parameter itself, without asking IsService — so this is a guard for the path, not a reproduction.")]
+	public async Task When_APromptDeclaresIServiceProviderWithoutAnAppProvider_Then_ItIsBoundAsADependency()
+	{
+		var app = ReplApp.Create();
+		var mcpOptions = app.Core.BuildMcpServerOptions(options => options.Prompt("probe", ResolveSamplingThroughProvider));
+
+		var text = await GetReusablePromptTextAsync(mcpOptions).ConfigureAwait(false);
+
+		text.Should().Be("sp-ok");
+	}
+
+	private static readonly Func<IServiceProvider, string> ResolveSamplingThroughProvider =
+		static services => services.GetService(typeof(IMcpSampling)) is null ? "sp-null" : "sp-ok";
+
+	private static async Task<string> GetReusablePromptTextAsync(McpServerOptions mcpOptions)
+	{
 		var session = await McpPipeSession.StartAsync(
 			async (io, token) =>
 			{
@@ -1071,14 +1093,9 @@ public sealed class Given_McpUserFeedback
 		await using (session.ConfigureAwait(false))
 		{
 			var result = await session.Client.GetPromptAsync("probe", arguments: null).ConfigureAwait(false);
-
-			result.Messages.Select(static m => (m.Content as TextContentBlock)?.Text).Should().ContainSingle()
-				.Which.Should().Be("sp-ok");
+			return string.Join('\n', result.Messages.Select(static m => (m.Content as TextContentBlock)?.Text ?? string.Empty));
 		}
 	}
-
-	private static readonly Func<IServiceProvider, string> ResolveSamplingThroughProvider =
-		static services => services.GetService(typeof(IMcpSampling)) is null ? "sp-null" : "sp-ok";
 
 	private static async Task<string> GetPromptTextAsync(Delegate handler)
 	{
