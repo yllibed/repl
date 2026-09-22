@@ -473,9 +473,8 @@ internal sealed class McpServerHandler
 	{
 		var sessionless = IsSessionlessRequest();
 		var snapshotVersion = Volatile.Read(ref _snapshotState).Version;
-		if (context.SnapshotCache is { IsStale: false } cached
-			&& cached.Version == snapshotVersion
-			&& cached.Sessionless == sessionless)
+		if (context.GetSnapshotCache(sessionless) is { IsStale: false } cached
+			&& cached.Version == snapshotVersion)
 		{
 			return cached.Snapshot;
 		}
@@ -484,9 +483,8 @@ internal sealed class McpServerHandler
 		try
 		{
 			snapshotVersion = Volatile.Read(ref _snapshotState).Version;
-			if (context.SnapshotCache is { IsStale: false } refreshed
-				&& refreshed.Version == snapshotVersion
-				&& refreshed.Sessionless == sessionless)
+			if (context.GetSnapshotCache(sessionless) is { IsStale: false } refreshed
+				&& refreshed.Version == snapshotVersion)
 			{
 				return refreshed.Snapshot;
 			}
@@ -514,7 +512,7 @@ internal sealed class McpServerHandler
 		bool sessionless,
 		CancellationToken cancellationToken)
 	{
-		var previousSnapshot = context.SnapshotCache?.Snapshot;
+		var clientHasSchema = context.HasServedSnapshot;
 		try
 		{
 			var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
@@ -522,7 +520,7 @@ internal sealed class McpServerHandler
 			// Read back what was just published rather than trusting snapshotVersion: a build that raced a
 			// routing change is republished stale, and one that raced a retraction is rebuilt at a newer
 			// version. Only a current entry ends the episode, and it is logged at the version it was built.
-			if (context.SnapshotCache is { IsStale: false } published && context.TryClearCatalogFailure())
+			if (context.GetSnapshotCache(sessionless) is { IsStale: false } published && context.TryClearCatalogFailure())
 			{
 				_diagnostics.CatalogRecovered(published.Version);
 			}
@@ -539,7 +537,7 @@ internal sealed class McpServerHandler
 		}
 		catch (HiddenRequiredOptionException)
 		{
-			ThrowSanitizedIfAClientAlreadyHasASchema(previousSnapshot);
+			ThrowSanitizedIfAClientAlreadyHasASchema(clientHasSchema);
 			throw;
 		}
 		catch (Exception ex) when (IsFallbackEligible(context, sessionless))
@@ -552,7 +550,7 @@ internal sealed class McpServerHandler
 			// Re-read rather than reuse the filter's value: nothing holds the retraction watermark
 			// still between the two, and a retraction that lands in between must fail closed with the
 			// original failure rather than serve a catalog it has just withdrawn.
-			if (context.SnapshotCache is not { } fallback || !IsFallbackEligible(context, sessionless))
+			if (context.GetSnapshotCache(sessionless) is not { } fallback || !IsFallbackEligible(context, sessionless))
 			{
 				throw;
 			}
@@ -585,9 +583,9 @@ internal sealed class McpServerHandler
 	// was meant to withhold — so it must not reach the client verbatim. A generic McpException (the
 	// pattern this handler already uses for other client-facing failures) reports the failure without
 	// disclosing what triggered it.
-	private static void ThrowSanitizedIfAClientAlreadyHasASchema(McpGeneratedSnapshot? previousSnapshot)
+	private static void ThrowSanitizedIfAClientAlreadyHasASchema(bool clientHasSchema)
 	{
-		if (previousSnapshot is not null)
+		if (clientHasSchema)
 		{
 			throw new McpException("Tool discovery is temporarily unavailable due to a server configuration error.");
 		}
@@ -771,8 +769,7 @@ internal sealed class McpServerHandler
 	/// </remarks>
 	private bool IsFallbackEligible(McpSessionContext context, bool sessionless) =>
 		!sessionless
-		&& context.SnapshotCache is { } candidate
-		&& candidate.Sessionless == sessionless
+		&& context.GetSnapshotCache(sessionless) is { } candidate
 		&& Volatile.Read(ref _snapshotState).LastVisibilityRetractionVersion <= candidate.Version;
 
 	internal sealed record SnapshotVersionState(
