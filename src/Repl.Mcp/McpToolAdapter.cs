@@ -24,6 +24,7 @@ internal sealed partial class McpToolAdapter
 	private readonly ReplMcpServerOptions _options;
 	private readonly IServiceProvider _services;
 	private readonly McpRequestServerAccessor _requestServers;
+	private readonly McpLoggerDiagnostics _diagnostics;
 	// Whether the catalog this adapter serves was built from the frozen discovery view. A property of
 	// the catalog, not of the request: a reusable BuildMcpServerOptions() result is frozen once and then
 	// serves clients of either era, so asking the request would leave an initialize-era caller unable to
@@ -44,6 +45,7 @@ internal sealed partial class McpToolAdapter
 		_services = services;
 		_requestServers = requestServers;
 		_catalogIsFrozen = catalogIsFrozen;
+		_diagnostics = new McpLoggerDiagnostics(services);
 	}
 
 	/// <summary>
@@ -323,11 +325,18 @@ internal sealed partial class McpToolAdapter
 	/// unable to say what it needs.
 	/// </para>
 	/// </remarks>
-	private static string DescribeFailure(in McpPipelineInvocation invocation)
+	private string DescribeFailure(in McpPipelineInvocation invocation)
 	{
 		var withheld = $"Command failed with exit code {invocation.ExitCode}.";
 		if (WithholdsFailureText(invocation))
 		{
+			// Withheld from the client, not discarded: the rendered detail and the exception behind it
+			// are exactly what the operator needs, and the log is the one reader that should get them.
+			var detail = string.IsNullOrWhiteSpace(invocation.Output) ? invocation.Error : invocation.Output;
+			_diagnostics.ToolFailureWithheld(
+				invocation.Failure,
+				invocation.ExitCode,
+				string.IsNullOrWhiteSpace(detail) ? "(nothing was rendered)" : detail);
 			return withheld;
 		}
 

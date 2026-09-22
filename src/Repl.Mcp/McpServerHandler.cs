@@ -33,6 +33,7 @@ internal sealed class McpServerHandler
 	private readonly McpSamplingService _sampling;
 	private readonly McpElicitationService _elicitation;
 	private readonly McpFeedbackService _feedback;
+	private readonly McpLoggerDiagnostics _diagnostics;
 	// Context for work that belongs to no MCP session: eager fail-fast validation, the pre-built
 	// catalog behind BuildMcpServerOptions, and the snapshot test seams. One per handler, sharing its
 	// lifetime, so nothing disposes it — and CreateSessionContext deliberately opens it no DI scope to
@@ -101,6 +102,7 @@ internal sealed class McpServerHandler
 		_sampling = new McpSamplingService(_requestServers);
 		_elicitation = new McpElicitationService(_requestServers);
 		_feedback = new McpFeedbackService(_requestServers);
+		_diagnostics = new McpLoggerDiagnostics(services);
 		_catalogContext = CreateSessionContext(McpRootsScope.Request);
 	}
 
@@ -500,6 +502,14 @@ internal sealed class McpServerHandler
 		{
 			var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
 				.ConfigureAwait(false);
+			// Read back what was just published rather than trusting snapshotVersion: a build that raced a
+			// routing change is republished stale, and one that raced a retraction is rebuilt at a newer
+			// version. Only a current entry ends the episode, and it is logged at the version it was built.
+			if (context.SnapshotCache is { IsStale: false } published && context.TryClearCatalogFailure())
+			{
+				_diagnostics.CatalogRecovered(published.Version);
+			}
+
 			return built;
 		}
 		// Filtered on the caller's own token, like every other cancellation catch here: a projection
@@ -515,7 +525,7 @@ internal sealed class McpServerHandler
 			ThrowSanitizedIfAClientAlreadyHasASchema(previousSnapshot);
 			throw;
 		}
-		catch (Exception) when (IsFallbackEligible(context, sessionless))
+		catch (Exception ex) when (IsFallbackEligible(context, sessionless))
 		{
 			// Preserve availability for transient projection failures, but republish as stale so the
 			// next request retries without requiring another routing mutation. The entry keeps the
@@ -528,6 +538,19 @@ internal sealed class McpServerHandler
 			if (context.SnapshotCache is not { } fallback || !IsFallbackEligible(context, sessionless))
 			{
 				throw;
+			}
+
+			// The client cannot tell a stale catalog from a current one, so the operator log is the only
+			// sign the failure is going on. Warned once per failing version: the fallback is republished
+			// stale, so every request retries the build — tools/call and prompts/get included, on every
+			// connection — and would otherwise repeat the same exception each time.
+			if (context.TryMarkCatalogFailure(snapshotVersion))
+			{
+				_diagnostics.StaleCatalogServed(ex, snapshotVersion, fallback.Version);
+			}
+			else
+			{
+				_diagnostics.StaleCatalogStillServed(ex, snapshotVersion);
 			}
 
 			context.PublishStaleSnapshot(fallback.Snapshot, fallback.Version, fallback.Sessionless);
