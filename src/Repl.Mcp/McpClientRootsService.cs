@@ -122,11 +122,15 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	/// <see cref="Current"/> is documented as only what this request already resolved, and an eager fetch
 	/// would add a round-trip to every request rather than to every connection.
 	/// </remarks>
-	internal async ValueTask PrimeCurrentAsync(CancellationToken cancellationToken)
+	/// <returns>
+	/// <see langword="true"/> only when roots were actually fetched; <see langword="false"/> when the
+	/// prime did not ask at all — outside connection scope, without client support, or standing down.
+	/// </returns>
+	internal async ValueTask<bool> PrimeCurrentAsync(CancellationToken cancellationToken)
 	{
 		if (_scope is not McpRootsScope.Connection || !IsSupported)
 		{
-			return;
+			return false;
 		}
 
 		lock (_syncRoot)
@@ -137,7 +141,7 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 				&& _primeFailedAt is { } failedAt
 				&& Stopwatch.GetElapsedTime(failedAt) < PrimeRetryCooldown)
 			{
-				return;
+				return false;
 			}
 		}
 
@@ -178,6 +182,8 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 		{
 			_primeFailedAt = null;
 		}
+
+		return true;
 	}
 
 	public async ValueTask<IReadOnlyList<McpClientRoot>> GetAsync(CancellationToken cancellationToken = default)
@@ -406,8 +412,12 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 
 		try
 		{
-			await roots.PrimeCurrentAsync(cancellationToken).ConfigureAwait(false);
-			Interlocked.Exchange(ref roots._primeFailureReported, 0);
+			// Only a prime that actually asked ends the episode: one skipped while standing down says
+			// nothing about whether the client can answer yet.
+			if (await roots.PrimeCurrentAsync(cancellationToken).ConfigureAwait(false))
+			{
+				Interlocked.Exchange(ref roots._primeFailureReported, 0);
+			}
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{

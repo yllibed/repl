@@ -502,9 +502,12 @@ internal sealed class McpServerHandler
 		{
 			var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
 				.ConfigureAwait(false);
-			if (context.TryClearCatalogFailure())
+			// Read back what was just published rather than trusting snapshotVersion: a build that raced a
+			// routing change is republished stale, and one that raced a retraction is rebuilt at a newer
+			// version. Only a current entry ends the episode, and it is logged at the version it was built.
+			if (context.SnapshotCache is { IsStale: false } published && context.TryClearCatalogFailure())
 			{
-				_diagnostics.CatalogRecovered(snapshotVersion);
+				_diagnostics.CatalogRecovered(published.Version);
 			}
 
 			return built;

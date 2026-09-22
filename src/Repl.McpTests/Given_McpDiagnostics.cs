@@ -70,6 +70,51 @@ public sealed class Given_McpDiagnostics
 	}
 
 	[TestMethod]
+	[Description("A prime skipped because the connection is standing down after a slow failure is not a successful prime, so it must not end the failure episode. Resetting on any normal return made the next real failure — once the stand-down lifts — warn again, so one ongoing outage produced repeated 2003 warnings. roots/list_changed lifts the stand-down on purpose; the routing invalidation it raises right after, in the same handler, orders the lift before the next call.")]
+	public async Task When_AStandDownSkipsThePrime_Then_TheFailureEpisodeIsNotReset()
+	{
+		var provider = new CapturingLoggerProvider();
+		var fetches = 0;
+		var slowNext = 0;
+		// Longer than half the ten-second roots budget, which is what makes a failure worth standing
+		// down for; well under the budget itself, so the fetch fails on the bad URI rather than timing out.
+		var slowFailure = TimeSpan.FromSeconds(5.5);
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app => app.Map("touch", () => "ok"),
+			configureOptions: null,
+			clientOptions: CreateBrokenRootsClient(async cancellationToken =>
+			{
+				Interlocked.Increment(ref fetches);
+				if (Interlocked.Exchange(ref slowNext, 0) == 1)
+				{
+					await Task.Delay(slowFailure, cancellationToken).ConfigureAwait(false);
+				}
+			}),
+			configureServices: services => CaptureLogs(services, provider)).ConfigureAwait(false);
+		var standDownLifted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		fixture.App.Core.RoutingInvalidated += (_, _) => standDownLifted.TrySetResult();
+
+		// Opens the episode with a fast failure, which does not stand the prime down.
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+		provider.Count(RootsPrimeFailedEvent).Should().Be(1);
+
+		Volatile.Write(ref slowNext, 1);
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+		var afterSlowFailure = Volatile.Read(ref fetches);
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+		Volatile.Read(ref fetches).Should().Be(afterSlowFailure, "the slow failure stood the prime down, so this call asked nothing");
+
+#pragma warning disable MCP9005
+		await fixture.Client.SendNotificationAsync(NotificationMethods.RootsListChangedNotification).ConfigureAwait(false);
+#pragma warning restore MCP9005
+		await standDownLifted.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+
+		Volatile.Read(ref fetches).Should().BeGreaterThan(afterSlowFailure, "roots/list_changed lifted the stand-down");
+		provider.Count(RootsPrimeFailedEvent).Should().Be(1, "the skipped prime did not end the episode, so no failure in it warns again");
+	}
+
+	[TestMethod]
 	[Description("The availability fallback re-serves an initialize-era connection's previous catalog when a build fails, and republishes it stale, so every request retries the build. The failure must reach the operator — once, as a warning, rather than once per request for as long as it lasts — and the end of the episode must be visible too, or a quiet log would read as 'still failing'.")]
 	public async Task When_AStaleCatalogIsServedUntilRecovery_Then_ItWarnsOnceAndLogsTheRecovery()
 	{
@@ -115,6 +160,97 @@ public sealed class Given_McpDiagnostics
 		provider.Count(StaleCatalogServedEvent).Should().Be(1, "recovering must not re-warn the episode it just ended");
 	}
 
+	[TestMethod]
+	[Description("Recovery is logged for the catalog actually published, not for the version the build set out to serve. A rebuild that succeeds while routing moves under it is republished stale, so the connection does not serve the current catalog yet — announcing recovery then, with the version the build started at, would tell the operator a failure had ended that the next request may still hit.")]
+	public async Task When_RoutingMovesDuringTheRecoveryBuild_Then_RecoveryWaitsForACurrentCatalog()
+	{
+		var provider = new CapturingLoggerProvider();
+		var app = ReplApp.Create(services => CaptureLogs(services, provider));
+		app.UseMcpServer();
+		app.Map("initial", () => "ok");
+		var options = new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory };
+		var handler = new McpServerHandler(app.Core, options, app.Services);
+
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var session = await McpPipeSession.StartAsync(
+			handler.RunAsync,
+			new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions },
+			cts.Token).ConfigureAwait(false);
+		await using var sessionScope = session.ConfigureAwait(false);
+
+		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		options.CommandFilter = _ => throw new InvalidOperationException("projection-boom");
+		app.Core.InvalidateRouting();
+		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		provider.Count(StaleCatalogServedEvent).Should().Be(1);
+
+		// The recovery build succeeds, but invalidates routing while it runs — the build it returns is
+		// republished stale.
+		var moveRoutingOnce = 1;
+		options.CommandFilter = _ =>
+		{
+			if (Interlocked.Exchange(ref moveRoutingOnce, 0) == 1)
+			{
+				app.Core.InvalidateRouting();
+			}
+
+			return true;
+		};
+		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		provider.Count(CatalogRecoveredEvent).Should().Be(0, "the catalog that build published is already stale");
+
+		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		provider.Single(CatalogRecoveredEvent).Message.Should().Contain(
+			"version 3",
+			"the recovery is the build at the routing version that moved during the first attempt");
+	}
+
+	[TestMethod]
+	[Description("A recovery build that races a visibility retraction starts over at the newer version and publishes that one. The recovery must be logged at the version actually published, not the one the build set out to serve, or the operator is told the connection recovered at a routing version it never served.")]
+	public async Task When_ARetractionRestartsTheRecoveryBuild_Then_RecoveryIsLoggedAtThePublishedVersion()
+	{
+		var provider = new CapturingLoggerProvider();
+		var app = ReplApp.Create(services => CaptureLogs(services, provider));
+		app.UseMcpServer();
+		app.Map("initial", () => "ok");
+		var extra = app.Map("extra", () => "x");
+		var options = new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory };
+		var handler = new McpServerHandler(app.Core, options, app.Services);
+
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var session = await McpPipeSession.StartAsync(
+			handler.RunAsync,
+			new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions },
+			cts.Token).ConfigureAwait(false);
+		await using var sessionScope = session.ConfigureAwait(false);
+
+		// Version 1 is served; the failing rebuild is requested at version 2.
+		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		options.CommandFilter = _ => throw new InvalidOperationException("projection-boom");
+		app.Core.InvalidateRouting();
+		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		provider.Count(StaleCatalogServedEvent).Should().Be(1);
+
+		// The recovery build at version 2 hides a command while it runs: a visibility retraction to
+		// version 3, which makes the build discard its result and start over there.
+		var retractOnce = 1;
+		options.CommandFilter = _ =>
+		{
+			if (Interlocked.Exchange(ref retractOnce, 0) == 1)
+			{
+				extra.Hidden();
+			}
+
+			return true;
+		};
+		(await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
+			.Should().NotContain(tool => string.Equals(tool.Name, "extra", StringComparison.Ordinal));
+
+		provider.Single(CatalogRecoveredEvent).Message.Should().Contain("version 3");
+	}
+
 	private static void CaptureLogs(IServiceCollection services, CapturingLoggerProvider provider) =>
 		services.AddLogging(builder =>
 		{
@@ -123,7 +259,7 @@ public sealed class Given_McpDiagnostics
 			builder.AddProvider(provider);
 		});
 
-	private static McpClientOptions CreateBrokenRootsClient()
+	private static McpClientOptions CreateBrokenRootsClient(Func<CancellationToken, Task>? beforeAnswer = null)
 	{
 		// Roots is deprecated by MCP spec 2026-07-28 (SEP-2577), but hosts still use it and Repl keeps
 		// supporting it until the SDK removes the surface (#51).
@@ -135,10 +271,16 @@ public sealed class Given_McpDiagnostics
 			{
 				// An unparseable URI fails server-side while being mapped — a real fetch failure that needs
 				// no client-side throw, which would escape the SDK's own message loop instead.
-				RootsHandler = static (_, _) => ValueTask.FromResult(new ListRootsResult
+				RootsHandler = async (_, cancellationToken) =>
 				{
-					Roots = [new Root { Uri = "http://", Name = "invalid" }],
-				}),
+					var invalid = new Root { Uri = "http://", Name = "invalid" };
+					if (beforeAnswer is not null)
+					{
+						await beforeAnswer(cancellationToken).ConfigureAwait(false);
+					}
+
+					return new ListRootsResult { Roots = [invalid] };
+				},
 			},
 		};
 #pragma warning restore MCP9005
