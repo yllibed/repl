@@ -311,7 +311,14 @@ internal sealed class McpServerHandler
 			&& !IsSessionlessRequest()
 			&& context.TryClaimCompatibilityIntro())
 		{
-			SignalToolListChanged();
+			// Sent to this request's own server, not through _toolListChanged: that collection's SDK
+			// fan-out reaches every attached session, and only this one's catalog is about to change.
+			if (request.Server is { } server)
+			{
+				await server.SendNotificationAsync(NotificationMethods.ToolListChangedNotification, cancellationToken)
+					.ConfigureAwait(false);
+			}
+
 			return McpCacheHints.MarkPrivateToThisClient(request, new ListToolsResult
 			{
 				Tools =
@@ -849,20 +856,18 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	private void SignalDiscoveryChanged()
-	{
-		_toolListChanged.Clear();
-		_resourceListChanged.Clear();
-		_promptListChanged.Clear();
-	}
-
 	// Clearing an already-empty primitive collection raises its Changed event without mutating
 	// anything, which is what lets an empty collection act as a pure signal. That the event fires
 	// unconditionally is NOT documented on Clear(), so it is pinned by
 	// Given_McpSubscriptions.When_ClearingAnEmptyCollection_Then_ChangedStillFires: if a future SDK
 	// turns Clear() into a no-op, that test fails loudly instead of discovery notifications silently
 	// disappearing.
-	private void SignalToolListChanged() => _toolListChanged.Clear();
+	private void SignalDiscoveryChanged()
+	{
+		_toolListChanged.Clear();
+		_resourceListChanged.Clear();
+		_promptListChanged.Clear();
+	}
 
 	private void UnsubscribeFromRoutingChanges()
 	{
