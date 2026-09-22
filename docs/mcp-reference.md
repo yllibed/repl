@@ -515,6 +515,27 @@ Command-backed resources expose the rendered handler return value as the
 resource body. Low-level writes to `IReplIoContext.Output` are treated as
 side-channel command output and are not included in `resources/read` bodies.
 
+## Operator diagnostics
+
+Some failures are hidden from the MCP client on purpose. `Repl.Mcp` records them for the operator
+through `Microsoft.Extensions.Logging`, under the category `Repl.Mcp`:
+
+| Event | Level | What the client saw instead |
+|---|---|---|
+| 2001 | Error | A command failed with a detail that is not meant for a remote caller, such as an unhandled exception's message. The client gets `Command failed with exit code N.`; the log gets the exception and the rendered detail. |
+| 2002 | Warning | A catalog rebuild failed on an initialize-era connection. That connection keeps its previous catalog until a rebuild succeeds or a visibility retraction withdraws it. |
+| 2003 | Warning | Priming the client's roots failed. The command still ran. |
+| 2004 | Debug | 2002 again for the same routing version. |
+| 2005 | Information | A rebuild succeeded after a 2002. |
+| 2006 | Debug | 2003 again before any prime succeeded. |
+
+A failure that can repeat on every request warns once per episode and logs its repeats at Debug, so a
+client that keeps asking cannot flood the log.
+
+`ReplApp` registers logging by default, but it stays silent until the app adds a provider. Under
+`mcp serve` on stdio, standard output carries the protocol, so send logs to standard error or a file.
+For the console provider, set `LogToStandardErrorThreshold = LogLevel.Trace`.
+
 ## Client compatibility
 
 Feature support varies across agents. Check [mcp-availability.com](https://mcp-availability.com/) for current data.

@@ -18,6 +18,9 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	private readonly ICoreReplApp _app;
 	private readonly McpRequestServerAccessor _servers;
 	private readonly McpRootsScope _scope;
+	// 1 while a failure to prime is being reported at Debug instead of Warning; reset by a successful
+	// prime. Interlocked, since concurrent tool calls on one connection prime concurrently.
+	private int _primeFailureReported;
 	private readonly Lock _syncRoot = new();
 	// Bounds the one outbound call this type makes. Request scope pays it per request rather than once
 	// per connection, so a client that never answers roots/list would otherwise hold every tool call
@@ -384,7 +387,8 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	}
 
 	/// <summary>
-	/// Primes the connection's native roots from <paramref name="services"/>, swallowing a failure.
+	/// Primes the connection's native roots from <paramref name="services"/>, logging and swallowing a
+	/// failure.
 	/// </summary>
 	/// <remarks>
 	/// Called from every execution entry point. A handler that never reads roots must not fail because
@@ -403,14 +407,26 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 		try
 		{
 			await roots.PrimeCurrentAsync(cancellationToken).ConfigureAwait(false);
+			Interlocked.Exchange(ref roots._primeFailureReported, 0);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
 			throw;
 		}
-		catch (Exception)
+		catch (Exception ex)
 		{
-			// Swallowed: see the remarks above.
+			// Swallowed for the command (see the remarks above), not for the operator. Warned once per
+			// failure episode: a fast failure is retried on every tool call, where the prime cooldown only
+			// covers one that exhausted its budget. Built only here, so a successful prime pays nothing.
+			var diagnostics = new McpLoggerDiagnostics(services);
+			if (Interlocked.Exchange(ref roots._primeFailureReported, 1) == 0)
+			{
+				diagnostics.RootsPrimeFailed(ex);
+			}
+			else
+			{
+				diagnostics.RootsPrimeStillFailing(ex);
+			}
 		}
 	}
 
