@@ -408,7 +408,13 @@ internal sealed class McpServerHandler
 		var resource = snapshot.Resources.FirstOrDefault(candidate => candidate.IsMatch(uri));
 		if (resource is null)
 		{
-			throw new McpException($"Unknown resource: {uri}");
+			// The code the SDK's own resource handler uses: 2026-07-28 reports an unresolvable URI with the
+			// standard InvalidParams, earlier revisions with the legacy ResourceNotFound. A code-less
+			// McpException would surface as InternalError, which reads as a broken server, not a missing
+			// resource (SEP-2164).
+			throw new McpProtocolException(
+				$"Unknown resource: {uri}",
+				IsSessionlessRequest() ? McpErrorCode.InvalidParams : McpErrorCode.ResourceNotFound);
 		}
 
 		return await resource.ReadAsync(request, cancellationToken).ConfigureAwait(false);
@@ -439,7 +445,8 @@ internal sealed class McpServerHandler
 			string.Equals(candidate.ProtocolPrompt.Name, promptName, StringComparison.OrdinalIgnoreCase));
 		if (prompt is null)
 		{
-			throw new McpException($"Unknown prompt: {promptName}");
+			// InvalidParams on every revision, as the SDK's own prompt handler answers an unknown name.
+			throw new McpProtocolException($"Unknown prompt: {promptName}", McpErrorCode.InvalidParams);
 		}
 
 		return await prompt.GetAsync(request, cancellationToken).ConfigureAwait(false);
