@@ -1057,6 +1057,66 @@ public sealed class Given_ResultFlowPager
 	}
 
 	[TestMethod]
+	[Description("Labels are compared column by column, as the separator spans them: 'first' / 'last name' and 'first last' / 'name' have the same words but are other columns, so the continuation keeps its header.")]
+	public void When_AContinuationHeaderRegroupsThePinnedWords_Then_ItIsKept()
+	{
+		var first = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, "first  last name", "-----  ---------", "a      b"), header: null);
+		var second = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, "first last  name", "----------  ----", "c           d"), first.Header);
+
+		second.ContentLines.Should().Equal("first last  name", "----------  ----", "c           d");
+	}
+
+	[TestMethod]
+	[Description("A narrow table leaves a single space between columns, so both headers read 'first last name': only the separator's column spans tell 'first' / 'last name' from 'first last' / 'name'.")]
+	public void When_ANarrowContinuationHeaderRegroupsThePinnedWords_Then_ItIsKept()
+	{
+		var first = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, "first last name", "----- ---------", "a     b"), header: null);
+		var second = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, "first last name", "---------- ----", "c          d"), first.Header);
+
+		second.ContentLines.Should().Equal("first last name", "---------- ----", "c          d");
+	}
+
+	[TestMethod]
+	[Description("A styled header, as Spectre writes it, has no separator: each label is its own styled run, spaces included, so regrouped words are other columns there too.")]
+	public void When_AStyledContinuationHeaderRegroupsThePinnedWords_Then_ItIsKept()
+	{
+		var first = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, Bold("first") + " " + Bold("last name"), "a     b"), header: null);
+		var next = Bold("first last") + " " + Bold("name");
+		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, next, "c          d"), first.Header);
+
+		second.ContentLines.Should().Equal(next, "c          d");
+	}
+
+	[TestMethod]
+	[Description("A styled continuation header with the pinned labels, padded to other widths, is still dropped as a duplicate.")]
+	public void When_AStyledContinuationHeaderRepeatsThePinnedOne_Then_ItIsDropped()
+	{
+		var first = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, Bold("id") + " " + Bold("last name"), "1  a"), header: null);
+		var second = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, Bold("id ") + " " + Bold("last name") + "   ", "100 b"), first.Header);
+
+		second.ContentLines.Should().Equal("100 b");
+	}
+
+	[TestMethod]
+	[Description("A header bolded as one run, its padding inside the styling, is still recognized as a repeat at other widths: the labels inside the run are split at their gaps.")]
+	public void When_AWholeLineBoldHeaderRepeatsAtOtherWidths_Then_ItIsDropped()
+	{
+		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, Bold("id  name"), "1   a"), header: null);
+		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, Bold("id    name"), "1000  b"), first.Header);
+
+		second.ContentLines.Should().Equal("1000  b");
+	}
+
+	private static string Bold(string text) => $"{(char)27}[1m{text}{(char)27}[0m";
+
+	[TestMethod]
 	[Description("A kept continuation header keeps its separator, even when the column widths make that separator identical to the pinned one: without it the header reads as a data row.")]
 	public void When_AKeptContinuationHeaderHasThePinnedSeparator_Then_TheSeparatorIsKeptToo()
 	{

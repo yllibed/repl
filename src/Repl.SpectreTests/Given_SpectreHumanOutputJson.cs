@@ -223,6 +223,55 @@ public sealed partial class Given_SpectreHumanOutputJson
 		AnsiStyling().Replace(session.Lines[1], string.Empty).Should().Contain("\"bbbbbb\"");
 	}
 
+	[TestMethod]
+	[Description("Through the pager, with Spectre's own styled header: keys 'first' / 'last name' and 'first last' / 'name' share their words but are other columns, so the continuation keeps its header.")]
+	public async Task When_ThePagerAppendsAPageWhoseKeysRegroupTheWords_Then_ItsRowsKeepTheirOwnHeader()
+	{
+		var transformer = CreateAnsiTransformer();
+		var first = await transformer.TransformPageAsync(
+			SingleRowPage(new JsonObject { ["first"] = "a", ["last name"] = "b" }), ResultFlowPageRenderMode.Initial, CancellationToken.None)
+			.ConfigureAwait(false);
+		var next = await transformer.TransformPageAsync(
+			SingleRowPage(new JsonObject { ["first last"] = "c", ["name"] = "d" }), ResultFlowPageRenderMode.Continuation, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
+		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
+
+		var lines = session.Lines.Select(line => AnsiStyling().Replace(line, string.Empty)).ToList();
+		var row = lines.FindIndex(line => line.Contains("\"d\"", StringComparison.Ordinal));
+		row.Should().BePositive();
+		lines.Take(row).Should().Contain(line => line.Contains("first last", StringComparison.Ordinal));
+	}
+
+	[TestMethod]
+	[Description("JSON details render as the JSON result itself would, also when their lines fill the width: composed as a pre-rendered string, their escape sequences counted as columns and the lines wrapped again.")]
+	public async Task When_AResultCarriesWideJsonDetails_Then_TheyRenderAsTheResultWould()
+	{
+		var transformer = new SpectreHumanOutputTransformer(
+			() => new HumanRenderSettings(Width: 80, UseAnsi: true, Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)),
+			new OutputOptions { AnsiMode = AnsiMode.Always });
+		JsonArray Rows() => new(
+			new JsonObject { ["id"] = 1, ["description"] = new string('x', 30), ["owner"] = "someone@example.com" },
+			new JsonObject { ["id"] = 2, ["description"] = new string('y', 30), ["owner"] = "other@example.com" });
+
+		var direct = AnsiStyling().Replace(await transformer.TransformAsync(Rows(), CancellationToken.None).ConfigureAwait(false), string.Empty);
+		var details = AnsiStyling().Replace(await transformer.TransformAsync(Results.Success("x", Rows()), CancellationToken.None).ConfigureAwait(false), string.Empty);
+
+		details.Should().EndWith(direct);
+	}
+
+	[TestMethod]
+	[Description("JSON carried as an IReplResult's details renders like a JSON result, as the human transformer renders it, rather than as one compact literal.")]
+	public async Task When_AResultCarriesJsonDetails_Then_TheFieldsAreShown()
+	{
+		var output = await RenderAsync(Results.Success("done", new JsonObject { ["code"] = 42, ["state"] = "ok" })).ConfigureAwait(false);
+
+		output.Should().MatchRegex(@"code:\s+42");
+		output.Should().MatchRegex(@"state:\s+""ok""");
+		AssertNoClrMembers(output);
+	}
+
 	// The ANSI pager case, where the bold header line is what the pager detects and pins. Forced, so these
 	// tests do not depend on whether the console running them supports ANSI.
 	private static SpectreHumanOutputTransformer CreateAnsiTransformer() =>

@@ -59,15 +59,70 @@ internal static class PagerPayloadParser
 			: PagerHeader.Empty;
 	}
 
-	// Word by word: a repeated header is padded to its own page's column widths, and its separator line with it.
+	// Label by label: a repeated header is padded to its own page's column widths, and its separator line with it.
 	// A label truncated to a different width on each page does not match, so that header is kept, not lost.
 	private static bool RepeatsHeader(PagerHeader pinned, PagerHeader candidate) =>
 		pinned.Lines.Count > 0
 		&& candidate.Lines.Count > 0
-		&& HeaderWords(pinned.Lines[0]).SequenceEqual(HeaderWords(candidate.Lines[0]), StringComparer.Ordinal);
+		&& HeaderLabels(pinned).SequenceEqual(HeaderLabels(candidate), StringComparer.Ordinal);
 
-	private static string[] HeaderWords(string line) =>
-		NormalizeLine(line).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+	// A label can hold spaces, so words alone would take 'first' / 'last name' for 'first last' / 'name', and a
+	// narrow table leaves a single space between columns. A plain table's separator spans each column, when the
+	// header is aligned on it; a styled header brackets each label in its own escape sequences; failing both,
+	// labels are what gaps of two or more spaces leave.
+	private static IEnumerable<string> HeaderLabels(PagerHeader header)
+	{
+		var line = header.Lines[0];
+		if (header.Lines.Count > 1
+			&& LabelsUnderSeparator(AnsiTextMetrics.StripControlSequences(line), header.Lines[1]) is { } spanned)
+		{
+			return spanned;
+		}
+
+		return line.Contains('\u001b', StringComparison.Ordinal)
+			// Each run is split at its own gaps too: a header can also be styled as one run, padding included.
+			? AnsiTextMetrics.SplitAtControlSequences(line).SelectMany(static run => SplitAtGaps(run))
+			: SplitAtGaps(line);
+	}
+
+	// The label over each run of dashes, or null when some of the header lies outside every run: the separator
+	// then does not say where its columns are.
+	private static List<string>? LabelsUnderSeparator(string line, string separator)
+	{
+		var labels = new List<string>();
+		var checkedUpTo = 0;
+		var i = 0;
+		while (i < separator.Length)
+		{
+			if (separator[i] != '-')
+			{
+				i++;
+				continue;
+			}
+
+			var start = i;
+			while (i < separator.Length && separator[i] == '-')
+			{
+				i++;
+			}
+
+			if (!IsBlank(line, checkedUpTo, start))
+			{
+				return null;
+			}
+
+			labels.Add(start < line.Length ? line[start..Math.Min(i, line.Length)].Trim() : string.Empty);
+			checkedUpTo = i;
+		}
+
+		return IsBlank(line, checkedUpTo, line.Length) ? labels : null;
+	}
+
+	private static string[] SplitAtGaps(string text) =>
+		text.Split("  ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+	private static bool IsBlank(string line, int from, int to) =>
+		from >= line.Length || line.AsSpan(from, Math.Min(to, line.Length) - from).IsWhiteSpace();
 
 	private static PagerHeader CreateHeader(string[] lines) =>
 		new(

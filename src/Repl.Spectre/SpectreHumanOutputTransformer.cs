@@ -192,9 +192,14 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 			return RenderToString(new Markup(statusMarkup));
 		}
 
-		var details = result.Details is IReplPage page
-			? new Text(RenderPage(page))
-			: RenderValueRenderable(result.Details, nested: false);
+		IRenderable details = result.Details switch
+		{
+			IReplPage page => new Text(RenderPage(page)),
+			// Like a JSON result, as the human transformer renders it, rather than as the compact literal a
+			// JSON value nested in a result object gets.
+			_ when JsonHumanShape.TryGetNode(result.Details, out var node) => BuildJson(node),
+			_ => RenderValueRenderable(result.Details, nested: false),
+		};
 		return RenderToString(new Rows(new IRenderable[]
 		{
 			new Markup(statusMarkup),
@@ -299,15 +304,29 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 	private string RenderJson(JsonNode? node) => node switch
 	{
 		JsonObject { Count: 0 } => "{}",
-		JsonObject jsonObject => RenderToString(BuildLabelValueGrid(
-			[.. jsonObject.Select(static property =>
-				(JsonHumanShape.Label(property.Key), JsonHumanShape.Literal(property.Value))),])),
+		JsonObject jsonObject => RenderToString(BuildJsonObjectGrid(jsonObject)),
 		JsonArray { Count: 0 } => "No results.",
 		// Its own path rather than RenderEnumerable, which recognizes JSON by its first non-null item and so
 		// has nothing to go on for an array of nulls.
 		JsonArray jsonArray => RenderJsonItems([.. jsonArray]),
 		_ => JsonHumanShape.Literal(node),
 	};
+
+	// The renderable for JSON composed into a larger layout, such as a result's details. Text wrapping an
+	// already-rendered string would count its escape sequences as columns and wrap its lines again.
+	private IRenderable BuildJson(JsonNode? node) => node switch
+	{
+		JsonObject { Count: > 0 } jsonObject => BuildJsonObjectGrid(jsonObject),
+		JsonArray jsonArray when JsonHumanShape.TryGetObjectRows([.. jsonArray], out var columns, out var rows)
+			=> BuildJsonTable(columns, rows),
+		// Literal lines only from here on: plain text, nothing styled.
+		_ => new Text(RenderJson(node)),
+	};
+
+	private static Grid BuildJsonObjectGrid(JsonObject jsonObject) =>
+		BuildLabelValueGrid(
+			[.. jsonObject.Select(static property =>
+				(JsonHumanShape.Label(property.Key), JsonHumanShape.Literal(property.Value))),]);
 
 	// A JSON table always carries its header, continuation pages included: its columns come from its own rows'
 	// keys rather than from a type, so another page's headings could mislabel its cells.
