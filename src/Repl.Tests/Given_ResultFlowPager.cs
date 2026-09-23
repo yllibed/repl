@@ -1114,6 +1114,59 @@ public sealed class Given_ResultFlowPager
 		second.ContentLines.Should().Equal("1000  b");
 	}
 
+	[TestMethod]
+	[Description("Bold within a combined SGR sequence, as the human palette styles its table header, marks a header line too.")]
+	public void When_TheFirstLineIsBoldWithinACombinedSequence_Then_ItIsTheHeader()
+	{
+		var parsed = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, $"{(char)27}[1;38;5;221mid  name{(char)27}[0m", "1   a"), header: null);
+
+		parsed.Header.Lines.Should().ContainSingle();
+		parsed.ContentLines.Should().Equal("1   a");
+	}
+
+	[TestMethod]
+	[Description("A 1 that is an extended colour's argument, as in 38;5;1, is a colour, not bold: that line is content.")]
+	public void When_TheFirstLineUsesColourIndexOne_Then_ItIsNotAHeader()
+	{
+		var colored = $"{(char)27}[38;5;1mred{(char)27}[0m";
+		var parsed = PagerPayloadParser.Parse(string.Join(Environment.NewLine, colored, "next"), header: null);
+
+		parsed.Header.Lines.Should().BeEmpty();
+		parsed.ContentLines.Should().Equal(colored, "next");
+	}
+
+	[TestMethod]
+	[Description("A single payload, such as a long string result, keeps a line identical to its first one: only a continuation page repeats a header.")]
+	public void When_APayloadRepeatsItsBoldFirstLine_Then_BothAreKept()
+	{
+		var title = $"{(char)27}[1;31mSection{(char)27}[0m";
+		var parsed = PagerPayloadParser.Parse(string.Join(Environment.NewLine, title, "one", title, "two"), header: null);
+
+		parsed.ContentLines.Should().Equal(["one", title, "two"], "the first line may be pinned, but its repeat inside the payload is data");
+	}
+
+	[TestMethod]
+	[Description("A first line holding only a style opener has no header text; taken as a header, it would drop every blank line after it.")]
+	public void When_TheFirstLineIsOnlyAStyleOpener_Then_BlankLinesAreKept()
+	{
+		var parsed = PagerPayloadParser.Parse(
+			string.Join(Environment.NewLine, $"{(char)27}[1;37m", "one", string.Empty, "two"), header: null);
+
+		parsed.Header.Lines.Should().BeEmpty();
+		parsed.ContentLines.Should().Contain(string.Empty);
+	}
+
+	[TestMethod]
+	[Description("Bold that only starts inside the line, after other text, does not style a header: that line is content.")]
+	public void When_ALineIsBoldOnlyAfterOtherText_Then_ItIsNotAHeader()
+	{
+		var line = $"note: {(char)27}[1;31mX{(char)27}[0m";
+		var parsed = PagerPayloadParser.Parse(string.Join(Environment.NewLine, line, "next"), header: null);
+
+		parsed.Header.Lines.Should().BeEmpty();
+	}
+
 	private static string Bold(string text) => $"{(char)27}[1m{text}{(char)27}[0m";
 
 	[TestMethod]

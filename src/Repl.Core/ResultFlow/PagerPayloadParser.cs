@@ -25,7 +25,8 @@ internal static class PagerPayloadParser
 		for (var i = payloadHeader.Lines.Count; i < lines.Count; i++)
 		{
 			var normalized = NormalizeLine(lines[i]);
-			if (resolvedHeader.NormalizedLines.Contains(normalized)
+			// Only a continuation repeats a header; within one payload, a line like its first one is data.
+			if ((header is not null && resolvedHeader.NormalizedLines.Contains(normalized))
 				|| (stripPresentationChrome && IsPageFooterLine(lines[i])))
 			{
 				continue;
@@ -54,9 +55,70 @@ internal static class PagerPayloadParser
 			return CreateHeader([lines[0]]);
 		}
 
-		return lines[0].Contains("\u001b[1m", StringComparison.Ordinal)
+		return (lines[0].Contains("\u001b[1m", StringComparison.Ordinal) || StartsBold(lines[0]))
+			&& NormalizeLine(lines[0]).Length > 0
 			? CreateHeader([lines[0]])
 			: PagerHeader.Empty;
+	}
+
+	// Bold set by the sequences the line starts with, before any text, within a combined sequence such as the
+	// human palette's table header (ESC[1;38;5;221m). A 1 that is an extended colour's argument, as in 38;5;1,
+	// is a colour. Bold starting later in the line styles text within it, not a header.
+	private static bool StartsBold(string line)
+	{
+		var start = 0;
+		while (line.AsSpan(start).StartsWith("\u001b[", StringComparison.Ordinal))
+		{
+			var end = start + 2;
+			while (end < line.Length && (char.IsAsciiDigit(line[end]) || line[end] == ';'))
+			{
+				end++;
+			}
+
+			if (end >= line.Length || line[end] != 'm')
+			{
+				return false;
+			}
+
+			if (SgrSetsBold(line.AsSpan(start + 2, end - start - 2)))
+			{
+				return true;
+			}
+
+			start = end + 1;
+		}
+
+		return false;
+	}
+
+	private static bool SgrSetsBold(ReadOnlySpan<char> parameters)
+	{
+		var colourArguments = 0;
+		var colourModeNext = false;
+		foreach (var range in parameters.Split(';'))
+		{
+			var parameter = parameters[range];
+			if (colourModeNext)
+			{
+				// 5 takes a palette index, 2 an RGB triple.
+				colourArguments = parameter is "5" ? 1 : parameter is "2" ? 3 : 0;
+				colourModeNext = false;
+			}
+			else if (colourArguments > 0)
+			{
+				colourArguments--;
+			}
+			else if (parameter is "38" or "48" or "58")
+			{
+				colourModeNext = true;
+			}
+			else if (parameter is "1")
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	// Label by label: a repeated header is padded to its own page's column widths, and its separator line with it.

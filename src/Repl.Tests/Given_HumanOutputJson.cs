@@ -272,6 +272,49 @@ public sealed class Given_HumanOutputJson
 		output.Should().NotContain("{", "the rows render as table cells, not as JSON literals");
 	}
 
+	[TestMethod]
+	[Description("A property declared as JSON holding null is a JSON null, as --json writes it: it reads null, not an empty value, both as a field and as a table cell.")]
+	public async Task When_AJsonTypedPropertyIsNull_Then_ItReadsNull()
+	{
+		(await RenderAsync(new NullableHolder("h1", Payload: null))).Should().MatchRegex(@"Payload\s*:\s*null");
+
+		var page = new ReplPage<NullableHolder>(
+			[new NullableHolder("a", Payload: null), new NullableHolder("b", new JsonObject { ["x"] = 1 })],
+			new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 2));
+		var rowA = (await RenderAsync(page)).Split(Environment.NewLine).Single(line => line.StartsWith('a'));
+		rowA.TrimEnd().Should().EndWith("null");
+	}
+
+	[TestMethod]
+	[Description("An explicit NullDisplayText still wins over the JSON null of a property declared as JSON.")]
+	public async Task When_AJsonTypedPropertyHasANullDisplayText_Then_ItIsUsed()
+	{
+		(await RenderAsync(new DisplayedHolder(Payload: null))).Should().MatchRegex(@"Payload\s*:\s*\(none\)");
+	}
+
+	[TestMethod]
+	[Description("With ANSI on, the table header is styled bold within a combined sequence; the pager must still recognize it, or every JSON page, which carries its own header, would repeat it.")]
+	public async Task When_AnAnsiPagerAppendsAPageWithTheSameKeys_Then_OnlyItsRowIsAdded()
+	{
+		var transformer = new HumanOutputTransformer(
+			() => new HumanRenderSettings(Width: 120, UseAnsi: true, Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
+		var first = await transformer.TransformPageAsync(
+			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None);
+		var next = await transformer.TransformPageAsync(
+			SingleRowPage(new JsonObject { ["id"] = 22, ["name"] = "bbbbbb" }), ResultFlowPageRenderMode.Continuation, CancellationToken.None);
+
+		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
+		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
+
+		session.HeaderLines.Should().ContainSingle("the styled header line is the pinned header");
+		session.Lines.Should().HaveCount(2, "the first page's row and the continuation's row, with no repeated header");
+	}
+
+	private sealed record NullableHolder(string Name, JsonNode? Payload);
+
+	private sealed record DisplayedHolder(
+		[property: System.ComponentModel.DataAnnotations.DisplayFormat(NullDisplayText = "(none)")] JsonNode? Payload);
+
 	private sealed record Holder(string Name, JsonObject Payload);
 
 	private sealed record Owner(string Login);

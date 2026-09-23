@@ -39,8 +39,10 @@ data rather than the CLR members of those types:
   every item on it is a JSON null.
 - Values are compact JSON literals. So a string shows as `"x"`, an explicit JSON null shows as `null`, and
   a nested object or array shows as itself.
-- A JSON value held by a property of an ordinary result object shows as a compact literal too. One passed
-  as a result's details renders like a JSON result.
+- A JSON value held by a property of an ordinary result object shows as a compact literal too, and a
+  property declared as JSON (`JsonNode?`, `JsonElement?`) that holds `null` reads `null`, unless its
+  `DisplayFormat` sets a `NullDisplayText`. A JSON value passed as a result's details renders like a JSON
+  result.
 
 In JSON strings and keys, control characters and Unicode format characters (such as bidirectional
 overrides) are escaped. So a payload can neither drive the terminal nor make it display something other

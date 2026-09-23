@@ -30,6 +30,12 @@ internal static class JsonHumanShape
 
 	public static bool IsJson([NotNullWhen(true)] object? value) => value is JsonNode or JsonElement;
 
+	/// <summary>
+	/// What a <see langword="null"/> declared as <paramref name="type"/> reads as: a JSON null, as <c>--json</c>
+	/// writes it, for a JSON type; <see langword="null"/>, the renderer's own default, for any other.
+	/// </summary>
+	public static string? NullText(Type type) => IsJsonType(type) ? Literal(node: null) : null;
+
 	/// <summary>Whether items declared as <paramref name="type"/> are JSON data, nullable elements included.</summary>
 	public static bool IsJsonType(Type type) =>
 		typeof(JsonNode).IsAssignableFrom(type) || (Nullable.GetUnderlyingType(type) ?? type) == typeof(JsonElement);
@@ -114,8 +120,9 @@ internal static class JsonHumanShape
 	/// <summary>
 	/// Reads <paramref name="values"/> as rows of JSON objects. The columns are the union of their keys in
 	/// first-seen order, so a key missing from one row leaves its cell empty rather than dropping the row.
-	/// A JSON null, as a <see langword="null"/> value or a null <see cref="JsonElement"/>, is an empty row. Fails if any other value is not a JSON object, or if no
-	/// row has a key: a table with no columns would show nothing of them.
+	/// A JSON null, as a <see langword="null"/> value or a null <see cref="JsonElement"/>, is an empty row. Fails
+	/// if any other value is not a JSON object, or if no row has a key: a table with no columns would show
+	/// nothing of them.
 	/// </summary>
 	public static bool TryGetObjectRows(
 		IReadOnlyList<object?> values,

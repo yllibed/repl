@@ -476,7 +476,7 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 					property,
 					string.IsNullOrWhiteSpace(display?.GetName()) ? property.Name : display!.GetName()!,
 					display?.GetOrder(),
-					displayFormat?.NullDisplayText);
+					displayFormat?.NullDisplayText ?? JsonHumanShape.NullText(property.PropertyType));
 			})
 			.Where(member => member is not null)
 			.Select(member => member!)

@@ -282,6 +282,17 @@ public sealed partial class Given_SpectreHumanOutputJson
 	private static ReplPage<JsonObject> SingleRowPage(JsonObject row) =>
 		new([row], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1));
 
+	[TestMethod]
+	[Description("A property declared as JSON holding null is a JSON null, as --json writes it: it reads null, not an empty value.")]
+	public async Task When_AJsonTypedPropertyIsNull_Then_ItReadsNull()
+	{
+		var output = await RenderAsync(new NullableHolder("h1", Payload: null)).ConfigureAwait(false);
+
+		output.Should().MatchRegex(@"Payload\W+null");
+	}
+
+	private sealed record NullableHolder(string Name, JsonNode? Payload);
+
 	private sealed record Holder(string Name, JsonObject Payload);
 
 	private sealed record Owner(string Login);
