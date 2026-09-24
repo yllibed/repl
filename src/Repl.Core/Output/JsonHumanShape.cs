@@ -41,8 +41,8 @@ internal static class JsonHumanShape
 		typeof(JsonNode).IsAssignableFrom(type) || (Nullable.GetUnderlyingType(type) ?? type) == typeof(JsonElement);
 
 	/// <summary>
-	/// Reads <paramref name="value"/> as a JSON node. A <see cref="JsonElement"/> is wrapped, and the element
-	/// itself is never modified. A JSON null comes back as a <see langword="null"/> node with
+	/// Reads <paramref name="value"/> as a JSON node. A <see cref="JsonElement"/> is copied into nodes, and the
+	/// element itself is never modified. A JSON null comes back as a <see langword="null"/> node with
 	/// <see langword="true"/>.
 	/// </summary>
 	public static bool TryGetNode(object? value, out JsonNode? node)
@@ -53,17 +53,41 @@ internal static class JsonHumanShape
 				node = jsonNode;
 				return true;
 			case JsonElement element:
-				node = element.ValueKind switch
-				{
-					JsonValueKind.Object => JsonObject.Create(element),
-					JsonValueKind.Array => JsonArray.Create(element),
-					JsonValueKind.Null or JsonValueKind.Undefined => null,
-					_ => JsonValue.Create(element),
-				};
+				node = FromElement(element);
 				return true;
 			default:
 				node = null;
 				return false;
+		}
+	}
+
+	// Built property by property rather than through JsonObject.Create: an element may repeat a property name,
+	// which a JsonObject cannot hold, and enumerating one created over such an element throws. The last value
+	// wins, as JavaScript reads it. Scalars keep referring to the element rather than copying its text.
+	private static JsonNode? FromElement(JsonElement element)
+	{
+		switch (element.ValueKind)
+		{
+			case JsonValueKind.Object:
+				var jsonObject = new JsonObject();
+				foreach (var property in element.EnumerateObject())
+				{
+					jsonObject[property.Name] = FromElement(property.Value);
+				}
+
+				return jsonObject;
+			case JsonValueKind.Array:
+				var jsonArray = new JsonArray();
+				foreach (var item in element.EnumerateArray())
+				{
+					jsonArray.Add(FromElement(item));
+				}
+
+				return jsonArray;
+			case JsonValueKind.Null or JsonValueKind.Undefined:
+				return null;
+			default:
+				return JsonValue.Create(element);
 		}
 	}
 

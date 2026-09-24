@@ -332,6 +332,16 @@ public sealed partial class Given_SpectreHumanOutputJson
 		output.Should().MatchRegex(@"Payload\W+null");
 	}
 
+	[TestMethod]
+	[Description("Line and paragraph separators (U+2028, U+2029) in a JSON key or string are escaped too: the pager breaks lines at them, so left raw they would split a one-line header or row.")]
+	public async Task When_AJsonStringCarriesLineSeparators_Then_TheyAreEscaped()
+	{
+		var output = await RenderRawAsync(new JsonArray(new JsonObject { ["a\u2028b"] = "c\u2029d" })).ConfigureAwait(false);
+
+		output.Should().NotContain("\u2028").And.NotContain("\u2029");
+		output.Should().Contain(@"a\u2028b").And.Contain(@"c\u2029d");
+	}
+
 	private sealed record NullableHolder(string Name, JsonNode? Payload);
 
 	private sealed record Holder(string Name, JsonObject Payload);

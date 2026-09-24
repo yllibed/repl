@@ -31,7 +31,7 @@ public sealed class Given_ResultFlowOutputTransformer
 				TotalCount: 250,
 				PageSize: 2));
 
-		var rendered = await ((IResultFlowOutputTransformer)transformer).RenderPageAsync(page, CancellationToken.None);
+		var rendered = await ((ILayoutDeclaringOutputTransformer)transformer).RenderPageAsync(page, CancellationToken.None);
 
 		var lines = rendered.Text.Split(Environment.NewLine);
 		lines.Should().HaveCount(4, "the header, its separator and the two rows");
@@ -62,7 +62,7 @@ public sealed class Given_ResultFlowOutputTransformer
 				TotalCount: 250,
 				PageSize: 1));
 
-		var rendered = await ((IResultFlowOutputTransformer)transformer).RenderAsync(page, CancellationToken.None);
+		var rendered = await ((ILayoutDeclaringOutputTransformer)transformer).RenderAsync(page, CancellationToken.None);
 
 		rendered.Text.Split(Environment.NewLine)[^1].Should().StartWith("Showing 1 of 250.");
 		rendered.Layout.HeaderLineCount.Should().Be(2);

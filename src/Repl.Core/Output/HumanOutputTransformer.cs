@@ -7,7 +7,7 @@ using System.Text.Json.Nodes;
 
 namespace Repl;
 
-internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
+internal sealed class HumanOutputTransformer : ILayoutDeclaringOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
 

@@ -1359,7 +1359,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken)
 	{
 		var nextCursor = page.PageInfo.NextCursor;
-		var (initialPayload, initialLayout) = await RenderPagerPageAsync(transformer, page, cancellationToken)
+		var (initialPayload, initialLayout) = await RenderPagerPageAsync(
+				transformer,
+				page,
+				ResultFlowPageRenderMode.Initial,
+				cancellationToken)
 			.ConfigureAwait(false);
 		var pagerPayload = TryColorizeStructuredPayload(initialPayload, transformer.Name, isInteractive);
 		await ResultFlowPager.WriteAsync(
@@ -1392,7 +1396,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			var nextRequest = request with { Cursor = nextCursor };
 			var nextPage = await FetchPageSourceAsync(source, nextRequest, token).ConfigureAwait(false);
 			nextCursor = nextPage.PageInfo.NextCursor;
-			var (nextPayload, nextLayout) = await RenderPagerPageAsync(transformer, nextPage, token)
+			var (nextPayload, nextLayout) = await RenderPagerPageAsync(
+					transformer,
+					nextPage,
+					ResultFlowPageRenderMode.Continuation,
+					token)
 				.ConfigureAwait(false);
 			return new ResultFlowPagerPage(
 				TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive),
@@ -1414,35 +1422,41 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return await RefuseGlobalOptionErrorsAsync(globalOptions, cancellationToken).ConfigureAwait(false);
 	}
 
-	// A result-flow transformer declares the layout it renders; for any other, the pager detects it from the text.
+	// A transformer that declares its layout says where its header and footer are; for any other, the pager
+	// detects them from the text.
 	private static async ValueTask<(string Payload, RenderedLayout? Layout)> RenderPayloadAsync(
 		IOutputTransformer transformer,
 		object? value,
 		CancellationToken cancellationToken)
 	{
-		if (transformer is IResultFlowOutputTransformer resultFlowTransformer)
+		if (transformer is ILayoutDeclaringOutputTransformer declaring)
 		{
-			var rendered = await resultFlowTransformer.RenderAsync(value, cancellationToken).ConfigureAwait(false);
+			var rendered = await declaring.RenderAsync(value, cancellationToken).ConfigureAwait(false);
 			return (rendered.Text, rendered.Layout);
 		}
 
 		return (await transformer.TransformAsync(value, cancellationToken).ConfigureAwait(false), null);
 	}
 
+	// A transformer built against 0.11 still gets the render mode that asks it to leave a continuation's header
+	// out, which the pager then detects on the first page only.
 	private static async ValueTask<(string Payload, RenderedLayout? Layout)> RenderPagerPageAsync(
 		IOutputTransformer transformer,
 		IReplPage page,
+		ResultFlowPageRenderMode mode,
 		CancellationToken cancellationToken)
 	{
 		var displayPage = CreatePagerDisplayPage(page);
-		if (transformer is IResultFlowOutputTransformer resultFlowTransformer)
+		if (transformer is ILayoutDeclaringOutputTransformer declaring)
 		{
-			var rendered = await resultFlowTransformer.RenderPageAsync(displayPage, cancellationToken)
-				.ConfigureAwait(false);
+			var rendered = await declaring.RenderPageAsync(displayPage, cancellationToken).ConfigureAwait(false);
 			return (rendered.Text, rendered.Layout);
 		}
 
-		return (await transformer.TransformAsync(displayPage, cancellationToken).ConfigureAwait(false), null);
+		var text = transformer is IResultFlowOutputTransformer resultFlowTransformer
+			? await resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken).ConfigureAwait(false)
+			: await transformer.TransformAsync(displayPage, cancellationToken).ConfigureAwait(false);
+		return (text, null);
 	}
 
 	private async ValueTask WritePayloadAsync(

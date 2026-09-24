@@ -12,7 +12,7 @@ namespace Repl.Spectre;
 /// <summary>
 /// Output transformer that renders values using light Spectre.Console layouts.
 /// </summary>
-internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransformer
+internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
 	private readonly OutputOptions? _outputOptions;

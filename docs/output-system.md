@@ -41,7 +41,8 @@ data rather than the CLR members of those types:
 - A page declared with a JSON item type, such as `IReplPageSource<JsonNode?>`, renders as JSON even when
   every item on it is a JSON null.
 - Values are compact JSON literals. So a string shows as `"x"`, an explicit JSON null shows as `null`, and
-  a nested object or array shows as itself.
+  a nested object or array shows as itself. A `JsonElement` object that repeats a property name shows the
+  last value given for it, as JavaScript reads it.
 - A JSON value held by a property of an ordinary result object shows as a compact literal too, and a
   property declared as JSON (`JsonNode?`, `JsonElement?`) that holds `null` reads `null`, unless its
   `DisplayFormat` sets a `NullDisplayText`. A JSON value passed as a result's details renders like a JSON

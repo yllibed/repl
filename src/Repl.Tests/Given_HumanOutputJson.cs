@@ -416,6 +416,31 @@ public sealed class Given_HumanOutputJson
 		session.Lines.Should().HaveCount(2, "the first page's row and the continuation's row, with no repeated header");
 	}
 
+	[TestMethod]
+	[Description("Line and paragraph separators (U+2028, U+2029) in a JSON key or string are escaped too: the pager breaks lines at them, so left raw they would split a one-line header or row.")]
+	public async Task When_AJsonStringCarriesLineSeparators_Then_TheyAreEscaped()
+	{
+		var output = await RenderAsync(new JsonArray(new JsonObject { ["a\u2028b"] = "c\u2029d" }));
+
+		output.Should().NotContain("\u2028").And.NotContain("\u2029");
+		output.Should().Contain(@"a\u2028b").And.Contain(@"c\u2029d");
+	}
+
+	[TestMethod]
+	[Description("A JsonElement may repeat a property name, which a JsonObject cannot hold: the last value is the one shown, as JavaScript reads it, rather than rendering failing.")]
+	public async Task When_AJsonElementRepeatsAPropertyName_Then_TheLastValueIsShown()
+	{
+		using var document = JsonDocument.Parse("""{"id":1,"id":2,"nested":{"x":1,"x":3}}""");
+		using var rows = JsonDocument.Parse("""[{"id":1,"id":2}]""");
+
+		var output = await RenderAsync(document.RootElement);
+		var table = await RenderAsync(rows.RootElement);
+
+		output.Should().MatchRegex(@"id\s*:\s*2");
+		output.Should().Contain("""{"x":3}""");
+		table.Split(Environment.NewLine)[^1].Trim().Should().Be("2");
+	}
+
 	private sealed record NullableHolder(string Name, JsonNode? Payload);
 
 	private sealed record DisplayedHolder(

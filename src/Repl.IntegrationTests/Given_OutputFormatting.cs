@@ -348,6 +348,65 @@ public sealed partial class Given_OutputFormatting
 		StripAnsi(output.ToString()).Should().Contain("Showing 10 of 20. Next data page: rerun with");
 	}
 
+	[TestMethod]
+	[Description("A transformer built against 0.11 implements the page-rendering interface as it shipped: it still pages, asked for the first page and then for continuations, whose header it leaves out.")]
+	public void When_PagingThroughATransformerBuiltAgainstTheEarlierInterface_Then_ItGetsEachRenderMode()
+	{
+		var legacy = new LegacyPageTransformer();
+		var sut = ReplApp.Create();
+		sut.Options(options =>
+		{
+			options.Output.AddTransformer("legacy", legacy);
+			options.Output.AddAlias("legacy", "legacy");
+		});
+		sut.Map("rows", (IReplPagingContext paging) =>
+			paging.CreateSource<ContactRow>((request, _) =>
+			{
+				var index = request.Cursor is null ? 0 : 1;
+				return ValueTask.FromResult(new ReplPage<ContactRow>(
+					[new ContactRow($"row {index}", "x@example.com")],
+					new ReplPageInfo(request.Cursor, index == 0 ? "1" : null, 2, request.PageSize)));
+			}));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		ReplSessionIO.KeyReader = new QueueKeyReader([.. Enumerable.Repeat(Key(ConsoleKey.Spacebar, ' '), 3)]);
+		ReplSessionIO.WindowSize = (100, 20);
+
+		var exitCode = sut.Run(["rows", "--legacy", "--result:page-size=1", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		legacy.Modes.Should().Equal(ResultFlowPageRenderMode.Initial, ResultFlowPageRenderMode.Continuation);
+		output.ToString().Should().Contain("row 0").And.Contain("row 1");
+	}
+
+	private sealed class LegacyPageTransformer : IResultFlowOutputTransformer
+	{
+		public List<ResultFlowPageRenderMode> Modes { get; } = [];
+
+		public string Name => "legacy";
+
+		public bool SupportsInteractivePaging => true;
+
+		public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default) =>
+			ValueTask.FromResult(value is IReplPage page ? Render(page, withHeader: true) : string.Empty);
+
+		public ValueTask<string> TransformPageAsync(
+			IReplPage page,
+			ResultFlowPageRenderMode mode,
+			CancellationToken cancellationToken = default)
+		{
+			Modes.Add(mode);
+			return ValueTask.FromResult(Render(page, withHeader: mode == ResultFlowPageRenderMode.Initial));
+		}
+
+		private static string Render(IReplPage page, bool withHeader) =>
+			string.Join(
+				Environment.NewLine,
+				(withHeader ? ["Name", "----"] : Array.Empty<string>())
+					.Concat(page.UntypedItems.OfType<ContactRow>().Select(row => row.Name)));
+	}
+
 	private static bool IsHeader(string line, params string[] columns) =>
 		line.Split(' ', StringSplitOptions.RemoveEmptyEntries).SequenceEqual(columns, StringComparer.Ordinal);
 
