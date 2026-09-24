@@ -1286,11 +1286,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				.ConfigureAwait(false);
 		}
 
-		var payload = await transformer.TransformAsync(result, cancellationToken).ConfigureAwait(false);
-		payload = TryColorizeStructuredPayload(payload, format, isInteractive);
+		var (rendered, layout) = await RenderPayloadAsync(transformer, result, cancellationToken).ConfigureAwait(false);
+		var payload = TryColorizeStructuredPayload(rendered, format, isInteractive);
 		if (!string.IsNullOrEmpty(payload))
 		{
-			await WritePayloadAsync(payload, transformer, resultFlow, cancellationToken).ConfigureAwait(false);
+			await WritePayloadAsync(payload, layout, transformer, resultFlow, cancellationToken).ConfigureAwait(false);
 		}
 
 		return true;
@@ -1305,11 +1305,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	{
 		var request = CreatePageSourceRequest(resultFlow);
 		var page = await FetchPageSourceAsync(source, request, cancellationToken).ConfigureAwait(false);
-		var payload = await transformer.TransformAsync(page, cancellationToken).ConfigureAwait(false);
-		payload = TryColorizeStructuredPayload(payload, transformer.Name, isInteractive);
+		var (rendered, layout) = await RenderPayloadAsync(transformer, page, cancellationToken).ConfigureAwait(false);
+		var payload = TryColorizeStructuredPayload(rendered, transformer.Name, isInteractive);
 
 		if (!TryCreatePager(
 				payload,
+				layout,
 				transformer,
 				resultFlow,
 				page.PageInfo.HasMore,
@@ -1358,9 +1359,13 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken)
 	{
 		var nextCursor = page.PageInfo.NextCursor;
-		var pagerPayload = await TransformPagerPageAsync(transformer, page, ResultFlowPageRenderMode.Initial, cancellationToken)
+		var (initialPayload, initialLayout) = await RenderPagerPageAsync(
+				transformer,
+				page,
+				ResultFlowPageRenderMode.Initial,
+				cancellationToken)
 			.ConfigureAwait(false);
-		pagerPayload = TryColorizeStructuredPayload(pagerPayload, transformer.Name, isInteractive);
+		var pagerPayload = TryColorizeStructuredPayload(initialPayload, transformer.Name, isInteractive);
 		await ResultFlowPager.WriteAsync(
 				pagerPayload,
 				ReplSessionIO.Output,
@@ -1372,6 +1377,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 					PagerMode = pagerMode,
 					AnsiEnabled = ansiEnabled,
 					HasMorePayload = page.PageInfo.HasMore,
+					PayloadLayout = initialLayout,
 					FetchNextPayload = FetchNextPayloadAsync,
 					PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
 					MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
@@ -1390,13 +1396,17 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			var nextRequest = request with { Cursor = nextCursor };
 			var nextPage = await FetchPageSourceAsync(source, nextRequest, token).ConfigureAwait(false);
 			nextCursor = nextPage.PageInfo.NextCursor;
-			var nextPayload = await TransformPagerPageAsync(transformer, nextPage, ResultFlowPageRenderMode.Continuation, token)
+			var (nextPayload, nextLayout) = await RenderPagerPageAsync(
+					transformer,
+					nextPage,
+					ResultFlowPageRenderMode.Continuation,
+					token)
 				.ConfigureAwait(false);
-			nextPayload = TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive);
 			return new ResultFlowPagerPage(
-				nextPayload,
+				TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive),
 				nextPage.PageInfo.HasMore,
-				ContainsPresentationChrome: false);
+				ContainsPresentationChrome: false,
+				nextLayout);
 		}
 	}
 
@@ -1412,26 +1422,53 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return await RefuseGlobalOptionErrorsAsync(globalOptions, cancellationToken).ConfigureAwait(false);
 	}
 
-	private static ValueTask<string> TransformPagerPageAsync(
+	// A transformer that declares its layout says where its header and footer are; for any other, the pager
+	// detects them from the text.
+	private static async ValueTask<(string Payload, RenderedLayout? Layout)> RenderPayloadAsync(
+		IOutputTransformer transformer,
+		object? value,
+		CancellationToken cancellationToken)
+	{
+		if (transformer is ILayoutDeclaringOutputTransformer declaring)
+		{
+			var rendered = await declaring.RenderAsync(value, cancellationToken).ConfigureAwait(false);
+			return (rendered.Text, rendered.Layout);
+		}
+
+		return (await transformer.TransformAsync(value, cancellationToken).ConfigureAwait(false), null);
+	}
+
+	// A transformer built against 0.11 still gets the render mode that asks it to leave a continuation's header
+	// out, which the pager then detects on the first page only.
+	private static async ValueTask<(string Payload, RenderedLayout? Layout)> RenderPagerPageAsync(
 		IOutputTransformer transformer,
 		IReplPage page,
 		ResultFlowPageRenderMode mode,
 		CancellationToken cancellationToken)
 	{
 		var displayPage = CreatePagerDisplayPage(page);
-		return transformer is IResultFlowOutputTransformer resultFlowTransformer
-			? resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken)
-			: transformer.TransformAsync(displayPage, cancellationToken);
+		if (transformer is ILayoutDeclaringOutputTransformer declaring)
+		{
+			var rendered = await declaring.RenderPageAsync(displayPage, cancellationToken).ConfigureAwait(false);
+			return (rendered.Text, rendered.Layout);
+		}
+
+		var text = transformer is IResultFlowOutputTransformer resultFlowTransformer
+			? await resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken).ConfigureAwait(false)
+			: await transformer.TransformAsync(displayPage, cancellationToken).ConfigureAwait(false);
+		return (text, null);
 	}
 
 	private async ValueTask WritePayloadAsync(
 		string payload,
+		RenderedLayout? layout,
 		IOutputTransformer transformer,
 		ResultFlowInvocationOptions? resultFlow,
 		CancellationToken cancellationToken)
 	{
 		if (TryCreatePager(
 				payload,
+				layout?.WithFooter(0),
 				transformer,
 				resultFlow,
 				out var keyReader,
@@ -1448,6 +1485,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 						VisibleRows = visibleRows,
 						PagerMode = pagerMode,
 						AnsiEnabled = ansiEnabled,
+						// This pager cannot fetch more, so a footer asking to rerun for the next page is the only way
+						// to continue, and stays in view instead of being stripped.
+						PayloadLayout = layout?.WithFooter(0),
 						PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
 						MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
 					},
@@ -1461,6 +1501,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private bool TryCreatePager(
 		string payload,
+		RenderedLayout? layout,
 		IOutputTransformer transformer,
 		ResultFlowInvocationOptions? resultFlow,
 		[NotNullWhen(true)] out IReplKeyReader? keyReader,
@@ -1469,6 +1510,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		out bool ansiEnabled)
 		=> TryCreatePager(
 			payload,
+			layout,
 			transformer,
 			resultFlow,
 			hasMorePayload: false,
@@ -1479,6 +1521,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private bool TryCreatePager(
 		string payload,
+		RenderedLayout? layout,
 		IOutputTransformer transformer,
 		ResultFlowInvocationOptions? resultFlow,
 		bool hasMorePayload,
@@ -1501,7 +1544,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 
 		if (!TryResolvePagerVisibleRows(out visibleRows)
-			|| (!hasMorePayload && ResultFlowPager.CountLines(payload) <= visibleRows)
+			|| (!hasMorePayload && ResultFlowPager.CountLines(payload, layout) <= visibleRows)
 			|| !TryResolvePagerKeyReader(out keyReader))
 		{
 			return false;

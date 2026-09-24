@@ -6,14 +6,10 @@ namespace Repl.Tests;
 public sealed class Given_ResultFlowOutputTransformer
 {
 	[TestMethod]
-	[Description("Result-flow continuation payloads render table rows only so pagers do not receive repeated headers or page footers.")]
-	public async Task When_RenderingHumanContinuationPage_Then_HeaderAndFooterAreOmitted()
+	[Description("A page rendered for the pager carries its table header on every page, declared with the columns it names, and no footer: the pager, not the transformer, drops a header that repeats the previous page's columns.")]
+	public async Task When_RenderingAHumanPageForThePager_Then_ItsHeaderIsDeclaredAndItsFooterOmitted()
 	{
-		var transformer = new HumanOutputTransformer(
-			() => new HumanRenderSettings(
-				Width: 120,
-				UseAnsi: false,
-				Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
+		var transformer = CreateTransformer();
 		var page = new ReplPage<ActivityRow>(
 			[
 				new ActivityRow(
@@ -35,29 +31,22 @@ public sealed class Given_ResultFlowOutputTransformer
 				TotalCount: 250,
 				PageSize: 2));
 
-		var output = await ((IResultFlowOutputTransformer)transformer).TransformPageAsync(
-			page,
-			ResultFlowPageRenderMode.Continuation,
-			CancellationToken.None);
+		var rendered = await ((ILayoutDeclaringOutputTransformer)transformer).RenderPageAsync(page, CancellationToken.None);
 
-		output.Should().NotContain("#");
-		output.Should().NotContain("---");
-		output.Should().NotContain("Showing ");
-		output.Should().Contain("49");
-		output.Should().Contain("identity batch 10 validated successfully");
-		output.Should().Contain("50");
-		output.Should().Contain("billing batch 10 queued successfully");
+		var lines = rendered.Text.Split(Environment.NewLine);
+		lines.Should().HaveCount(4, "the header, its separator and the two rows");
+		lines[0].Should().MatchRegex(@"^#\s+At\s+Area\s+Event\s+Summary");
+		rendered.Text.Should().NotContain("Showing ");
+		rendered.Layout.HeaderLineCount.Should().Be(2);
+		rendered.Layout.Columns.Should().Equal("#", "At", "Area", "Event", "Summary");
+		rendered.Layout.FooterLineCount.Should().Be(0);
 	}
 
 	[TestMethod]
-	[Description("Result-flow initial payloads keep the table header so the first page remains readable.")]
-	public async Task When_RenderingHumanInitialPage_Then_HeaderIsIncluded()
+	[Description("A page rendered on its own keeps the footer asking to rerun for more, and declares it, so the pager strips exactly that line rather than any line that reads like one.")]
+	public async Task When_RenderingAHumanPageOnItsOwn_Then_ItsFooterIsDeclared()
 	{
-		var transformer = new HumanOutputTransformer(
-			() => new HumanRenderSettings(
-				Width: 120,
-				UseAnsi: false,
-				Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
+		var transformer = CreateTransformer();
 		var page = new ReplPage<ActivityRow>(
 			[
 				new ActivityRow(
@@ -73,15 +62,18 @@ public sealed class Given_ResultFlowOutputTransformer
 				TotalCount: 250,
 				PageSize: 1));
 
-		var output = await ((IResultFlowOutputTransformer)transformer).TransformPageAsync(
-			page,
-			ResultFlowPageRenderMode.Initial,
-			CancellationToken.None);
+		var rendered = await ((ILayoutDeclaringOutputTransformer)transformer).RenderAsync(page, CancellationToken.None);
 
-		output.Should().Contain("#");
-		output.Should().Contain("At");
-		output.Should().NotContain("Showing ");
+		rendered.Text.Split(Environment.NewLine)[^1].Should().StartWith("Showing 1 of 250.");
+		rendered.Layout.HeaderLineCount.Should().Be(2);
+		rendered.Layout.FooterLineCount.Should().Be(1);
 	}
+
+	private static HumanOutputTransformer CreateTransformer() =>
+		new(() => new HumanRenderSettings(
+			Width: 120,
+			UseAnsi: false,
+			Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
 
 	[TestMethod]
 	[Description("Human page footers never render unsafe cursor text directly.")]

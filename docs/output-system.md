@@ -23,6 +23,37 @@ The active output format is resolved in this order:
 | `yaml`     | YAML serialization.                  |
 | `markdown` | Markdown table/document rendering.   |
 
+### JSON results
+
+A handler can return `System.Text.Json.Nodes.JsonNode` (`JsonObject`, `JsonArray`, `JsonValue`) or a
+`JsonElement`, including as rows of an `IReplPageSource<T>`. `human` and `spectre` then render the JSON
+data rather than the CLR members of those types:
+
+- An object becomes one `key: value` line per field.
+- In `spectre` as in `human`, a table's header labels stay on one line: a label wider than its column is
+  truncated rather than wrapped, and a line break in a label reads as a space.
+- Rows that are all objects with at least one key become a table. Its columns are the union of the rows'
+  keys in first-seen order, matched ordinally, and a key missing from a row leaves that cell empty. The rows'
+  keys, not a type, define the columns, so each page the pager fetches can name other columns than the page
+  before it. See [Result Flow And Paging](result-flow.md) for how the pager shows their headers.
+- An array of scalars becomes one value per line. So does a page of rows among which one is a JSON null or
+  an empty object: each row reads as its literal, since a blank table row would read as no row at all.
+- A page declared with a JSON item type, such as `IReplPageSource<JsonNode?>`, renders as JSON even when
+  every item on it is a JSON null.
+- Values are compact JSON literals. So a string shows as `"x"`, an explicit JSON null shows as `null`, and
+  a nested object or array shows as itself. A `JsonElement` object that repeats a property name shows the
+  last value given for it, as JavaScript reads it.
+- A JSON value held by a property of an ordinary result object shows as a compact literal too, and a
+  property declared as JSON (`JsonNode?`, `JsonElement?`) that holds `null` reads `null`, unless its
+  `DisplayFormat` sets a `NullDisplayText`. A JSON value passed as a result's details renders like a JSON
+  result.
+
+In JSON strings and keys, control characters and Unicode format characters (such as bidirectional
+overrides) are escaped. So a payload can neither drive the terminal nor make it display something other
+than the data. Non-ASCII text stays readable. This covers JSON values only: a plain CLR `string` in a
+result is still written as-is. The `json` format and MCP output are unchanged, and `markdown` does not
+special-case JSON yet.
+
 ### Format aliases
 
 The built-in aliases are:

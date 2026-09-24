@@ -14,7 +14,11 @@ internal static class ResultFlowPager
 	private static readonly System.Text.CompositeFormat FullStatusBufferLimitFormat =
 		System.Text.CompositeFormat.Parse(FullStatusBufferLimit);
 
-	internal static int CountLines(string payload) => PagerPayloadParser.Parse(payload, header: null).TotalLineCount;
+	internal static int CountLines(string payload, RenderedLayout? layout = null) =>
+		(layout is null
+			? PagerPayloadParser.Parse(payload, header: null)
+			: PagerPayloadParser.ParseDeclared(payload, header: null, previousLayout: null, layout))
+		.TotalLineCount;
 
 	internal static ValueTask WriteAsync(
 		string payload,
@@ -53,6 +57,7 @@ internal static class ResultFlowPager
 				options.VisibleRowsProvider,
 				options.AnsiEnabled,
 				options.HasMorePayload,
+				options.PayloadLayout,
 				options.FetchNextPayload,
 				cancellationToken)
 			.ConfigureAwait(false))
@@ -60,7 +65,7 @@ internal static class ResultFlowPager
 			return;
 		}
 
-		var session = new PagerSession(payload, options.HasMorePayload, maxBufferedLines);
+		var session = new PagerSession(payload, options.HasMorePayload, maxBufferedLines, options.PayloadLayout);
 		await RenderBuiltInAsync(
 				mode,
 				session,
@@ -140,6 +145,7 @@ internal static class ResultFlowPager
 		Func<int>? visibleRowsProvider,
 		bool ansiEnabled,
 		bool hasMorePayload,
+		RenderedLayout? payloadLayout,
 		Func<CancellationToken, ValueTask<ResultFlowPagerPage?>>? fetchNextPayload,
 		CancellationToken cancellationToken)
 	{
@@ -147,6 +153,8 @@ internal static class ResultFlowPager
 		{
 			return false;
 		}
+
+		var previousLayout = payloadLayout;
 
 		foreach (var renderer in pagerRenderers)
 		{
@@ -175,7 +183,26 @@ internal static class ResultFlowPager
 		async ValueTask<ReplPagerPayload?> FetchPublicPayloadAsync(CancellationToken token)
 		{
 			var next = await fetchNextPayload!(token).ConfigureAwait(false);
-			return next is null ? null : new ReplPagerPayload(next.Payload, next.HasMore);
+			return next is null ? null : new ReplPagerPayload(WithoutRepeatedHeader(next), next.HasMore);
+		}
+
+		// A custom renderer gets text only, so a declared header naming the previous page's columns is stripped
+		// for it, as the built-in pager drops it; a header naming other columns stays with its rows.
+		string WithoutRepeatedHeader(ResultFlowPagerPage page)
+		{
+			if (previousLayout is not { } previous || page.Layout is not { } layout)
+			{
+				return page.Payload;
+			}
+
+			previousLayout = layout;
+			if (!layout.NamesSameColumns(previous))
+			{
+				return page.Payload;
+			}
+
+			var parsed = PagerPayloadParser.ParseDeclared(page.Payload, PagerHeader.Empty, previous, layout);
+			return string.Join(Environment.NewLine, parsed.ContentLines);
 		}
 	}
 
@@ -282,7 +309,7 @@ internal static class ResultFlowPager
 			return false;
 		}
 
-		session.Append(nextPayload.Payload, nextPayload.HasMore, nextPayload.ContainsPresentationChrome);
+		session.Append(nextPayload.Payload, nextPayload.HasMore, nextPayload.ContainsPresentationChrome, nextPayload.Layout);
 		return true;
 	}
 
