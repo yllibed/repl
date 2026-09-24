@@ -31,83 +31,44 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-		var settings = _resolveRenderSettings();
-
-		if (value is null)
-		{
-			return ValueTask.FromResult(string.Empty);
-		}
-
-		if (value is IReplPage page)
-		{
-			return ValueTask.FromResult(RenderPage(page, settings));
-		}
-
-		if (value is IReplResult replResult)
-		{
-			return ValueTask.FromResult(RenderReplResult(replResult, settings));
-		}
-
-		if (value is string text)
-		{
-			return ValueTask.FromResult(text);
-		}
-
-		// Before the enumerable branch: a JsonObject enumerates as key/value pairs, and reflecting over
-		// those would show JsonNode's CLR members instead of the data.
-		if (JsonHumanShape.TryGetNode(value, out var node))
-		{
-			return ValueTask.FromResult(RenderJson(node, settings));
-		}
-
-		if (value is System.Collections.IEnumerable enumerable)
-		{
-			return ValueTask.FromResult(RenderTopLevelEnumerable(enumerable, settings));
-		}
-
-		if (TryRenderObject(value, settings, out var objectText))
-		{
-			return ValueTask.FromResult(objectText);
-		}
-
-		return ValueTask.FromResult(
-			Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty);
+		return ValueTask.FromResult(Render(value, _resolveRenderSettings()).Text);
 	}
 
-	public ValueTask<string> TransformPageAsync(
-		IReplPage page,
-		ResultFlowPageRenderMode mode,
-		CancellationToken cancellationToken = default)
+	public ValueTask<RenderedPayload> RenderAsync(object? value, CancellationToken cancellationToken = default)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		return ValueTask.FromResult(Render(value, _resolveRenderSettings()));
+	}
+
+	public ValueTask<RenderedPayload> RenderPageAsync(IReplPage page, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(page);
 		cancellationToken.ThrowIfCancellationRequested();
-		return ValueTask.FromResult(RenderPage(page, _resolveRenderSettings(), mode));
+		return ValueTask.FromResult(RenderPageBody(page, _resolveRenderSettings()));
 	}
 
-	private static string RenderPage(IReplPage page, HumanRenderSettings settings) =>
-		RenderPage(page, settings, ResultFlowPageRenderMode.Initial, includeFooter: true);
-
-	private static string RenderPage(IReplPage page, HumanRenderSettings settings, ResultFlowPageRenderMode mode) =>
-		RenderPage(page, settings, mode, includeFooter: false);
-
-	private static string RenderPage(
-		IReplPage page,
-		HumanRenderSettings settings,
-		ResultFlowPageRenderMode mode,
-		bool includeFooter)
+	private static RenderedPayload Render(object? value, HumanRenderSettings settings) => value switch
 	{
-		var body = RenderPageBody(page, settings, mode);
-		var footer = includeFooter ? ResultFlowPageFooterBuilder.RenderHuman(page) : string.Empty;
-		return string.IsNullOrWhiteSpace(footer)
-			? body
-			: string.Concat(body, Environment.NewLine, footer);
-	}
+		null => RenderedPayload.Plain(string.Empty),
+		IReplPage page => RenderPageWithFooter(page, settings),
+		IReplResult replResult => RenderReplResult(replResult, settings),
+		string text => RenderedPayload.Plain(text),
+		// Before the enumerable arm: a JsonObject enumerates as key/value pairs, and reflecting over those would
+		// show JsonNode's CLR members instead of the data.
+		_ when JsonHumanShape.TryGetNode(value, out var node) => RenderJson(node, settings),
+		System.Collections.IEnumerable enumerable => RenderTopLevelEnumerable(enumerable, settings),
+		_ when TryRenderObject(value, settings, out var objectText) => RenderedPayload.Plain(objectText),
+		_ => RenderedPayload.Plain(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty),
+	};
 
-	private static string RenderPageBody(IReplPage page, HumanRenderSettings settings, ResultFlowPageRenderMode mode)
+	private static RenderedPayload RenderPageWithFooter(IReplPage page, HumanRenderSettings settings) =>
+		RenderPageBody(page, settings).WithFooterLine(ResultFlowPageFooterBuilder.RenderHuman(page));
+
+	private static RenderedPayload RenderPageBody(IReplPage page, HumanRenderSettings settings)
 	{
 		if (page.UntypedItems.Count == 0)
 		{
-			return "No results.";
+			return RenderedPayload.Plain("No results.");
 		}
 
 		// By its declared item type: a page of JSON nulls has no item to be recognized by.
@@ -116,26 +77,24 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			return RenderJsonItems(page.UntypedItems, settings);
 		}
 
-		return RenderCollection(
-			page.UntypedItems,
-			depth: 0,
-			settings,
-			includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
+		return RenderItems([.. page.UntypedItems], depth: 0, settings);
 	}
 
-	private static string RenderTopLevelEnumerable(System.Collections.IEnumerable enumerable, HumanRenderSettings settings)
+	private static RenderedPayload RenderTopLevelEnumerable(
+		System.Collections.IEnumerable enumerable,
+		HumanRenderSettings settings)
 	{
 		var lines = enumerable
 			.Cast<object?>()
 			.ToArray();
 		if (lines.Length == 0)
 		{
-			return "No results.";
+			return RenderedPayload.Plain("No results.");
 		}
 
-		if (TryRenderTable(lines, settings, includeHeader: true, out var tableText))
+		if (TryRenderTable(lines, settings, out var table))
 		{
-			return tableText;
+			return table;
 		}
 
 		var scalarLines = lines
@@ -143,35 +102,36 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			.Where(item => !string.IsNullOrWhiteSpace(item))
 			.ToArray();
 
-		return scalarLines.Length == 0 ? "No results." : string.Join(Environment.NewLine, scalarLines);
+		return RenderedPayload.Plain(scalarLines.Length == 0 ? "No results." : string.Join(Environment.NewLine, scalarLines));
 	}
 
-	private static string RenderJson(JsonNode? node, HumanRenderSettings settings) => node switch
+	private static RenderedPayload RenderJson(JsonNode? node, HumanRenderSettings settings) => node switch
 	{
-		JsonObject jsonObject => RenderJsonObject(jsonObject, settings),
-		JsonArray { Count: 0 } => "No results.",
+		JsonObject jsonObject => RenderedPayload.Plain(RenderJsonObject(jsonObject, settings)),
+		JsonArray { Count: 0 } => RenderedPayload.Plain("No results."),
 		// Its own path rather than the generic collection one, which recognizes JSON by its first non-null
 		// item and so has nothing to go on for an array of nulls.
 		JsonArray jsonArray => RenderJsonItems([.. jsonArray], settings),
-		_ => JsonHumanShape.Literal(node),
+		_ => RenderedPayload.Plain(JsonHumanShape.Literal(node)),
 	};
 
-	// A JSON table always carries its header, continuation pages included: its columns come from its own rows'
-	// keys rather than from a type, so another page's headings could mislabel its cells.
-	private static string RenderJsonItems(IReadOnlyList<object?> items, HumanRenderSettings settings)
+	// The table's columns come from its own rows' keys rather than from a type, so a later page can name others;
+	// declaring those keys lets the pager tell a repeated header from one it must keep.
+	private static RenderedPayload RenderJsonItems(IReadOnlyList<object?> items, HumanRenderSettings settings)
 	{
 		if (!JsonHumanShape.TryGetObjectRows(items, out var columns, out var rows))
 		{
-			return string.Join(
+			var literals = string.Join(
 				Environment.NewLine,
 				items.Select(item => JsonHumanShape.TryLiteral(item, out var literal)
 					? literal
 					: RenderScalar(item, member: null, depth: 0, compactCollection: true, settings.Width, settings)));
+			return RenderedPayload.Plain(literals);
 		}
 
 		var tableRows = new List<string[]>(rows.Length + 1) { columns.Select(JsonHumanShape.Label).ToArray() };
 		tableRows.AddRange(rows.Select(row => columns.Select(column => JsonHumanShape.Cell(row, column)).ToArray()));
-		return FormatTable(tableRows, settings, includeHeader: true);
+		return FormatTable(tableRows, settings, columns);
 	}
 
 	private static string RenderJsonObject(JsonObject jsonObject, HumanRenderSettings settings)
@@ -248,87 +208,89 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 	private static string RenderCollection(
 		System.Collections.IEnumerable collection,
 		int depth,
-		HumanRenderSettings settings,
-		bool includeTableHeader = true)
+		HumanRenderSettings settings) =>
+		RenderItems([.. collection.Cast<object?>()], depth, settings).Text;
+
+	private static RenderedPayload RenderItems(object?[] values, int depth, HumanRenderSettings settings)
 	{
-		var values = collection.Cast<object?>().ToArray();
 		if (values.Length == 0)
 		{
-			return string.Empty;
+			return RenderedPayload.Plain(string.Empty);
 		}
 
-		if (TryRenderTable(values, settings, includeTableHeader, out var tableText))
+		if (TryRenderTable(values, settings, out var table))
 		{
-			return tableText;
+			return table;
 		}
 
-		return string.Join(
+		var list = string.Join(
 			Environment.NewLine,
 			values.Select(value => $"- {RenderScalar(value, member: null, depth, compactCollection: false, settings.Width, settings)}"));
+		return RenderedPayload.Plain(list);
 	}
 
 	private static bool TryRenderTable(
 		object?[] values,
 		HumanRenderSettings settings,
-		bool includeHeader,
-		out string text)
+		[NotNullWhen(true)] out RenderedPayload? rendered)
 	{
 		var firstNonNull = values.FirstOrDefault(value => value is not null);
 		if (firstNonNull is null)
 		{
-			text = string.Empty;
+			rendered = null;
 			return false;
 		}
 
 		// Only once the first item is JSON: ordinary collections must not pay for the JSON row scan.
 		if (JsonHumanShape.IsJson(firstNonNull))
 		{
-			text = RenderJsonItems(values, settings);
+			rendered = RenderJsonItems(values, settings);
 			return true;
 		}
 
 		if (IsSimpleValue(firstNonNull.GetType()))
 		{
-			text = string.Join(
+			var lines = string.Join(
 				Environment.NewLine,
 				values.Select(value => RenderScalar(value, member: null, depth: 0, compactCollection: true, settings.Width, settings)));
+			rendered = RenderedPayload.Plain(lines);
 			return true;
 		}
 
 		var members = GetDisplayMembers(firstNonNull.GetType());
 		if (members.Length == 0)
 		{
-			text = string.Empty;
+			rendered = null;
 			return false;
 		}
 
-		text = FormatTable(BuildTableRows(values, members, settings, includeHeader), settings, includeHeader);
+		var rows = BuildTableRows(values, members, settings);
+		rendered = FormatTable(rows, settings, columns: rows[0]);
 		return true;
 	}
 
-	private static string FormatTable(List<string[]> rows, HumanRenderSettings settings, bool includeHeader)
+	// The first row is the header. TextTableFormatter writes it on one line (it truncates a cell, never wraps it)
+	// and, without ANSI styling to set it apart, a separator line under it: the layout declares exactly that.
+	private static RenderedPayload FormatTable(
+		List<string[]> rows,
+		HumanRenderSettings settings,
+		IReadOnlyList<string> columns)
 	{
-		var style = includeHeader && settings.UseAnsi
-			? TextTableStyle.ForHeader(settings.Palette.TableHeaderStyle)
-			: TextTableStyle.None;
-		return TextTableFormatter.FormatRows(
+		var separated = !settings.UseAnsi;
+		var text = TextTableFormatter.FormatRows(
 			rows,
 			settings.Width,
-			includeHeaderSeparator: includeHeader && !settings.UseAnsi,
-			style);
+			includeHeaderSeparator: separated,
+			separated ? TextTableStyle.None : TextTableStyle.ForHeader(settings.Palette.TableHeaderStyle));
+		return new RenderedPayload(text, new RenderedLayout(separated ? 2 : 1, columns));
 	}
 
 	private static List<string[]> BuildTableRows(
 		object?[] values,
 		DisplayMember[] members,
-		HumanRenderSettings settings,
-		bool includeHeader)
+		HumanRenderSettings settings)
 	{
-		var rows = new List<string[]>(values.Length + (includeHeader ? 1 : 0));
-		if (includeHeader)
-		{
-			rows.Add(members.Select(member => member.Label).ToArray());
-		}
+		var rows = new List<string[]>(values.Length + 1) { members.Select(member => member.Label).ToArray() };
 
 		foreach (var item in values)
 		{
@@ -474,7 +436,8 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 				var displayFormat = property.GetCustomAttribute<DisplayFormatAttribute>();
 				return new DisplayMember(
 					property,
-					string.IsNullOrWhiteSpace(display?.GetName()) ? property.Name : display!.GetName()!,
+					TextTableFormatter.ToSingleLine(
+						string.IsNullOrWhiteSpace(display?.GetName()) ? property.Name : display!.GetName()!),
 					display?.GetOrder(),
 					displayFormat?.NullDisplayText ?? JsonHumanShape.NullText(property.PropertyType));
 			})
@@ -484,13 +447,27 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			.ThenBy(member => member.Property.MetadataToken)
 			.ToArray();
 
-		private sealed record DisplayMember(
+	private sealed record DisplayMember(
 		PropertyInfo Property,
 		string Label,
 		int? Order,
 		string? NullDisplayText);
 
-	private static string RenderReplResult(IReplResult result, HumanRenderSettings settings)
+	private static RenderedPayload RenderReplResult(IReplResult result, HumanRenderSettings settings)
+	{
+		// The message comes first, so no header starts the payload; a page's footer still ends it.
+		if (result.Details is IReplPage page)
+		{
+			var rendered = RenderPageWithFooter(page, settings);
+			return new RenderedPayload(
+				$"{DescribeResult(result)}{Environment.NewLine}{rendered.Text}",
+				RenderedLayout.None.WithFooter(rendered.Layout.FooterLineCount));
+		}
+
+		return RenderedPayload.Plain(RenderReplResultText(result, settings));
+	}
+
+	private static string DescribeResult(IReplResult result)
 	{
 		var prefix = result.Kind.ToLowerInvariant() switch
 		{
@@ -503,23 +480,22 @@ internal sealed class HumanOutputTransformer : IResultFlowOutputTransformer
 			_ => "Result",
 		};
 
-		var message = string.IsNullOrWhiteSpace(prefix)
+		return string.IsNullOrWhiteSpace(prefix)
 			? result.Message
 			: $"{prefix}: {result.Message}";
+	}
 
+	private static string RenderReplResultText(IReplResult result, HumanRenderSettings settings)
+	{
+		var message = DescribeResult(result);
 		if (result.Details is null)
 		{
 			return message;
 		}
 
-		if (result.Details is IReplPage page)
-		{
-			return $"{message}{Environment.NewLine}{RenderPage(page, settings)}";
-		}
-
 		if (JsonHumanShape.TryGetNode(result.Details, out var jsonDetails))
 		{
-			return $"{message}{Environment.NewLine}{RenderJson(jsonDetails, settings)}";
+			return $"{message}{Environment.NewLine}{RenderJson(jsonDetails, settings).Text}";
 		}
 
 		if (TryRenderDictionary(result.Details, settings, out var dictionaryText))

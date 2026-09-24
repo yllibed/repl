@@ -30,11 +30,14 @@ A handler can return `System.Text.Json.Nodes.JsonNode` (`JsonObject`, `JsonArray
 data rather than the CLR members of those types:
 
 - An object becomes one `key: value` line per field.
-- Rows of objects become a table. Its columns are the union of the rows' keys in first-seen order, matched
-  ordinally, and a key missing from a row leaves that cell empty. The rows' keys, not a type, define the
-  columns. So when a page the pager fetches has other columns than the first page, it keeps its own header
-  row, while a header that repeats the first page's is still dropped.
-- An array of scalars becomes one value per line. So do rows that have no keys at all: each reads `{}`.
+- In `spectre` as in `human`, a table's header labels stay on one line: a label wider than its column is
+  truncated rather than wrapped, and a line break in a label reads as a space.
+- Rows that are all objects with at least one key become a table. Its columns are the union of the rows'
+  keys in first-seen order, matched ordinally, and a key missing from a row leaves that cell empty. The rows'
+  keys, not a type, define the columns, so each page the pager fetches can name other columns than the page
+  before it. See [Result Flow And Paging](result-flow.md) for how the pager shows their headers.
+- An array of scalars becomes one value per line. So does a page of rows among which one is a JSON null or
+  an empty object: each row reads as its literal, since a blank table row would read as no row at all.
 - A page declared with a JSON item type, such as `IReplPageSource<JsonNode?>`, renders as JSON even when
   every item on it is a JSON null.
 - Values are compact JSON literals. So a string shows as `"x"`, an explicit JSON null shows as `null`, and

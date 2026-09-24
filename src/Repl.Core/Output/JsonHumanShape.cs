@@ -120,40 +120,28 @@ internal static class JsonHumanShape
 	/// <summary>
 	/// Reads <paramref name="values"/> as rows of JSON objects. The columns are the union of their keys in
 	/// first-seen order, so a key missing from one row leaves its cell empty rather than dropping the row.
-	/// A JSON null, as a <see langword="null"/> value or a null <see cref="JsonElement"/>, is an empty row. Fails
-	/// if any other value is not a JSON object, or if no row has a key: a table with no columns would show
-	/// nothing of them.
+	/// Fails unless every value is a JSON object with at least one key. A JSON null or an empty object would
+	/// render as a blank row, which reads as no row at all and, as the last one, is trimmed away with the payload's
+	/// trailing whitespace; those rows then read as their literals instead.
 	/// </summary>
 	public static bool TryGetObjectRows(
 		IReadOnlyList<object?> values,
 		[NotNullWhen(true)] out string[]? columns,
-		[NotNullWhen(true)] out JsonObject?[]? rows)
+		[NotNullWhen(true)] out JsonObject[]? rows)
 	{
 		columns = null;
 		rows = null;
-		var converted = new JsonObject?[values.Count];
+		if (values.Count == 0)
+		{
+			return false;
+		}
+
+		var converted = new JsonObject[values.Count];
 		var seen = new HashSet<string>(StringComparer.Ordinal);
 		var ordered = new List<string>();
 		for (var i = 0; i < values.Count; i++)
 		{
-			if (values[i] is null)
-			{
-				continue;
-			}
-
-			if (!TryGetNode(values[i], out var node))
-			{
-				return false;
-			}
-
-			// A JsonElement of kind Null (or Undefined, a default element) is no data either: an empty row, like
-			// a CLR null.
-			if (node is null)
-			{
-				continue;
-			}
-
-			if (node is not JsonObject row)
+			if (!TryGetNode(values[i], out var node) || node is not JsonObject { Count: > 0 } row)
 			{
 				return false;
 			}
@@ -168,11 +156,6 @@ internal static class JsonHumanShape
 			}
 		}
 
-		if (ordered.Count == 0)
-		{
-			return false;
-		}
-
 		columns = [.. ordered];
 		rows = converted;
 		return true;
@@ -182,9 +165,9 @@ internal static class JsonHumanShape
 	/// The cell for <paramref name="column"/>: empty when the row does not have the key. Matched ordinally, the
 	/// way the columns were collected, even in a row built with case-insensitive property names.
 	/// </summary>
-	public static string Cell(JsonObject? row, string column)
+	public static string Cell(JsonObject row, string column)
 	{
-		if (row is null || row.IndexOf(column) is not (>= 0 and var index))
+		if (row.IndexOf(column) is not (>= 0 and var index))
 		{
 			return string.Empty;
 		}

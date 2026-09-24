@@ -1,4 +1,6 @@
 using System.ComponentModel.DataAnnotations;
+using System.Globalization;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Repl.Spectre;
 
@@ -268,6 +270,86 @@ public sealed partial class Given_OutputFormatting
 		text.Split("Name", StringSplitOptions.None).Should().HaveCount(2);
 		text.Should().NotContain("Showing ");
 	}
+
+	[TestMethod]
+	[Description("A JSON page source in the human pager: a page with the same keys at other widths adds its row only, and a page with other keys shows its own header, so no row sits under headings that are not its own.")]
+	public void When_PagingJsonRowsWhoseKeysChange_Then_EachHeaderShowsOnceForItsRows()
+	{
+		var sut = ReplApp.Create();
+		JsonObject[] rows =
+		[
+			new() { ["id"] = 1, ["name"] = "a" },
+			new() { ["id"] = 22, ["name"] = "bbbb" },
+			new() { ["name"] = "c", ["id"] = 3 },
+		];
+		sut.Map("rows", (IReplPagingContext paging) =>
+			paging.CreateSource<JsonObject>((request, _) =>
+			{
+				var index = request.Cursor is null ? 0 : int.Parse(request.Cursor, CultureInfo.InvariantCulture);
+				var next = index + 1 < rows.Length ? (index + 1).ToString(CultureInfo.InvariantCulture) : null;
+				return ValueTask.FromResult(new ReplPage<JsonObject>(
+					[rows[index]],
+					new ReplPageInfo(request.Cursor, next, rows.Length, request.PageSize)));
+			}));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		ReplSessionIO.KeyReader = new QueueKeyReader([.. Enumerable.Repeat(Key(ConsoleKey.Spacebar, ' '), 4)]);
+		ReplSessionIO.WindowSize = (100, 20);
+
+		var exitCode = sut.Run(["rows", "--result:page-size=1", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		var lines = StripAnsi(output.ToString()).Split(Environment.NewLine);
+		lines.Count(line => IsHeader(line, "id", "name")).Should().Be(1, "the second page repeats the first one's columns");
+		lines.Count(line => IsHeader(line, "name", "id")).Should().Be(1, "the third page names other columns");
+		var third = Array.FindIndex(lines, line => line.Contains("\"c\"", StringComparison.Ordinal));
+		third.Should().BePositive();
+		lines.Take(third).Last(line => IsHeader(line, "id", "name") || IsHeader(line, "name", "id"))
+			.Should().Match(line => IsHeader(line, "name", "id"), "the third page's rows sit under its own header");
+	}
+
+	[TestMethod]
+	[Description("A JSON array returned whole and paged: a row that reads like the header is data, so every row reaches the screen rather than being dropped as a repeated header.")]
+	public void When_PagingAJsonArrayWhoseRowsReadLikeItsHeader_Then_EveryRowIsShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("ones", () => new JsonArray([.. Enumerable.Range(0, 10).Select(_ => (JsonNode)new JsonObject { ["1"] = 1 })]));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		ReplSessionIO.KeyReader = new QueueKeyReader([.. Enumerable.Repeat(Key(ConsoleKey.Spacebar, ' '), 10)]);
+		ReplSessionIO.WindowSize = (100, 8);
+
+		var exitCode = sut.Run(["ones", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		StripAnsi(output.ToString()).Split(Environment.NewLine).Count(line => string.Equals(line.Trim(), "1", StringComparison.Ordinal))
+			.Should().Be(11, "the header, then each of the ten rows");
+	}
+
+	[TestMethod]
+	[Description("A long page returned whole is paged without a way to fetch the next one, so its footer, which says how to rerun for it, stays in view.")]
+	public void When_PagingALongPageReturnedWhole_Then_ItsRerunFooterIsShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("ones", () => new ReplPage<JsonObject>(
+			[.. Enumerable.Range(1, 10).Select(i => new JsonObject { ["id"] = i })],
+			new ReplPageInfo(Cursor: null, NextCursor: "next", TotalCount: 20, PageSize: 10)));
+
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		ReplSessionIO.KeyReader = new QueueKeyReader([.. Enumerable.Repeat(Key(ConsoleKey.Spacebar, ' '), 10)]);
+		ReplSessionIO.WindowSize = (100, 8);
+
+		var exitCode = sut.Run(["ones", "--no-logo"]);
+
+		exitCode.Should().Be(0);
+		StripAnsi(output.ToString()).Should().Contain("Showing 10 of 20. Next data page: rerun with");
+	}
+
+	private static bool IsHeader(string line, params string[] columns) =>
+		line.Split(' ', StringSplitOptions.RemoveEmptyEntries).SequenceEqual(columns, StringComparer.Ordinal);
 
 	[TestMethod]
 	[Description("Regression guard: verifies paging.CreateSource receives the caller cursor and suggested page size through the first source request.")]

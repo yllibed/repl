@@ -523,6 +523,28 @@ The full viewport is inspired by `less`: it does not depend on terminal
 scrollback. It renders from an internal buffer and fetches additional
 `IReplPageSource<T>` payloads as the user pages past the buffered end.
 
+The pager pins the first page's table header. `human` and `spectre` render a
+table's header on every page and tell the pager exactly which lines hold the
+header and which columns it names, whether the pager shows a result that is
+simply long or pages an `IReplPageSource<T>`. A long result keeps its footer
+asking to rerun for the next page, since that pager cannot fetch it. A fetched page whose header names
+the columns the page before it showed adds only its rows. A page naming other
+columns keeps its own header, since its rows would otherwise sit under headings
+that are not theirs. That can happen with JSON rows, whose columns come from
+their keys, or with pages of rows of different types. In `inline` and `full`,
+the header at the top of the viewport stays the first page's, and a later
+header scrolls with its rows.
+
+A custom `IReplPagerRenderer` receives each fetched page as text: a header
+naming the previous page's columns is stripped from it first, and one naming
+other columns is kept.
+
+For any other transformer, the pager recognizes a header from the text: a
+separator line under the first line, a first line starting with `#` and a
+space, or bold styling. It drops that header, and any line that reads like it,
+from every fetched page, and drops lines that read like the rerun footer from
+the first payload.
+
 Applications that need a different terminal experience can register a custom
 `IReplPagerRenderer` with
 `options.Output.ResultFlow.UsePagerRenderer(renderer)`. A custom renderer is

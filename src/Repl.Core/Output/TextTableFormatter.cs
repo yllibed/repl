@@ -4,6 +4,45 @@ namespace Repl;
 
 internal static class TextTableFormatter
 {
+	/// <summary>
+	/// <paramref name="text"/> with each control character and line or paragraph separator replaced by a space: a
+	/// table header is declared one line tall, and a line break in a label would push part of it onto a second
+	/// line for the pager, which splits at every one of them. Returns the input itself, allocating nothing, when
+	/// it has none.
+	/// </summary>
+	public static string ToSingleLine(string text)
+	{
+		ArgumentNullException.ThrowIfNull(text);
+		if (!ContainsLineBreaking(text))
+		{
+			return text;
+		}
+
+		return string.Create(text.Length, text, static (buffer, source) =>
+		{
+			for (var i = 0; i < source.Length; i++)
+			{
+				buffer[i] = BreaksLine(source[i]) ? ' ' : source[i];
+			}
+		});
+	}
+
+	private static bool ContainsLineBreaking(string text)
+	{
+		foreach (var character in text)
+		{
+			if (BreaksLine(character))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static bool BreaksLine(char character) =>
+		char.IsControl(character) || character is '\u2028' or '\u2029';
+
 	public static string FormatRows(
 		IReadOnlyList<string[]> rows,
 		int renderWidth,

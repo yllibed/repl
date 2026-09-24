@@ -12,7 +12,6 @@ namespace Repl.Tests;
 public sealed class Given_HumanOutputJson
 {
 	private static readonly string[] ClrMembers = ["Options", "Parent", "Root", "Count", "ValueKind"];
-	private static readonly string[] PageTwoColumns = ["name", "id"];
 
 	[TestMethod]
 	[Description("The issue's own repro: a JsonObject result renders one line per JSON field, values as JSON literals, and none of JsonObject's CLR members.")]
@@ -187,9 +186,11 @@ public sealed class Given_HumanOutputJson
 			[new JsonObject { ["name"] = "b", ["id"] = 2 }],
 			new ReplPageInfo(Cursor: "1", NextCursor: null, TotalCount: null, PageSize: 1));
 
-		var output = await CreateTransformer().TransformPageAsync(page, ResultFlowPageRenderMode.Continuation, CancellationToken.None);
+		var rendered = await CreateTransformer().RenderPageAsync(page, CancellationToken.None);
 
-		output.Split(Environment.NewLine)[0].Should().MatchRegex(@"^name\s+id\s*$");
+		rendered.Text.Split(Environment.NewLine)[0].Should().MatchRegex(@"^name\s+id\s*$");
+		rendered.Layout.HeaderLineCount.Should().Be(2, "the header line and its separator");
+		rendered.Layout.Columns.Should().Equal("name", "id");
 	}
 
 	[TestMethod]
@@ -239,37 +240,147 @@ public sealed class Given_HumanOutputJson
 	}
 
 	[TestMethod]
-	[Description("Through the pager, which pins the first page's header and drops a repeated one: a continuation page with other keys must keep its own header, or its rows sit under headings that are not theirs.")]
-	public async Task When_ThePagerAppendsAPageWithOtherKeys_Then_ItsRowsKeepTheirOwnHeader()
+	[Description("A JSON null among object rows, as a JsonElement or a CLR null, makes every row a literal: as an empty table row it would read as no row, and as the last one it would vanish with the payload's trailing blank line.")]
+	public async Task When_APageOfJsonObjectsHasANullRow_Then_EveryRowReadsAsALiteral()
 	{
-		var transformer = CreateTransformer();
-		var first = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None);
-		var next = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["name"] = "b", ["id"] = 2 }), ResultFlowPageRenderMode.Continuation, CancellationToken.None);
+		using var document = JsonDocument.Parse("""[{"id":1},null]""");
+		var elements = new ReplPage<JsonElement>(
+			[.. document.RootElement.EnumerateArray()],
+			new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 2));
+		var nodes = new ReplPage<JsonNode?>(
+			[new JsonObject { ["id"] = 1 }, null],
+			new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 2));
 
-		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
-		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
-
-		var lines = session.Lines.ToList();
-		var row = lines.FindIndex(line => line.Contains("\"b\"", StringComparison.Ordinal));
-		row.Should().BePositive();
-		lines.Take(row).Should().Contain(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries).SequenceEqual(PageTwoColumns));
+		(await RenderAsync(elements)).Split(Environment.NewLine).Should().Equal("""{"id":1}""", "null");
+		(await RenderAsync(nodes)).Split(Environment.NewLine).Should().Equal("""{"id":1}""", "null");
 	}
 
 	[TestMethod]
-	[Description("A JSON null that arrives as a JsonElement is an empty row, like a CLR null: it must not turn the whole table into bare literals.")]
-	public async Task When_APageOfJsonElementsHasANullRow_Then_ItStaysATable()
+	[Description("An empty object among keyed rows renders as blank as a null would, so it makes every row a literal too.")]
+	public async Task When_APageOfJsonObjectsHasAnEmptyObject_Then_EveryRowReadsAsALiteral()
 	{
-		using var document = JsonDocument.Parse("""[{"id":1},null,{"id":2}]""");
-		var page = new ReplPage<JsonElement>(
-			[.. document.RootElement.EnumerateArray()],
-			new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 3));
+		var output = await RenderAsync(new JsonArray(new JsonObject { ["id"] = 1 }, new JsonObject()));
 
-		var output = await RenderAsync(page);
+		output.Split(Environment.NewLine).Should().Equal("""{"id":1}""", "{}");
+	}
 
-		output.Split(Environment.NewLine)[0].Should().MatchRegex(@"^id\s*$");
-		output.Should().NotContain("{", "the rows render as table cells, not as JSON literals");
+	[TestMethod]
+	[Description("Through the pager, keys A, then B, then A again: each page shows its header, since the one in view before it names other columns.")]
+	public async Task When_ThePagerAppendsKeysThatSwitchBack_Then_EachPageShowsItsHeader()
+	{
+		var session = await PageThroughAsync(
+			CreateTransformer(),
+			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }),
+			SingleRowPage(new JsonObject { ["name"] = "b", ["id"] = 2 }),
+			SingleRowPage(new JsonObject { ["id"] = 3, ["name"] = "c" }));
+
+		session.Lines.Should().HaveCount(7, "the first row, then a header, its separator and a row for each later page");
+		session.Lines[4].Should().MatchRegex(@"^id\s+name\s*$");
+	}
+
+	[TestMethod]
+	[Description("Through the pager, a first page with no header pins none; the next table page shows its header, and the one after, with the same columns, adds its row only.")]
+	public async Task When_TheFirstPageHasNoHeader_Then_TheFirstTablePageShowsItOnce()
+	{
+		var session = await PageThroughAsync(
+			CreateTransformer(),
+			new ReplPage<JsonNode?>([null], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1)),
+			SingleRowPage(new JsonObject { ["id"] = 1 }),
+			SingleRowPage(new JsonObject { ["id"] = 2 }));
+
+		session.HeaderLines.Should().BeEmpty();
+		session.Lines.Should().Equal("null", "id", "--", "1", "2");
+	}
+
+	[TestMethod]
+	[Description("Through the pager, a page of rows of another type shows its own header: a type's table renders its header on every page, and the pager drops only a repeat.")]
+	public async Task When_ThePagerAppendsRowsOfAnotherType_Then_TheirHeaderIsShown()
+	{
+		var session = await PageThroughAsync(
+			CreateTransformer(),
+			new ReplPage<object>([new Holder("h1", new JsonObject())], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1)),
+			new ReplPage<object>([new Holder("h2", new JsonObject())], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1)),
+			new ReplPage<object>([new Owner("octo")], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1)));
+
+		session.Lines.Should().HaveCount(5, "the two holders' rows, then the owner's header, separator and row");
+		session.Lines[2].Should().MatchRegex(@"^Login\s*$");
+	}
+
+	[TestMethod]
+	[Description("A line separator (U+2028) in a display name breaks the line for the pager as a line feed does, so it reads as a space too.")]
+	public async Task When_ADisplayNameHasALineSeparator_Then_TheHeaderStaysOnOneLine()
+	{
+		var rendered = await CreateTransformer().RenderAsync(new[] { new Separated("now") }, CancellationToken.None);
+
+		var session = new PagerSession(rendered.Text, hasMorePayload: false, maxBufferedLines: 100, rendered.Layout);
+		session.HeaderLines.Should().HaveCount(2, "the header line and its separator");
+		session.HeaderLines[0].Should().MatchRegex("^Created At *$");
+		session.Lines.Should().ContainSingle();
+	}
+
+	[TestMethod]
+	[Description("A result whose details are a page declares that page's footer, its last line, and no header: the message comes first.")]
+	public async Task When_AResultCarriesAPage_Then_ItsFooterIsDeclaredAndLast()
+	{
+		var page = new ReplPage<JsonObject>(
+			[new JsonObject { ["id"] = 1 }],
+			new ReplPageInfo(Cursor: null, NextCursor: "2", TotalCount: 5, PageSize: 1));
+
+		var rendered = await CreateTransformer().RenderAsync(Results.Success("Found", page), CancellationToken.None);
+
+		rendered.Text.Split(Environment.NewLine)[^1].Should().StartWith("Showing 1 of 5.");
+		rendered.Layout.HeaderLineCount.Should().Be(0);
+		rendered.Layout.FooterLineCount.Should().Be(1);
+	}
+
+	[TestMethod]
+	[Description("A display name with a line break still makes a one-line header: the declared height must match what is rendered.")]
+	public async Task When_ADisplayNameHasALineBreak_Then_TheHeaderStaysOnOneLine()
+	{
+		var rendered = await CreateTransformer().RenderAsync(new[] { new Stamped("now") }, CancellationToken.None);
+
+		// Split the way the pager splits, at any line break, lone ones included.
+		var lines = rendered.Text.ReplaceLineEndings("\n").Split('\n');
+		lines.Should().HaveCount(3, "the header, its separator and the row");
+		lines[0].Should().MatchRegex("^Created At *$");
+		rendered.Layout.HeaderLineCount.Should().Be(2);
+	}
+
+	[TestMethod]
+	[Description("Through the pager, a page whose last row is a JSON null keeps that row: it reads null rather than being trimmed as a trailing blank line.")]
+	public async Task When_ThePagerReceivesAPageEndingInANullRow_Then_TheRowIsKept()
+	{
+		var page = new ReplPage<JsonNode?>(
+			[new JsonObject { ["id"] = 1 }, null],
+			new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 2));
+
+		var session = await PageThroughAsync(CreateTransformer(), page, SingleRowPage(new JsonObject { ["id"] = 2 }));
+
+		session.Lines.Should().Contain("null");
+	}
+
+	[TestMethod]
+	[Description("Through the pager, a column named 1 holding 1 renders its header and its row alike; the row is data, and must not be dropped as a repeated header.")]
+	public async Task When_ARowReadsLikeTheHeader_Then_ThePagerKeepsIt()
+	{
+		var session = await PageThroughAsync(
+			CreateTransformer(),
+			SingleRowPage(new JsonObject { ["1"] = 1 }),
+			SingleRowPage(new JsonObject { ["1"] = 1 }));
+
+		session.Lines.Should().Equal("1", "1");
+	}
+
+	[TestMethod]
+	[Description("Through the ANSI pager, keys 'a  b' / 'c' and 'a' / 'b  c' render headers that read alike but name other columns: the continuation keeps its own.")]
+	public async Task When_TheAnsiPagerAppendsKeysThatRegroupTheirSpaces_Then_TheContinuationKeepsItsHeader()
+	{
+		var session = await PageThroughAsync(
+			CreateTransformer(useAnsi: true),
+			SingleRowPage(new JsonObject { ["a  b"] = 1, ["c"] = 2 }),
+			SingleRowPage(new JsonObject { ["a"] = 3, ["b  c"] = 4 }));
+
+		session.Lines.Should().HaveCount(3, "the first row, then the continuation's own header and its row");
 	}
 
 	[TestMethod]
@@ -293,18 +404,13 @@ public sealed class Given_HumanOutputJson
 	}
 
 	[TestMethod]
-	[Description("With ANSI on, the table header is styled bold within a combined sequence; the pager must still recognize it, or every JSON page, which carries its own header, would repeat it.")]
+	[Description("With ANSI on, the table header has no separator line and a palette style; the pager must still pin it, or every JSON page, which carries its own header, would repeat it.")]
 	public async Task When_AnAnsiPagerAppendsAPageWithTheSameKeys_Then_OnlyItsRowIsAdded()
 	{
-		var transformer = new HumanOutputTransformer(
-			() => new HumanRenderSettings(Width: 120, UseAnsi: true, Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
-		var first = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None);
-		var next = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["id"] = 22, ["name"] = "bbbbbb" }), ResultFlowPageRenderMode.Continuation, CancellationToken.None);
-
-		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
-		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
+		var session = await PageThroughAsync(
+			CreateTransformer(useAnsi: true),
+			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }),
+			SingleRowPage(new JsonObject { ["id"] = 22, ["name"] = "bbbbbb" }));
 
 		session.HeaderLines.Should().ContainSingle("the styled header line is the pinned header");
 		session.Lines.Should().HaveCount(2, "the first page's row and the continuation's row, with no repeated header");
@@ -319,14 +425,32 @@ public sealed class Given_HumanOutputJson
 
 	private sealed record Owner(string Login);
 
+	private sealed record Separated([property: System.ComponentModel.DataAnnotations.Display(Name = "Created\u2028At")] string When);
+
+	private sealed record Stamped([property: System.ComponentModel.DataAnnotations.Display(Name = "Created\nAt")] string When);
+
 	private static ReplPage<JsonObject> SingleRowPage(JsonObject row) =>
 		new([row], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1));
 
-	private static HumanOutputTransformer CreateTransformer() =>
+	private static HumanOutputTransformer CreateTransformer(bool useAnsi = false) =>
 		new(() => new HumanRenderSettings(
 			Width: 120,
-			UseAnsi: false,
+			UseAnsi: useAnsi,
 			Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)));
+
+	// Drives pages through a PagerSession the way the pager does, each with the layout its transformer declared.
+	private static async Task<PagerSession> PageThroughAsync(HumanOutputTransformer transformer, params IReplPage[] pages)
+	{
+		var initial = await transformer.RenderPageAsync(pages[0], CancellationToken.None).ConfigureAwait(false);
+		var session = new PagerSession(initial.Text, hasMorePayload: pages.Length > 1, maxBufferedLines: 100, initial.Layout);
+		for (var i = 1; i < pages.Length; i++)
+		{
+			var next = await transformer.RenderPageAsync(pages[i], CancellationToken.None).ConfigureAwait(false);
+			session.Append(next.Text, hasMorePayload: i < pages.Length - 1, containsPresentationChrome: false, next.Layout);
+		}
+
+		return session;
+	}
 
 	private static async Task<string> RenderAsync(object value) =>
 		await CreateTransformer().TransformAsync(value, CancellationToken.None).ConfigureAwait(false);

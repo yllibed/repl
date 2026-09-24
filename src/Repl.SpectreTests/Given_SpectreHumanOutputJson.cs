@@ -143,11 +143,13 @@ public sealed partial class Given_SpectreHumanOutputJson
 			[new JsonObject { ["name"] = "b", ["id"] = 2 }],
 			new ReplPageInfo(Cursor: "1", NextCursor: null, TotalCount: null, PageSize: 1));
 
-		var raw = await new SpectreHumanOutputTransformer()
-			.TransformPageAsync(page, ResultFlowPageRenderMode.Continuation, CancellationToken.None)
+		var rendered = await new SpectreHumanOutputTransformer()
+			.RenderPageAsync(page, CancellationToken.None)
 			.ConfigureAwait(false);
 
-		AnsiStyling().Replace(raw, string.Empty).Should().MatchRegex(@"name\s+id");
+		AnsiStyling().Replace(rendered.Text, string.Empty).Should().MatchRegex(@"name\s+id");
+		rendered.Layout.HeaderLineCount.Should().Be(1);
+		rendered.Layout.Columns.Should().Equal("name", "id");
 	}
 
 	[TestMethod]
@@ -184,59 +186,73 @@ public sealed partial class Given_SpectreHumanOutputJson
 	}
 
 	[TestMethod]
-	[Description("Through the pager, which pins the first page's header and drops a repeated one (a bold first line counts as one): a continuation page with other keys must keep its own header, or its rows sit under headings that are not theirs.")]
-	public async Task When_ThePagerAppendsAPageWithOtherKeys_Then_ItsRowsKeepTheirOwnHeader()
+	[Description("Through the pager, a continuation page with the same keys at other widths repeats the pinned header, so it adds its data row only, with or without ANSI: a plain Spectre header has neither a separator nor styling to be recognized by.")]
+	[DataRow(AnsiMode.Always)]
+	[DataRow(AnsiMode.Never)]
+	public async Task When_ThePagerAppendsAPageWithTheSameKeys_Then_OnlyItsRowIsAdded(AnsiMode ansiMode)
 	{
-		var transformer = CreateAnsiTransformer();
-		var first = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None)
-			.ConfigureAwait(false);
-		var next = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["name"] = "b", ["id"] = 2 }), ResultFlowPageRenderMode.Continuation, CancellationToken.None)
-			.ConfigureAwait(false);
+		var session = await PageThroughAsync(
+			CreateTransformer(ansiMode),
+			new JsonObject { ["id"] = 1, ["name"] = "a" },
+			new JsonObject { ["id"] = 22, ["name"] = "bbbbbb" }).ConfigureAwait(false);
 
-		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
-		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
-
-		var lines = session.Lines.Select(line => AnsiStyling().Replace(line, string.Empty)).ToList();
-		var row = lines.FindIndex(line => line.Contains("\"b\"", StringComparison.Ordinal));
-		row.Should().BePositive();
-		lines.Take(row).Should().Contain(line => line.Contains("name", StringComparison.Ordinal));
+		session.HeaderLines.Should().ContainSingle("the first page's header is pinned");
+		session.Lines.Should().HaveCount(2, "the first page's row and the continuation's row, with no repeated header");
+		AnsiStyling().Replace(session.Lines[1], string.Empty).Should().Contain("\"bbbbbb\"");
 	}
 
 	[TestMethod]
-	[Description("Through the pager, a continuation page with the same keys at other widths repeats the pinned header, so it adds its data row only.")]
-	public async Task When_ThePagerAppendsAPageWithTheSameKeys_Then_OnlyItsRowIsAdded()
+	[Description("A header label too long for a narrow table is truncated on its one line rather than wrapped onto a second: the pager is told the header is one line tall, and a wrapped half would show up as a row.")]
+	public async Task When_AHeaderLabelDoesNotFit_Then_ItStaysOnOneLine()
 	{
-		var transformer = CreateAnsiTransformer();
-		var first = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["id"] = 1, ["name"] = "a" }), ResultFlowPageRenderMode.Initial, CancellationToken.None)
-			.ConfigureAwait(false);
-		var next = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["id"] = 22, ["name"] = "bbbbbb" }), ResultFlowPageRenderMode.Continuation, CancellationToken.None)
+		var label = "a rather long column label";
+		var session = await PageThroughAsync(
+			CreateTransformer(AnsiMode.Never, width: 20),
+			new JsonObject { ["id"] = 1, [label] = "x" },
+			new JsonObject { ["id"] = 2, [label] = "y" }).ConfigureAwait(false);
+
+		session.HeaderLines.Should().ContainSingle();
+		session.Lines.Should().HaveCount(2, "the two rows; no part of the header is left among them");
+	}
+
+	[TestMethod]
+	[Description("A result whose details are a page ends with that page's footer, whole on its last line even when it outruns the width: laid out again as Spectre text, it would wrap, and the declared one-line footer would leave half of it behind.")]
+	public async Task When_AResultCarriesAPageWithALongCursor_Then_ItsFooterIsWholeAndLast()
+	{
+		var page = new ReplPage<JsonObject>(
+			[new JsonObject { ["id"] = 1, ["note"] = new string('x', 30) }],
+			new ReplPageInfo(Cursor: null, NextCursor: new string('c', 120), TotalCount: 5, PageSize: 1));
+
+		var rendered = await CreateTransformer(AnsiMode.Always, width: 40)
+			.RenderAsync(Results.Success("Found", page), CancellationToken.None)
 			.ConfigureAwait(false);
 
-		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
-		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
+		var lines = rendered.Text.ReplaceLineEndings("\n").Split('\n');
+		AnsiStyling().Replace(lines[^1], string.Empty).Should().StartWith("Showing 1 of 5.").And.EndWith(new string('c', 120) + ".");
+		rendered.Layout.HeaderLineCount.Should().Be(0);
+		rendered.Layout.FooterLineCount.Should().Be(1);
+	}
 
-		session.Lines.Should().HaveCount(2, "the first page's row and the continuation's row, with no repeated header");
-		AnsiStyling().Replace(session.Lines[1], string.Empty).Should().Contain("\"bbbbbb\"");
+	[TestMethod]
+	[Description("A type's table whose header fits keeps its labels whole and wraps its data: labels are one line each, but are truncated only when the header itself does not fit.")]
+	public async Task When_ATypeTableIsNarrow_Then_ItsLabelsStayWhole()
+	{
+		var output = await CreateTransformer(AnsiMode.Never, width: 40)
+			.TransformAsync(new[] { new Described("Ada", "2026-09-24", new string('x', 60)) }, CancellationToken.None)
+			.ConfigureAwait(false);
+
+		var header = output.Split(Environment.NewLine)[0];
+		header.Should().Contain("Display Name").And.Contain("Created At");
 	}
 
 	[TestMethod]
 	[Description("Through the pager, with Spectre's own styled header: keys 'first' / 'last name' and 'first last' / 'name' share their words but are other columns, so the continuation keeps its header.")]
 	public async Task When_ThePagerAppendsAPageWhoseKeysRegroupTheWords_Then_ItsRowsKeepTheirOwnHeader()
 	{
-		var transformer = CreateAnsiTransformer();
-		var first = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["first"] = "a", ["last name"] = "b" }), ResultFlowPageRenderMode.Initial, CancellationToken.None)
-			.ConfigureAwait(false);
-		var next = await transformer.TransformPageAsync(
-			SingleRowPage(new JsonObject { ["first last"] = "c", ["name"] = "d" }), ResultFlowPageRenderMode.Continuation, CancellationToken.None)
-			.ConfigureAwait(false);
-
-		var session = new PagerSession(first, hasMorePayload: true, maxBufferedLines: 100);
-		session.Append(next, hasMorePayload: false, containsPresentationChrome: false);
+		var session = await PageThroughAsync(
+			CreateTransformer(AnsiMode.Always),
+			new JsonObject { ["first"] = "a", ["last name"] = "b" },
+			new JsonObject { ["first last"] = "c", ["name"] = "d" }).ConfigureAwait(false);
 
 		var lines = session.Lines.Select(line => AnsiStyling().Replace(line, string.Empty)).ToList();
 		var row = lines.FindIndex(line => line.Contains("\"d\"", StringComparison.Ordinal));
@@ -272,12 +288,37 @@ public sealed partial class Given_SpectreHumanOutputJson
 		AssertNoClrMembers(output);
 	}
 
-	// The ANSI pager case, where the bold header line is what the pager detects and pins. Forced, so these
-	// tests do not depend on whether the console running them supports ANSI.
-	private static SpectreHumanOutputTransformer CreateAnsiTransformer() =>
+	// ANSI is forced one way or the other, so these tests do not depend on whether the console running them
+	// supports it.
+	private static SpectreHumanOutputTransformer CreateTransformer(AnsiMode ansiMode, int width = 120) =>
 		new(
-			() => new HumanRenderSettings(Width: 120, UseAnsi: true, Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)),
-			new OutputOptions { AnsiMode = AnsiMode.Always });
+			() => new HumanRenderSettings(
+				Width: width,
+				UseAnsi: ansiMode == AnsiMode.Always,
+				Palette: new DefaultAnsiPaletteProvider().Create(ThemeMode.Dark)),
+			new OutputOptions { AnsiMode = ansiMode });
+
+	// Drives single-row pages through a PagerSession the way the pager does, each with the layout its transformer
+	// declared.
+	private static async Task<PagerSession> PageThroughAsync(
+		SpectreHumanOutputTransformer transformer,
+		params JsonObject[] rows)
+	{
+		var initial = await transformer.RenderPageAsync(SingleRowPage(rows[0]), CancellationToken.None).ConfigureAwait(false);
+		var session = new PagerSession(initial.Text, hasMorePayload: rows.Length > 1, maxBufferedLines: 100, initial.Layout);
+		for (var i = 1; i < rows.Length; i++)
+		{
+			var next = await transformer.RenderPageAsync(SingleRowPage(rows[i]), CancellationToken.None).ConfigureAwait(false);
+			session.Append(next.Text, hasMorePayload: i < rows.Length - 1, containsPresentationChrome: false, next.Layout);
+		}
+
+		return session;
+	}
+
+	private sealed record Described(
+		[property: System.ComponentModel.DataAnnotations.Display(Name = "Display Name")] string Name,
+		[property: System.ComponentModel.DataAnnotations.Display(Name = "Created At")] string CreatedAt,
+		string Description);
 
 	private static ReplPage<JsonObject> SingleRowPage(JsonObject row) =>
 		new([row], new ReplPageInfo(Cursor: null, NextCursor: null, TotalCount: null, PageSize: 1));

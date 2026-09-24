@@ -1037,147 +1037,130 @@ public sealed class Given_ResultFlowPager
 	}
 
 	[TestMethod]
-	[Description("A continuation header that repeats the pinned one, only padded to other column widths, is still dropped as a duplicate.")]
-	public void When_AContinuationHeaderRepeatsThePinnedOneAtOtherWidths_Then_ItIsDropped()
+	[Description("A declared header is dropped from a page that names the previous page's columns, whatever its text: a plain Spectre header has neither a separator nor styling to be recognized by.")]
+	public void When_ADeclaredHeaderNamesThePreviousColumns_Then_ItIsDropped()
 	{
-		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  name", "--  ----", "1   a"), header: null);
-		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id   name", "---  ----", "100  b"), first.Header);
+		var layout = Declared(1, "id", "name");
+		var first = PagerPayloadParser.ParseDeclared(Lines("id name", "1  a"), header: null, previousLayout: null, layout);
+		var second = PagerPayloadParser.ParseDeclared(Lines("id  name", "22 bb"), first.Header, layout, Declared(1, "id", "name"));
 
-		second.ContentLines.Should().Equal("100  b");
+		first.Header.Lines.Should().Equal("id name");
+		first.ContentLines.Should().Equal("1  a");
+		second.ContentLines.Should().Equal("22 bb");
 	}
 
 	[TestMethod]
-	[Description("A continuation header that names other columns than the pinned one is kept: without it the page's rows would sit under headings that are not theirs.")]
-	public void When_AContinuationHeaderDiffersFromThePinnedOne_Then_ItIsKept()
+	[Description("A declared header naming other columns is kept, even when its text reads the same: keys 'a  b' / 'c' and 'a' / 'b  c' render alike.")]
+	public void When_ADeclaredHeaderNamesOtherColumns_Then_ItIsKept()
 	{
-		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  name", "--  ----", "1   a"), header: null);
-		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "name  id", "----  --", "b     2"), first.Header);
+		var layout = Declared(1, "a  b", "c");
+		var first = PagerPayloadParser.ParseDeclared(Lines("a  b  c", "1     2"), header: null, previousLayout: null, layout);
+		var second = PagerPayloadParser.ParseDeclared(Lines("a  b  c", "3  4"), first.Header, layout, Declared(1, "a", "b  c"));
 
-		second.ContentLines.Should().Equal("name  id", "----  --", "b     2");
+		second.ContentLines.Should().Equal("a  b  c", "3  4");
 	}
 
 	[TestMethod]
-	[Description("Labels are compared column by column, as the separator spans them: 'first' / 'last name' and 'first last' / 'name' have the same words but are other columns, so the continuation keeps its header.")]
-	public void When_AContinuationHeaderRegroupsThePinnedWords_Then_ItIsKept()
+	[Description("A page is compared with the page before it, not with the pinned one: after columns A then B, a page back on A must show its header again, since the last header in view names B.")]
+	public void When_ColumnsGoBackToThePinnedOnes_Then_TheHeaderIsShownAgain()
 	{
-		var first = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, "first  last name", "-----  ---------", "a      b"), header: null);
-		var second = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, "first last  name", "----------  ----", "c           d"), first.Header);
+		var a = Declared(1, "id", "name");
+		var b = Declared(1, "name", "id");
+		var first = PagerPayloadParser.ParseDeclared(Lines("id  name", "1   a"), header: null, previousLayout: null, a);
+		var third = PagerPayloadParser.ParseDeclared(Lines("id  name", "3   c"), first.Header, b, a);
 
-		second.ContentLines.Should().Equal("first last  name", "----------  ----", "c           d");
+		third.ContentLines.Should().Equal("id  name", "3   c");
 	}
 
 	[TestMethod]
-	[Description("A narrow table leaves a single space between columns, so both headers read 'first last name': only the separator's column spans tell 'first' / 'last name' from 'first last' / 'name'.")]
-	public void When_ANarrowContinuationHeaderRegroupsThePinnedWords_Then_ItIsKept()
+	[Description("Under a declared header, a data line that reads like the header is data: a column named 1 holding 1 renders its header and its row alike.")]
+	public void When_ADeclaredPageHasARowLikeItsHeader_Then_TheRowIsKept()
 	{
-		var first = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, "first last name", "----- ---------", "a     b"), header: null);
-		var second = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, "first last name", "---------- ----", "c          d"), first.Header);
+		var layout = Declared(2, "1");
+		var first = PagerPayloadParser.ParseDeclared(Lines("1", "-", "1"), header: null, previousLayout: null, layout);
+		var second = PagerPayloadParser.ParseDeclared(Lines("1", "-", "1"), first.Header, layout, layout);
 
-		second.ContentLines.Should().Equal("first last name", "---------- ----", "c          d");
+		first.ContentLines.Should().Equal("1");
+		second.ContentLines.Should().Equal("1");
 	}
 
 	[TestMethod]
-	[Description("A styled header, as Spectre writes it, has no separator: each label is its own styled run, spaces included, so regrouped words are other columns there too.")]
-	public void When_AStyledContinuationHeaderRegroupsThePinnedWords_Then_ItIsKept()
+	[Description("A declared footer is exactly the lines it names: a data line that reads like a footer stays.")]
+	public void When_APayloadDeclaresItsFooter_Then_OnlyThoseLinesAreStripped()
 	{
-		var first = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, Bold("first") + " " + Bold("last name"), "a     b"), header: null);
-		var next = Bold("first last") + " " + Bold("name");
-		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, next, "c          d"), first.Header);
+		var parsed = PagerPayloadParser.ParseDeclared(
+			Lines("Showing 1 of 2.", "Showing 2 of 9. Next data page: rerun with --result:cursor 2."),
+			header: null,
+			previousLayout: null,
+			RenderedLayout.None.WithFooter(1));
 
-		second.ContentLines.Should().Equal(next, "c          d");
+		parsed.ContentLines.Should().Equal("Showing 1 of 2.");
 	}
 
 	[TestMethod]
-	[Description("A styled continuation header with the pinned labels, padded to other widths, is still dropped as a duplicate.")]
-	public void When_AStyledContinuationHeaderRepeatsThePinnedOne_Then_ItIsDropped()
+	[Description("A page with no declared header, a list between two tables for instance, adds its lines only.")]
+	public void When_APageDeclaresNoHeader_Then_AllItsLinesAreContent()
 	{
-		var first = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, Bold("id") + " " + Bold("last name"), "1  a"), header: null);
-		var second = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, Bold("id ") + " " + Bold("last name") + "   ", "100 b"), first.Header);
+		var layout = Declared(2, "id", "name");
+		var first = PagerPayloadParser.ParseDeclared(Lines("id  name", "--  ----", "1   a"), header: null, previousLayout: null, layout);
+		var second = PagerPayloadParser.ParseDeclared(Lines("2   b"), first.Header, layout, RenderedLayout.None);
 
-		second.ContentLines.Should().Equal("100 b");
+		first.Header.Lines.Should().Equal("id  name", "--  ----");
+		second.ContentLines.Should().Equal("2   b");
 	}
 
 	[TestMethod]
-	[Description("A header bolded as one run, its padding inside the styling, is still recognized as a repeat at other widths: the labels inside the run are split at their gaps.")]
-	public void When_AWholeLineBoldHeaderRepeatsAtOtherWidths_Then_ItIsDropped()
+	[Description("A header declared taller than the payload takes the lines there are, rather than reading past them.")]
+	public void When_ADeclaredHeaderIsTallerThanThePayload_Then_ItTakesTheLinesThereAre()
 	{
-		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, Bold("id  name"), "1   a"), header: null);
-		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, Bold("id    name"), "1000  b"), first.Header);
+		var parsed = PagerPayloadParser.ParseDeclared(Lines("id"), header: null, previousLayout: null, Declared(2, "id"));
 
-		second.ContentLines.Should().Equal("1000  b");
+		parsed.Header.Lines.Should().Equal("id");
+		parsed.ContentLines.Should().BeEmpty();
 	}
 
 	[TestMethod]
-	[Description("Bold within a combined SGR sequence, as the human palette styles its table header, marks a header line too.")]
-	public void When_TheFirstLineIsBoldWithinACombinedSequence_Then_ItIsTheHeader()
+	[Description("A layout holds only what a rendering can have: no negative line counts, and a header exactly when there are columns.")]
+	public void When_ALayoutIsInconsistent_Then_ItCannotBeCreated()
 	{
-		var parsed = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, $"{(char)27}[1;38;5;221mid  name{(char)27}[0m", "1   a"), header: null);
-
-		parsed.Header.Lines.Should().ContainSingle();
-		parsed.ContentLines.Should().Equal("1   a");
+		FluentActions.Invoking(() => new RenderedLayout(-1, [])).Should().Throw<ArgumentOutOfRangeException>();
+		FluentActions.Invoking(() => new RenderedLayout(0, [], footerLineCount: -1)).Should().Throw<ArgumentOutOfRangeException>();
+		FluentActions.Invoking(() => new RenderedLayout(1, [])).Should().Throw<ArgumentException>();
+		FluentActions.Invoking(() => new RenderedLayout(0, ["id"])).Should().Throw<ArgumentException>();
 	}
 
 	[TestMethod]
-	[Description("A 1 that is an extended colour's argument, as in 38;5;1, is a colour, not bold: that line is content.")]
-	public void When_TheFirstLineUsesColourIndexOne_Then_ItIsNotAHeader()
+	[Description("A custom pager renderer gets fetched pages as text only: a declared header naming the previous page's columns is stripped for it, as the built-in pager drops it, and one naming other columns is kept.")]
+	public async Task When_ACustomRendererFetchesDeclaredPages_Then_RepeatedHeadersAreStripped()
 	{
-		var colored = $"{(char)27}[38;5;1mred{(char)27}[0m";
-		var parsed = PagerPayloadParser.Parse(string.Join(Environment.NewLine, colored, "next"), header: null);
+		var renderer = new FetchingPagerRenderer(ReplPagerMode.More);
+		var pages = new Queue<ResultFlowPagerPage>(
+		[
+			new(Lines("id  name", "--  ----", "22  bb"), HasMore: true, ContainsPresentationChrome: false, Declared(2, "id", "name")),
+			new(Lines("name  id", "----  --", "c     3"), HasMore: false, ContainsPresentationChrome: false, Declared(2, "name", "id")),
+		]);
 
-		parsed.Header.Lines.Should().BeEmpty();
-		parsed.ContentLines.Should().Equal(colored, "next");
+		await ResultFlowPager.WriteAsync(
+			Lines("id  name", "--  ----", "1   a"),
+			new StringWriter(),
+			new FakeKeyReader([]),
+			new ResultFlowPagerOptions
+			{
+				VisibleRows = 5,
+				PagerMode = ReplPagerMode.More,
+				HasMorePayload = true,
+				PayloadLayout = Declared(2, "id", "name"),
+				FetchNextPayload = _ => ValueTask.FromResult(pages.TryDequeue(out var page) ? page : null),
+				PagerRenderers = [renderer],
+			},
+			CancellationToken.None);
+
+		renderer.Fetched.Should().Equal("22  bb", Lines("name  id", "----  --", "c     3"));
 	}
 
-	[TestMethod]
-	[Description("A single payload, such as a long string result, keeps a line identical to its first one: only a continuation page repeats a header.")]
-	public void When_APayloadRepeatsItsBoldFirstLine_Then_BothAreKept()
-	{
-		var title = $"{(char)27}[1;31mSection{(char)27}[0m";
-		var parsed = PagerPayloadParser.Parse(string.Join(Environment.NewLine, title, "one", title, "two"), header: null);
+	private static string Lines(params string[] lines) => string.Join(Environment.NewLine, lines);
 
-		parsed.ContentLines.Should().Equal(["one", title, "two"], "the first line may be pinned, but its repeat inside the payload is data");
-	}
-
-	[TestMethod]
-	[Description("A first line holding only a style opener has no header text; taken as a header, it would drop every blank line after it.")]
-	public void When_TheFirstLineIsOnlyAStyleOpener_Then_BlankLinesAreKept()
-	{
-		var parsed = PagerPayloadParser.Parse(
-			string.Join(Environment.NewLine, $"{(char)27}[1;37m", "one", string.Empty, "two"), header: null);
-
-		parsed.Header.Lines.Should().BeEmpty();
-		parsed.ContentLines.Should().Contain(string.Empty);
-	}
-
-	[TestMethod]
-	[Description("Bold that only starts inside the line, after other text, does not style a header: that line is content.")]
-	public void When_ALineIsBoldOnlyAfterOtherText_Then_ItIsNotAHeader()
-	{
-		var line = $"note: {(char)27}[1;31mX{(char)27}[0m";
-		var parsed = PagerPayloadParser.Parse(string.Join(Environment.NewLine, line, "next"), header: null);
-
-		parsed.Header.Lines.Should().BeEmpty();
-	}
-
-	private static string Bold(string text) => $"{(char)27}[1m{text}{(char)27}[0m";
-
-	[TestMethod]
-	[Description("A kept continuation header keeps its separator, even when the column widths make that separator identical to the pinned one: without it the header reads as a data row.")]
-	public void When_AKeptContinuationHeaderHasThePinnedSeparator_Then_TheSeparatorIsKeptToo()
-	{
-		var first = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  name", "--  ----", "1   a"), header: null);
-		var second = PagerPayloadParser.Parse(string.Join(Environment.NewLine, "id  kind", "--  ----", "2   b"), first.Header);
-
-		second.ContentLines.Should().Equal("id  kind", "--  ----", "2   b");
-	}
+	private static RenderedLayout Declared(int headerLineCount, params string[] columns) => new(headerLineCount, columns);
 
 	private static ValueTask WritePagerAsync(
 		string payload,
@@ -1342,6 +1325,26 @@ public sealed class Given_ResultFlowPager
 
 	private static ConsoleKeyInfo MakeKey(ConsoleKey key, char keyChar) =>
 		new(keyChar, key, shift: false, alt: false, control: false);
+
+	private sealed class FetchingPagerRenderer(ReplPagerMode mode) : IReplPagerRenderer
+	{
+		public List<string> Fetched { get; } = [];
+
+		public ReplPagerMode Mode { get; } = mode;
+
+		public async ValueTask RenderAsync(ReplPagerRenderContext context, CancellationToken cancellationToken = default)
+		{
+			while (context.CanFetchNextPayload
+				&& await context.FetchNextPayloadAsync(cancellationToken).ConfigureAwait(false) is { } next)
+			{
+				Fetched.Add(next.Payload);
+				if (!next.HasMore)
+				{
+					break;
+				}
+			}
+		}
+	}
 
 	private sealed class RecordingPagerRenderer(ReplPagerMode mode) : IReplPagerRenderer
 	{

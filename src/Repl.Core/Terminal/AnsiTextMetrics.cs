@@ -69,39 +69,6 @@ internal static class AnsiTextMetrics
 		return builder.ToString();
 	}
 
-	/// <summary>
-	/// The runs of text between escape sequences, in order and untrimmed. A renderer that styles each table
-	/// label on its own brackets every label with its own sequences, so a label reads as one run, spaces included.
-	/// </summary>
-	public static List<string> SplitAtControlSequences(string text)
-	{
-		var span = text.AsSpan();
-		var runs = new List<string>();
-		var start = 0;
-		for (var i = 0; i < span.Length; i++)
-		{
-			if (span[i] != '\u001b')
-			{
-				continue;
-			}
-
-			if (i > start)
-			{
-				runs.Add(text[start..i]);
-			}
-
-			i = SkipEscapeSequence(span, i);
-			start = i + 1;
-		}
-
-		if (start < text.Length)
-		{
-			runs.Add(text[start..]);
-		}
-
-		return runs;
-	}
-
 	private static int SkipEscapeSequence(ReadOnlySpan<char> text, int escapeIndex)
 	{
 		if (escapeIndex + 1 >= text.Length)
