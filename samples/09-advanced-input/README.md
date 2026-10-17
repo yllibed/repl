@@ -16,6 +16,22 @@ dotnet run --project samples/09-advanced-input
 
 In the interactive session, type `demo` to display the steps again.
 
+The same sample also demonstrates preparation and startup; no separate app is
+needed. Preparation declares typed globals and normalizes legacy input before
+`SearchPolicy` is registered. A startup hook then receives the composed index:
+
+```powershell
+dotnet run --project samples/09-advanced-input -- /find "hello world" 3 --maximum-limit 2
+dotnet run --project samples/09-advanced-input -- status --refresh-on-start
+dotnet run --project samples/09-advanced-input -- --refresh-on-start
+```
+
+The first invocation is refused by the policy selected before DI. The second
+refreshes once before `status` executes. The last handles startup without needing
+a matching command. Help and completion do not perform that action. Startup does
+not repeat for later interactive commands; `/refresh` still handles individual
+interactive input as shown below.
+
 | Try | Observe |
 | --- | --- |
 | Type `/find` and pause | An incomplete-input hint asks for a search term. |
@@ -54,3 +70,5 @@ across invocations.
 
 See [advanced input adaptation and validation](../../docs/advanced-input.md) for
 source ranges, cancellation, shell completion and the normalization opt-out.
+The [startup guide](../../docs/advanced-startup.md) specifies callback order,
+Core without DI, external providers and lifecycle ownership.

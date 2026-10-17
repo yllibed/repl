@@ -55,9 +55,9 @@ app.UseArgumentPreprocessor((input, _) => ValueTask.FromResult(
         : ArgumentPreprocessingResult.Continue()));
 ```
 
-These callbacks run before input parsing, after the current hosting path has
-provided its services. They do not provide the before-DI preparation lifecycle
-described in [issue #114](https://github.com/yllibed/repl/issues/114).
+On ordinary runs, these callbacks run after the hosting path provides its services.
+The explicit [startup preparation path](advanced-startup.md) can run declared
+adapters before application composition and transfer them to later input handling.
 
 ## Preview, Completion and External Actions
 

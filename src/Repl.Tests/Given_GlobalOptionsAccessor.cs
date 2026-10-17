@@ -566,7 +566,7 @@ public sealed class Given_GlobalOptionsAccessor
 		snapshot.Update(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
 
 		// PopulateInstance should still see baseline values
-		var result = GlobalOptionsExtensions.PopulateInstance<TestTypedOptions>(
+		var result = CoreGlobalOptionsExtensions.PopulateInstance<TestTypedOptions>(
 			snapshot, System.Globalization.CultureInfo.InvariantCulture);
 
 		result.Tenant.Should().Be("acme");
