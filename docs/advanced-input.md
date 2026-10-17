@@ -148,6 +148,11 @@ when those checks are appropriate. Returning `Incomplete` communicates that a
 check or value is still needed. Both `Incomplete` and `Invalid` prevent normal
 execution when an invocation is submitted.
 
+Interactive ambient commands, including `help`, `?`, `history`, `exit` and custom
+ambient commands, also pass through application validators before dispatch. A
+refused `exit` leaves the session open. Ambient commands have no resolved route
+or command values; inspect `input.Input.Arguments` to identify them.
+
 The snapshot exposes command values through `Values` and globals through
 `GlobalValues`. Each value is `Available`, `Missing` or `Invalid`; typed values
 are converted using Repl's existing conversion rules. A partial command may not
@@ -187,6 +192,14 @@ back to the original text only when an adapter's origin information permits a
 safe replacement. An unmappable edit is omitted rather than inserting a token at
 the wrong position. Shell bridges continue using their shell-specific completion
 protocol; they do not replace the whole command line as the Repl editor does.
+
+On the shell bridge, adaptation and input validation share one
+`ShellCompletion.ProviderTimeout` budget (one second by default). This budget is
+separate from the deadline for each completion provider. A callback failure or
+timeout returns no suggestions and writes a short diagnostic to stderr; stdout
+remains reserved for completion candidates. Caller cancellation propagates without
+an error diagnostic. Overdue callbacks are canceled and abandoned, but application
+code must still cooperate with cancellation to stop its work.
 
 ## Scope
 

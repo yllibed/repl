@@ -286,6 +286,14 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return await ExecuteNormalizedCommittedInputAsync(cycle, line, inputTokens, cancellationToken).ConfigureAwait(false);
 		}
 		ProcessedInput input;
+		var outputStarted = false;
+		async ValueTask OpenOutputAsync()
+		{
+			if (outputStarted) { return; }
+			await cycle.Marks.WriteCommandLineAsync(line).ConfigureAwait(false);
+			await cycle.Marks.WriteOutputStartAsync().ConfigureAwait(false);
+			outputStarted = true;
+		}
 		using (var commandCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
 		{
 			cycle.CancelHandler.SetCommandCts(commandCts);
@@ -293,19 +301,11 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			try
 			{
 				input = await app.PreprocessInputAsync(inputTokens, cycle.ScopeTokens, InputProcessingMode.Execution,
-					line, line.Length, commandCts.Token).ConfigureAwait(false);
-				if (!input.IsHandled && input.Context.Purpose == InputPurpose.Help && app.OptionsSnapshot.Input.Validators.Count != 0)
-				{
-					var help = await app.AnalyzeInputAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
-					if (help.ApplicationValidation.State != InputValidationState.Valid)
-					{
-						input = input with { Validation = help.ApplicationValidation };
-					}
-				}
+					line, line.Length, commandCts.Token, isInteractive: true).ConfigureAwait(false);
+				input = await ValidateAmbientInputAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
 				if (input.IsHandled || input.Validation.State != InputValidationState.Valid)
 				{
-					await cycle.Marks.WriteCommandLineAsync(line).ConfigureAwait(false);
-					await cycle.Marks.WriteOutputStartAsync().ConfigureAwait(false);
+					await OpenOutputAsync().ConfigureAwait(false);
 					var handled = await app.TryFinishProcessedInputAsync(input, commandCts.Token).ConfigureAwait(false);
 					await TryWriteResolvedCommandEndAsync(cycle.Marks, handled ?? ExecutionOutcome.Success).ConfigureAwait(false);
 					return handled?.Kind == ReplExecutionOutcomeKind.HandlerExitCode
@@ -314,12 +314,14 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			}
 			catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
 			{
+				await OpenOutputAsync().ConfigureAwait(false);
 				await ReplSessionIO.Output.WriteLineAsync("Cancelled.").ConfigureAwait(false);
 				await TryWriteCommandEndAsync(cycle.Marks, ExitCodeOptions.ConventionalInterruptedExitCode).ConfigureAwait(false);
 				return AmbientCommandOutcome.Handled;
 			}
 			catch (Exception exception) when (exception is not OperationCanceledException)
 			{
+				await OpenOutputAsync().ConfigureAwait(false);
 				var failure = await app.ReportInputCallbackFailureAsync(exception, cancellationToken).ConfigureAwait(false);
 				await TryWriteResolvedCommandEndAsync(cycle.Marks, failure).ConfigureAwait(false);
 				return AmbientCommandOutcome.Handled;
@@ -332,6 +334,15 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		}
 		using var inputScope = app.PushProcessedInput(input);
 		return await ExecuteNormalizedCommittedInputAsync(cycle, line, input.Context.Arguments, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<ProcessedInput> ValidateAmbientInputAsync(
+		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken)
+	{
+		if (input.IsHandled || input.Validation.State != InputValidationState.Valid || app.OptionsSnapshot.Input.Validators.Count == 0
+			|| (input.Context.Purpose != InputPurpose.Help && !IsAmbientCommandInvocation(input.Context.Arguments))) { return input; }
+		var analysis = await app.AnalyzeInputAsync(input, services, cancellationToken).ConfigureAwait(false);
+		return input with { Validation = analysis.ApplicationValidation };
 	}
 
 	private async ValueTask<AmbientCommandOutcome> ExecuteNormalizedCommittedInputAsync(
@@ -527,7 +538,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 	/// both <see cref="CommittedInputResolver"/> (via the injected predicate) and
 	/// <see cref="TryHandleAmbientCommandAsync"/> — both walk the same table.
 	/// </summary>
-	private bool IsAmbientCommandInvocation(IReadOnlyList<string> inputTokens)
+	internal bool IsAmbientCommandInvocation(IReadOnlyList<string> inputTokens)
 	{
 		if (inputTokens.Count == 0)
 		{

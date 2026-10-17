@@ -137,9 +137,9 @@ internal static partial class ConsoleLineReader
 		var assist = await editor.Resolver!(request, ct).ConfigureAwait(false);
 		if (assist is { NormalizedInput: { } normalized })
 		{
-			buffer.Clear();
-			buffer.Append(normalized);
-			ReplaceBuffer(buffer, ref cursor, assist.Value.NormalizedCursor ?? normalized.Length, echo);
+			ReplaceLine(buffer, ref cursor, normalized, echo);
+			MoveBack(cursor - (assist.Value.NormalizedCursor ?? normalized.Length), echo);
+			cursor = assist.Value.NormalizedCursor ?? normalized.Length;
 			editor.IsMenuOpen = false;
 			editor.ConsecutiveTabPresses = 0;
 			await RefreshAssistAfterEditingAsync(editor, buffer, cursor, echo, ct).ConfigureAwait(false);

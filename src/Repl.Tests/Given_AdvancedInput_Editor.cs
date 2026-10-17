@@ -8,6 +8,41 @@ namespace Repl.Tests;
 public sealed class Given_AdvancedInput_Editor
 {
 	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Shorter normalization must erase the old suffix on screen and preserve an origin-mapped cursor before further editing.")]
+	public async Task When_NormalizationShortensTheLine_Then_DisplayAndSubmittedTextAgree(bool rich)
+	{
+		var app = CoreReplApp.Create();
+		app.Map("q {text}", (string text) => text);
+		app.UseArgumentPreprocessor((input, _) => ValueTask.FromResult(
+			input.Arguments is ["/verylonglegacy", var text]
+				? ArgumentPreprocessingResult.Replace(["q", text]) : ArgumentPreprocessingResult.Continue()));
+		var harness = new TerminalHarness(cols: 80, rows: 8);
+		using var io = ReplSessionIO.SetSession(harness.Writer, TextReader.Null);
+		var previous = ReplSessionIO.KeyReader;
+		var keys = "/verylonglegacy hello".Select(ToKey).ToList();
+		keys.AddRange(Enumerable.Repeat(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, shift: false, alt: false, control: false), 3));
+		keys.Add(ToKey('\t'));
+		keys.Add(ToKey('X'));
+		keys.Add(ToKey('\r'));
+		ReplSessionIO.KeyReader = new FakeKeyReader(keys);
+		try
+		{
+			var edited = await ConsoleLineReader.ReadLineAsync(history: null,
+				(request, token) => app.Autocomplete.ResolveAutocompleteAsync(request, [], app.CurrentServiceProvider, token),
+				rich ? ConsoleLineReader.AutocompleteRenderMode.Rich : ConsoleLineReader.AutocompleteRenderMode.Basic,
+				8, Repl.Autocomplete.AutocompletePresentation.Hybrid, liveHintEnabled: false,
+				colorizeInputLine: false, colorizeHintAndMenu: false, ConsoleLineReader.AutocompleteColorStyles.Empty,
+				CancellationToken.None, backgroundInputAnalysis: true);
+			edited.Line.Should().Be("q heXllo");
+			harness.GetLine(0).TrimEnd().Should().Be("q heXllo");
+		}
+		finally { ReplSessionIO.KeyReader = previous; }
+	}
+
+	[TestMethod]
+	[Description("Normalization must update the submitted buffer as well as the autocomplete result.")]
 	public async Task When_TabIsPressed_Then_TheEditorSubmitsNormalizedArguments()
 	{
 		var app = CreateApp(normalize: true);
@@ -16,6 +51,7 @@ public sealed class Given_AdvancedInput_Editor
 	}
 
 	[TestMethod]
+	[Description("The editor must honor the normalization opt-out during actual key handling.")]
 	public async Task When_NormalizationIsOptedOut_Then_TabPreservesLegacyText()
 	{
 		var app = CreateApp(normalize: false);
@@ -23,6 +59,7 @@ public sealed class Given_AdvancedInput_Editor
 	}
 
 	[TestMethod]
+	[Description("Origin mapping must retain the editing position inside a rewritten argument.")]
 	public async Task When_CursorHasAnOrigin_Then_NormalizationKeepsItsRelativePosition()
 	{
 		var app = CreateApp(normalize: true);
@@ -33,6 +70,7 @@ public sealed class Given_AdvancedInput_Editor
 	}
 
 	[TestMethod]
+	[Description("Live analysis must ask for a missing option value without marking a recoverable prefix invalid.")]
 	public async Task When_AValueIsStillMissing_Then_LiveValidationIsIncomplete()
 	{
 		var app = CoreReplApp.Create();
@@ -44,6 +82,7 @@ public sealed class Given_AdvancedInput_Editor
 	}
 
 	[TestMethod]
+	[Description("An unknown command with no possible completion should produce an invalid-input hint.")]
 	public async Task When_ACommandCannotMatchAnyRoute_Then_LiveValidationIsInvalid()
 	{
 		var app = CreateApp(normalize: true);
@@ -54,6 +93,7 @@ public sealed class Given_AdvancedInput_Editor
 	}
 
 	[TestMethod]
+	[Description("A stale preview must neither block typing nor overwrite the newest diagnostic.")]
 	public async Task When_AnOldPreviewIgnoresCancellation_Then_TypingContinuesAndItsResultIsDiscarded()
 	{
 		var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

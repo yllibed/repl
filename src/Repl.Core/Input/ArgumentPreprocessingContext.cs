@@ -6,7 +6,7 @@ public sealed class ArgumentPreprocessingContext
 	internal ArgumentPreprocessingContext(
 		IReadOnlyList<string> originalArguments, IReadOnlyList<string> arguments,
 		IReadOnlyList<string> scopeTokens, InputProcessingMode mode, InputPurpose purpose,
-		string? text, int? cursor, IReadOnlyList<InputSourceRange?> origins)
+		string? text, int? cursor, IReadOnlyList<InputSourceRange?> origins, bool isInteractive = false)
 	{
 		OriginalArguments = Array.AsReadOnly(originalArguments.ToArray());
 		Arguments = Array.AsReadOnly(arguments.ToArray());
@@ -16,7 +16,10 @@ public sealed class ArgumentPreprocessingContext
 		Text = text;
 		Cursor = cursor;
 		ArgumentOrigins = Array.AsReadOnly(origins.ToArray());
+		IsInteractive = isInteractive;
 	}
+
+	internal bool IsInteractive { get; }
 
 	/// <summary>Gets arguments before any adapter ran.</summary>
 	public IReadOnlyList<string> OriginalArguments { get; }

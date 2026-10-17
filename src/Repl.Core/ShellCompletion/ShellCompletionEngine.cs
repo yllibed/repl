@@ -7,6 +7,7 @@ namespace Repl;
 /// </summary>
 internal sealed class ShellCompletionEngine(CoreReplApp app)
 {
+	private sealed record AnalyzedShellInput(ProcessedInput Input, ParsedInputContext? Analysis);
 
 	public async ValueTask<string[]> ResolveShellCompletionCandidatesAsync(
 		string line,
@@ -27,10 +28,17 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			while (start < line.Length && char.IsWhiteSpace(line[start])) { start++; }
 			var inputText = line[start..];
 			var arguments = InputTokenizer.Tokenize(inputText).Select(static token => token.Value).ToArray();
-			var input = await app.PreprocessInputAsync(arguments, [], InputProcessingMode.ShellCompletion,
-				inputText, Math.Max(0, cursor - start), cancellationToken).ConfigureAwait(false);
-			var analysis = await app.AnalyzeInputAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
-			if (input.IsHandled || analysis.ApplicationValidation.State == InputValidationState.Invalid) { return []; }
+			var analyzed = await InvokeWithDeadlineAsync(async token =>
+			{
+				var processed = await app.PreprocessInputAsync(arguments, [], InputProcessingMode.ShellCompletion,
+					inputText, Math.Max(0, cursor - start), token).ConfigureAwait(false);
+				var analysis = processed.IsHandled ? null
+					: await app.AnalyzeInputAsync(processed, serviceProvider, token).ConfigureAwait(false);
+				return new AnalyzedShellInput(processed, analysis);
+			}, serviceProvider, reportInputFailure: true, cancellationToken).ConfigureAwait(false);
+			if (analyzed is null || analyzed.Input.IsHandled
+				|| analyzed.Analysis?.ApplicationValidation.State == InputValidationState.Invalid) { return []; }
+			var input = analyzed.Input;
 			var normalized = input.WasRewritten ? InputTokenizer.Format(input.Context.Arguments) : inputText;
 			if (inputText.Length != 0 && char.IsWhiteSpace(inputText[^1]) && input.WasRewritten) { normalized += " "; }
 			var mappedCursor = AutocompleteEngine.MapInputCursor(input, normalized, Math.Max(0, cursor - start));
@@ -47,7 +55,11 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 				shell, serviceProvider, cancellationToken).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-		catch (Exception) { return []; }
+		catch (Exception exception)
+		{
+			await WriteInputFailureAsync(exception).ConfigureAwait(false);
+			return [];
+		}
 	}
 
 	private async ValueTask<string[]> ResolveCanonicalShellCompletionCandidatesAsync(
@@ -375,23 +387,29 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	// Returns null on timeout OR provider fault so the caller degrades to static candidates
 	// (a transient lookup failure must not fail the completion invocation or spam the shell's
 	// completion stream).
-	private async ValueTask<IReadOnlyList<string>?> InvokeProviderWithDeadlineAsync(
+	private ValueTask<IReadOnlyList<string>?> InvokeProviderWithDeadlineAsync(
 		CompletionDelegate provider,
 		IServiceProvider serviceProvider,
 		string input,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken) =>
+		InvokeWithDeadlineAsync(token => provider(new CompletionContext(serviceProvider), input, token),
+			serviceProvider, reportInputFailure: false, cancellationToken);
+
+	private async ValueTask<T?> InvokeWithDeadlineAsync<T>(
+		Func<CancellationToken, ValueTask<T>> callback, IServiceProvider serviceProvider,
+		bool reportInputFailure, CancellationToken cancellationToken) where T : class
 	{
 		var timeout = app.OptionsSnapshot.ShellCompletion.ProviderTimeout;
 		// Resolve the app's TimeProvider so the deadline is driven by an injectable clock
 		// (deterministic under FakeTimeProvider) rather than hardcoding the system clock.
 		var timeProvider = serviceProvider.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		var providerTask = Task.Run(
-			() => provider(new CompletionContext(serviceProvider), input, deadline.Token).AsTask(),
+		var callbackTask = Task.Run(
+			() => callback(deadline.Token).AsTask(),
 			CancellationToken.None);
 		try
 		{
-			var result = await providerTask.WaitAsync(timeout, timeProvider, cancellationToken).ConfigureAwait(false);
+			var result = await callbackTask.WaitAsync(timeout, timeProvider, cancellationToken).ConfigureAwait(false);
 			deadline.Dispose();
 			return result;
 		}
@@ -400,10 +418,10 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			// Caller cancelled: hand the still-running provider to the same detached
 			// abandon/observe/dispose path as the timeout case, so we never dispose the CTS
 			// while the provider still holds its token.
-			AbandonProvider(deadline, providerTask);
+			AbandonCallback(deadline, callbackTask);
 			throw;
 		}
-		catch (TimeoutException)
+		catch (TimeoutException exception)
 		{
 			// The provider overran the deadline. Cancel the token to let a cooperative
 			// provider unwind, but off a DETACHED task: Cancel() runs the provider's
@@ -411,18 +429,35 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			// keep the bridge (and the user's shell) waiting past the deadline. The same
 			// detached task observes the abandoned provider's eventual fault and disposes the
 			// CTS once it settles, so Cancel() and Dispose() never race.
-			AbandonProvider(deadline, providerTask);
+			AbandonCallback(deadline, callbackTask);
+			if (reportInputFailure) { await WriteInputFailureAsync(exception).ConfigureAwait(false); }
 			return null;
 		}
-		catch (Exception)
+		catch (Exception exception)
 		{
-			// Provider fault (sync or async) — degrade to static candidates.
+			// The caller chooses its fallback; input failures also need an error diagnostic.
 			deadline.Dispose();
+			if (reportInputFailure) { await WriteInputFailureAsync(exception).ConfigureAwait(false); }
 			return null;
 		}
 	}
 
-	private static void AbandonProvider(CancellationTokenSource deadline, Task providerTask) =>
+	private static async ValueTask WriteInputFailureAsync(Exception exception)
+	{
+		try
+		{
+			var message = exception is TimeoutException
+				? "Shell completion input callbacks timed out."
+				: $"Shell completion input callbacks failed: {exception.GetType().Name}: {exception.Message}";
+			await ReplSessionIO.Error.WriteLineAsync(message).ConfigureAwait(false);
+		}
+		catch
+		{
+			// A torn-down error stream must not replace the callback failure or write to protocol stdout.
+		}
+	}
+
+	private static void AbandonCallback(CancellationTokenSource deadline, Task callbackTask) =>
 		_ = Task.Run(async () =>
 		{
 			try
@@ -441,7 +476,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 				// VSTHRD003: awaiting a task started elsewhere is intentional — there is no
 				// sync context on this pool task, so no deadlock; we only observe the fault.
 #pragma warning disable VSTHRD003
-				await providerTask.ConfigureAwait(false);
+				await callbackTask.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
 			}
 			catch

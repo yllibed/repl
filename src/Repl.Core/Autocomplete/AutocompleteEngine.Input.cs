@@ -15,7 +15,7 @@ internal sealed partial class AutocompleteEngine
 			var tokens = InputTokenizer.Tokenize(request.Input);
 			var processed = await app.PreprocessInputAsync(tokens.Select(static token => token.Value).ToArray(), scopeTokens,
 				request.ExplicitCompletion ? InputProcessingMode.Completion : InputProcessingMode.Preview,
-				request.Input, request.Cursor, cancellationToken).ConfigureAwait(false);
+				request.Input, request.Cursor, cancellationToken, isInteractive: true).ConfigureAwait(false);
 			var analysis = await app.AnalyzeInputAsync(processed, serviceProvider, cancellationToken).ConfigureAwait(false);
 			var globals = GlobalOptionParser.Parse([.. scopeTokens, .. processed.Context.Arguments],
 				app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);

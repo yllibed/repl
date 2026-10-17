@@ -6,6 +6,33 @@ namespace Repl.Tests;
 [DoNotParallelize]
 public sealed class Given_InteractiveSession_ShellIntegrationMarks
 {
+	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("A preprocessing error or command cancellation opens the output region before its diagnostic and closes the command exactly once.")]
+	public void When_InputCallbackFails_Then_TheDiagnosticHasACompleteShellLifecycle(bool cancelled)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.UseArgumentPreprocessor((input, _) =>
+		{
+			if (input.Mode == InputProcessingMode.Execution && input.Arguments is ["boom"])
+			{
+				throw cancelled ? new OperationCanceledException() : new InvalidOperationException("input callback failed");
+			}
+			return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+		});
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		var raw = RunInteractiveSession(harness, sut, "boom\rexit\r");
+		var start = raw.IndexOf("]133;C", StringComparison.Ordinal);
+		var diagnostic = raw.IndexOf(cancelled ? "Cancelled." : "input callback failed", StringComparison.Ordinal);
+		var end = raw.IndexOf(cancelled ? "]133;D;130" : "]133;D;1", StringComparison.Ordinal);
+		start.Should().BeGreaterThanOrEqualTo(0);
+		diagnostic.Should().BeGreaterThan(start);
+		end.Should().BeGreaterThan(diagnostic);
+		var commandRegion = raw[..(end + 1)];
+		commandRegion.Split("]133;C", StringSplitOptions.None).Length.Should().Be(2);
+	}
 
 	[TestMethod]
 	[Description("A successful interactive command is wrapped by the full lifecycle: prompt start, input start, output start, command output, and command end with exit code 0, then the next prompt starts a new cycle.")]

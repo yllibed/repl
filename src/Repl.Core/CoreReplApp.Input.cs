@@ -21,7 +21,7 @@ public sealed partial class CoreReplApp
 
 	internal async ValueTask<ProcessedInput> PreprocessInputAsync(
 		IReadOnlyList<string> arguments, IReadOnlyList<string> scopeTokens, InputProcessingMode mode,
-		string? text, int? cursor, CancellationToken cancellationToken)
+		string? text, int? cursor, CancellationToken cancellationToken, bool isInteractive = false)
 	{
 		var original = arguments.ToArray();
 		IReadOnlyList<string> effective = original;
@@ -55,7 +55,7 @@ public sealed partial class CoreReplApp
 		return new(context, CombineInputValidation(checks));
 
 		ArgumentPreprocessingContext CreateContext() => new(
-			original, effective, scopeTokens, mode, IdentifyInputPurpose(effective, mode), text, cursor, origins);
+			original, effective, scopeTokens, mode, IdentifyInputPurpose(effective, mode, isInteractive), text, cursor, origins, isInteractive);
 	}
 
 	private static InputSourceRange?[] PreserveInputOrigins(IReadOnlyList<string> previous,
@@ -76,13 +76,11 @@ public sealed partial class CoreReplApp
 		return mapped;
 	}
 
-	private InputPurpose IdentifyInputPurpose(IReadOnlyList<string> arguments, InputProcessingMode mode)
+	private InputPurpose IdentifyInputPurpose(IReadOnlyList<string> arguments, InputProcessingMode mode, bool isInteractive)
 	{
 		if (mode is InputProcessingMode.Completion or InputProcessingMode.ShellCompletion) { return InputPurpose.Completion; }
-		var comparison = _options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseSensitive
-			? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-		if (arguments.Any(argument => string.Equals(argument, "--help", comparison))
-			|| (arguments.Count != 0 && string.Equals(arguments[0], "help", StringComparison.OrdinalIgnoreCase)))
+		var globals = GlobalOptionParser.Parse(arguments, _options.Output, _options.Parsing);
+		if (globals.HelpRequested || (isInteractive && arguments.Count != 0 && IsHelpToken(arguments[0])))
 		{
 			return InputPurpose.Help;
 		}
@@ -94,7 +92,7 @@ public sealed partial class CoreReplApp
 		CancellationToken cancellationToken, IServiceProvider? presenceServiceProvider = null)
 	{
 		// Structured adapters retain their native invocation contract; #115 owns their interception.
-		if (!_options.Input.IsEnabled || ReplSessionIO.IsProgrammatic || IsCompletionBridge(args))
+		if (!_options.Input.IsEnabled || ReplSessionIO.IsProgrammatic)
 		{
 			return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
 				cancellationToken, presenceServiceProvider).ConfigureAwait(false);
@@ -103,6 +101,11 @@ public sealed partial class CoreReplApp
 		using var runtimeScope = PushRuntimeState(serviceProvider, isInteractiveSession: false, presenceServiceProvider);
 		try
 		{
+			if (IsCompletionBridge(args))
+			{
+				return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
+					cancellationToken, presenceServiceProvider).ConfigureAwait(false);
+			}
 			var input = await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken)
 				.ConfigureAwait(false);
 			_currentInput.Value = input;
@@ -115,7 +118,8 @@ public sealed partial class CoreReplApp
 				var help = await AnalyzeInputAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
 				if (help.ApplicationValidation.State != InputValidationState.Valid)
 				{
-					return await RefuseInputAsync(help.ApplicationValidation, cancellationToken).ConfigureAwait(false);
+					var globals = ParseInputGlobals(input);
+					return await RefuseInputAsync(help.ApplicationValidation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
 				}
 			}
 			return await ExecuteUnprocessedCoreOutcomeAsync(input.Context.Arguments, serviceProvider,
@@ -128,18 +132,25 @@ public sealed partial class CoreReplApp
 		finally { _currentInput.Value = previous; }
 	}
 
-	private static bool IsCompletionBridge(IReadOnlyList<string> arguments) =>
-		arguments.Count >= 2 && string.Equals(arguments[0], "completion", StringComparison.Ordinal)
-		&& string.Equals(arguments[1], "__complete", StringComparison.Ordinal);
+	private bool IsCompletionBridge(IReadOnlyList<string> arguments)
+	{
+		var globals = GlobalOptionParser.Parse(arguments, _options.Output, _options.Parsing);
+		if (globals.HelpRequested || globals.RemainingTokens.Count < 2) { return false; }
+		return string.Equals(globals.RemainingTokens[0], "completion", StringComparison.OrdinalIgnoreCase)
+			&& string.Equals(globals.RemainingTokens[1], "__complete", StringComparison.OrdinalIgnoreCase);
+	}
+
+	private GlobalInvocationOptions ParseInputGlobals(ProcessedInput input) =>
+		GlobalOptionParser.Parse([.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
 
 	internal async ValueTask<ExecutionOutcome?> TryFinishProcessedInputAsync(ProcessedInput input, CancellationToken cancellationToken)
 	{
+		if (!input.IsHandled && input.Validation.State == InputValidationState.Valid) { return null; }
+		var globals = ParseInputGlobals(input);
 		if (input.Validation.State != InputValidationState.Valid)
 		{
-			return await RefuseInputAsync(input.Validation, cancellationToken).ConfigureAwait(false);
+			return await RefuseInputAsync(input.Validation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
 		}
-		if (!input.IsHandled) { return null; }
-		var globals = GlobalOptionParser.Parse(input.Context.Arguments, _options.Output, _options.Parsing);
 		await TryClearProgressAsync(CurrentServiceProvider).ConfigureAwait(false);
 		if (TupleDecomposer.IsTupleResult(input.Result, out var tuple))
 		{
@@ -169,9 +180,9 @@ public sealed partial class CoreReplApp
 			: ExecutionOutcome.FrameworkError(failure, exception);
 	}
 
-	private ValueTask<ExecutionOutcome> RefuseInputAsync(InputValidationResult validation, CancellationToken cancellationToken) =>
+	private ValueTask<ExecutionOutcome> RefuseInputAsync(InputValidationResult validation, string? requestedFormat, CancellationToken cancellationToken) =>
 		RefuseAsync(Results.Validation(validation.Diagnostics.Count != 0 ? validation.Diagnostics[0].Message : "Input validation failed."),
-			requestedFormat: null, cancellationToken);
+			requestedFormat, cancellationToken);
 
 	internal async ValueTask<ParsedInputContext> AnalyzeInputAsync(
 		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken,
@@ -183,27 +194,10 @@ public sealed partial class CoreReplApp
 			[.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
 		foreach (var diagnostic in globals.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic)); }
 		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions);
-		if (match is null && !input.IsHandled)
+		if (match is null && !input.IsHandled
+			&& !(input.Context.IsInteractive && Interactive.IsAmbientCommandInvocation(input.Context.Arguments)))
 		{
-			var graph = ResolveActiveRoutingGraph(useDurableCache: false);
-			var prefix = ResolveUniquePrefixes(globals.RemainingTokens, graph);
-			var resolution = ResolveWithDiagnostics(prefix.Tokens, graph.Routes);
-			match = resolution.Match;
-			if (match is null && input.Context.Purpose == InputPurpose.Command)
-			{
-				var comparison = _options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseSensitive
-					? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-				var isContext = ContextResolver.ResolveExact(graph.Contexts, prefix.Tokens, _options.Parsing) is not null;
-				var canComplete = prefix.Tokens.Length == 0 || prefix.IsAmbiguous || resolution.MissingArgumentsFailure is not null
-					|| Autocomplete.CollectVisibleMatchingRoutes(prefix.Tokens.ToArray(), comparison, graph.Routes, graph.Contexts).Count != 0;
-				if (!isContext)
-				{
-					checks.Add(resolution.ConstraintFailure is not null
-						? InputValidationResult.Invalid("An argument does not satisfy its route constraint.")
-						: canComplete ? InputValidationResult.Incomplete("Complete the command and its required arguments.")
-						: InputValidationResult.Invalid("Unknown command."));
-				}
-			}
+			match = ResolveInputRoute(input, globals, checks);
 		}
 		var values = new Dictionary<string, InputValue>(StringComparer.OrdinalIgnoreCase);
 		if (match is not null)
@@ -236,6 +230,29 @@ public sealed partial class CoreReplApp
 			};
 		}
 		return context;
+	}
+
+	private RouteMatch? ResolveInputRoute(ProcessedInput input, GlobalInvocationOptions globals, List<InputValidationResult> checks)
+	{
+		var graph = ResolveActiveRoutingGraph(useDurableCache: false);
+		var prefix = ResolveUniquePrefixes(globals.RemainingTokens, graph);
+		var resolution = ResolveWithDiagnostics(prefix.Tokens, graph.Routes);
+		if (resolution.Match is null && input.Context.Purpose == InputPurpose.Command)
+		{
+			var comparison = _options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseSensitive
+				? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
+			var isContext = ContextResolver.ResolveExact(graph.Contexts, prefix.Tokens, _options.Parsing) is not null;
+			var canComplete = prefix.Tokens.Length == 0 || prefix.IsAmbiguous || resolution.MissingArgumentsFailure is not null
+				|| Autocomplete.CollectVisibleMatchingRoutes(prefix.Tokens.ToArray(), comparison, graph.Routes, graph.Contexts).Count != 0;
+			if (!isContext)
+			{
+				checks.Add(resolution.ConstraintFailure is not null
+					? InputValidationResult.Invalid("An argument does not satisfy its route constraint.")
+					: canComplete ? InputValidationResult.Incomplete("Complete the command and its required arguments.")
+					: InputValidationResult.Invalid("Unknown command."));
+			}
+		}
+		return resolution.Match;
 	}
 
 	private InputValidationResult ToInputValidation(ProcessedInput input, ParseDiagnostic diagnostic, OptionSchema? schema = null)
@@ -299,6 +316,8 @@ public sealed partial class CoreReplApp
 		foreach (var parameter in match.Route.OptionSchema.Parameters.Values)
 		{
 			IReadOnlyList<string>? raw = null;
+			var rawStart = 0;
+			int? rawCount = null;
 			var missing = false;
 			try
 			{
@@ -306,9 +325,12 @@ public sealed partial class CoreReplApp
 					parsed.PositionalArguments, positionalIndex, out var named)) { raw = named; }
 				else if (parameter.Mode != ReplParameterMode.OptionOnly && positionalIndex < parsed.PositionalArguments.Count)
 				{
-					raw = InputValueSelector.SelectPositional(parameter.ParameterType, parsed.PositionalArguments, positionalIndex);
-					HandlerArgumentBinder.ThrowIfExplicitUpperBoundExceeded(match.Route.OptionSchema, parameter.Name, raw.Count);
-					positionalIndex += raw.Count;
+					var selected = InputValueSelector.SelectPositional(parameter.ParameterType, parsed.PositionalArguments, positionalIndex);
+					raw = parsed.PositionalArguments;
+					rawStart = selected.Start;
+					rawCount = selected.Count;
+					HandlerArgumentBinder.ThrowIfExplicitUpperBoundExceeded(match.Route.OptionSchema, parameter.Name, selected.Count);
+					positionalIndex += selected.Count;
 				}
 				if (raw is null)
 				{
@@ -337,7 +359,7 @@ public sealed partial class CoreReplApp
 				continue;
 			}
 			AddTypedInputValue(input, parameter.Name, raw, parameter.ParameterType, values, checks,
-				(parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive);
+				(parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive, rawStart, rawCount);
 		}
 	}
 
@@ -345,23 +367,27 @@ public sealed partial class CoreReplApp
 		|| type == typeof(Uri) || type == typeof(FileInfo) || type == typeof(DirectoryInfo);
 
 	private void AddTypedInputValue(ProcessedInput input, string name, IReadOnlyList<string> raw, Type type,
-		Dictionary<string, InputValue> values, List<InputValidationResult> checks, bool enumIgnoreCase)
+		Dictionary<string, InputValue> values, List<InputValidationResult> checks, bool enumIgnoreCase,
+		int start = 0, int? count = null)
 	{
+		var length = count ?? raw.Count;
+		var first = length == 0 ? null : raw[start];
 		try
 		{
 			var converted = HandlerArgumentBinder.TryGetCollectionElementType(type, out var elementType)
-				? HandlerArgumentBinder.ConvertMany(raw, type, elementType, _options.Parsing.NumericFormatProvider, enumIgnoreCase)
-				: ParameterValueConverter.ConvertSingle(raw.Count == 0 ? null : raw[0], type,
+				? HandlerArgumentBinder.ConvertMany(start == 0 && length == raw.Count ? raw : raw.Skip(start).Take(length).ToArray(),
+					type, elementType, _options.Parsing.NumericFormatProvider, enumIgnoreCase)
+				: ParameterValueConverter.ConvertSingle(first, type,
 					_options.Parsing.NumericFormatProvider, enumIgnoreCase);
 			values[name] = new(InputValueState.Available, converted);
 		}
 		catch (Exception exception) when (IsInputConversionFailure(exception))
 		{
 			values[name] = new(InputValueState.Invalid);
-			var incomplete = input.Context.Mode != InputProcessingMode.Execution && raw.Count == 1
-				&& IsIncompleteValue(raw[0], type, enumIgnoreCase);
+			var incomplete = input.Context.Mode != InputProcessingMode.Execution && length == 1 && first is not null
+				&& IsIncompleteValue(first, type, enumIgnoreCase);
 			var state = incomplete ? InputValidationState.Incomplete : InputValidationState.Invalid;
-			checks.Add(new(state, [new(state, $"Invalid value for '{name}': {exception.Message}", FindInputRange(input, raw.Count == 0 ? null : raw[0]))]));
+			checks.Add(new(state, [new(state, $"Invalid value for '{name}': {exception.Message}", FindInputRange(input, first))]));
 		}
 	}
 
@@ -398,7 +424,7 @@ public sealed partial class CoreReplApp
 		{
 			var context = await AnalyzeInputAsync(input, services, cancellationToken, match, globals, parsed).ConfigureAwait(false);
 			return context.Validation.State == InputValidationState.Valid ? null
-				: await RefuseInputAsync(context.Validation, cancellationToken).ConfigureAwait(false);
+				: await RefuseInputAsync(context.Validation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
 		}
 		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken))
 		{

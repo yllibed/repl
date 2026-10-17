@@ -8,6 +8,7 @@ namespace Repl.Tests;
 public sealed class Given_AdvancedInput
 {
 	[TestMethod]
+	[Description("Legacy syntax must reach adaptation before parsing, without restarting the chain after a rewrite.")]
 	public async Task When_LegacyArgumentsAreRewritten_Then_AdaptersRunOnceBeforeParsing()
 	{
 		var app = CoreReplApp.Create();
@@ -33,6 +34,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("A handled decision is terminal even when no matching Repl route exists.")]
 	public async Task When_PreprocessorHandlesInput_Then_NoRouteOrLaterAdapterIsRequired()
 	{
 		var app = CoreReplApp.Create();
@@ -43,6 +45,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Analysis must reject invalid input without constructing execution-only handler dependencies.")]
 	public async Task When_TypedValidationRejects_Then_HandlerDependenciesAreNotConstructed()
 	{
 		var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
@@ -67,6 +70,7 @@ public sealed class Given_AdvancedInput
 	private sealed class HandlerDependency;
 
 	[TestMethod]
+	[Description("Callback defects use the application-failure outcome rather than blaming user input.")]
 	public async Task When_AdapterThrows_Then_ItIsAnApplicationFailure()
 	{
 		var app = CoreReplApp.Create();
@@ -78,6 +82,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Caller cancellation must prevent callback side effects before the chain starts.")]
 	public async Task When_InputIsAlreadyCancelled_Then_AdaptersDoNotRun()
 	{
 		var app = CoreReplApp.Create();
@@ -89,6 +94,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Callbacks need the help purpose to guard execution-only work on help requests.")]
 	public async Task When_HelpIsRequested_Then_AdaptersAndValidatorsSeeItsPurpose()
 	{
 		var app = CoreReplApp.Create();
@@ -109,6 +115,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Validator injection must use the invocation scope that the eventual handler receives.")]
 	public async Task When_ValidatorNeedsAScopedService_Then_TheHandlerUsesTheSameScope()
 	{
 		var app = ReplApp.Create(services => services.AddScoped<HandlerDependency>());
@@ -125,6 +132,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("A valid enum prefix needs more typing rather than an invalid-input diagnostic.")]
 	public async Task When_AnEnumPrefixCanStillBecomeValid_Then_PreviewIsIncomplete()
 	{
 		var app = CoreReplApp.Create();
@@ -138,6 +146,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("A missing typed value must not be confused with a failed conversion or a default numeric value.")]
 	public async Task When_ARequiredValueIsMissing_Then_TheSnapshotDistinguishesItFromInvalidInput()
 	{
 		var app = CoreReplApp.Create();
@@ -151,6 +160,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Incomplete application checks must stop submitted execution as well as inform live analysis.")]
 	public async Task When_TypedValidationReturnsIncomplete_Then_SubmissionIsRefused()
 	{
 		var app = CoreReplApp.Create();
@@ -160,6 +170,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Ordered validators must receive the accumulated diagnostic context.")]
 	public async Task When_ValidatorsRunInOrder_Then_LaterValidatorsSeeEarlierDiagnostics()
 	{
 		var app = CoreReplApp.Create();
@@ -174,6 +185,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Canonical text must preserve argument boundaries and contents through tokenization.")]
 	public void When_ArgumentsAreFormatted_Then_EmptyValuesAndQuotesRoundTrip()
 	{
 		string[] values = ["query", "", "hello world", "a'b\"c", "C:\\some path\\", "--not-an-option", "é😀"];
@@ -182,6 +194,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Converting legacy text on Tab must preserve a quoted multiword argument.")]
 	public async Task When_TabNormalizesLegacyInput_Then_ItPreservesAllArguments()
 	{
 		var app = CreateLegacyApp();
@@ -192,6 +205,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Applications can retain their legacy editor syntax by opting out of normalization.")]
 	public async Task When_TabNormalizationIsDisabled_Then_LegacyTextIsRetained()
 	{
 		var app = CreateLegacyApp();
@@ -202,6 +216,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Mapped diagnostics must highlight the original value rather than an unrelated canonical token.")]
 	public async Task When_AdapterMapsARewrittenValue_Then_DiagnosticUsesTheOriginalTextRange()
 	{
 		var app = CoreReplApp.Create();
@@ -213,6 +228,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Typing must never render or execute a terminal result returned by an adapter.")]
 	public async Task When_PreviewHasAnExitResult_Then_ItDoesNotRenderItsPayload()
 	{
 		var app = CoreReplApp.Create();
@@ -226,6 +242,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Preview globals are temporary and must not leak into later committed invocations.")]
 	public async Task When_PreviewChangesGlobals_Then_ItDoesNotChangeTheCommittedBaseline()
 	{
 		var app = CoreReplApp.Create();
@@ -238,6 +255,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Concurrent analyses must isolate globals observed through injected services.")]
 	public async Task When_PreviewServicesReadGlobalsConcurrently_Then_EachValidatorSeesItsOwnValues()
 	{
 		var app = ReplApp.Create();
@@ -264,6 +282,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Handling a single invocation must not close the surrounding interactive session.")]
 	public async Task When_AHandledInteractiveCommandCompletes_Then_TheSessionAcceptsTheNextCommand()
 	{
 		var app = CoreReplApp.Create();
@@ -281,6 +300,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("An adapter rewrites editable arguments while navigation scope remains separate.")]
 	public async Task When_InteractiveInputIsRewrittenInsideAScope_Then_TheScopeIsNotDuplicated()
 	{
 		var app = CoreReplApp.Create();
@@ -297,6 +317,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Shell callbacks must analyze user input in completion mode rather than the protocol envelope.")]
 	public async Task When_ShellCompletionUsesLegacySyntax_Then_AdaptersSeeTheTransportedLine()
 	{
 		var app = CoreReplApp.Create();
@@ -334,6 +355,7 @@ public sealed class Given_AdvancedInput
 	private enum ProbeMode { Debug, Release }
 
 	[TestMethod]
+	[Description("Live analysis and execution must share named-versus-positional conflict rules.")]
 	public async Task When_NamedAndPositionalValuesConflict_Then_AnalysisAndExecutionBothReject()
 	{
 		var app = CoreReplApp.Create();
@@ -345,6 +367,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Explicit collection minimum arity must remain consistent between analysis and execution.")]
 	public async Task When_AnExplicitCollectionMinimumIsNotMet_Then_AnalysisIsIncompleteAndSubmissionFails()
 	{
 		var app = CoreReplApp.Create();
@@ -355,6 +378,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Positional collection selection must enforce the same upper arity bound as binding.")]
 	public async Task When_PositionalCollectionExceedsAnExplicitMaximum_Then_AnalysisRejectsIt()
 	{
 		var app = CoreReplApp.Create();
@@ -365,6 +389,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Built-in diagnostics on a partial option must not suppress useful completion candidates.")]
 	public async Task When_PartialOptionIsCompleted_Then_ShellAndEditorStillOfferIt()
 	{
 		var app = CoreReplApp.Create();
@@ -382,6 +407,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Help must honor incomplete application checks even though built-in missing values do not block help.")]
 	public async Task When_CustomValidationNeedsMoreInputForHelp_Then_ItsDecisionIsHonored()
 	{
 		var app = CoreReplApp.Create();
@@ -391,6 +417,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Help must remain available when users are asking how to supply missing command values.")]
 	public async Task When_OnlyBuiltinChecksAreIncomplete_Then_HelpStillWorks()
 	{
 		var app = CoreReplApp.Create();
@@ -400,6 +427,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Direct adapter results must honor the normal requested output format.")]
 	public async Task When_HandledInputSelectsJson_Then_ItUsesNormalOutputFormatting()
 	{
 		var app = CoreReplApp.Create();
@@ -412,6 +440,7 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Tuple rendering must retain an explicit exit outcome supplied by an adapter.")]
 	public async Task When_HandledInputReturnsAnExitTuple_Then_TheExplicitCodeIsPreserved()
 	{
 		var app = CoreReplApp.Create();

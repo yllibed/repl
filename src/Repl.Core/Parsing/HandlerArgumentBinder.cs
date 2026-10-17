@@ -503,12 +503,13 @@ internal static class HandlerArgumentBinder
 		if (TryGetCollectionElementType(targetType, out var elementType))
 		{
 			positionalIndex += selected.Count;
-			value = ConvertMany(selected, targetType, elementType, numericFormatProvider, enumIgnoreCase);
+			value = ConvertMany(positionalArguments.Skip(selected.Start).Take(selected.Count).ToArray(),
+				targetType, elementType, numericFormatProvider, enumIgnoreCase);
 			return true;
 		}
 
 		value = ParameterValueConverter.ConvertSingle(
-			selected[0],
+			positionalArguments[selected.Start],
 			targetType,
 			numericFormatProvider,
 			enumIgnoreCase);
