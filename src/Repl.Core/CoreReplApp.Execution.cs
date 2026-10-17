@@ -199,7 +199,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	internal bool ConvertsCancellationToExitCode =>
 		_options.ExitCodes.Cancelled is not null || _options.ExitCodes.Resolver is not null;
 
-	private async ValueTask<ExecutionOutcome> ExecuteCoreOutcomeAsync(
+	private async ValueTask<ExecutionOutcome> ExecuteUnprocessedCoreOutcomeAsync(
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
 		bool isSubInvocation,
@@ -329,11 +329,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken,
 		IServiceProvider? presenceServiceProvider = null)
 	{
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation); // volatile ref swap — safe under concurrent sub-invocations
-			if (!isSubInvocation)
-			{
-				_globalOptionsSnapshot.SetSessionBaseline();
-			}
+			using var invocationGlobals = PushExecutionGlobals(globalOptions, isSubInvocation);
 			using var runtimeStateScope = PushRuntimeState(
 				serviceProvider,
 				isInteractiveSession: false,
@@ -388,6 +384,13 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
+	}
+
+	private IDisposable PushExecutionGlobals(GlobalInvocationOptions options, bool isSubInvocation)
+	{
+		_globalOptionsSnapshot.Update(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
+		if (!isSubInvocation) { _globalOptionsSnapshot.SetSessionBaseline(); }
+		return _globalOptionsSnapshot.PushInputValues(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
 	}
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbiguousPrefixAsync(
@@ -793,6 +796,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		var bound = false;
 		try
 		{
+			if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, bindingContext, cancellationToken)
+				.ConfigureAwait(false) is { } inputFailure)
+			{
+				await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
+				return (inputFailure, false);
+			}
 			var arguments = HandlerArgumentBinder.Bind(match.Route.Command.Handler, bindingContext);
 			bound = true;
 			var contextFailure = await ValidateContextsForMatchAsync(

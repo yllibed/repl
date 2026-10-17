@@ -50,6 +50,9 @@ public sealed class ReplApp : IReplApp
 	{
 		_services = services;
 		_core = CoreReplApp.Create();
+		_core.InputServiceAvailability = static (provider, type) => provider is SessionOverlayServiceProvider overlay
+			? overlay.IsService(type)
+			: provider.GetService<IServiceProviderIsService>()?.IsService(type) == true;
 		EnsureDefaultServices(_services, _core);
 		// The app registers itself so service factories (e.g. the Spectre console factory)
 		// can reach per-app state regardless of registration/materialization ordering.
@@ -1122,6 +1125,9 @@ public sealed class ReplApp : IReplApp
 		IServiceProvider external,
 		IReadOnlyDictionary<Type, object> defaults) : IServiceProvider
 	{
+		internal bool IsService(Type serviceType) => defaults.ContainsKey(serviceType)
+			|| external.GetService<IServiceProviderIsService>()?.IsService(serviceType) == true;
+
 		public object? GetService(Type serviceType)
 		{
 			var service = external.GetService(serviceType);

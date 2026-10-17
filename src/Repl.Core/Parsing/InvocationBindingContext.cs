@@ -35,6 +35,8 @@ internal sealed class InvocationBindingContext(
 
 	public CancellationToken CancellationToken { get; } = cancellationToken;
 
+	internal Dictionary<string, object?>? InputServiceFallbacks { get; set; }
+
 	public ImplicitServiceParameterRegistry ImplicitServiceParameters { get; } =
 		implicitServiceParameters ?? throw new ArgumentNullException(nameof(implicitServiceParameters));
 }

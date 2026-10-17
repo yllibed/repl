@@ -73,7 +73,9 @@ internal static partial class ConsoleLineReader
 		int ReplaceLength,
 		IReadOnlyList<AutocompleteSuggestion> Suggestions,
 		string? HintLine = null,
-		IReadOnlyList<TokenClassification>? TokenClassifications = null);
+		IReadOnlyList<TokenClassification>? TokenClassifications = null,
+		string? NormalizedInput = null,
+		int? NormalizedCursor = null);
 
 	internal enum AutocompleteRenderMode
 	{
@@ -94,8 +96,27 @@ internal static partial class ConsoleLineReader
 		bool liveHintEnabled,
 		bool colorizeInputLine,
 		bool colorizeHintAndMenu,
-		AutocompleteColorStyles colorStyles)
+		AutocompleteColorStyles colorStyles,
+		bool backgroundInputAnalysis = false) : IDisposable
 	{
+		public bool BackgroundInputAnalysis { get; } = backgroundInputAnalysis;
+		public CancellationTokenSource? PreviewCancellation { get; set; }
+		public Task<AutocompleteResult?>? PendingPreview { get; set; }
+		public string? PreviewText { get; set; }
+		public int PreviewCursor { get; set; }
+
+		public void CancelPreview()
+		{
+#pragma warning disable MA0045 // Disposal and editor state changes must invalidate the preview synchronously.
+			PreviewCancellation?.Cancel();
+#pragma warning restore MA0045
+			PreviewCancellation?.Dispose();
+			PreviewCancellation = null;
+			PendingPreview = null;
+		}
+
+		public void Dispose() => CancelPreview();
+
 		public AutocompleteResolver? Resolver { get; } = resolver;
 
 		public AutocompleteRenderMode RenderMode { get; } = renderMode;
@@ -177,9 +198,10 @@ internal static partial class ConsoleLineReader
 		bool colorizeInputLine,
 		bool colorizeHintAndMenu,
 		AutocompleteColorStyles colorStyles,
-		CancellationToken ct)
+		CancellationToken ct,
+		bool backgroundInputAnalysis = false)
 	{
-		var editor = new LineEditorState(
+		using var editor = new LineEditorState(
 			autocompleteResolver,
 			renderMode,
 			maxVisibleSuggestions,
@@ -187,7 +209,8 @@ internal static partial class ConsoleLineReader
 			liveHintEnabled,
 			colorizeInputLine,
 			colorizeHintAndMenu,
-			colorStyles);
+			colorStyles,
+			backgroundInputAnalysis);
 		if (ReplSessionIO.KeyReader is { } keyReader)
 		{
 			var navigator = await CreateNavigatorAsync(history, ct).ConfigureAwait(false);
@@ -202,6 +225,10 @@ internal static partial class ConsoleLineReader
 		}
 
 		var nav = await CreateNavigatorAsync(history, ct).ConfigureAwait(false);
+		if (backgroundInputAnalysis)
+		{
+			return await ReadLineRemoteAsync(new ConsoleKeyReader(), nav, editor, ct).ConfigureAwait(false);
+		}
 		return await Task.Run(() => ReadLineSync(nav, editor, ct), ct).ConfigureAwait(false);
 	}
 
@@ -225,7 +252,7 @@ internal static partial class ConsoleLineReader
 			ConsoleKeyInfo key;
 			try
 			{
-				key = await keyReader.ReadKeyAsync(ct).ConfigureAwait(false);
+				key = await ReadKeyWithPreviewAsync(keyReader, editor, buffer, cursor, echo, ct).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException)
 			{

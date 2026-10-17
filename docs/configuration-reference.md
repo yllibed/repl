@@ -1,5 +1,20 @@
 # Configuration Reference
 
+## Advanced Input
+
+`ReplOptions.Input` holds ordered `Preprocessors` and injectable `Validators`.
+Both collections are empty by default. The fluent registration helpers are
+`UseArgumentPreprocessor(...)` and `UseInputValidator(...)` on root applications.
+
+`Interactive.Autocomplete.NormalizeInputOnTab` defaults to `true`: valid adapted
+input can be converted to equivalent Repl syntax on the first Tab. Set it to
+`false` to preserve the legacy text while continuing to analyze its normalized
+arguments.
+
+These are advanced features for compatibility and larger host applications. See
+[Advanced Input](advanced-input.md) for processing modes, diagnostics, service
+injection and callback responsibilities during typing and completion.
+
 This is the complete configuration reference for the Repl Toolkit. All options are accessible through the `ReplOptions` object passed to `app.Options(...)`.
 
 ```csharp
@@ -215,7 +230,7 @@ Accessed via `ReplOptions.ShellCompletion`. See [Shell Completion](shell-complet
 - `SetupMode` (`ShellCompletionSetupMode`, default: `Manual`) — Completion setup mode.
 - `PreferredShell` (`ShellKind?`, default: `null`) — Preferred shell for completion. `null` uses automatic detection.
 - `PromptOnce` (`bool`, default: `true`) — Only prompt the user once for completion setup.
-- `ProviderTimeout` (`TimeSpan`, default: 1 second) — Deadline applied to each opted-in `WithCompletion` provider on the completion bridge; a stalled provider is abandoned and completion degrades to static candidates.
+- `ProviderTimeout` (`TimeSpan`, default: 1 second) — Deadline applied to each opted-in `WithCompletion` provider on the completion bridge, and separately to adaptation plus input validation as one combined budget. A stalled provider degrades to static candidates; an input callback failure or timeout produces no suggestions and a diagnostic on stderr.
 - `StateFilePath` (`string?`, default: `null`) — Path to the completion state file.
 - `BashProfilePath` (`string?`, default: `null`) — Custom path for the Bash profile.
 - `PowerShellProfilePath` (`string?`, default: `null`) — Custom path for the PowerShell profile.

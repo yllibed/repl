@@ -5,6 +5,9 @@ namespace Repl.Autocomplete;
 /// </summary>
 public sealed class AutocompleteOptions
 {
+	/// <summary>Gets or sets whether the first Tab converts adapted input to equivalent Repl syntax.</summary>
+	public bool NormalizeInputOnTab { get; set; } = true;
+
 	/// <summary>
 	/// Gets or sets autocomplete mode.
 	/// </summary>

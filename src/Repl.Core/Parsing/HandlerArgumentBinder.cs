@@ -86,26 +86,22 @@ internal static class HandlerArgumentBinder
 				enumIgnoreCase);
 		}
 
-		if (bindingMode != ReplParameterMode.ArgumentOnly
-			&& context.NamedOptions.TryGetValue(parameterName, out var namedValues))
+		if (InputValueSelector.TrySelectNamed(parameterName, bindingMode, context.NamedOptions,
+			context.PositionalArguments, positionalIndex, out var namedValues))
 		{
-			if (bindingMode == ReplParameterMode.OptionAndPositional
-				&& CanConsumePositional(parameter, context.PositionalArguments, positionalIndex))
-			{
-				throw new InvalidOperationException(
-					$"Parameter '{parameterName}' cannot receive both named and positional values in the same invocation.");
-			}
-
-				return ConvertManyOrSingle(
-					parameter,
-					namedValues,
-					parameter.ParameterType,
-					context.NumericFormatProvider,
-					enumIgnoreCase);
-			}
+			return ConvertManyOrSingle(
+				parameter,
+				namedValues,
+				parameter.ParameterType,
+				context.NumericFormatProvider,
+				enumIgnoreCase);
+		}
 
 		var isUserOption = context.OptionSchema.TryGetParameter(parameterName, out _);
-		if (TryResolveFromContextOrServices(parameter, context, skipContext: isUserOption, out var resolved))
+		var found = isUserOption
+			? TryResolveInputServiceFallback(parameter, context, out var resolved)
+			: TryResolveFromContextOrServices(parameter, context, skipContext: false, out resolved);
+		if (found)
 		{
 			return resolved;
 		}
@@ -153,7 +149,7 @@ internal static class HandlerArgumentBinder
 	// scalars) keeps its historical binding behavior, and inferred arities never produce
 	// OneOrMore. ArgumentOnly parameters have no named entry, so the message falls back to
 	// the parameter name instead of a token the parser would not accept.
-	private static void ThrowIfExplicitLowerBoundUnsatisfied(OptionSchema schema, string parameterName)
+	internal static void ThrowIfExplicitLowerBoundUnsatisfied(OptionSchema schema, string parameterName)
 	{
 		if (!schema.TryGetParameter(parameterName, out var schemaParameter)
 			|| schemaParameter.ExplicitArity is not (ReplArity.OneOrMore or ReplArity.ExactlyOne))
@@ -172,7 +168,7 @@ internal static class HandlerArgumentBinder
 	// Positional twin of the parse-time ValidateTooManyValues: only explicit upper bounds are
 	// enforced (inferred collection arity is ZeroOrMore), and only collections can consume
 	// more than one positional.
-	private static void ThrowIfExplicitUpperBoundExceeded(OptionSchema schema, string parameterName, int consumedCount)
+	internal static void ThrowIfExplicitUpperBoundExceeded(OptionSchema schema, string parameterName, int consumedCount)
 	{
 		if (consumedCount <= 1
 			|| !schema.TryGetParameter(parameterName, out var schemaParameter)
@@ -191,6 +187,16 @@ internal static class HandlerArgumentBinder
 	private static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
 		parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0;
+
+	internal static bool TryResolveInputServiceFallback(ParameterInfo parameter, InvocationBindingContext context, out object? resolved)
+	{
+		var name = parameter.Name ?? string.Empty;
+		if (context.InputServiceFallbacks is { } cached && cached.TryGetValue(name, out resolved)) { return resolved is not null; }
+		var found = TryResolveFromContextOrServices(parameter, context, skipContext: true, out resolved);
+		// Retain null as well: a transient factory must not change the positional assignment after validation.
+		(context.InputServiceFallbacks ??= new(StringComparer.Ordinal))[name] = resolved;
+		return found;
+	}
 
 	private static bool TryResolveFromContextOrServices(
 		System.Reflection.ParameterInfo parameter,
@@ -501,28 +507,22 @@ internal static class HandlerArgumentBinder
 		out object? value)
 	{
 		var targetType = parameter.ParameterType;
-		if (TryGetCollectionElementType(targetType, out var elementType))
-		{
-			var remaining = positionalArguments.Skip(positionalIndex).ToArray();
-			if (remaining.Length == 0)
-			{
-				value = null;
-				return false;
-			}
-
-			positionalIndex = positionalArguments.Count;
-			value = ConvertMany(remaining, targetType, elementType, numericFormatProvider, enumIgnoreCase);
-			return true;
-		}
-
-		if (positionalIndex >= positionalArguments.Count)
+		var selected = InputValueSelector.SelectPositional(targetType, positionalArguments, positionalIndex);
+		if (selected.Count == 0)
 		{
 			value = null;
 			return false;
 		}
+		if (TryGetCollectionElementType(targetType, out var elementType))
+		{
+			positionalIndex += selected.Count;
+			value = ConvertMany(positionalArguments.Skip(selected.Start).Take(selected.Count).ToArray(),
+				targetType, elementType, numericFormatProvider, enumIgnoreCase);
+			return true;
+		}
 
 		value = ParameterValueConverter.ConvertSingle(
-			positionalArguments[positionalIndex],
+			positionalArguments[selected.Start],
 			targetType,
 			numericFormatProvider,
 			enumIgnoreCase);
@@ -555,7 +555,7 @@ internal static class HandlerArgumentBinder
 		return ConvertMany(values, targetType, elementType, numericFormatProvider, enumIgnoreCase);
 	}
 
-	private static object ConvertMany(
+	internal static object ConvertMany(
 		IEnumerable<string> values,
 		Type targetType,
 		Type elementType,
@@ -587,18 +587,6 @@ internal static class HandlerArgumentBinder
 		return list;
 	}
 
-	private static bool CanConsumePositional(
-		System.Reflection.ParameterInfo parameter,
-		IReadOnlyList<string> positionalArguments,
-		int positionalIndex)
-	{
-		if (TryGetCollectionElementType(parameter.ParameterType, out _))
-		{
-			return positionalIndex < positionalArguments.Count;
-		}
-
-		return positionalIndex < positionalArguments.Count;
-	}
 
 	private static ReplParameterMode ResolveBindingMode(
 		System.Reflection.ParameterInfo parameter,
