@@ -612,8 +612,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		if (options.RemainingTokens.Count == 0
-			|| !string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase))
+		if (!IsAmbientCompletion(options))
 		{
 			return null;
 		}
@@ -626,6 +625,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			.ConfigureAwait(false);
 		return completed ? ExecutionOutcome.Success : ExecutionOutcome.UsageError();
 	}
+
+	private static bool IsAmbientCompletion(GlobalInvocationOptions options) => options.RemainingTokens.Count != 0
+		&& string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase);
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbientInNonInteractiveAsync(
 		GlobalInvocationOptions options,

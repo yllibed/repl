@@ -270,6 +270,123 @@ public sealed class Given_StartupPreparation
 		calls.Should().Be(1);
 	}
 
+	[TestMethod]
+	[DataRow(false, 0)]
+	[DataRow(false, 1)]
+	[DataRow(false, 2)]
+	[DataRow(true, 0)]
+	[DataRow(true, 1)]
+	[DataRow(true, 2)]
+	[Description("Keyed hook dependencies share the handler's scope in owned and external providers; missing or failing registrations stop dispatch.")]
+	public async Task When_AStartupDependencyHasAKey_Then_BindingMatchesNormalHandlers(bool external, int failure)
+	{
+		var log = new StartupLog();
+		var instances = new List<ScopedDependency>();
+		void Register(IServiceCollection services)
+		{
+			if (failure == 1) { return; }
+			services.AddKeyedScoped("primary", (IServiceProvider _, object? _) =>
+				failure == 2 ? throw new InvalidOperationException("keyed factory failed") : new ScopedDependency(log));
+		}
+		var services = new ServiceCollection();
+		Register(services);
+		await using var provider = services.BuildServiceProvider(validateScopes: true);
+		var app = external ? ReplApp.Create() : ReplApp.Create(Register);
+		app.Map("query", ([FromServices("primary")] ScopedDependency dependency) => { instances.Add(dependency); });
+		if (failure == 0)
+		{
+			var control = external ? await app.RunAsync(["query"], provider) : await app.RunAsync(["query"]);
+			control.Should().Be(0);
+			instances.Should().HaveCount(1);
+			instances.Clear();
+			log.Events.Clear();
+		}
+		app.UseStartupHook(([FromServices("primary")] ScopedDependency dependency) =>
+		{
+			instances.Add(dependency);
+			return ArgumentPreprocessingResult.Continue();
+		});
+		var code = external ? await app.RunAsync(["query"], provider) : await app.RunAsync(["query"]);
+		code.Should().Be(failure == 0 ? 0 : 1);
+		if (failure == 0)
+		{
+			instances.Should().HaveCount(2);
+			instances[0].Should().BeSameAs(instances[1]);
+			log.Events.Should().Equal("dispose");
+		}
+		else { instances.Should().BeEmpty(); }
+	}
+
+	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Ambient completion is discovery in both startup stages, even with leading globals, and never triggers guarded external actions.")]
+	public async Task When_TheAmbientCompleteCommandRuns_Then_StartupGuardsAvoidExternalActions(bool leadingGlobals)
+	{
+		var actions = 0;
+		var purposes = new List<InputPurpose>();
+		ArgumentPreprocessingResult Guard(ReplStartupContext context)
+		{
+			purposes.Add(context.Purpose);
+			if (context.Purpose is not (InputPurpose.Help or InputPurpose.Completion)) { actions++; }
+			return ArgumentPreprocessingResult.Continue();
+		}
+		var args = leadingGlobals ? new[] { "--count", "3", "complete", "--target", "limit", "query" }
+			: ["complete", "--target", "limit", "query"];
+		var prepared = await ReplStartup.CreateBuilder().UseGlobalOptions<StartupSettings>().UsePreparationHook(Guard).PrepareAsync(args);
+		var app = CoreReplApp.Create(prepared).UseStartupHook(Guard);
+		app.Map("query", (int limit = 1) => limit).WithCompletion("limit", (_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["1", "2"]));
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		(await app.RunAsync(prepared)).Should().Be(0);
+		purposes.Should().Equal(InputPurpose.Completion, InputPurpose.Completion);
+		actions.Should().Be(0);
+		writer.ToString().Should().Contain("1").And.Contain("2");
+	}
+
+	[TestMethod]
+	[Description("The documented default-command rewrite preserves globals used for composition and handler binding.")]
+	public async Task When_OnlyGlobalsAreProvided_Then_SelectingServePreservesThePreparedPort()
+	{
+		var prepared = await ReplStartup.CreateBuilder().UseGlobalOptions<PortSettings>().PrepareAsync(["--port", "9001"]);
+		var composedPort = prepared.GetOptions<PortSettings>().Port;
+		var app = CoreReplApp.Create(prepared);
+		app.UseStartupHook((ReplStartupContext context) => context.RemainingArguments.Count == 0
+			? ArgumentPreprocessingResult.Replace(["serve", .. context.Arguments]) : ArgumentPreprocessingResult.Continue());
+		var servedPort = 0;
+		app.Map("serve", (PortSettings options) => { servedPort = options.Port; });
+		(await app.RunAsync(prepared)).Should().Be(0);
+		composedPort.Should().Be(9001);
+		servedPort.Should().Be(composedPort);
+	}
+
+	[TestMethod]
+	[Description("A sequentially configured builder allows overlapping preparations while rejecting later configuration changes.")]
+	public async Task When_PreparationsOverlap_Then_TheirArgumentsRemainIndependentAndConfigurationIsFrozen()
+	{
+		var arrived = 0;
+		var barrier = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var builder = ReplStartup.CreateBuilder().UseGlobalOptions<StartupSettings>().UsePreparationHook(async (CancellationToken token) =>
+		{
+			if (Interlocked.Increment(ref arrived) == 2) { barrier.TrySetResult(); }
+			await barrier.Task.WaitAsync(token).ConfigureAwait(false);
+			return ArgumentPreprocessingResult.Continue();
+		});
+		using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		var results = await Task.WhenAll(builder.PrepareAsync(["--count", "3"], cancellation.Token).AsTask(),
+			builder.PrepareAsync(["--count", "7"], cancellation.Token).AsTask());
+		results.Select(result => result.GetOptions<StartupSettings>().Count).Should().Equal(3, 7);
+		Action configure = () => builder.Options(_ => { });
+		Action hook = () => builder.UsePreparationHook(() => ArgumentPreprocessingResult.Continue());
+		Action globals = () => builder.UseGlobalOptions<PortSettings>();
+		Action adapter = () => builder.UseArgumentPreprocessor((_, _) => ValueTask.FromResult(ArgumentPreprocessingResult.Continue()));
+		configure.Should().Throw<InvalidOperationException>();
+		hook.Should().Throw<InvalidOperationException>();
+		globals.Should().Throw<InvalidOperationException>();
+		adapter.Should().Throw<InvalidOperationException>();
+	}
+
+	public sealed class PortSettings { public int Port { get; set; } = 8080; }
 	public sealed class StartupSettings { public int Count { get; set; } = 1; }
 	private sealed record ChosenCount(int Value);
 	private sealed class StartupLog { public List<string> Events { get; } = []; }

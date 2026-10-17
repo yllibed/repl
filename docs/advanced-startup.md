@@ -35,7 +35,7 @@ app.UseStartupHook((ReplStartupContext context, StartupOptions current,
 {
     cancellationToken.ThrowIfCancellationRequested();
     return context.RemainingArguments.Count == 0
-        ? ArgumentPreprocessingResult.Replace(["serve"])
+        ? ArgumentPreprocessingResult.Replace(["serve", .. context.Arguments])
         : ArgumentPreprocessingResult.Continue();
 });
 app.Map("serve", (StartupOptions current) => $"Serving on {current.Port}.");
@@ -58,8 +58,9 @@ No command needs to exist during preparation. Invalid globals produce diagnostic
 before application service registration. `CompleteAsync` renders a terminal result
 or refusal under the configured output and exit policies, without application DI.
 
-The builder freezes its declarations on the first preparation. It may prepare
-independent argument arrays afterward, including concurrently. Configuration
+Configure the builder sequentially, before starting any preparation; configuration
+must not overlap with preparation. The first preparation freezes its declarations.
+It may prepare independent argument arrays afterward, including concurrently. Configuration
 callbacks supplied to `Options` are applied to independent preparation/application
 instances; keep those callbacks reusable and free of external actions.
 
@@ -157,6 +158,8 @@ Startup hooks run once for each run/session. They do not run for subsequent
 interactive commands, background editor analysis or nested MCP tool calls.
 Ordinary argument adapters and input validators retain their per-input behavior.
 Hooks run for help and completion too: check `Purpose` before external actions.
+Both the ambient `complete` command and the `completion __complete` shell bridge
+are identified as completion.
 An empty invocation can have `Unknown` purpose. Shell completion envelopes are
 identified before startup actions; their payload retains normal shell adaptation.
 

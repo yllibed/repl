@@ -23,7 +23,7 @@ public sealed partial class CoreReplApp
 	internal async ValueTask<ProcessedInput> PreprocessInputAsync(
 		IReadOnlyList<string> arguments, IReadOnlyList<string> scopeTokens, InputProcessingMode mode,
 		string? text, int? cursor, CancellationToken cancellationToken, bool isInteractive = false,
-		ProcessedInput? previous = null, int skip = 0)
+		ProcessedInput? previous = null, int skip = 0, Action<ProcessedInput>? onProcessed = null)
 	{
 		var original = previous?.Context.OriginalArguments.ToArray() ?? arguments.ToArray();
 		IReadOnlyList<string> effective = previous?.Context.Arguments ?? original;
@@ -33,6 +33,7 @@ public sealed partial class CoreReplApp
 		var checks = new List<InputValidationResult>();
 		if (previous is not null) { checks.Add(previous.Validation); }
 		var context = CreateContext();
+		onProcessed?.Invoke(new(context, CombineInputValidation(checks)));
 		foreach (var adapter in _options.Input.Preprocessors.Skip(skip).ToArray())
 		{
 			cancellationToken.ThrowIfCancellationRequested();
@@ -50,10 +51,9 @@ public sealed partial class CoreReplApp
 				origins = replacementOrigins;
 				context = CreateContext();
 			}
-			if (decision.IsHandled)
-			{
-				return new(context, CombineInputValidation(checks), IsHandled: true, decision.Result);
-			}
+			var processed = new ProcessedInput(context, CombineInputValidation(checks), decision.IsHandled, decision.Result);
+			onProcessed?.Invoke(processed);
+			if (decision.IsHandled) { return processed; }
 		}
 		return new(context, CombineInputValidation(checks));
 
@@ -87,6 +87,7 @@ public sealed partial class CoreReplApp
 		{
 			return InputPurpose.Help;
 		}
+		if (IsAmbientCompletion(globals) || IsCompletionBridge(arguments)) { return InputPurpose.Completion; }
 		return arguments.Count == 0 ? InputPurpose.Unknown : InputPurpose.Command;
 	}
 

@@ -48,7 +48,6 @@ public sealed partial class CoreReplApp
 		_globalOptionsFactories.TryGetValue(type, out var factory) ? factory(accessor) : null;
 	internal IEnumerable<Type> GlobalOptionsTypes => _globalOptionsFactories.Keys;
 	internal void SetStartupConfiguration(object key) => _startupConfiguration = key;
-	internal bool IsStartupCompletion(IReadOnlyList<string> args) => IsCompletionBridge(args);
 	internal bool HasStartupWork => _startupHooks.Count != 0 || _preparedStartup.Value is not null;
 
 	internal IDisposable PushPreparedStartup(PreparedReplStartup prepared)
@@ -71,18 +70,20 @@ public sealed partial class CoreReplApp
 		var invocation = new StartupInvocation(input);
 		try
 		{
-			invocation.Input = await PrepareStartupInputAsync(args, prepared: null, cancellationToken).ConfigureAwait(false);
+			invocation.Input = await PrepareStartupInputAsync(args, prepared: null, invocation, cancellationToken).ConfigureAwait(false);
 			await InvokeStartupHooksAsync(invocation, hooks, _services, preparation: true, cancellationToken).ConfigureAwait(false);
 		}
 		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken)) { invocation.Failure = exception; }
 		return invocation;
 	}
 
-	private async ValueTask<ProcessedInput> PrepareStartupInputAsync(IReadOnlyList<string> args, PreparedReplStartup? prepared, CancellationToken cancellationToken)
+	private async ValueTask<ProcessedInput> PrepareStartupInputAsync(IReadOnlyList<string> args, PreparedReplStartup? prepared,
+		StartupInvocation invocation, CancellationToken cancellationToken)
 	{
 		var mode = IsCompletionBridge(args) ? InputProcessingMode.ShellCompletion : InputProcessingMode.Execution;
 		var input = await PreprocessInputAsync(args, [], mode, text: null, cursor: null, cancellationToken,
-			previous: prepared?.Invocation.Input, skip: prepared?.AdapterCount ?? 0).ConfigureAwait(false);
+			previous: prepared?.Invocation.Input, skip: prepared?.AdapterCount ?? 0,
+			onProcessed: input => invocation.Input = input).ConfigureAwait(false);
 		return ValidateStartupInput(input);
 	}
 
@@ -112,7 +113,7 @@ public sealed partial class CoreReplApp
 			var binding = new InvocationBindingContext(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
 				new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase), [], OptionSchema.Empty,
 				_options.Parsing.OptionCaseSensitivity, [context], _options.Parsing.NumericFormatProvider, provider,
-				_options.Interaction, _implicitServiceParameters, cancellationToken);
+				_options.Interaction, _implicitServiceParameters, cancellationToken) { KeyedServiceProvider = services };
 			var result = await CommandInvoker.InvokeAsync(hook, HandlerArgumentBinder.Bind(hook, binding)).ConfigureAwait(false);
 			var decision = result as ArgumentPreprocessingResult ?? throw new InvalidOperationException("Startup hooks must return ArgumentPreprocessingResult, Task<ArgumentPreprocessingResult> or ValueTask<ArgumentPreprocessingResult>.");
 			var arguments = decision.Arguments ?? input.Context.Arguments;
@@ -137,14 +138,24 @@ public sealed partial class CoreReplApp
 
 	private async ValueTask<ExecutionOutcome> FinishStartupAsync(StartupInvocation invocation, CancellationToken cancellationToken)
 	{
+		var globals = ParseInputGlobals(invocation.Input);
+		using var frame = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: false);
 		if (invocation.Failure is { } exception)
 		{
 			var failure = Results.Error("startup_error", DescribeLocally(exception));
-			return await RenderFailureAsync(failure, exception, bound: true, ParseInputGlobals(invocation.Input),
+			return await RenderFailureAsync(failure, exception, bound: true, globals,
 				CurrentServiceProvider, cancellationToken).ConfigureAwait(false);
 		}
-		await TryClearProgressAsync(CurrentServiceProvider).ConfigureAwait(false);
-		return await TryFinishProcessedInputAsync(invocation.Input, cancellationToken).ConfigureAwait(false) ?? ExecutionOutcome.Success;
+		try
+		{
+			await TryClearProgressAsync(CurrentServiceProvider).ConfigureAwait(false);
+			return await TryFinishProcessedInputAsync(invocation.Input, cancellationToken).ConfigureAwait(false) ?? ExecutionOutcome.Success;
+		}
+		catch (Exception renderFailure) when (!IsCallerCancellation(renderFailure, cancellationToken))
+		{
+			return await RenderFailureAsync(Results.Error("startup_error", DescribeLocally(renderFailure)), renderFailure, bound: true,
+				globals, CurrentServiceProvider, cancellationToken).ConfigureAwait(false);
+		}
 	}
 
 	internal async ValueTask<int> CompleteStartupAsync(StartupInvocation invocation, CancellationToken cancellationToken)
@@ -212,7 +223,7 @@ public sealed partial class CoreReplApp
 		var invocation = new StartupInvocation(input);
 		try
 		{
-			invocation.Input = await PrepareStartupInputAsync(args, prepared, cancellationToken).ConfigureAwait(false);
+			invocation.Input = await PrepareStartupInputAsync(args, prepared, invocation, cancellationToken).ConfigureAwait(false);
 			await InvokeStartupHooksAsync(invocation, _startupHooks.ToArray(), services, preparation: false, cancellationToken).ConfigureAwait(false);
 		}
 		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken))

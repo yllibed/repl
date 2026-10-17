@@ -31,6 +31,8 @@ internal sealed class InvocationBindingContext(
 
 	public IServiceProvider ServiceProvider { get; } = serviceProvider;
 
+	internal IServiceProvider KeyedServiceProvider { get; init; } = serviceProvider;
+
 	public InteractionOptions InteractionOptions { get; } = interactionOptions;
 
 	public CancellationToken CancellationToken { get; } = cancellationToken;

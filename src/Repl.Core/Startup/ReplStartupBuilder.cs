@@ -3,9 +3,9 @@ using System.Diagnostics.CodeAnalysis;
 namespace Repl;
 
 /// <summary>Declares preparation configuration, frozen on the first preparation.</summary>
+/// <remarks>Configure sequentially before preparation. Independent preparations may then run concurrently.</remarks>
 public sealed class ReplStartupBuilder
 {
-	private readonly Lock _gate = new();
 	private readonly List<Action<CoreReplApp>> _configuration = [];
 	private readonly List<Delegate> _hooks = [];
 	private bool _frozen;
@@ -41,7 +41,8 @@ public sealed class ReplStartupBuilder
 	public ReplStartupBuilder UsePreparationHook(Delegate hook)
 	{
 		ArgumentNullException.ThrowIfNull(hook);
-		lock (_gate) { ThrowIfFrozen(); _hooks.Add(hook); }
+		ThrowIfFrozen();
+		_hooks.Add(hook);
 		return this;
 	}
 
@@ -53,9 +54,9 @@ public sealed class ReplStartupBuilder
 	{
 		ArgumentNullException.ThrowIfNull(args);
 		cancellationToken.ThrowIfCancellationRequested();
-		Action<CoreReplApp>[] configuration;
-		Delegate[] hooks;
-		lock (_gate) { _frozen = true; configuration = _configuration.ToArray(); hooks = _hooks.ToArray(); }
+		_frozen = true;
+		var configuration = _configuration.ToArray();
+		var hooks = _hooks.ToArray();
 		var app = CoreReplApp.Create();
 		foreach (var configure in configuration) { configure(app); }
 		var invocation = await app.PrepareStartupAsync(args, hooks, cancellationToken).ConfigureAwait(false);
@@ -64,7 +65,8 @@ public sealed class ReplStartupBuilder
 
 	private ReplStartupBuilder Configure(Action<CoreReplApp> configure)
 	{
-		lock (_gate) { ThrowIfFrozen(); _configuration.Add(configure); }
+		ThrowIfFrozen();
+		_configuration.Add(configure);
 		return this;
 	}
 

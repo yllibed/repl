@@ -221,12 +221,12 @@ internal static class HandlerArgumentBinder
 			return ResolveExplicitFromContext(parameter, context.ContextValues, fromContext!, out resolved);
 		}
 
-		if (hasFromServices)
+		if (fromServices is not null)
 		{
 			return ResolveExplicitFromServices(
 				parameter,
-				context.ServiceProvider,
-				fromServices!,
+				string.IsNullOrWhiteSpace(fromServices.Key) ? context.ServiceProvider : context.KeyedServiceProvider,
+				fromServices,
 				context.CancellationToken,
 				out resolved);
 		}

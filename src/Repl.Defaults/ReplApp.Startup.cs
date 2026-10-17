@@ -36,7 +36,7 @@ public sealed partial class ReplApp
 		foreach (var type in _core.GlobalOptionsTypes)
 		{
 			services.TryAdd(ServiceDescriptor.Transient(type, sp => _core.CreateGlobalOptions(type,
-				sp.GetRequiredService<IGlobalOptionsAccessor>())!));
+				sp.GetRequiredService<IGlobalOptionsAccessor>()) ?? throw new InvalidOperationException($"Global options factory for '{type.Name}' is not registered.")));
 		}
 	}
 

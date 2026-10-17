@@ -11,7 +11,7 @@ public sealed class ReplStartupContext
 		Arguments = input.Context.Arguments;
 		var globals = GlobalOptionParser.Parse(Arguments, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
 		RemainingArguments = Array.AsReadOnly(globals.RemainingTokens.ToArray());
-		Purpose = app.IsStartupCompletion(Arguments) ? InputPurpose.Completion : input.Context.Purpose;
+		Purpose = input.Context.Purpose;
 		var accessor = new GlobalOptionsSnapshot(app.OptionsSnapshot.Parsing);
 		accessor.Update(globals.CustomGlobalNamedOptions);
 		GlobalOptions = accessor;
