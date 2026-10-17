@@ -7,12 +7,14 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	private IReadOnlyDictionary<string, IReadOnlyList<string>> CurrentValues => _inputFrame.Value?.Values ?? _currentValues;
 	private HashSet<string> CurrentExplicitKeys => _inputFrame.Value?.ExplicitKeys ?? _explicitKeys;
 
-	internal IDisposable PushInputValues(IReadOnlyDictionary<string, IReadOnlyList<string>> values)
+	internal IDisposable PushInputValues(IReadOnlyDictionary<string, IReadOnlyList<string>> values, bool preserveSessionExplicitKeys = false)
 	{
 		var previous = _inputFrame.Value;
 		var merged = new Dictionary<string, IReadOnlyList<string>>(_sessionBaseline, StringComparer.OrdinalIgnoreCase);
 		foreach (var pair in values) { merged[pair.Key] = pair.Value; }
-		_inputFrame.Value = new(merged, new(values.Keys, StringComparer.OrdinalIgnoreCase));
+		var explicitKeys = new HashSet<string>(values.Keys, StringComparer.OrdinalIgnoreCase);
+		if (preserveSessionExplicitKeys) { explicitKeys.UnionWith(_sessionBaseline.Keys); }
+		_inputFrame.Value = new(merged, explicitKeys);
 		return new InputScope(this, previous);
 	}
 

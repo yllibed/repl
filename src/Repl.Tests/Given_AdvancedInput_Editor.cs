@@ -8,10 +8,12 @@ namespace Repl.Tests;
 public sealed class Given_AdvancedInput_Editor
 {
 	[TestMethod]
-	[DataRow(false)]
-	[DataRow(true)]
+	[DataRow(false, false)]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[DataRow(true, true)]
 	[Description("Shorter normalization must erase the old suffix on screen and preserve an origin-mapped cursor before further editing.")]
-	public async Task When_NormalizationShortensTheLine_Then_DisplayAndSubmittedTextAgree(bool rich)
+	public async Task When_NormalizationShortensTheLine_Then_DisplayAndSubmittedTextAgree(bool rich, bool quoted)
 	{
 		var app = CoreReplApp.Create();
 		app.Map("q {text}", (string text) => text);
@@ -21,8 +23,8 @@ public sealed class Given_AdvancedInput_Editor
 		var harness = new TerminalHarness(cols: 80, rows: 8);
 		using var io = ReplSessionIO.SetSession(harness.Writer, TextReader.Null);
 		var previous = ReplSessionIO.KeyReader;
-		var keys = "/verylonglegacy hello".Select(ToKey).ToList();
-		keys.AddRange(Enumerable.Repeat(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, shift: false, alt: false, control: false), 3));
+		var keys = (quoted ? "/verylonglegacy \"hello\"" : "/verylonglegacy hello").Select(ToKey).ToList();
+		keys.AddRange(Enumerable.Repeat(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, shift: false, alt: false, control: false), quoted ? 5 : 3));
 		keys.Add(ToKey('\t'));
 		keys.Add(ToKey('X'));
 		keys.Add(ToKey('\r'));
@@ -35,8 +37,9 @@ public sealed class Given_AdvancedInput_Editor
 				8, Repl.Autocomplete.AutocompletePresentation.Hybrid, liveHintEnabled: false,
 				colorizeInputLine: false, colorizeHintAndMenu: false, ConsoleLineReader.AutocompleteColorStyles.Empty,
 				CancellationToken.None, backgroundInputAnalysis: true);
-			edited.Line.Should().Be("q heXllo");
-			harness.GetLine(0).TrimEnd().Should().Be("q heXllo");
+			var expected = quoted ? "q hXello" : "q heXllo";
+			edited.Line.Should().Be(expected);
+			harness.GetLine(0).TrimEnd().Should().Be(expected);
 		}
 		finally { ReplSessionIO.KeyReader = previous; }
 	}

@@ -160,6 +160,12 @@ have a resolved `Command`. Missing values must not be treated as zero or false.
 Only input values and literal parameter defaults are analyzed: preview does not
 instantiate options groups or construct the handler's service dependencies.
 
+DI-backed handler parameters are omitted from parsed input values when service
+availability metadata identifies them. Named input still takes precedence over
+service fallback. DI-enabled hosts consult `IServiceProviderIsService` rather than
+activating handler services during analysis; custom providers should expose that
+metadata to participate in this check.
+
 Built-in syntax, type and route-constraint checks remain in place. Existing
 context validators and command middleware remain execution steps; they are not
 automatically invoked on every keystroke. Input validation does not replace
@@ -192,6 +198,12 @@ back to the original text only when an adapter's origin information permits a
 safe replacement. An unmappable edit is omitted rather than inserting a token at
 the wrong position. Shell bridges continue using their shell-specific completion
 protocol; they do not replace the whole command line as the Repl editor does.
+
+For adapted shell input, suggestions are omitted when the original command prefix
+contains quotes or shell escapes, or when its source mapping is unavailable.
+This conservative check also omits suggestions after an earlier, closed quoted
+argument: shell escapes can carry quote context across apparent token boundaries.
+Reformatting the arguments cannot establish safe insertion into the original line.
 
 On the shell bridge, adaptation and input validation share one
 `ShellCompletion.ProviderTimeout` budget (one second by default). This budget is

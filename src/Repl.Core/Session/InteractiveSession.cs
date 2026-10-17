@@ -312,14 +312,14 @@ internal sealed class InteractiveSession(CoreReplApp app)
 						? AmbientCommandOutcome.Exit : AmbientCommandOutcome.Handled;
 				}
 			}
-			catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+			catch (OperationCanceledException) when (commandCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
 			{
 				await OpenOutputAsync().ConfigureAwait(false);
 				await ReplSessionIO.Output.WriteLineAsync("Cancelled.").ConfigureAwait(false);
 				await TryWriteCommandEndAsync(cycle.Marks, ExitCodeOptions.ConventionalInterruptedExitCode).ConfigureAwait(false);
 				return AmbientCommandOutcome.Handled;
 			}
-			catch (Exception exception) when (exception is not OperationCanceledException)
+			catch (Exception exception) when (exception is not OperationCanceledException || !commandCts.IsCancellationRequested)
 			{
 				await OpenOutputAsync().ConfigureAwait(false);
 				var failure = await app.ReportInputCallbackFailureAsync(exception, cancellationToken).ConfigureAwait(false);
@@ -352,6 +352,8 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var marks = cycle.Marks;
+		var globals = GlobalOptionParser.Parse([.. cycle.ScopeTokens, .. inputTokens], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+		using var invocationGlobals = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
 		var resolution = CommittedResolver.Resolve(inputTokens, cycle.ScopeTokens);
 
 		// A protocol-passthrough command turns the output stream into a protocol

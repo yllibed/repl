@@ -9,7 +9,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	[TestMethod]
 	[DataRow(false)]
 	[DataRow(true)]
-	[Description("A preprocessing error or command cancellation opens the output region before its diagnostic and closes the command exactly once.")]
+	[Description("Preprocessing application failures, including unrelated cancellation exceptions, must open output before the diagnostic and report failure rather than interruption.")]
 	public void When_InputCallbackFails_Then_TheDiagnosticHasACompleteShellLifecycle(bool cancelled)
 	{
 		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
@@ -18,15 +18,16 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		{
 			if (input.Mode == InputProcessingMode.Execution && input.Arguments is ["boom"])
 			{
-				throw cancelled ? new OperationCanceledException() : new InvalidOperationException("input callback failed");
+				throw cancelled ? new OperationCanceledException("private timeout") : new InvalidOperationException("input callback failed");
 			}
 			return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
 		});
 		var harness = new TerminalHarness(cols: 80, rows: 12);
 		var raw = RunInteractiveSession(harness, sut, "boom\rexit\r");
 		var start = raw.IndexOf("]133;C", StringComparison.Ordinal);
-		var diagnostic = raw.IndexOf(cancelled ? "Cancelled." : "input callback failed", StringComparison.Ordinal);
-		var end = raw.IndexOf(cancelled ? "]133;D;130" : "]133;D;1", StringComparison.Ordinal);
+		var diagnostic = raw.IndexOf(cancelled ? "private timeout" : "input callback failed", StringComparison.Ordinal);
+		var end = raw.IndexOf("]133;D;1", StringComparison.Ordinal);
+		raw.Should().NotContain("Cancelled.");
 		start.Should().BeGreaterThanOrEqualTo(0);
 		diagnostic.Should().BeGreaterThan(start);
 		end.Should().BeGreaterThan(diagnostic);

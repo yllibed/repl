@@ -329,11 +329,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken,
 		IServiceProvider? presenceServiceProvider = null)
 	{
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation); // volatile ref swap — safe under concurrent sub-invocations
-			if (!isSubInvocation)
-			{
-				_globalOptionsSnapshot.SetSessionBaseline();
-			}
+			using var invocationGlobals = PushExecutionGlobals(globalOptions, isSubInvocation);
 			using var runtimeStateScope = PushRuntimeState(
 				serviceProvider,
 				isInteractiveSession: false,
@@ -388,6 +384,13 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 					serviceProvider,
 					cancellationToken)
 				.ConfigureAwait(false);
+	}
+
+	private IDisposable PushExecutionGlobals(GlobalInvocationOptions options, bool isSubInvocation)
+	{
+		_globalOptionsSnapshot.Update(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
+		if (!isSubInvocation) { _globalOptionsSnapshot.SetSessionBaseline(); }
+		return _globalOptionsSnapshot.PushInputValues(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
 	}
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbiguousPrefixAsync(

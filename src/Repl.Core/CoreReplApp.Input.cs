@@ -5,9 +5,10 @@ namespace Repl;
 
 public sealed partial class CoreReplApp
 {
+	internal Func<IServiceProvider, Type, bool>? InputServiceAvailability { get; set; }
 	private readonly AsyncLocal<ProcessedInput?> _currentInput = new();
 
-	internal IDisposable PushProcessedInput(ProcessedInput input)
+	internal IDisposable PushProcessedInput(ProcessedInput? input)
 	{
 		var previous = _currentInput.Value;
 		_currentInput.Value = input;
@@ -94,6 +95,7 @@ public sealed partial class CoreReplApp
 		// Structured adapters retain their native invocation contract; #115 owns their interception.
 		if (!_options.Input.IsEnabled || ReplSessionIO.IsProgrammatic)
 		{
+			using var inputScope = PushProcessedInput(input: null);
 			return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
 				cancellationToken, presenceServiceProvider).ConfigureAwait(false);
 		}
@@ -103,6 +105,7 @@ public sealed partial class CoreReplApp
 		{
 			if (IsCompletionBridge(args))
 			{
+				using var inputScope = PushProcessedInput(input: null);
 				return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
 					cancellationToken, presenceServiceProvider).ConfigureAwait(false);
 			}
@@ -205,7 +208,7 @@ public sealed partial class CoreReplApp
 			parsedOptions ??= InvocationOptionParser.Parse(match.RemainingTokens, match.Route.OptionSchema,
 				BuildEffectiveCommandParsingOptions(globals.GlobalOptionConfiguration.CaseSensitivity), globals.CustomGlobalTokenOwnership);
 			foreach (var diagnostic in parsedOptions.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic, match.Route.OptionSchema)); }
-			ReadTypedInputValues(input, match, parsedOptions, values, checks);
+			ReadTypedInputValues(input, match, parsedOptions, services, values, checks);
 		}
 		var globalValues = ReadTypedGlobalValues(globals, checks);
 		if (input.Context.Text is { } text && InputTokenizer.Tokenize(text).Exists(static token => token.IsIncomplete))
@@ -301,17 +304,10 @@ public sealed partial class CoreReplApp
 		return values;
 	}
 
-	private void ReadTypedInputValues(ProcessedInput input, RouteMatch match, OptionParsingResult parsed,
+	private void ReadTypedInputValues(ProcessedInput input, RouteMatch match, OptionParsingResult parsed, IServiceProvider services,
 		Dictionary<string, InputValue> values, List<InputValidationResult> checks)
 	{
-		foreach (var parameter in match.Route.Command.Handler.Method.GetParameters())
-		{
-			if (parameter.Name is { } name && match.Values.TryGetValue(name, out var raw))
-			{
-				AddTypedInputValue(input, name, [raw], parameter.ParameterType, values, checks,
-					_options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive);
-			}
-		}
+		ReadTypedRouteValues(input, match, values, checks);
 		var positionalIndex = 0;
 		foreach (var parameter in match.Route.OptionSchema.Parameters.Values)
 		{
@@ -323,14 +319,18 @@ public sealed partial class CoreReplApp
 			{
 				if (InputValueSelector.TrySelectNamed(parameter.Name, parameter.Mode, parsed.NamedOptions,
 					parsed.PositionalArguments, positionalIndex, out var named)) { raw = named; }
-				else if (parameter.Mode != ReplParameterMode.OptionOnly && positionalIndex < parsed.PositionalArguments.Count)
+				else
 				{
-					var selected = InputValueSelector.SelectPositional(parameter.ParameterType, parsed.PositionalArguments, positionalIndex);
-					raw = parsed.PositionalArguments;
-					rawStart = selected.Start;
-					rawCount = selected.Count;
-					HandlerArgumentBinder.ThrowIfExplicitUpperBoundExceeded(match.Route.OptionSchema, parameter.Name, selected.Count);
-					positionalIndex += selected.Count;
+					if (parameter.SupportsServiceFallback && IsInputServiceAvailable(parameter.ParameterType, services)) { continue; }
+					if (parameter.Mode != ReplParameterMode.OptionOnly && positionalIndex < parsed.PositionalArguments.Count)
+					{
+						var selected = InputValueSelector.SelectPositional(parameter.ParameterType, parsed.PositionalArguments, positionalIndex);
+						raw = parsed.PositionalArguments;
+						rawStart = selected.Start;
+						rawCount = selected.Count;
+						HandlerArgumentBinder.ThrowIfExplicitUpperBoundExceeded(match.Route.OptionSchema, parameter.Name, selected.Count);
+						positionalIndex += selected.Count;
+					}
 				}
 				if (raw is null)
 				{
@@ -363,8 +363,29 @@ public sealed partial class CoreReplApp
 		}
 	}
 
+	private bool IsInputServiceAvailable(Type type, IServiceProvider services)
+	{
+		if (InteractionProgressFactory.IsSupportedProgressType(type) &&
+			IsInputServiceAvailable(typeof(IReplInteractionChannel), services)) { return true; }
+		return InputServiceAvailability?.Invoke(services, type)
+			?? (services is DefaultServiceProvider && services.GetService(type) is not null);
+	}
+
 	private static bool IsInputScalar(Type type) => type.IsValueType || type == typeof(string)
 		|| type == typeof(Uri) || type == typeof(FileInfo) || type == typeof(DirectoryInfo);
+
+	private void ReadTypedRouteValues(ProcessedInput input, RouteMatch match, Dictionary<string, InputValue> values,
+		List<InputValidationResult> checks)
+	{
+		foreach (var parameter in match.Route.Command.Handler.Method.GetParameters())
+		{
+			if (parameter.Name is { } name && match.Values.TryGetValue(name, out var raw))
+			{
+				AddTypedInputValue(input, name, [raw], parameter.ParameterType, values, checks,
+					_options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive);
+			}
+		}
+	}
 
 	private void AddTypedInputValue(ProcessedInput input, string name, IReadOnlyList<string> raw, Type type,
 		Dictionary<string, InputValue> values, List<InputValidationResult> checks, bool enumIgnoreCase,

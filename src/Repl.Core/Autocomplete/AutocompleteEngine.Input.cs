@@ -56,7 +56,12 @@ internal sealed partial class AutocompleteEngine
 			{
 				continue;
 			}
-			return tokens[index].Start + Math.Min(cursor - origin.Start, tokens[index].Length);
+			var token = tokens[index];
+			var offset = input.Context.Text is { } original
+				? InputTokenizer.MapTokenCursor(original.Substring(origin.Start, origin.Length),
+					canonical.Substring(token.Start, token.Length), cursor - origin.Start)
+				: Math.Min(cursor - origin.Start, token.Length);
+			return token.Start + offset;
 		}
 		return canonical.Length;
 	}

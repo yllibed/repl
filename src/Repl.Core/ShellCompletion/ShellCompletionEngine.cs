@@ -39,10 +39,12 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (analyzed is null || analyzed.Input.IsHandled
 				|| analyzed.Analysis?.ApplicationValidation.State == InputValidationState.Invalid) { return []; }
 			var input = analyzed.Input;
+			// Re-encoding loses shell quoting and escaping; never insert into that original context.
+			if (input.WasRewritten && HasUnsafeOriginalShellContext(line, cursor)) { return []; }
 			var normalized = input.WasRewritten ? InputTokenizer.Format(input.Context.Arguments) : inputText;
 			if (inputText.Length != 0 && char.IsWhiteSpace(inputText[^1]) && input.WasRewritten) { normalized += " "; }
 			var mappedCursor = AutocompleteEngine.MapInputCursor(input, normalized, Math.Max(0, cursor - start));
-			if (input.WasRewritten && mappedCursor < normalized.Length)
+			if (input.WasRewritten && AnalyzeShellCompletionInput(line, cursor).CurrentTokenPrefix.Length != 0)
 			{
 				var mappedTokens = InputTokenizer.Tokenize(normalized);
 				var currentIndex = mappedTokens.FindIndex(token => mappedCursor >= token.Start && mappedCursor <= token.Start + token.Length);
@@ -60,6 +62,13 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			await WriteInputFailureAsync(exception).ConfigureAwait(false);
 			return [];
 		}
+	}
+
+	private static bool HasUnsafeOriginalShellContext(string line, int cursor)
+	{
+		// Shell escapes may carry quote context across word boundaries our tokenizer cannot recognize.
+		var prefix = line.AsSpan(0, Math.Clamp(cursor, 0, line.Length));
+		return prefix.ContainsAny('"', '\'') || prefix.ContainsAny('\\', '`');
 	}
 
 	private async ValueTask<string[]> ResolveCanonicalShellCompletionCandidatesAsync(
