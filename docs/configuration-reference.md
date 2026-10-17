@@ -1,5 +1,20 @@
 # Configuration Reference
 
+## Advanced Input
+
+`ReplOptions.Input` holds ordered `Preprocessors` and injectable `Validators`.
+Both collections are empty by default. The fluent registration helpers are
+`UseArgumentPreprocessor(...)` and `UseInputValidator(...)` on root applications.
+
+`Interactive.Autocomplete.NormalizeInputOnTab` defaults to `true`: valid adapted
+input can be converted to equivalent Repl syntax on the first Tab. Set it to
+`false` to preserve the legacy text while continuing to analyze its normalized
+arguments.
+
+These are advanced features for compatibility and larger host applications. See
+[Advanced Input](advanced-input.md) for processing modes, diagnostics, service
+injection and callback responsibilities during typing and completion.
+
 This is the complete configuration reference for the Repl Toolkit. All options are accessible through the `ReplOptions` object passed to `app.Options(...)`.
 
 ```csharp

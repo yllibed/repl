@@ -15,6 +15,48 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		if (!app.OptionsSnapshot.Input.IsEnabled)
+		{
+			return await ResolveCanonicalShellCompletionCandidatesAsync(line, cursor, shell, serviceProvider, cancellationToken).ConfigureAwait(false);
+		}
+		try
+		{
+			var tokens = InputTokenizer.Tokenize(line);
+			if (tokens.Count == 0) { return []; }
+			var start = tokens[0].Start + tokens[0].Length;
+			while (start < line.Length && char.IsWhiteSpace(line[start])) { start++; }
+			var inputText = line[start..];
+			var arguments = InputTokenizer.Tokenize(inputText).Select(static token => token.Value).ToArray();
+			var input = await app.PreprocessInputAsync(arguments, [], InputProcessingMode.ShellCompletion,
+				inputText, Math.Max(0, cursor - start), cancellationToken).ConfigureAwait(false);
+			var analysis = await app.AnalyzeInputAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
+			if (input.IsHandled || analysis.ApplicationValidation.State == InputValidationState.Invalid) { return []; }
+			var normalized = input.WasRewritten ? InputTokenizer.Format(input.Context.Arguments) : inputText;
+			if (inputText.Length != 0 && char.IsWhiteSpace(inputText[^1]) && input.WasRewritten) { normalized += " "; }
+			var mappedCursor = AutocompleteEngine.MapInputCursor(input, normalized, Math.Max(0, cursor - start));
+			if (input.WasRewritten && mappedCursor < normalized.Length)
+			{
+				var mappedTokens = InputTokenizer.Tokenize(normalized);
+				var currentIndex = mappedTokens.FindIndex(token => mappedCursor >= token.Start && mappedCursor <= token.Start + token.Length);
+				if (currentIndex < 0 || input.Context.ArgumentOrigins.ElementAtOrDefault(currentIndex) is null) { return []; }
+			}
+			var globals = GlobalOptionParser.Parse(input.Context.Arguments, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+			using var globalsScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
+			var executable = line[..(tokens[0].Start + tokens[0].Length)] + " ";
+			return await ResolveCanonicalShellCompletionCandidatesAsync(executable + normalized, executable.Length + mappedCursor,
+				shell, serviceProvider, cancellationToken).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+		catch (Exception) { return []; }
+	}
+
+	private async ValueTask<string[]> ResolveCanonicalShellCompletionCandidatesAsync(
+		string line,
+		int cursor,
+		ShellKind shell,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
 		// Completion must not poison the durable routing cache (see the interactive path).
 		var activeGraph = app.ResolveActiveRoutingGraph(useDurableCache: false);
 		var state = AnalyzeShellCompletionInput(line, cursor);

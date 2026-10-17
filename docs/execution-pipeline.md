@@ -3,6 +3,11 @@
 This document describes the command execution pipeline in the Repl Toolkit,
 from raw input to final output. The pipeline is driven by `CoreReplApp.ExecuteCoreAsync`.
 
+Applications integrating an existing CLI or a larger host can opt into
+[advanced input adaptation and validation](advanced-input.md). Adapters run before
+the global-option stage; typed input validators run before handler binding. The
+ordinary command-definition workflow does not require these hooks.
+
 ```text
 Input
   |

@@ -424,7 +424,7 @@ internal static class InvocationOptionParser
 			diagnostics.Add(new ParseDiagnostic(
 				ParseDiagnosticSeverity.Error,
 				$"Option '{entry.Token}' is missing a value.",
-				Token: originalToken));
+				Token: originalToken) { IsIncomplete = true });
 			return;
 		}
 

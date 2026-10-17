@@ -199,7 +199,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	internal bool ConvertsCancellationToExitCode =>
 		_options.ExitCodes.Cancelled is not null || _options.ExitCodes.Resolver is not null;
 
-	private async ValueTask<ExecutionOutcome> ExecuteCoreOutcomeAsync(
+	private async ValueTask<ExecutionOutcome> ExecuteUnprocessedCoreOutcomeAsync(
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
 		bool isSubInvocation,
@@ -775,6 +775,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			return (
 				await RefuseAsync(optionFailure, globalOptions.OutputFormat, cancellationToken).ConfigureAwait(false),
 				false);
+		}
+		if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, cancellationToken)
+			.ConfigureAwait(false) is { } inputFailure)
+		{
+			return (inputFailure, false);
 		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
