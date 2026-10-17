@@ -1,6 +1,6 @@
 namespace Repl;
 
-/// <summary>Availability of a typed value without resolving a command handler's services.</summary>
+/// <summary>Availability of a typed input value in the parsed snapshot.</summary>
 public enum InputValueState
 {
 	/// <summary>The value converted successfully.</summary>

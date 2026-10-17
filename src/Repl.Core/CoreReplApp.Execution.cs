@@ -779,11 +779,6 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				await RefuseAsync(optionFailure, globalOptions.OutputFormat, cancellationToken).ConfigureAwait(false),
 				false);
 		}
-		if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, cancellationToken)
-			.ConfigureAwait(false) is { } inputFailure)
-		{
-			return (inputFailure, false);
-		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
 		var bindingContext = CreateInvocationBindingContext(
@@ -795,6 +790,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			activeGraph.Contexts,
 			serviceProvider,
 			cancellationToken);
+		if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, bindingContext, cancellationToken)
+			.ConfigureAwait(false) is { } inputFailure)
+		{
+			return (inputFailure, false);
+		}
 		// Binding and the handler share one try so progress cleanup and rendering stay uniform; the flag
 		// tells a binder exception (InvalidOperationException, conversion FormatException, …) apart from
 		// anything thrown after binding — the handler, middleware, user validators, banners, transformers.

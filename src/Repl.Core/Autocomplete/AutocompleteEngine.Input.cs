@@ -48,7 +48,14 @@ internal sealed partial class AutocompleteEngine
 
 	internal static int MapInputCursor(ProcessedInput input, string canonical, int cursor)
 	{
-		if (!input.WasRewritten) { return Math.Clamp(cursor, 0, canonical.Length); }
+		TryMapInputCursor(input, canonical, cursor, out var mappedCursor);
+		return mappedCursor;
+	}
+
+	internal static bool TryMapInputCursor(ProcessedInput input, string canonical, int cursor, out int mappedCursor)
+	{
+		mappedCursor = Math.Clamp(cursor, 0, canonical.Length);
+		if (!input.WasRewritten) { return true; }
 		var tokens = InputTokenizer.Tokenize(canonical);
 		for (var index = 0; index < input.Context.ArgumentOrigins.Count && index < tokens.Count; index++)
 		{
@@ -61,9 +68,11 @@ internal sealed partial class AutocompleteEngine
 				? InputTokenizer.MapTokenCursor(original.Substring(origin.Start, origin.Length),
 					canonical.Substring(token.Start, token.Length), cursor - origin.Start)
 				: Math.Min(cursor - origin.Start, token.Length);
-			return token.Start + offset;
+			mappedCursor = token.Start + offset;
+			return true;
 		}
-		return canonical.Length;
+		mappedCursor = canonical.Length;
+		return false;
 	}
 
 	private static ConsoleLineReader.AutocompleteResult ProjectInputAssist(

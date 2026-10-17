@@ -42,13 +42,19 @@ public sealed class Given_AdvancedInput_NestedAndQuoted
 		app.Map("query", (SearchService search, int limit) => limit);
 		app.UseInputValidator((ParsedInputContext input) =>
 		{
+			if (input.Input.Mode != InputProcessingMode.Execution)
+			{
+				input.TryGetValue<int>("limit", out _).Should().BeFalse();
+				created.Should().Be(0);
+				return InputValidationResult.Valid();
+			}
 			input.TryGetValue<int>("limit", out var limit).Should().BeTrue();
 			limit.Should().Be(3);
-			created.Should().Be(0);
+			created.Should().Be(1);
 			return InputValidationResult.Valid();
 		});
 		var processed = await app.Core.PreprocessInputAsync(["query", "3"], [], InputProcessingMode.Preview, "query 3", 7, CancellationToken.None);
-		(await app.Core.AnalyzeInputAsync(processed, app.Services, CancellationToken.None)).Validation.State.Should().Be(InputValidationState.Valid);
+		(await app.Core.AnalyzeInputAsync(processed, app.Services, CancellationToken.None)).Validation.State.Should().Be(InputValidationState.Incomplete);
 		created.Should().Be(0);
 		(await app.RunAsync(["query", "3"])).Should().Be(0);
 		created.Should().Be(1);
@@ -70,7 +76,8 @@ public sealed class Given_AdvancedInput_NestedAndQuoted
 		string[] arguments = namedOverride ? ["query", "--count", "7"] : ["query"];
 		var text = string.Join(' ', arguments);
 		var processed = await app.Core.PreprocessInputAsync(arguments, [], InputProcessingMode.Preview, text, text.Length, CancellationToken.None);
-		(await app.Core.AnalyzeInputAsync(processed, app.Services, CancellationToken.None)).Validation.State.Should().Be(InputValidationState.Valid);
+		(await app.Core.AnalyzeInputAsync(processed, app.Services, CancellationToken.None)).Validation.State.Should()
+			.Be(namedOverride ? InputValidationState.Valid : InputValidationState.Incomplete);
 		created.Should().Be(0);
 		(await app.RunAsync(arguments)).Should().Be(0);
 		countSeen.Should().Be(namedOverride ? 7 : 42);

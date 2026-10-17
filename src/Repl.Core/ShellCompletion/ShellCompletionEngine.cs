@@ -43,9 +43,10 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (input.WasRewritten && HasUnsafeOriginalShellContext(line, cursor)) { return []; }
 			var normalized = input.WasRewritten ? InputTokenizer.Format(input.Context.Arguments) : inputText;
 			if (inputText.Length != 0 && char.IsWhiteSpace(inputText[^1]) && input.WasRewritten) { normalized += " "; }
-			var mappedCursor = AutocompleteEngine.MapInputCursor(input, normalized, Math.Max(0, cursor - start));
+			var cursorMapped = AutocompleteEngine.TryMapInputCursor(input, normalized, Math.Max(0, cursor - start), out var mappedCursor);
 			if (input.WasRewritten && AnalyzeShellCompletionInput(line, cursor).CurrentTokenPrefix.Length != 0)
 			{
+				if (!cursorMapped) { return []; }
 				var mappedTokens = InputTokenizer.Tokenize(normalized);
 				var currentIndex = mappedTokens.FindIndex(token => mappedCursor >= token.Start && mappedCursor <= token.Start + token.Length);
 				if (currentIndex < 0 || input.Context.ArgumentOrigins.ElementAtOrDefault(currentIndex) is null) { return []; }

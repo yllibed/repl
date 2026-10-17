@@ -98,7 +98,10 @@ internal static class HandlerArgumentBinder
 		}
 
 		var isUserOption = context.OptionSchema.TryGetParameter(parameterName, out _);
-		if (TryResolveFromContextOrServices(parameter, context, skipContext: isUserOption, out var resolved))
+		var found = isUserOption
+			? TryResolveInputServiceFallback(parameter, context, out var resolved)
+			: TryResolveFromContextOrServices(parameter, context, skipContext: false, out resolved);
+		if (found)
 		{
 			return resolved;
 		}
@@ -184,6 +187,16 @@ internal static class HandlerArgumentBinder
 	private static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
 		parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0;
+
+	internal static bool TryResolveInputServiceFallback(ParameterInfo parameter, InvocationBindingContext context, out object? resolved)
+	{
+		var name = parameter.Name ?? string.Empty;
+		if (context.InputServiceFallbacks is { } cached && cached.TryGetValue(name, out resolved)) { return resolved is not null; }
+		var found = TryResolveFromContextOrServices(parameter, context, skipContext: true, out resolved);
+		// Retain null as well: a transient factory must not change the positional assignment after validation.
+		(context.InputServiceFallbacks ??= new(StringComparer.Ordinal))[name] = resolved;
+		return found;
+	}
 
 	private static bool TryResolveFromContextOrServices(
 		System.Reflection.ParameterInfo parameter,

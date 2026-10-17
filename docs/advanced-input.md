@@ -160,11 +160,19 @@ have a resolved `Command`. Missing values must not be treated as zero or false.
 Only input values and literal parameter defaults are analyzed: preview does not
 instantiate options groups or construct the handler's service dependencies.
 
-DI-backed handler parameters are omitted from parsed input values when service
-availability metadata identifies them. Named input still takes precedence over
-service fallback. DI-enabled hosts consult `IServiceProviderIsService` rather than
-activating handler services during analysis; custom providers should expose that
-metadata to participate in this check.
+During preview, DI-enabled hosts consult `IServiceProviderIsService`; custom
+providers should expose that metadata too. A registration may return `null`, in
+which case binding falls back to positional input or a literal default. When
+positional assignment or a required value depends on that result, preview returns
+`Incomplete` and omits the affected values until submission. It does not activate
+the factory to guess the assignment.
+
+At submission, implicit service fallbacks for input parameters are resolved before
+input validators run. Their results, including `null`, are reused by the handler's
+binder so factories run once and validators see the actual positional assignment.
+Non-null services are omitted from parsed input values. Named input still takes
+precedence and does not activate that parameter's fallback. Explicit
+`[FromServices]` dependencies and options groups remain deferred until binding.
 
 Built-in syntax, type and route-constraint checks remain in place. Existing
 context validators and command middleware remain execution steps; they are not

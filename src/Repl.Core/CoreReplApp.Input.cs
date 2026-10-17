@@ -189,7 +189,8 @@ public sealed partial class CoreReplApp
 
 	internal async ValueTask<ParsedInputContext> AnalyzeInputAsync(
 		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken,
-		RouteMatch? match = null, GlobalInvocationOptions? globals = null, OptionParsingResult? parsedOptions = null)
+		RouteMatch? match = null, GlobalInvocationOptions? globals = null, OptionParsingResult? parsedOptions = null,
+		InvocationBindingContext? executionBinding = null)
 	{
 		var checks = new List<InputValidationResult> { input.Validation };
 		var applicationChecks = new List<InputValidationResult> { input.Validation };
@@ -208,7 +209,7 @@ public sealed partial class CoreReplApp
 			parsedOptions ??= InvocationOptionParser.Parse(match.RemainingTokens, match.Route.OptionSchema,
 				BuildEffectiveCommandParsingOptions(globals.GlobalOptionConfiguration.CaseSensitivity), globals.CustomGlobalTokenOwnership);
 			foreach (var diagnostic in parsedOptions.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic, match.Route.OptionSchema)); }
-			ReadTypedInputValues(input, match, parsedOptions, services, values, checks);
+			ReadTypedInputValues(input, match, parsedOptions, services, values, checks, executionBinding);
 		}
 		var globalValues = ReadTypedGlobalValues(globals, checks);
 		if (input.Context.Text is { } text && InputTokenizer.Tokenize(text).Exists(static token => token.IsIncomplete))
@@ -305,10 +306,11 @@ public sealed partial class CoreReplApp
 	}
 
 	private void ReadTypedInputValues(ProcessedInput input, RouteMatch match, OptionParsingResult parsed, IServiceProvider services,
-		Dictionary<string, InputValue> values, List<InputValidationResult> checks)
+		Dictionary<string, InputValue> values, List<InputValidationResult> checks, InvocationBindingContext? executionBinding)
 	{
 		ReadTypedRouteValues(input, match, values, checks);
 		var positionalIndex = 0;
+		var positionalUncertain = false;
 		foreach (var parameter in match.Route.OptionSchema.Parameters.Values)
 		{
 			IReadOnlyList<string>? raw = null;
@@ -318,10 +320,19 @@ public sealed partial class CoreReplApp
 			try
 			{
 				if (InputValueSelector.TrySelectNamed(parameter.Name, parameter.Mode, parsed.NamedOptions,
-					parsed.PositionalArguments, positionalIndex, out var named)) { raw = named; }
+					parsed.PositionalArguments, positionalUncertain ? parsed.PositionalArguments.Count : positionalIndex, out var named)) { raw = named; }
 				else
 				{
-					if (parameter.SupportsServiceFallback && IsInputServiceAvailable(parameter.ParameterType, services)) { continue; }
+					var fallback = ResolveInputServiceFallback(parameter, match.Route.Command.Handler, services, executionBinding);
+					if (fallback is not false)
+					{
+						if (fallback is null)
+						{
+							positionalUncertain |= DeferInputServiceFallback(parameter, positionalIndex < parsed.PositionalArguments.Count, checks);
+						}
+						continue;
+					}
+					if (positionalUncertain && parameter.Mode != ReplParameterMode.OptionOnly) { continue; }
 					if (parameter.Mode != ReplParameterMode.OptionOnly && positionalIndex < parsed.PositionalArguments.Count)
 					{
 						var selected = InputValueSelector.SelectPositional(parameter.ParameterType, parsed.PositionalArguments, positionalIndex);
@@ -338,7 +349,7 @@ public sealed partial class CoreReplApp
 					HandlerArgumentBinder.ThrowIfExplicitLowerBoundUnsatisfied(match.Route.OptionSchema, parameter.Name);
 				}
 			}
-			catch (InvalidOperationException exception)
+			catch (InvalidOperationException exception) when (exception is not ReplBindingCallbackException)
 			{
 				values[parameter.Name] = new(missing ? InputValueState.Missing : InputValueState.Invalid);
 				var state = missing && input.Context.Mode != InputProcessingMode.Execution
@@ -348,19 +359,49 @@ public sealed partial class CoreReplApp
 			}
 			if (raw is null)
 			{
-				var metadata = match.Route.Command.Handler.Method.GetParameters()
-					.FirstOrDefault(item => string.Equals(item.Name, parameter.Name, StringComparison.Ordinal));
-				values[parameter.Name] = metadata?.HasDefaultValue == true
-					? new(InputValueState.Available, metadata.DefaultValue) : new(InputValueState.Missing);
-				if (!parameter.CanBeOmitted && IsInputScalar(parameter.ParameterType))
-				{
-					checks.Add(InputValidationResult.Incomplete($"Supply a value for '{parameter.Name}'."));
-				}
+				AddMissingTypedInputValue(parameter, match.Route.Command.Handler, values, checks);
 				continue;
 			}
 			AddTypedInputValue(input, parameter.Name, raw, parameter.ParameterType, values, checks,
 				(parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive, rawStart, rawCount);
 		}
+	}
+
+	private static bool DeferInputServiceFallback(OptionSchemaParameter parameter, bool hasPositionals,
+		List<InputValidationResult> checks)
+	{
+		var positionalUncertain = parameter.Mode != ReplParameterMode.OptionOnly && hasPositionals;
+		if (positionalUncertain || (!parameter.CanBeOmitted && IsInputScalar(parameter.ParameterType))
+			|| parameter.ExplicitArity is ReplArity.OneOrMore or ReplArity.ExactlyOne)
+		{
+			checks.Add(InputValidationResult.Incomplete("Input values depend on service resolution at submission."));
+		}
+		return positionalUncertain;
+	}
+
+	private static void AddMissingTypedInputValue(OptionSchemaParameter parameter, Delegate handler,
+		Dictionary<string, InputValue> values, List<InputValidationResult> checks)
+	{
+		var metadata = handler.Method.GetParameters()
+			.FirstOrDefault(item => string.Equals(item.Name, parameter.Name, StringComparison.Ordinal));
+		values[parameter.Name] = metadata?.HasDefaultValue == true
+			? new(InputValueState.Available, metadata.DefaultValue) : new(InputValueState.Missing);
+		if (!parameter.CanBeOmitted && IsInputScalar(parameter.ParameterType))
+		{
+			checks.Add(InputValidationResult.Incomplete($"Supply a value for '{parameter.Name}'."));
+		}
+	}
+
+	private bool? ResolveInputServiceFallback(OptionSchemaParameter parameter, Delegate handler, IServiceProvider services,
+		InvocationBindingContext? executionBinding)
+	{
+		if (!parameter.SupportsServiceFallback) { return false; }
+		if (executionBinding is null)
+		{
+			return IsInputServiceAvailable(parameter.ParameterType, services) ? null : false;
+		}
+		var metadata = handler.Method.GetParameters().First(item => string.Equals(item.Name, parameter.Name, StringComparison.Ordinal));
+		return HandlerArgumentBinder.TryResolveInputServiceFallback(metadata, executionBinding, out _);
 	}
 
 	private bool IsInputServiceAvailable(Type type, IServiceProvider services)
@@ -438,12 +479,13 @@ public sealed partial class CoreReplApp
 	}
 
 	private async ValueTask<ExecutionOutcome?> ValidateInputForExecutionAsync(RouteMatch match,
-		GlobalInvocationOptions globals, OptionParsingResult parsed, IServiceProvider services, CancellationToken cancellationToken)
+		GlobalInvocationOptions globals, OptionParsingResult parsed, IServiceProvider services,
+		InvocationBindingContext executionBinding, CancellationToken cancellationToken)
 	{
 		if (_currentInput.Value is not { } input || _options.Input.Validators.Count == 0) { return null; }
 		try
 		{
-			var context = await AnalyzeInputAsync(input, services, cancellationToken, match, globals, parsed).ConfigureAwait(false);
+			var context = await AnalyzeInputAsync(input, services, cancellationToken, match, globals, parsed, executionBinding).ConfigureAwait(false);
 			return context.Validation.State == InputValidationState.Valid ? null
 				: await RefuseInputAsync(context.Validation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
 		}
