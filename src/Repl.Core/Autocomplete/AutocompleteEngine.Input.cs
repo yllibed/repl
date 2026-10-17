@@ -16,23 +16,29 @@ internal sealed partial class AutocompleteEngine
 			var processed = await app.PreprocessInputAsync(tokens.Select(static token => token.Value).ToArray(), scopeTokens,
 				request.ExplicitCompletion ? InputProcessingMode.Completion : InputProcessingMode.Preview,
 				request.Input, request.Cursor, cancellationToken, isInteractive: true).ConfigureAwait(false);
+			if (processed.IsHandled)
+			{
+				return ApplyInputDiagnostics(new(request.Cursor, 0, []), processed.Validation, request.Input.Length);
+			}
 			var analysis = await app.AnalyzeInputAsync(processed, serviceProvider, cancellationToken).ConfigureAwait(false);
 			var globals = GlobalOptionParser.Parse([.. scopeTokens, .. processed.Context.Arguments],
 				app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
 			using var globalScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
 			var canonical = processed.WasRewritten ? InputTokenizer.Format(processed.Context.Arguments) : request.Input;
-			var canonicalCursor = MapInputCursor(processed, canonical, request.Cursor);
+			var cursorMapped = TryMapInputCursor(processed, canonical, request.Cursor, out var canonicalCursor);
 			if (processed.WasRewritten && request.ExplicitCompletion
 				&& app.OptionsSnapshot.Interactive.Autocomplete.NormalizeInputOnTab
 				&& analysis.Validation.State == InputValidationState.Valid)
 			{
 				return new(0, request.Input.Length, [], NormalizedInput: canonical, NormalizedCursor: canonicalCursor);
 			}
-			var result = processed.IsHandled
-				? new ConsoleLineReader.AutocompleteResult(request.Cursor, 0, [])
-				: await ResolveCanonicalAutocompleteAsync(request with { Input = canonical, Cursor = canonicalCursor },
-					scopeTokens, serviceProvider, cancellationToken).ConfigureAwait(false)
-					?? new ConsoleLineReader.AutocompleteResult(request.Cursor, 0, []);
+			if (!cursorMapped)
+			{
+				return ApplyInputDiagnostics(new(request.Cursor, 0, []), analysis.Validation, request.Input.Length);
+			}
+			var result = await ResolveCanonicalAutocompleteAsync(request with { Input = canonical, Cursor = canonicalCursor },
+				scopeTokens, serviceProvider, cancellationToken).ConfigureAwait(false)
+				?? new ConsoleLineReader.AutocompleteResult(request.Cursor, 0, []);
 			if (processed.WasRewritten)
 			{
 				result = ProjectInputAssist(result, processed, canonical, request.Cursor);
@@ -44,12 +50,6 @@ internal sealed partial class AutocompleteEngine
 		{
 			return new(request.Cursor, 0, [], HintLine: $"Input analysis failed: {exception.Message}");
 		}
-	}
-
-	internal static int MapInputCursor(ProcessedInput input, string canonical, int cursor)
-	{
-		TryMapInputCursor(input, canonical, cursor, out var mappedCursor);
-		return mappedCursor;
 	}
 
 	internal static bool TryMapInputCursor(ProcessedInput input, string canonical, int cursor, out int mappedCursor)
@@ -65,8 +65,8 @@ internal sealed partial class AutocompleteEngine
 			}
 			var token = tokens[index];
 			var offset = input.Context.Text is { } original
-				? InputTokenizer.MapTokenCursor(original.Substring(origin.Start, origin.Length),
-					canonical.Substring(token.Start, token.Length), cursor - origin.Start)
+				? InputTokenizer.MapTokenCursor(original.AsSpan(origin.Start, origin.Length),
+					canonical.AsSpan(token.Start, token.Length), cursor - origin.Start)
 				: Math.Min(cursor - origin.Start, token.Length);
 			mappedCursor = token.Start + offset;
 			return true;

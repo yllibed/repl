@@ -19,7 +19,7 @@ internal static class InputTokenizer
 		return tokens;
 	}
 
-	private static Token ReadToken(string text, ref int index, List<int>? contentPositions = null)
+	private static Token ReadToken(ReadOnlySpan<char> text, ref int index, List<int>? contentPositions = null)
 	{
 		var start = index;
 		var value = new StringBuilder();
@@ -36,7 +36,7 @@ internal static class InputTokenizer
 		return new(value.ToString(), start, index - start, quote is not null);
 	}
 
-	internal static int MapTokenCursor(string original, string formatted, int cursor)
+	internal static int MapTokenCursor(ReadOnlySpan<char> original, ReadOnlySpan<char> formatted, int cursor)
 	{
 		if (cursor <= 0) { return 0; }
 		if (cursor >= original.Length) { return formatted.Length; }

@@ -99,6 +99,7 @@ app.UseArgumentPreprocessor((input, _) =>
 `Handled` stops later adapters and normal command dispatch. During preview and
 completion it never renders the returned payload or exits the session. On
 submission it uses normal result rendering and exit-code classification.
+Input validators do not run after a handled decision, including in the editor.
 Handling an interactive invocation keeps the session open; `Results.Exit(code)`
 explicitly closes it. Application callback failures are application errors, not
 invalid user input. Caller cancellation follows the existing cancellation policy.
@@ -173,6 +174,9 @@ binder so factories run once and validators see the actual positional assignment
 Non-null services are omitted from parsed input values. Named input still takes
 precedence and does not activate that parameter's fallback. Explicit
 `[FromServices]` dependencies and options groups remain deferred until binding.
+Failures while resolving a handler fallback retain the normal binding-error
+format, classification and exit policy. Exceptions from input validators remain
+callback failures.
 
 Built-in syntax, type and route-constraint checks remain in place. Existing
 context validators and command middleware remain execution steps; they are not

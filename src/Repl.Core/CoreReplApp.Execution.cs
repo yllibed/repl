@@ -790,17 +790,18 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			activeGraph.Contexts,
 			serviceProvider,
 			cancellationToken);
-		if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, bindingContext, cancellationToken)
-			.ConfigureAwait(false) is { } inputFailure)
-		{
-			return (inputFailure, false);
-		}
 		// Binding and the handler share one try so progress cleanup and rendering stay uniform; the flag
 		// tells a binder exception (InvalidOperationException, conversion FormatException, …) apart from
 		// anything thrown after binding — the handler, middleware, user validators, banners, transformers.
 		var bound = false;
 		try
 		{
+			if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, bindingContext, cancellationToken)
+				.ConfigureAwait(false) is { } inputFailure)
+			{
+				await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
+				return (inputFailure, false);
+			}
 			var arguments = HandlerArgumentBinder.Bind(match.Route.Command.Handler, bindingContext);
 			bound = true;
 			var contextFailure = await ValidateContextsForMatchAsync(

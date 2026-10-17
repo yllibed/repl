@@ -16,6 +16,16 @@ public sealed class ParsedInputContext
 		Validation = validation;
 	}
 
+	internal ParsedInputContext(ParsedInputContext snapshot, InputValidationResult validation, InputValidationResult applicationValidation)
+	{
+		Input = snapshot.Input;
+		Command = snapshot.Command;
+		Values = snapshot.Values;
+		GlobalValues = snapshot.GlobalValues;
+		Validation = validation;
+		ApplicationValidation = applicationValidation;
+	}
+
 	/// <summary>Gets original and effective input and the processing mode.</summary>
 	public ArgumentPreprocessingContext Input { get; }
 	/// <summary>Gets the resolved route template, or null for unresolved or partial input.</summary>

@@ -62,6 +62,28 @@ public sealed class Given_AdvancedInput_Editor
 	}
 
 	[TestMethod]
+	[DataRow(false, 0)]
+	[DataRow(true, 0)]
+	[DataRow(false, 2)]
+	[DataRow(true, 2)]
+	[Description("Tab at the end or inside a removed token must leave the actual editor buffer unchanged in both render modes.")]
+	public async Task When_TabTargetsARemovedToken_Then_TheSubmittedTextIsUnchanged(bool rich, int leftArrows)
+	{
+		var app = CoreReplApp.Create();
+		app.Options(options => options.Interactive.Autocomplete.NormalizeInputOnTab = false);
+		app.UseArgumentPreprocessor((input, _) => ValueTask.FromResult(input.Arguments.Count >= 2
+			? ArgumentPreprocessingResult.Replace(["query", input.Arguments[1]]) : ArgumentPreprocessingResult.Continue()));
+		app.Map("query {text}", (string text) => text).WithCompletion("text",
+			(_, _, _) => ValueTask.FromResult<IReadOnlyList<string>>(["plain"]));
+		var keys = "/q p removed".Select(ToKey).ToList();
+		keys.AddRange(Enumerable.Repeat(new ConsoleKeyInfo('\0', ConsoleKey.LeftArrow, shift: false, alt: false, control: false), leftArrows));
+		keys.Add(ToKey('\t'));
+		keys.Add(ToKey('\r'));
+		keys.Add(ToKey('\r'));
+		(await ReadEditedLineAsync(app, keys, rich)).Should().Be("/q p removed");
+	}
+
+	[TestMethod]
 	[Description("Origin mapping must retain the editing position inside a rewritten argument.")]
 	public async Task When_CursorHasAnOrigin_Then_NormalizationKeepsItsRelativePosition()
 	{
@@ -153,17 +175,19 @@ public sealed class Given_AdvancedInput_Editor
 		return app;
 	}
 
-	private static async Task<string?> ReadEditedLineAsync(CoreReplApp app, string input)
+	private static Task<string?> ReadEditedLineAsync(CoreReplApp app, string input) => ReadEditedLineAsync(app, input.Select(ToKey), rich: true);
+
+	private static async Task<string?> ReadEditedLineAsync(CoreReplApp app, IEnumerable<ConsoleKeyInfo> keys, bool rich)
 	{
 		using var writer = new StringWriter();
 		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
 		var previous = ReplSessionIO.KeyReader;
-		ReplSessionIO.KeyReader = new FakeKeyReader(input.Select(ToKey));
+		ReplSessionIO.KeyReader = new FakeKeyReader(keys);
 		try
 		{
 			var result = await ConsoleLineReader.ReadLineAsync(history: null,
 				(request, token) => app.Autocomplete.ResolveAutocompleteAsync(request, [], app.CurrentServiceProvider, token),
-				ConsoleLineReader.AutocompleteRenderMode.Rich, 8, Repl.Autocomplete.AutocompletePresentation.Hybrid,
+				rich ? ConsoleLineReader.AutocompleteRenderMode.Rich : ConsoleLineReader.AutocompleteRenderMode.Basic, 8, Repl.Autocomplete.AutocompletePresentation.Hybrid,
 				liveHintEnabled: true, colorizeInputLine: false, colorizeHintAndMenu: false,
 				ConsoleLineReader.AutocompleteColorStyles.Empty, CancellationToken.None, backgroundInputAnalysis: true).ConfigureAwait(false);
 			return result.Line;

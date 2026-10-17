@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Repl.Tests;
@@ -114,15 +115,48 @@ public sealed class Given_AdvancedInput_ServiceAndCursor
 	}
 
 	[TestMethod]
-	[Description("An implicit service factory exception remains an application failure rather than invalid user input.")]
-	public async Task When_AnImplicitFactoryThrows_Then_InputValidationDoesNotReclassifyIt()
+	[DataRow(false, false, false)]
+	[DataRow(true, false, false)]
+	[DataRow(false, true, false)]
+	[DataRow(true, true, false)]
+	[DataRow(false, false, true)]
+	[DataRow(true, false, true)]
+	[DataRow(false, true, true)]
+	[DataRow(true, true, true)]
+	[Description("Enabling validation must preserve the existing format, binding outcome and exit mapping of a failing service factory.")]
+	public async Task When_AnImplicitFactoryThrows_Then_InputValidationDoesNotReclassifyIt(bool json, bool unrelatedCancellation, bool customCodes)
 	{
-		var app = ReplApp.Create(services => services.AddTransient<string>(_ => throw new InvalidOperationException("factory failed")));
-		var validated = false;
-		app.Map("query", (string prefix, int limit) => limit);
-		app.UseInputValidator((ParsedInputContext _) => { validated = true; return InputValidationResult.Valid(); });
-		(await app.RunAsync(["query", "3"])).Should().Be(1);
-		validated.Should().BeFalse();
+		foreach (var validate in new[] { false, true })
+		{
+			var calls = 0;
+			var app = ReplApp.Create(services => services.AddTransient<string>(_ =>
+			{
+				calls++;
+				throw unrelatedCancellation ? new OperationCanceledException("factory failed") : new InvalidOperationException("factory failed");
+			}));
+			ReplExecutionOutcomeKind? kind = null;
+			app.Options(options =>
+			{
+				if (customCodes) { options.ExitCodes.BindingError = 42; options.ExitCodes.HandlerException = 43; }
+				options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; };
+			});
+			var validated = false;
+			app.Map("query", (string prefix, int limit) => limit);
+			if (validate) { app.UseInputValidator((ParsedInputContext _) => { validated = true; return InputValidationResult.Valid(); }); }
+			using var output = new StringWriter();
+			using var io = ReplSessionIO.SetSession(output, TextReader.Null);
+			string[] args = json ? ["query", "3", "--output:json"] : ["query", "3"];
+			(await app.RunAsync(args)).Should().Be(customCodes ? 42 : 2);
+			kind.Should().Be(ReplExecutionOutcomeKind.BindingError);
+			calls.Should().Be(1);
+			validated.Should().BeFalse();
+			output.ToString().Should().Contain("factory failed").And.NotContain("input_callback_error");
+			if (json)
+			{
+				using var document = JsonDocument.Parse(output.ToString());
+				document.RootElement.ToString().Should().Contain("execution_error");
+			}
+		}
 	}
 
 	[TestMethod]

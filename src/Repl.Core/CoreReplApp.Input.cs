@@ -188,16 +188,20 @@ public sealed partial class CoreReplApp
 			requestedFormat, cancellationToken);
 
 	internal async ValueTask<ParsedInputContext> AnalyzeInputAsync(
-		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken,
-		RouteMatch? match = null, GlobalInvocationOptions? globals = null, OptionParsingResult? parsedOptions = null,
-		InvocationBindingContext? executionBinding = null)
+		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken)
+	{
+		var globals = GlobalOptionParser.Parse(
+			[.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
+		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions);
+		var context = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null);
+		return await ValidateParsedInputAsync(context, services, cancellationToken).ConfigureAwait(false);
+	}
+
+	private ParsedInputContext CreateParsedInputContext(ProcessedInput input, IServiceProvider services,
+		GlobalInvocationOptions globals, RouteMatch? match, OptionParsingResult? parsedOptions, InvocationBindingContext? executionBinding = null)
 	{
 		var checks = new List<InputValidationResult> { input.Validation };
-		var applicationChecks = new List<InputValidationResult> { input.Validation };
-		globals ??= GlobalOptionParser.Parse(
-			[.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
 		foreach (var diagnostic in globals.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic)); }
-		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions);
 		if (match is null && !input.IsHandled
 			&& !(input.Context.IsInteractive && Interactive.IsAmbientCommandInvocation(input.Context.Arguments)))
 		{
@@ -216,10 +220,17 @@ public sealed partial class CoreReplApp
 		{
 			checks.Add(InputValidationResult.Incomplete("Close the quoted argument."));
 		}
-		var context = new ParsedInputContext(input.Context, match?.Route.Template.Template, values, globalValues, CombineInputValidation(checks))
+		return new(input.Context, match?.Route.Template.Template, values, globalValues, CombineInputValidation(checks))
 		{
-			ApplicationValidation = CombineInputValidation(applicationChecks),
+			ApplicationValidation = input.Validation,
 		};
+	}
+
+	private async ValueTask<ParsedInputContext> ValidateParsedInputAsync(ParsedInputContext context,
+		IServiceProvider services, CancellationToken cancellationToken)
+	{
+		var checks = new List<InputValidationResult> { context.Validation };
+		var applicationChecks = new List<InputValidationResult> { context.ApplicationValidation };
 		foreach (var validator in _options.Input.Validators.ToArray())
 		{
 			cancellationToken.ThrowIfCancellationRequested();
@@ -228,10 +239,7 @@ public sealed partial class CoreReplApp
 				?? throw new InvalidOperationException("Input validators must return InputValidationResult, Task<InputValidationResult> or ValueTask<InputValidationResult>.");
 			checks.Add(validation);
 			applicationChecks.Add(validation);
-			context = new(input.Context, context.Command, values, globalValues, CombineInputValidation(checks))
-			{
-				ApplicationValidation = CombineInputValidation(applicationChecks),
-			};
+			context = new(context, CombineInputValidation(checks), CombineInputValidation(applicationChecks));
 		}
 		return context;
 	}
@@ -483,9 +491,12 @@ public sealed partial class CoreReplApp
 		InvocationBindingContext executionBinding, CancellationToken cancellationToken)
 	{
 		if (_currentInput.Value is not { } input || _options.Input.Validators.Count == 0) { return null; }
+		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions);
+		// Fallback resolution belongs to binding; only validator invocation uses the callback-error policy.
+		var context = CreateParsedInputContext(input, services, globals, match, parsed, executionBinding);
 		try
 		{
-			var context = await AnalyzeInputAsync(input, services, cancellationToken, match, globals, parsed, executionBinding).ConfigureAwait(false);
+			context = await ValidateParsedInputAsync(context, services, cancellationToken).ConfigureAwait(false);
 			return context.Validation.State == InputValidationState.Valid ? null
 				: await RefuseInputAsync(context.Validation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
 		}
