@@ -52,22 +52,30 @@ app.UseStartupHook((ReplStartupContext context, SampleStartupOptions options, Se
 		? ArgumentPreprocessingResult.Handled(result) : ArgumentPreprocessingResult.Continue();
 });
 
-app.UseArgumentPreprocessor((input, ct) =>
+app.UseArgumentPreprocessor((input, _) => ValueTask.FromResult(
+	input.Arguments is ["/refresh"] && input.Mode == InputProcessingMode.Preview
+		? ArgumentPreprocessingResult.Handled() : ArgumentPreprocessingResult.Continue()));
+
+app.UseInvocationHook((ReplInvocationContext context, SearchIndex search, CancellationToken ct) =>
 {
 	ct.ThrowIfCancellationRequested();
-	if (input.Arguments is not ["/refresh"])
+	if (context.Request.Arguments is not ["/refresh"]) { return ReplInvocationResult.Continue(); }
+	if (context.Parsed.Input.Purpose is InputPurpose.Help or InputPurpose.Completion)
 	{
-		return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+		return ReplInvocationResult.Handled();
 	}
+	return ReplInvocationResult.Handled(search.Refresh());
+});
 
-	// The surrounding application owns this action; typing and completion must not perform it.
-	if (input.Mode != InputProcessingMode.Execution ||
-		input.Purpose is InputPurpose.Help or InputPurpose.Completion)
-	{
-		return ValueTask.FromResult(ArgumentPreprocessingResult.Handled());
-	}
-
-	return ValueTask.FromResult(ArgumentPreprocessingResult.Handled(index.Refresh()));
+app.UseInvocationHook((ReplInvocationContext context, SearchPolicy policy) =>
+{
+	if (context.Parsed.Command != "query {text}" || context.Parsed.Input.Purpose != InputPurpose.Command
+		|| !context.Parsed.TryGetValue<int>("limit", out var limit) || limit != 0
+		|| !context.Parsed.TryGetValue<string>("text", out var text)) { return ReplInvocationResult.Continue(); }
+	return ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("query {text}",
+		new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["text"] = text, ["limit"] = policy.MaximumLimit },
+		context.Parsed.GlobalValues.Where(pair => pair.Value.State == InputValueState.Available)
+			.ToDictionary(pair => pair.Key, pair => pair.Value.Value, StringComparer.OrdinalIgnoreCase)));
 });
 
 app.UseInputValidator((ParsedInputContext input, SearchPolicy policy, CancellationToken ct) =>
@@ -102,6 +110,7 @@ app.Map("demo",
 		6. Submit /refresh, then status: the host refresh count increases once; the session stays open.
 		7. At startup, --maximum-limit 2 configures SearchPolicy before DI; /find "hello world" 3 is then refused.
 		8. At startup, --refresh-on-start status refreshes once before dispatch; --refresh-on-start alone finishes without a command.
+		9. Submit /find "hello world" 0: a parsed hook selects the injected policy maximum, then normal validation and search run.
 		""");
 
 return await app.RunAsync(prepared);

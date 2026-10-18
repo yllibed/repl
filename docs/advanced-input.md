@@ -59,6 +59,143 @@ On ordinary runs, these callbacks run after the hosting path provides its servic
 The explicit [startup preparation path](advanced-startup.md) can run declared
 adapters before application composition and transfer them to later input handling.
 
+## Intercept a Parsed Invocation
+
+Use `UseInvocationHook` when a larger application needs to interpret parsed
+parameters, handle an external action, or redirect an invocation. Like raw
+adapters, this is an advanced integration API, principally for compatibility with
+an existing interface. Ordinary commands should use normal handlers and options.
+
+Hooks accept synchronous, `Task` and `ValueTask` delegates returning
+`ReplInvocationResult`. The context, available typed command parameters, options
+groups, registered typed global options, scoped services, keyed `[FromServices]`
+dependencies and `CancellationToken` can be injected into the signature.
+
+```csharp
+app.UseInvocationHook((ReplInvocationContext context, SearchPolicy policy) =>
+{
+    if (context.Parsed.Command != "query {text}"
+        || context.Parsed.Input.Purpose != InputPurpose.Command
+        || !context.Parsed.TryGetValue<int>("limit", out var limit) || limit != 0
+        || !context.Parsed.TryGetValue<string>("text", out var text))
+    {
+        return ReplInvocationResult.Continue();
+    }
+
+    return ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand(
+        "query {text}",
+        new Dictionary<string, object?>
+        {
+            ["text"] = text,
+            ["limit"] = policy.MaximumLimit,
+        },
+        context.Parsed.GlobalValues
+            .Where(pair => pair.Value.State == InputValueState.Available)
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Value)));
+});
+```
+
+`OriginalRequest` retains the submitted request; `Request` reflects earlier
+replacements. `Parsed` shares `ParsedInputContext` with validators: it includes
+the resolved route when available, typed values with `Missing`/`Invalid` states,
+globals, diagnostics, mode and purpose. Hooks run **before final validation** and
+can repair malformed or partial input. Use a context-based signature when that
+input may be invalid. A required typed hook parameter that is unavailable produces
+a binding diagnostic; it does not silently receive a default numeric value.
+
+`Continue` advances to the next hook. `Replace` replaces the whole request,
+including its globals; explicitly carry forward the values you want to preserve.
+Repl reparses the replacement before the next hook, without replaying earlier
+hooks, raw adapters or startup callbacks. Normal routing, constraints, arity,
+validators, binding and middleware still apply to the final request.
+`Handled(result)` skips later hooks and command execution and uses normal result
+rendering. In an interactive session it leaves the session open unless the result
+explicitly requests exit.
+
+`Channel` distinguishes CLI, local interactive, hosted interactive, programmatic
+and MCP input. This distinction does not add a new module-presence channel. Hooks
+run on submission, help and explicit completion (Tab or the shell bridge), **not**
+on background preview. Check purpose before external actions. Completion handling
+suppresses candidates without rendering a payload or requesting session exit.
+The shell bridge invokes hooks on its user-command payload, once, rather than on
+the transport envelope. Structured replacements do not normalize the editor to a
+route template; edits without a safe source mapping are omitted.
+
+`CoreReplApp` supports the same hooks without DI packages. Capture application
+objects in the delegate, use context and cancellation directly, and use registered
+Core global-options factories. `ReplApp` additionally resolves application
+services from the current run/session provider, including caller-owned providers.
+
+## Submit Native Values
+
+The same request type can be passed to `RunAsync`:
+
+```csharp
+var request = ReplInvocationRequest.ForCommand("search",
+    new Dictionary<string, object?>
+    {
+        ["layers"] = new[] { "raw", "indexed" },
+        ["limit"] = 3,
+    });
+var exitCode = await app.RunAsync(request);
+```
+
+Use the exact registered route template and parameter/property names, rather than
+CLI option aliases. Route arguments, positional arguments and options share the
+values dictionary. The `globalValues` argument accepts registered global names;
+built-in flags such as `help` and `interactive`, and `output`, are also supported.
+`FromArguments(tokens)` submits or replaces textual input. Both forms have the
+usual `ReplApp` provider and host overloads.
+
+Native command scalars and arrays bind directly; they are not serialized into a
+shell command and reparsed. This preserves empty strings, option-looking strings,
+numeric values independent of CLI culture, and explicit empty collections.
+Requests copy their dictionaries, arrays and enumerable collections on creation
+and submission. Treat other mutable application objects as caller-owned; their
+internal state is not cloned. Do not mutate app configuration while runs are active.
+
+Command-backed MCP tools and resources use this same native path after schema
+allowlisting and reserved-field validation. Typed arrays reach hooks and binding
+without CLI token expansion. MCP retains its existing convention that an empty
+client array means an omitted option, preserving its default. A hook can supply
+an explicit empty collection in a replacement. Prompt prefills, paging metadata,
+frozen-catalog module presence and forced JSON output remain transport-owned.
+Core and MCP packages must use matching versions; incompatible invocation
+contracts fail closed.
+
+## Callback Order
+
+For each submitted input, the order is:
+
+1. Raw adapters for textual input, in registration order. An explicit handled or
+   refusal decision remains terminal.
+2. Startup callbacks when applicable, once per run/session, followed by owned
+   hosted-service startup. See [startup preparation](advanced-startup.md) for
+   the earlier before-composition stages.
+3. Preliminary global parsing, route resolution and typed diagnostics.
+4. Invocation hooks, in registration order, with fresh analysis after replacement.
+5. Final parsing and input validation, then handler binding, context validation,
+   middleware, handler and result rendering.
+
+For a run with prepared input or startup hooks, raw adaptation precedes those
+startup callbacks. Otherwise the normal hosting setup, including owned service
+startup, finishes before per-input adaptation. Startup preparation can itself
+refuse invalid globals before invocation hooks become available; use preparation
+or startup hooks for decisions needed at that earlier stage.
+For structured `RunAsync`, submission ownership and native globals are established
+before owned hosted services start, including when no startup hook is registered.
+
+Later interactive commands and nested MCP calls do not repeat startup. Native
+structured requests bypass raw token adapters. Existing validators remain the
+validation API; middleware wraps resolved command execution. Hook failures use
+the callback-error outcome and caller cancellation follows normal policy.
+
+A startup token replacement also replaces a submitted native request, so its
+original native values cannot override that decision. `OriginalRequest` still
+identifies the submitted request. Independent public `RunAsync` calls start with
+their own globals and transport controls; a hook replacement within an MCP call
+retains that call's transport-owned output and paging controls.
+
 ## Preview, Completion and External Actions
 
 Adapters run during typing as well as submission. `Mode` distinguishes:
@@ -227,10 +364,11 @@ code must still cooperate with cancellation to stop its work.
 
 ## Scope
 
-This input pipeline covers CLI, local and hosted interactive input, and shell
-completion. No adapter or validator is enabled by default. Programmatic and MCP
-interception belongs to [issue #115](https://github.com/yllibed/repl/issues/115);
-structured requests are not converted into command-line text by these APIs.
+This input pipeline covers CLI, local and hosted interactive input, programmatic
+requests, MCP and shell completion. No adapter, validator or invocation hook is
+enabled by default. Legacy MCP invocations without invocation hooks retain their
+existing validator behavior; enabling invocation hooks also enables final input
+validation for that channel.
 
 Repl provides the adaptation points, not a second declarative grammar engine.
 Applications remain responsible for translating their previous interface.
