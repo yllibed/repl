@@ -7,6 +7,102 @@ namespace Repl.Tests;
 public sealed class Given_InvocationHooks
 {
 	[TestMethod]
+	[DataRow(0)]
+	[DataRow(1)]
+	[DataRow(2)]
+	[Description("Skipping enumeration of scalar objects must not weaken explicit native collection arity checks.")]
+	public async Task When_ANativeCollectionHasExplicitArity_Then_ExactlyOneIsStillEnforced(int count)
+	{
+		var app = CoreReplApp.Create();
+		var called = false;
+		app.Map("run", ([ReplOption(Arity = ReplArity.ExactlyOne)] int[] items) =>
+		{
+			items.Should().Equal(42);
+			called = true;
+		});
+		var values = Enumerable.Repeat(42, count).ToArray();
+
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("run", new Dictionary<string, object?>(StringComparer.Ordinal) { ["items"] = values }))).Should().Be(count == 1 ? 0 : 2);
+		called.Should().Be(count == 1);
+	}
+
+	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Scalar native enumerable objects must reach hooks and handlers without being consumed by collection arity checks.")]
+	public async Task When_AScalarNativeObjectIsSingleUse_Then_OnlyTheHandlerEnumeratesIt(bool hook)
+	{
+		var app = CoreReplApp.Create();
+		var stream = new SingleUseValues();
+		app.Map("run", ([ReplOption(Arity = ReplArity.ExactlyOne)] object payload) =>
+		{
+			stream.Enumerations.Should().Be(0);
+			payload.Should().BeSameAs(stream);
+			((IEnumerable<int>)payload).Should().Equal(1, 2);
+		});
+		if (hook)
+		{
+			app.UseInvocationHook((object payload) =>
+			{
+				stream.Enumerations.Should().Be(0);
+				payload.Should().BeSameAs(stream);
+				return ReplInvocationResult.Continue();
+			});
+		}
+
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("run", new Dictionary<string, object?>(StringComparer.Ordinal) { ["payload"] = stream }))).Should().Be(0);
+		stream.Enumerations.Should().Be(1);
+	}
+
+	[TestMethod]
+	[DataRow(false, false)]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[DataRow(true, true)]
+	[Description("Compatible native matrices retain rank, dimensions and lower bounds, while request array copies remain isolated between submissions.")]
+	public async Task When_ANativeArrayIsMultidimensional_Then_ItsShapeAndSnapshotArePreserved(bool hook, bool offset)
+	{
+		var app = CoreReplApp.Create();
+		var source = offset ? (int[,])Array.CreateInstance(typeof(int), [2, 2], [1, 3]) : new int[2, 2];
+		var row = source.GetLowerBound(0);
+		var column = source.GetLowerBound(1);
+		source[row, column] = 42;
+		var calls = 0;
+		app.Map("run", (int[,] matrix) =>
+		{
+			matrix.Rank.Should().Be(2);
+			matrix.GetLength(0).Should().Be(2);
+			matrix.GetLength(1).Should().Be(2);
+			matrix.GetLowerBound(0).Should().Be(row);
+			matrix.GetLowerBound(1).Should().Be(column);
+			matrix[row, column].Should().Be(42);
+			matrix[row, column] = 9;
+			calls++;
+		});
+		if (hook) { app.UseInvocationHook((int[,] matrix) => { matrix[row, column].Should().Be(42); return ReplInvocationResult.Continue(); }); }
+		var request = ReplInvocationRequest.ForCommand("run", new Dictionary<string, object?>(StringComparer.Ordinal) { ["matrix"] = source });
+		source[row, column] = 99;
+
+		(await app.RunAsync(request)).Should().Be(0);
+		(await app.RunAsync(request)).Should().Be(0);
+
+		calls.Should().Be(2);
+		source[row, column].Should().Be(99);
+	}
+
+	private sealed class SingleUseValues : IEnumerable<int>
+	{
+		public int Enumerations { get; private set; }
+		public IEnumerator<int> GetEnumerator()
+		{
+			if (++Enumerations != 1) { throw new InvalidOperationException("Values may only be enumerated once."); }
+			yield return 1;
+			yield return 2;
+		}
+		System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+	}
+
+	[TestMethod]
 	[DataRow(true)]
 	[DataRow(false)]
 	[Description("Required hook-only scalar services resolve once without availability metadata; an absent value remains a usage refusal.")]

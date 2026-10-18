@@ -777,9 +777,11 @@ internal static class HandlerArgumentBinder
 
 	internal static void ValidateNativeArity(OptionSchema schema, string name, object? value)
 	{
+		if (!schema.TryGetParameter(name, out var parameter) || parameter.ExplicitArity is null) { return; }
+		var collection = TryGetCollectionElementType(parameter.ParameterType, out _);
 		var count = value is null or System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Null } ? 0
-			: value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } json ? json.GetArrayLength()
-			: value is System.Collections.IEnumerable items && value is not string ? items.Cast<object?>().Count() : 1;
+			: collection && value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } json ? json.GetArrayLength()
+			: collection && value is System.Collections.IEnumerable items && value is not string ? items.Cast<object?>().Count() : 1;
 		ThrowIfExplicitUpperBoundExceeded(schema, name, count);
 		if (count == 0) { ThrowIfExplicitLowerBoundUnsatisfied(schema, name); }
 	}

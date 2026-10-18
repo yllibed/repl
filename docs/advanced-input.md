@@ -161,8 +161,10 @@ var exitCode = await app.RunAsync(request);
 ```
 
 Use the exact registered route template and parameter/property names, rather than
-CLI option aliases. Route arguments, positional arguments and options share the
-values dictionary. The `globalValues` argument accepts registered global names;
+CLI option aliases. Context names and inactive commands cannot be dispatched as
+structured targets. Hooks may handle or replace the request before this check.
+Route arguments, positional arguments and options share the values dictionary.
+The `globalValues` argument accepts registered global names;
 built-in flags such as `help` and `interactive`, and `output`, are also supported.
 `FromArguments(tokens)` submits or replaces textual input. Both forms have the
 usual `ReplApp` provider and host overloads.
@@ -170,6 +172,9 @@ usual `ReplApp` provider and host overloads.
 Native command scalars and arrays bind directly; they are not serialized into a
 shell command and reparsed. This preserves empty strings, option-looking strings,
 numeric values independent of CLI culture, and explicit empty collections.
+Compatible native arrays retain their rank and lower bounds. Collection arity
+checks apply to declared collection parameters; scalar application objects are
+not enumerated to count their contents.
 Requests copy their value maps and arrays and clone JSON elements on creation
 and submission. Other native objects, including concrete dictionaries, lists and
 sets supplied as parameter values, retain their type and remain caller-owned;

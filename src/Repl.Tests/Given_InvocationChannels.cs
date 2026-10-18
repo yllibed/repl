@@ -7,6 +7,62 @@ namespace Repl.Tests;
 public sealed class Given_InvocationChannels
 {
 	[TestMethod]
+	[DataRow("plain", false)]
+	[DataRow("help", false)]
+	[DataRow("interactive", false)]
+	[DataRow("inactive", false)]
+	[DataRow("plain", true)]
+	[DataRow("help", true)]
+	[DataRow("interactive", true)]
+	[Description("Structured context targets are refused as noncommands, including inactive routes; an earlier hook can still replace them with an exact active command.")]
+	public async Task When_AStructuredTargetNamesAContext_Then_OnlyExplicitRepairCanDispatch(string mode, bool repair)
+	{
+		var app = CoreReplApp.Create();
+		var ran = false;
+		app.Context("tools", scope => scope.Map("run", () => { ran = true; }));
+		if (mode is "inactive") { app.MapModule(new ContextNamedCommand(), _ => false); }
+		if (repair) { app.UseInvocationHook(() => ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("tools run"))); }
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		var globals = new Dictionary<string, object?>(StringComparer.Ordinal) { ["no-interactive"] = true };
+		if (mode is "help") { globals["help"] = true; }
+		if (mode is "interactive") { globals.Remove("no-interactive"); globals["interactive"] = true; }
+
+		using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("tools", globalValues: globals), cancellation.Token)).Should().Be(repair ? 0 : 2);
+
+		ran.Should().Be(repair);
+	}
+
+	[TestMethod]
+	[Description("Shell candidate routing retains native null globals from structured replacements and restores the surrounding input afterward.")]
+	public async Task When_ShellHookReplacesNativeGlobals_Then_CandidatesUseTheNativePresenceDecision()
+	{
+		var app = CoreReplApp.Create().UseGlobalOptions<Globals>();
+		app.MapModule(new NativeCompletionCommand(), _ => app.GlobalOptionsAccessor.GetValue<string>("tenant") is null);
+		app.UseInvocationHook(() => ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("run", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["tenant"] = null })));
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		const string line = "app legacy ";
+
+		var candidates = await new ShellCompletionEngine(app).ResolveShellCompletionCandidatesAsync(
+			line, line.Length, ShellKind.Bash, app.CurrentServiceProvider, CancellationToken.None);
+
+		candidates.Should().Contain("--count");
+		app.GlobalOptionsAccessor.GetValue<string>("tenant").Should().Be("default");
+	}
+
+	private sealed class NativeCompletionCommand : IReplModule
+	{
+		public void Map(IReplMap map) => map.Map("run", (int count) => count);
+	}
+	private sealed class ContextNamedCommand : IReplModule
+	{
+		public void Map(IReplMap map) => map.Map("tools", () => Assert.Fail("Inactive commands must not run."));
+	}
+
+	[TestMethod]
 	[Description("Legacy text adaptation must precede startup and parsed hooks, with validation and middleware applied once afterward.")]
 	public async Task When_TextIsAdapted_Then_StartupAndInvocationCallbacksHaveSeparateOrdering()
 	{

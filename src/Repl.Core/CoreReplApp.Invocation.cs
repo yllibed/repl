@@ -154,7 +154,7 @@ public sealed partial class CoreReplApp
 				};
 			}
 		}
-		return _options.Input.InvocationHooks.Count != 0 || input.Request?.Command is not null ? ValidateInvocationGlobals(input) : input;
+		return _options.Input.InvocationHooks.Count != 0 || input.Request?.Command is not null ? ValidateInvocationRequest(input) : input;
 	}
 
 	private object?[] BindInvocationHookArguments(Delegate hook, ReplInvocationContext context, ParsedInputContext parsed,
@@ -190,14 +190,20 @@ public sealed partial class CoreReplApp
 		return HandlerArgumentBinder.Bind(hook, binding);
 	}
 
-	private ProcessedInput ValidateInvocationGlobals(ProcessedInput input)
+	private ProcessedInput ValidateInvocationRequest(ProcessedInput input)
 	{
 		using var inputScope = PushProcessedInput(input);
 		var globals = ParseInputGlobals(input);
-		using var frame = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
+		using var frame = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions,
+			preserveSessionExplicitKeys: input.Channel is ReplInvocationChannel.Mcp, inheritSessionBaseline: input.InheritSessionGlobals);
 		var checks = new List<InputValidationResult> { input.Validation };
 		foreach (var diagnostic in globals.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic)); }
 		ReadTypedGlobalValues(globals, checks);
+		if (input.Request?.Command is { } command && !ResolveActiveRoutingGraph(useDurableCache: false).Routes
+			.Any(route => string.Equals(route.Template.Template, command, StringComparison.Ordinal)))
+		{
+			checks.Add(InputValidationResult.Invalid($"Unknown invocation command '{command}'. Use an exact active route template."));
+		}
 		return input with { Validation = CombineInputValidation(checks) };
 	}
 
