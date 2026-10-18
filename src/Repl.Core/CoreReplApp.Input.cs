@@ -210,14 +210,15 @@ public sealed partial class CoreReplApp
 		var globals = GlobalOptionParser.Parse(
 			[.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
 		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
-		var context = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null);
+		var context = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null, cancellationToken: cancellationToken);
 		return await ValidateParsedInputAsync(context, services, cancellationToken).ConfigureAwait(false);
 	}
 
 	private ParsedInputContext CreateParsedInputContext(ProcessedInput input, IServiceProvider services,
-		GlobalInvocationOptions globals, RouteMatch? match, OptionParsingResult? parsedOptions, InvocationBindingContext? executionBinding = null)
+		GlobalInvocationOptions globals, RouteMatch? match, OptionParsingResult? parsedOptions, InvocationBindingContext? executionBinding = null, Delegate? invocationHook = null, CancellationToken cancellationToken = default)
 	{
 		var checks = new List<InputValidationResult> { input.Validation };
+		var globalValues = ReadTypedGlobalValues(globals, checks);
 		foreach (var diagnostic in globals.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic)); }
 		if (match is null && !input.IsHandled
 			&& !(input.Context.IsInteractive && Interactive.IsAmbientCommandInvocation(input.Context.Arguments)))
@@ -230,9 +231,19 @@ public sealed partial class CoreReplApp
 			parsedOptions ??= ParseInvocationOptions(match,
 				BuildEffectiveCommandParsingOptions(globals.GlobalOptionConfiguration.CaseSensitivity), globals);
 			foreach (var diagnostic in parsedOptions.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic, match.Route.OptionSchema)); }
-			ReadTypedInputValues(input, match, parsedOptions, services, values, checks, executionBinding);
+			var resolveInputServices = invocationHook is not null && input.Context.Mode == InputProcessingMode.Execution
+				&& FindUnavailableHookGlobal(invocationHook, globalValues) is null
+				&& invocationHook.Method.GetParameters().Any(static parameter => parameter.ParameterType != typeof(ReplInvocationContext)
+					&& parameter.ParameterType != typeof(ParsedInputContext) && parameter.ParameterType != typeof(CancellationToken));
+			if (executionBinding is null && resolveInputServices)
+			{
+				executionBinding = new InvocationBindingContext(match.Values, parsedOptions.NamedOptions, parsedOptions.PositionalArguments,
+					match.Route.OptionSchema, _options.Parsing.OptionCaseSensitivity, [], _options.Parsing.NumericFormatProvider,
+					services, _options.Interaction, _implicitServiceParameters, cancellationToken)
+				{ InputServiceFallbacks = input.InputServiceFallbacks };
+			}
+			ReadTypedInputValues(input, match, parsedOptions, services, values, checks, executionBinding, includeServiceValues: resolveInputServices);
 		}
-		var globalValues = ReadTypedGlobalValues(globals, checks);
 		if (input.Context.Text is { } text && InputTokenizer.Tokenize(text).Exists(static token => token.IsIncomplete))
 		{
 			checks.Add(InputValidationResult.Incomplete("Close the quoted argument."));
@@ -336,7 +347,7 @@ public sealed partial class CoreReplApp
 
 	[SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Typed analysis follows the binder's native, named, service and positional precedence.")]
 	private void ReadTypedInputValues(ProcessedInput input, RouteMatch match, OptionParsingResult parsed, IServiceProvider services,
-		Dictionary<string, InputValue> values, List<InputValidationResult> checks, InvocationBindingContext? executionBinding)
+		Dictionary<string, InputValue> values, List<InputValidationResult> checks, InvocationBindingContext? executionBinding, bool includeServiceValues)
 	{
 		ReadTypedRouteValues(input, match, values, checks);
 		var positionalIndex = 0;
@@ -363,6 +374,10 @@ public sealed partial class CoreReplApp
 					var fallback = ResolveInputServiceFallback(parameter, match.Route.Command.Handler, services, executionBinding);
 					if (fallback is not false)
 					{
+						if (includeServiceValues && fallback is true && executionBinding?.InputServiceFallbacks?.TryGetValue(parameter.Name, out var service) == true)
+						{
+							values[parameter.Name] = new(InputValueState.Available, service);
+						}
 						if (fallback is null)
 						{
 							positionalUncertain |= DeferInputServiceFallback(parameter, positionalIndex < parsed.PositionalArguments.Count, checks);
@@ -525,7 +540,7 @@ public sealed partial class CoreReplApp
 			|| (ReplSessionIO.IsProgrammatic && _options.Input.InvocationHooks.Count == 0)) { return null; }
 		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
 		// Fallback resolution belongs to binding; only validator invocation uses the callback-error policy.
-		var context = CreateParsedInputContext(input, services, globals, match, parsed, executionBinding);
+		var context = CreateParsedInputContext(input, services, globals, match, parsed, executionBinding, cancellationToken: cancellationToken);
 		try
 		{
 			context = await ValidateParsedInputAsync(context, services, cancellationToken).ConfigureAwait(false);

@@ -186,6 +186,38 @@ public sealed class Given_InvocationStartup
 		writer.ToString().Should().Contain("done");
 	}
 
+	[TestMethod]
+	[Description("Native nullable globals must remain native across interactive entry, text overrides and subsequent independent runs.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_ANativeRequestEntersInteractiveMode_Then_CommandsInheritNativeNulls(bool hosted)
+	{
+		var app = ReplApp.Create().UseGlobalOptions<NullableGlobals>();
+		var seen = new List<string?>();
+		app.Map("start", () => { });
+		app.Map("check", (NullableGlobals globals) =>
+		{
+			seen.Add(globals.Tenant);
+			seen.Add(globals.Limit?.ToString(System.Globalization.CultureInfo.InvariantCulture));
+		});
+		using var writer = new StringWriter();
+		using var reader = new StringReader("check\ncheck --tenant=override --limit=9\ncheck\nexit\n");
+		using var io = ReplSessionIO.SetSession(writer, reader, isHostedSession: hosted);
+		var request = ReplInvocationRequest.ForCommand("start", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["tenant"] = null, ["limit"] = null, ["interactive"] = true });
+
+		(await app.RunAsync(request)).Should().Be(0);
+		(await app.RunAsync(["check"])).Should().Be(0);
+
+		seen.Should().Equal(null, null, "override", "9", null, null, "default", "3");
+	}
+
+	private sealed class NullableGlobals
+	{
+		public string? Tenant { get; set; } = "default";
+		public int? Limit { get; set; } = 3;
+	}
+
 	private sealed class Dependency(Globals globals) { public string? Tenant { get; } = globals.Tenant; }
 	private sealed class HostedProbe(Globals globals, List<string?> seen) : IHostedService
 	{

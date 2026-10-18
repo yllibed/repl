@@ -1826,6 +1826,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			_implicitServiceParameters,
 			cancellationToken)
 		{
+			InputServiceFallbacks = _currentInput.Value?.InputServiceFallbacks,
 			NativeValues = _currentInput.Value?.Request is { Command: not null } request
 				? request.Values : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase),
 		};

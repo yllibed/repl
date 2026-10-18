@@ -14,7 +14,7 @@ public sealed class Given_McpToolAdapter
 	public void When_RouteAndOptionValuesArePrepared_Then_TheirNativeShapesAreRetained()
 	{
 		var command = Command("contacts {id:int}", ["id"], ["format"]);
-		var (request, transport, prefills) = Adapter().PrepareStructuredExecution(command,
+		var (request, transport, prefills) = McpToolAdapter.PrepareStructuredExecution(command,
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				["id"] = JsonSerializer.SerializeToElement(-42),
@@ -36,7 +36,7 @@ public sealed class Given_McpToolAdapter
 			AcceptsPagingInput = true,
 			Answers = [new ReplDocAnswer("confirm", "bool", Description: null)],
 		};
-		var (request, transport, prefills) = Adapter().PrepareStructuredExecution(command,
+		var (request, transport, prefills) = McpToolAdapter.PrepareStructuredExecution(command,
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				["_replcursor"] = JsonSerializer.SerializeToElement("abc_DEF-123"),
@@ -55,7 +55,7 @@ public sealed class Given_McpToolAdapter
 	[DataRow("abc\u001b[2J", "*control*")]
 	public void When_ResultCursorIsInvalid_Then_TransportValidationRejectsIt(string cursor, string message)
 	{
-		var action = () => Adapter().PrepareStructuredExecution(Command("contacts") with { AcceptsPagingInput = true },
+		var action = () => McpToolAdapter.PrepareStructuredExecution(Command("contacts") with { AcceptsPagingInput = true },
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal) { [McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement(cursor) });
 		action.Should().Throw<InvalidOperationException>().WithMessage(message);
 	}
@@ -63,7 +63,7 @@ public sealed class Given_McpToolAdapter
 	[TestMethod]
 	public void When_ResultCursorIsTooLong_Then_TransportValidationRejectsIt()
 	{
-		var action = () => Adapter().PrepareStructuredExecution(Command("contacts") with { AcceptsPagingInput = true },
+		var action = () => McpToolAdapter.PrepareStructuredExecution(Command("contacts") with { AcceptsPagingInput = true },
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal) { [McpResultFlowArgumentNames.Cursor] = JsonSerializer.SerializeToElement(new string('a', 513)) });
 		action.Should().Throw<InvalidOperationException>().WithMessage("*512*");
 	}
@@ -76,7 +76,7 @@ public sealed class Given_McpToolAdapter
 	[DataRow("11111111111", "*10 characters*")]
 	public void When_ResultPageSizeIsInvalid_Then_TransportValidationRejectsIt(string size, string message)
 	{
-		var action = () => Adapter().PrepareStructuredExecution(Command("contacts") with { AcceptsPagingInput = true },
+		var action = () => McpToolAdapter.PrepareStructuredExecution(Command("contacts") with { AcceptsPagingInput = true },
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal) { [McpResultFlowArgumentNames.PageSize] = JsonSerializer.SerializeToElement(size) });
 		action.Should().Throw<InvalidOperationException>().WithMessage(message);
 	}
@@ -87,7 +87,7 @@ public sealed class Given_McpToolAdapter
 	[DataRow("_replCursor")]
 	public void When_FieldIsAbsentFromTheSchema_Then_ItCannotEnterTheRequest(string field)
 	{
-		var action = () => Adapter().PrepareStructuredExecution(Command("run", options: ["visible"]),
+		var action = () => McpToolAdapter.PrepareStructuredExecution(Command("run", options: ["visible"]),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal) { [field] = JsonSerializer.SerializeToElement("value") });
 		action.Should().Throw<InvalidOperationException>().WithMessage("*not defined*schema*");
 	}
@@ -95,7 +95,7 @@ public sealed class Given_McpToolAdapter
 	[TestMethod]
 	public void When_CaseFallbackDuplicatesAField_Then_PreparationRejectsIt()
 	{
-		var action = () => Adapter().PrepareStructuredExecution(Command("run", options: ["tenant"]),
+		var action = () => McpToolAdapter.PrepareStructuredExecution(Command("run", options: ["tenant"]),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				["tenant"] = JsonSerializer.SerializeToElement("south"),
@@ -107,7 +107,7 @@ public sealed class Given_McpToolAdapter
 	[TestMethod]
 	public void When_FieldCaseIsAmbiguous_Then_PreparationRejectsIt()
 	{
-		var action = () => Adapter().PrepareStructuredExecution(Command("run", options: ["tenant", "TENANT"]),
+		var action = () => McpToolAdapter.PrepareStructuredExecution(Command("run", options: ["tenant", "TENANT"]),
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal) { ["Tenant"] = JsonSerializer.SerializeToElement("value") });
 		action.Should().Throw<InvalidOperationException>().WithMessage("*ambiguous*tenant*TENANT*");
 	}
@@ -118,7 +118,7 @@ public sealed class Given_McpToolAdapter
 		var app = CoreReplApp.Create().Options(options => options.Parsing.OptionCaseSensitivity = ReplCaseSensitivity.CaseSensitive);
 		app.Map("run", ([ReplOption(Name = "tenant")] string? lower, [ReplOption(Name = "TENANT")] string? upper) => $"{lower}:{upper}");
 		var command = app.CreateDocumentationModel().Commands.Single();
-		var (request, _, _) = Adapter(app).PrepareStructuredExecution(command,
+		var (request, _, _) = McpToolAdapter.PrepareStructuredExecution(command,
 			new Dictionary<string, JsonElement>(StringComparer.Ordinal)
 			{
 				["tenant"] = JsonSerializer.SerializeToElement("south"),
@@ -198,8 +198,6 @@ public sealed class Given_McpToolAdapter
 		}
 	}
 
-	private static McpToolAdapter Adapter(CoreReplApp? app = null) =>
-		new(app ?? CoreReplApp.Create(), new ReplMcpServerOptions(), McpTestFixture.EmptyServices, new McpRequestServerAccessor());
 
 	private static ReplDocCommand Command(string path, string[]? arguments = null, string[]? options = null) =>
 		new(path, Description: null, Aliases: [], IsHidden: false,

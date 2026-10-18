@@ -520,7 +520,7 @@ internal sealed partial class McpToolAdapter
 		return summary;
 	}
 
-	internal (ReplInvocationRequest Request, List<string> Transport, Dictionary<string, string> Prefills) PrepareStructuredExecution(
+	internal static (ReplInvocationRequest Request, List<string> Transport, Dictionary<string, string> Prefills) PrepareStructuredExecution(
 		ReplDocCommand command, IDictionary<string, JsonElement> arguments)
 	{
 		var allowed = BuildAllowedArgumentNames(command);
@@ -550,8 +550,7 @@ internal sealed partial class McpToolAdapter
 					break;
 				default:
 					var option = command.Options.FirstOrDefault(option => string.Equals(option.Name, field.Name, StringComparison.Ordinal));
-					var parameterName = option is not null && _app is CoreReplApp core
-						? core.ResolveInvocationParameterName(command.Path, option.Aliases, field.Name) : field.Name;
+					var parameterName = option is null ? field.Name : DocumentationEngine.ResolveInvocationParameterName(option);
 					var collection = option is not null && McpSchemaGenerator.IsCollectionType(option.Type);
 					if (collection && value.ValueKind == JsonValueKind.Array)
 					{

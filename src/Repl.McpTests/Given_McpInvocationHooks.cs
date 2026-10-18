@@ -71,6 +71,34 @@ public sealed class Given_McpInvocationHooks
 		result.IsError.Should().NotBeTrue("{0}", System.Text.Json.JsonSerializer.Serialize(result));
 	}
 
+	[TestMethod]
+	[Description("MCP option names must bind to the active shadowing registration rather than a historical parameter name.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_ACommandIsShadowed_Then_McpUsesItsAdvertisedParameterMapping(bool shadowing)
+	{
+		string? received = null;
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+		{
+			app.MapModule(new OriginalModule(value => received = value));
+			app.MapModule(new ShadowingModule(value => received = value), _ => shadowing);
+		});
+
+		var result = await fixture.Client.CallToolAsync("run", new Dictionary<string, object?>(StringComparer.Ordinal) { ["value"] = "supplied" });
+
+		result.IsError.Should().NotBeTrue("{0}", System.Text.Json.JsonSerializer.Serialize(result));
+		received.Should().Be("supplied");
+	}
+
+	private sealed class OriginalModule(Action<string> receive) : IReplModule
+	{
+		public void Map(IReplMap map) => map.Map("run", ([Repl.Parameters.ReplOption(Name = "value")] string first) => { receive(first); return "old"; });
+	}
+	private sealed class ShadowingModule(Action<string> receive) : IReplModule
+	{
+		public void Map(IReplMap map) => map.Map("run", ([Repl.Parameters.ReplOption(Name = "value")] string second) => { receive(second); return "new"; });
+	}
+
 	private sealed class Marker;
 
 	[TestMethod]

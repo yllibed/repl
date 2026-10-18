@@ -6,6 +6,7 @@ internal static class ParameterValueConverter
 {
 	internal static object? ConvertNative(object? value, Type targetType, IFormatProvider provider, bool enumIgnoreCase = true)
 	{
+		if (value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Null }) { value = null; }
 		if (value is not null && HandlerArgumentBinder.TryGetCollectionElementType(targetType, out var elementType))
 		{
 			var items = value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } array

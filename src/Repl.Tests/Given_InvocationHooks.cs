@@ -120,6 +120,129 @@ public sealed class Given_InvocationHooks
 		received.Should().Equal("original", "original");
 	}
 
+	[TestMethod]
+	[Description("Native CLR and JSON null values must reach nullable scalar and collection parameters identically.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_NativeValuesAreNull_Then_TheirRepresentationDoesNotChangeBinding(bool json)
+	{
+		var app = CoreReplApp.Create();
+		var called = false;
+		app.Map("run", (string? item, int[]? items, int? count) =>
+		{
+			item.Should().BeNull();
+			items.Should().BeNull();
+			count.Should().BeNull();
+			called = true;
+		});
+		object? value = json ? System.Text.Json.JsonSerializer.SerializeToElement<object?>(value: null) : null;
+		var request = ReplInvocationRequest.ForCommand("run", new Dictionary<string, object?>(StringComparer.Ordinal)
+			{ ["item"] = value, ["items"] = value, ["count"] = value });
+
+		(await app.RunAsync(request)).Should().Be(0);
+
+		called.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Typed globals with malformed user values must be refused before factories run, while a context hook may repair them.")]
+	[DataRow(false, false)]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[DataRow(true, true)]
+	public async Task When_TypedGlobalsAreInvalid_Then_HooksCanRepairOrReceiveAUsageDiagnostic(bool native, bool repair)
+	{
+		var app = ReplApp.Create().UseGlobalOptions<NumericGlobals>();
+		var calls = new List<int>();
+		app.Map("run", () => { calls.Add(1); });
+		app.UseInvocationHook((ReplInvocationContext context) =>
+		{
+			context.Parsed.GlobalValues["limit"].State.Should().Be(InputValueState.Invalid);
+			return repair ? ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("run", globalValues:
+				new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 7 })) : ReplInvocationResult.Continue();
+		});
+		app.UseInvocationHook((NumericGlobals globals) => { calls.Add(globals.Limit); return ReplInvocationResult.Continue(); });
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = "bad" })) : app.RunAsync(["run", "--limit=bad"]));
+
+		code.Should().Be(repair ? 0 : 2);
+		if (repair) { calls.Should().Equal(7, 1); }
+		else { calls.Should().BeEmpty(); writer.ToString().Should().Contain("Cannot bind invocation hook input 'limit'").And.NotContain("input_callback_error"); }
+	}
+
+	[TestMethod]
+	[Description("A caller-owned provider without availability metadata must resolve an implicit scalar once for hooks and the handler.")]
+	public async Task When_ExternalServicesLackAvailabilityMetadata_Then_TheResolvedFallbackIsReused()
+	{
+		var app = ReplApp.Create();
+		var services = new ScalarProvider();
+		var received = new List<string>();
+		app.Map("run", (string prefix, int count) => { received.Add($"{prefix}:{count}"); });
+		app.UseInvocationHook((string prefix, int count) => { received.Add($"{prefix}:{count}"); return ReplInvocationResult.Continue(); });
+
+		(await app.RunAsync(["run", "5"], services)).Should().Be(0);
+
+		received.Should().Equal("service:5", "service:5");
+		services.Resolutions.Should().Be(1);
+	}
+
+	[TestMethod]
+	[Description("Context-only repair must run before a command fallback factory reads malformed global options.")]
+	public async Task When_AContextHookRepairsGlobals_Then_ServiceFallbackActivationWaitsForTypedInput()
+	{
+		var app = ReplApp.Create(services => services.AddTransient<string>(provider =>
+			provider.GetRequiredService<NumericGlobals>().Limit.ToString(CultureInfo.InvariantCulture))).UseGlobalOptions<NumericGlobals>();
+		var received = new List<string>();
+		app.Map("run", (string prefix) => { received.Add(prefix); });
+		app.UseInvocationHook((ReplInvocationContext _) => ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("run", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 7 })));
+		app.UseInvocationHook((string prefix) => { received.Add(prefix); return ReplInvocationResult.Continue(); });
+
+		(await app.RunAsync(["run", "--limit=bad"])).Should().Be(0);
+
+		received.Should().Equal("7", "7");
+	}
+
+	[TestMethod]
+	[Description("Invalid globals must refuse typed-global hooks before any dependent command fallback factory is activated.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_InvalidGlobalsHaveDependentFactories_Then_TypedHooksReceiveAUsageDiagnostic(bool native)
+	{
+		var factoryCalls = 0;
+		var app = ReplApp.Create(services => services.AddTransient<string>(provider =>
+		{
+			factoryCalls++;
+			return provider.GetRequiredService<NumericGlobals>().Limit.ToString(CultureInfo.InvariantCulture);
+		})).UseGlobalOptions<NumericGlobals>();
+		app.Map("run", (string prefix) => Assert.Fail("Invalid input must not execute."));
+		app.UseInvocationHook((NumericGlobals globals) => { Assert.Fail("Invalid typed globals must not reach the hook."); return ReplInvocationResult.Continue(); });
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = "bad" })) : app.RunAsync(["run", "--limit=bad"]));
+
+		code.Should().Be(2);
+		factoryCalls.Should().Be(0);
+		writer.ToString().Should().Contain("Cannot bind invocation hook input 'limit'").And.NotContain("input_callback_error");
+	}
+
+	private sealed class NumericGlobals { public int Limit { get; set; } = 3; }
+	private sealed class ScalarProvider : IServiceProvider
+	{
+		public int Resolutions { get; private set; }
+		public object? GetService(Type serviceType)
+		{
+			if (serviceType != typeof(string)) { return null; }
+			Resolutions++;
+			return "service";
+		}
+	}
+
 	private sealed class Marker;
 
 	private sealed class CultureScope : IDisposable

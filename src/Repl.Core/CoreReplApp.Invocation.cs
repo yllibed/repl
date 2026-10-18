@@ -40,11 +40,6 @@ public sealed partial class CoreReplApp
 		new(new(args, args, [], InputProcessingMode.Execution, IdentifyInputPurpose(args, InputProcessingMode.Execution, isInteractive: false),
 			text: null, cursor: null, new InputSourceRange?[args.Count]), InputValidationResult.Valid()) { Request = request.Copy(), OriginalRequest = request.Copy() };
 
-	internal string ResolveInvocationParameterName(string command, IReadOnlyList<string> aliases, string fallback)
-	{
-		var route = _routes.FirstOrDefault(candidate => string.Equals(candidate.Template.Template, command, StringComparison.Ordinal));
-		return route?.OptionSchema.Entries.FirstOrDefault(entry => aliases.Contains(entry.Token, StringComparer.Ordinal))?.ParameterName ?? fallback;
-	}
 
 	/// <summary>Adds an ordered hook after preliminary parsing and before final validation.</summary>
 	/// <param name="hook">Delegate receiving context, command values, options, services or cancellation.</param>
@@ -130,7 +125,7 @@ public sealed partial class CoreReplApp
 			using var inputScope = PushProcessedInput(input);
 			var globals = ParseInputGlobals(input);
 			using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
-			var parsed = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null);
+			var parsed = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null, invocationHook: hook, cancellationToken: cancellationToken);
 			var channel = input.Channel ?? (ReplSessionIO.IsProgrammatic ? ReplInvocationChannel.Mcp
 				: input.Context.IsInteractive ? ReplSessionIO.IsHostedSession ? ReplInvocationChannel.HostedInteractive : ReplInvocationChannel.Interactive
 				: ReplInvocationChannel.Cli);
@@ -212,6 +207,7 @@ public sealed partial class CoreReplApp
 	[UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Options-group properties are preserved by the registered command handler and group binding contract.")]
 	private string? FindUnavailableHookValue(Delegate hook, ParsedInputContext parsed, IServiceProvider services)
 	{
+		if (FindUnavailableHookGlobal(hook, parsed.GlobalValues) is { } global) { return global; }
 		foreach (var parameter in hook.Method.GetParameters())
 		{
 			if (parameter.ParameterType == typeof(ReplInvocationContext) || parameter.ParameterType == typeof(ParsedInputContext)
@@ -232,6 +228,21 @@ public sealed partial class CoreReplApp
 							&& parsed.OptionSchema.TryGetParameter(property.Name, out var metadata)
 							&& metadata.ExplicitArity is ReplArity.ExactlyOne or ReplArity.OneOrMore)) { return property.Name; }
 				}
+			}
+		}
+		return null;
+	}
+
+	private string? FindUnavailableHookGlobal(Delegate hook, IReadOnlyDictionary<string, InputValue> values)
+	{
+		foreach (var parameter in hook.Method.GetParameters())
+		{
+			if (parameter.IsDefined(typeof(FromServicesAttribute), inherit: true) || parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
+				|| !_implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out var globalType)) { continue; }
+			foreach (var definition in _options.Parsing.GlobalOptions.Values)
+			{
+				if (definition.OwnerType == globalType && values.TryGetValue(definition.Name, out var value)
+					&& value.State == InputValueState.Invalid) { return definition.Name; }
 			}
 		}
 		return null;
