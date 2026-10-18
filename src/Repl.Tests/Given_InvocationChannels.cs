@@ -182,6 +182,57 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("Early interactive rendering must retain native null globals for accessors and DI, then restore the session even after a rendering failure.")]
+	[DataRow(false, false)]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[DataRow(true, true)]
+	public async Task When_InteractiveHandledRenderingUsesNativeGlobals_Then_TheSessionIsRestored(bool hosted, bool renderFails)
+	{
+		var app = ReplApp.Create(services => services.AddTransient<RenderDependency>()).UseGlobalOptions<Globals>();
+		var direct = new List<string?>();
+		var injected = new List<string?>();
+		var next = new List<string?>();
+		app.Options(options => options.Output.AddTransformer("native", new InteractiveGlobalsTransformer(app.Core, direct, injected, renderFails)));
+		app.Map("run", () => Assert.Fail("Handled input must not reach the handler."));
+		app.Map("next", (Globals globals, RenderDependency dependency) =>
+		{
+			next.Add(globals.Tenant);
+			next.Add(dependency.Tenant);
+		});
+		app.UseInvocationHook((ReplInvocationContext context) => context.Request.Arguments is ["external"]
+			? ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("run", globalValues:
+				new Dictionary<string, object?>(StringComparer.Ordinal) { ["tenant"] = null, ["output"] = "native" }))
+			: ReplInvocationResult.Continue());
+		app.UseInvocationHook((ReplInvocationContext context) => context.Parsed.Command is "run"
+			? ReplInvocationResult.Handled("payload") : ReplInvocationResult.Continue());
+		using var writer = new StringWriter();
+		using var reader = new StringReader("external\nnext\nexit\n");
+		using var io = ReplSessionIO.SetSession(writer, reader, isHostedSession: hosted);
+
+		var code = await app.RunAsync(["--tenant=session"]);
+
+		code.Should().Be(0);
+		direct.Should().Equal(new string?[] { null });
+		injected.Should().Equal(new string?[] { null });
+		next.Should().Equal("session", "session");
+		writer.ToString().Should().Contain(renderFails ? "render failure" : "native rendered");
+	}
+
+	private sealed class RenderDependency(Globals globals) { public string? Tenant { get; } = globals.Tenant; }
+	private sealed class InteractiveGlobalsTransformer(CoreReplApp app, List<string?> direct, List<string?> injected, bool renderFails) : IOutputTransformer
+	{
+		public string Name => "native";
+		public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
+		{
+			direct.Add(app.GlobalOptionsAccessor.GetValue<string>("tenant"));
+			injected.Add(app.CurrentServiceProvider.GetRequiredService<RenderDependency>().Tenant);
+			if (renderFails) { throw new InvalidOperationException("render failure"); }
+			return ValueTask.FromResult("native rendered");
+		}
+	}
+
+	[TestMethod]
 	[Description("Required group input must not trigger an external action with a fabricated default before validation.")]
 	[DataRow(false, "missing")]
 	[DataRow(true, "missing")]

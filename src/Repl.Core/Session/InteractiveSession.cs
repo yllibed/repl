@@ -298,19 +298,21 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		{
 			cycle.CancelHandler.SetCommandCts(commandCts);
 			SetCommandTokenOnChannel(cycle.ServiceProvider, commandCts.Token);
+			IDisposable? processedInputScope = null;
+			IDisposable? globalsScope = null;
 			try
 			{
 				input = await app.PreprocessInputAsync(inputTokens, cycle.ScopeTokens, InputProcessingMode.Execution,
 					line, line.Length, commandCts.Token, isInteractive: true).ConfigureAwait(false);
 				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
+				processedInputScope = app.PushProcessedInput(input);
+				var globals = GlobalOptionParser.Parse([.. input.Context.ScopeTokens, .. input.Context.Arguments], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+				globalsScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
 				input = await ValidateAmbientInputAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
 				if (input.IsHandled || input.Validation.State != InputValidationState.Valid)
 				{
 					await OpenOutputAsync().ConfigureAwait(false);
-					var handled = await app.TryFinishProcessedInputAsync(input, commandCts.Token).ConfigureAwait(false);
-					await TryWriteResolvedCommandEndAsync(cycle.Marks, handled ?? ExecutionOutcome.Success).ConfigureAwait(false);
-					return handled?.Kind == ReplExecutionOutcomeKind.HandlerExitCode
-						? AmbientCommandOutcome.Exit : AmbientCommandOutcome.Handled;
+					return await FinishCommittedInputAsync(input, cycle.Marks, commandCts.Token).ConfigureAwait(false);
 				}
 			}
 			catch (OperationCanceledException) when (commandCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -329,12 +331,23 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			}
 			finally
 			{
+				globalsScope?.Dispose();
+				processedInputScope?.Dispose();
 				cycle.CancelHandler.SetCommandCts(cts: null);
 				SetCommandTokenOnChannel(cycle.ServiceProvider, default);
 			}
 		}
 		using var inputScope = app.PushProcessedInput(input);
 		return await ExecuteNormalizedCommittedInputAsync(cycle, line, input.Context.Arguments, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<AmbientCommandOutcome> FinishCommittedInputAsync(
+		ProcessedInput input, ShellIntegrationMarkEmitter marks, CancellationToken cancellationToken)
+	{
+		var handled = await app.TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false);
+		await TryWriteResolvedCommandEndAsync(marks, handled ?? ExecutionOutcome.Success).ConfigureAwait(false);
+		return handled?.Kind == ReplExecutionOutcomeKind.HandlerExitCode
+			? AmbientCommandOutcome.Exit : AmbientCommandOutcome.Handled;
 	}
 
 	private async ValueTask<ProcessedInput> ValidateAmbientInputAsync(
