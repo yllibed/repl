@@ -13,6 +13,10 @@ public sealed partial class CoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		using var nativeSession = _globalOptionsSnapshot.PushNativeSessionBaseline(
+			_currentInput.Value?.Request?.Copy().GlobalValues ?? new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase));
+		using var globalsScope = _globalOptionsSnapshot.PushInputValues(new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase));
+		using var inputScope = PushProcessedInput(input: null);
 		await Interactive.RunInteractiveSessionAsync(initialScopeTokens, serviceProvider, cancellationToken)
 			.ConfigureAwait(false);
 		return ExecutionOutcome.Success;

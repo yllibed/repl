@@ -394,7 +394,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	{
 		_globalOptionsSnapshot.Update(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
 		if (!isSubInvocation) { _globalOptionsSnapshot.SetSessionBaseline(); }
-		return _globalOptionsSnapshot.PushInputValues(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
+		return _globalOptionsSnapshot.PushInputValues(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation, inheritSessionBaseline: isSubInvocation);
 	}
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbiguousPrefixAsync(
@@ -771,11 +771,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				false);
 		}
 
-		var parsedOptions = InvocationOptionParser.Parse(
-			match.RemainingTokens,
-			match.Route.OptionSchema,
-			commandParsingOptions,
-			globalOptions.CustomGlobalTokenOwnership);
+		var parsedOptions = ParseInvocationOptions(match, commandParsingOptions, globalOptions);
 		if (parsedOptions.HasErrors)
 		{
 			var firstError = parsedOptions.Diagnostics
@@ -787,6 +783,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
+		if (_currentInput.Value?.Request?.Command is not null)
+		{
+			matchedPathTokens = match.Route.Template.Segments
+				.Where(segment => segment is not DynamicRouteSegment dynamic || match.Values.ContainsKey(dynamic.Name))
+				.Select(segment => segment is DynamicRouteSegment dynamic ? match.Values[dynamic.Name] : segment.RawText).ToArray();
+		}
 		var bindingContext = CreateInvocationBindingContext(
 			match,
 			parsedOptions,
@@ -1822,7 +1824,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			serviceProvider,
 			_options.Interaction,
 			_implicitServiceParameters,
-			cancellationToken);
+			cancellationToken)
+		{
+			InputServiceFallbacks = _currentInput.Value?.InputServiceFallbacks,
+			NativeValues = _currentInput.Value?.Request is { Command: not null } request
+				? request.Values : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase),
+		};
 	}
 
 	private ReplPagingContext CreatePagingContext(GlobalInvocationOptions globalOptions)

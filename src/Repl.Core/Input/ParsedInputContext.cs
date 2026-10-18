@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using Repl.Internal.Options;
 
 namespace Repl;
 
@@ -24,6 +25,7 @@ public sealed class ParsedInputContext
 		GlobalValues = snapshot.GlobalValues;
 		Validation = validation;
 		ApplicationValidation = applicationValidation;
+		OptionSchema = snapshot.OptionSchema;
 	}
 
 	/// <summary>Gets original and effective input and the processing mode.</summary>
@@ -36,6 +38,8 @@ public sealed class ParsedInputContext
 	public IReadOnlyDictionary<string, InputValue> GlobalValues { get; }
 	/// <summary>Gets parser and earlier-validator diagnostics.</summary>
 	public InputValidationResult Validation { get; }
+
+	internal OptionSchema OptionSchema { get; init; } = OptionSchema.Empty;
 
 	internal InputValidationResult ApplicationValidation { get; init; } = InputValidationResult.Valid();
 

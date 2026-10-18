@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 namespace Repl;
 
@@ -29,7 +30,15 @@ public sealed class ReplStartupBuilder
 	/// <summary>Adds an argument adapter that also transfers to the application's interactive pipeline.</summary>
 	/// <param name="adapter">Argument adapter.</param>
 	/// <returns>The builder.</returns>
+	[OverloadResolutionPriority(1)]
 	public ReplStartupBuilder UseArgumentPreprocessor(Func<ArgumentPreprocessingContext, CancellationToken, ValueTask<ArgumentPreprocessingResult>> adapter)
+	{
+		ArgumentNullException.ThrowIfNull(adapter);
+		return Configure(app => app.UseArgumentPreprocessor(adapter));
+	}
+
+	/// <inheritdoc cref="UseArgumentPreprocessor(Func{ArgumentPreprocessingContext, CancellationToken, ValueTask{ArgumentPreprocessingResult}})"/>
+	public ReplStartupBuilder UseArgumentPreprocessor(Func<ArgumentPreprocessingContext, CancellationToken, ArgumentPreprocessingResult> adapter)
 	{
 		ArgumentNullException.ThrowIfNull(adapter);
 		return Configure(app => app.UseArgumentPreprocessor(adapter));

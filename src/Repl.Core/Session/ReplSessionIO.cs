@@ -66,7 +66,7 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
 	private static readonly AsyncLocal<bool> s_isHostedSession = new();
-	private const int CurrentProgrammaticInvocationContractVersion = 1;
+	private const int CurrentProgrammaticInvocationContractVersion = 2;
 	private static readonly AsyncLocal<bool> s_isProgrammatic = new();
 	private static readonly AsyncLocal<int> s_programmaticInvocationContractVersion = new();
 	private static readonly AsyncLocal<bool> s_isProtocolPassthrough = new();

@@ -131,7 +131,7 @@ public sealed class Given_AdvancedInput_NestedAndQuoted
 			try
 			{
 				ReplSessionIO.IsProgrammatic = true;
-				using var contract = ReplSessionIO.PushProgrammaticInvocationContract(adapterContractVersion: 1);
+				using var contract = ReplSessionIO.PushProgrammaticInvocationContract(adapterContractVersion: 2);
 				(await app.Core.RunSubInvocationAsync(["inner"], services).ConfigureAwait(false)).Should().Be(0);
 			}
 			finally { ReplSessionIO.IsProgrammatic = previous; }

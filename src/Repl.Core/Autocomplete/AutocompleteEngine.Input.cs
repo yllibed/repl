@@ -16,6 +16,11 @@ internal sealed partial class AutocompleteEngine
 			var processed = await app.PreprocessInputAsync(tokens.Select(static token => token.Value).ToArray(), scopeTokens,
 				request.ExplicitCompletion ? InputProcessingMode.Completion : InputProcessingMode.Preview,
 				request.Input, request.Cursor, cancellationToken, isInteractive: true).ConfigureAwait(false);
+			if (request.ExplicitCompletion)
+			{
+				processed = await app.InvokeInvocationHooksAsync(processed, serviceProvider, cancellationToken).ConfigureAwait(false);
+			}
+			using var inputScope = app.PushProcessedInput(processed);
 			if (processed.IsHandled)
 			{
 				return ApplyInputDiagnostics(new(request.Cursor, 0, []), processed.Validation, request.Input.Length);
@@ -26,7 +31,7 @@ internal sealed partial class AutocompleteEngine
 			using var globalScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
 			var canonical = processed.WasRewritten ? InputTokenizer.Format(processed.Context.Arguments) : request.Input;
 			var cursorMapped = TryMapInputCursor(processed, canonical, request.Cursor, out var canonicalCursor);
-			if (processed.WasRewritten && request.ExplicitCompletion
+			if (processed.Request?.Command is null && processed.WasRewritten && request.ExplicitCompletion
 				&& app.OptionsSnapshot.Interactive.Autocomplete.NormalizeInputOnTab
 				&& analysis.Validation.State == InputValidationState.Valid)
 			{

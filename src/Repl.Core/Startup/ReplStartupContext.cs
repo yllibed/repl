@@ -13,6 +13,7 @@ public sealed class ReplStartupContext
 		RemainingArguments = Array.AsReadOnly(globals.RemainingTokens.ToArray());
 		Purpose = input.Context.Purpose;
 		var accessor = new GlobalOptionsSnapshot(app.OptionsSnapshot.Parsing);
+		accessor.NativeValues = () => input.Request?.GlobalValues;
 		accessor.Update(globals.CustomGlobalNamedOptions);
 		GlobalOptions = accessor;
 		Validation = input.Validation;

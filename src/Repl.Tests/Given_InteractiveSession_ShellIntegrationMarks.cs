@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Repl.Tests.TerminalSupport;
 
 namespace Repl.Tests;
@@ -815,6 +816,42 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		harness.RawOutput.Should().Contain("pong");
 		harness.RawOutput.Should().NotContain("]133;");
 		harness.RawOutput.Should().NotContain("]633;");
+	}
+
+	[TestMethod]
+	[Description("Early handler fallback failures retain formatted binding diagnostics and command-end codes while the interactive session stays usable.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public void When_HandlerFallbackFailsBeforeATypedHook_Then_InteractiveMarksRetainBindingPolicy(bool hook)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var factories = 0;
+		var kinds = new List<ReplExecutionOutcomeKind>();
+		var nextRan = false;
+		var sut = ReplApp.Create(services => services.AddTransient<Uri>(_ => { factories++; throw new InvalidOperationException("factory failed"); }))
+			.UseDefaultInteractive().UseTerminalIntegration(options => options.ShellIntegration = ShellIntegrationMode.Always);
+		sut.Options(options =>
+		{
+			options.Output.AnsiMode = AnsiMode.Always;
+			options.Output.ColorizeStructuredInteractive = false;
+			options.ExitCodes.BindingError = 17;
+			options.ExitCodes.Resolver = outcome =>
+			{
+				if (outcome.Scope == ReplExitCodeScope.ShellIntegrationMark) { kinds.Add(outcome.Kind); }
+				return outcome.ExitCode;
+			};
+		});
+		sut.Map("run", (Uri endpoint, int count) => Assert.Fail("The failing handler dependency must prevent dispatch."));
+		sut.Map("next", () => { nextRan = true; });
+		if (hook) { sut.UseInvocationHook((int count = 0) => ReplInvocationResult.Continue()); }
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "run 5 --output:json\rnext\rexit\r");
+
+		raw.Should().Contain("execution_error").And.NotContain("input_callback_error").And.Contain("]133;D;17");
+		kinds[0].Should().Be(ReplExecutionOutcomeKind.BindingError);
+		factories.Should().Be(1);
+		nextRan.Should().BeTrue();
 	}
 
 	private static ReplApp CreateMarkedApp(ShellIntegrationMode mode = ShellIntegrationMode.Always)

@@ -8,6 +8,57 @@ namespace Repl.Tests;
 public sealed class Given_AdvancedInput
 {
 	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Synchronous and asynchronous adapters share ordered rewrites and receive the caller's cancellation token on Core and Defaults.")]
+	public async Task When_SyncAndAsyncAdaptersAreMixed_Then_RewritesReachTheHandler(bool defaults)
+	{
+		var app = ReplApp.Create();
+		using var cancellation = new CancellationTokenSource();
+		var calls = new List<string>();
+		ArgumentPreprocessingResult Rewrite(ArgumentPreprocessingContext input, CancellationToken ct)
+		{
+			ct.Should().Be(cancellation.Token);
+			input.Arguments.Should().Equal("/old");
+			calls.Add("sync");
+			return ArgumentPreprocessingResult.Replace(["query", "hello world"]);
+		}
+		async ValueTask<ArgumentPreprocessingResult> ObserveAsync(ArgumentPreprocessingContext input, CancellationToken ct)
+		{
+			await Task.Yield();
+			ct.Should().Be(cancellation.Token);
+			input.Arguments.Should().Equal("query", "hello world");
+			calls.Add("async");
+			return ArgumentPreprocessingResult.Continue();
+		}
+		if (defaults) { app.UseArgumentPreprocessor(Rewrite).UseArgumentPreprocessor(ObserveAsync); }
+		else { app.Core.UseArgumentPreprocessor(Rewrite).UseArgumentPreprocessor(ObserveAsync); }
+		app.Map("query {text}", (string text) => { calls.Add(text); });
+
+		var code = defaults
+			? await app.RunAsync(["/old"], cancellation.Token)
+			: await app.Core.RunAsync(["/old"], cancellation.Token);
+
+		code.Should().Be(0);
+		calls.Should().Equal("sync", "async", "hello world");
+	}
+
+	[TestMethod]
+	[Description("Adding synchronous overloads keeps untyped null calls unambiguous and rejects null synchronous callbacks at registration.")]
+	public void When_PreprocessorIsNull_Then_RegistrationRejectsBothSignatures()
+	{
+		var app = ReplApp.Create();
+		var builder = ReplStartup.CreateBuilder();
+		Func<ArgumentPreprocessingContext, CancellationToken, ArgumentPreprocessingResult> callback = null!;
+		Assert.Throws<ArgumentNullException>(() => app.Core.UseArgumentPreprocessor(null!));
+		Assert.Throws<ArgumentNullException>(() => app.UseArgumentPreprocessor(null!));
+		Assert.Throws<ArgumentNullException>(() => builder.UseArgumentPreprocessor(null!));
+		Assert.Throws<ArgumentNullException>(() => app.Core.UseArgumentPreprocessor(callback));
+		Assert.Throws<ArgumentNullException>(() => app.UseArgumentPreprocessor(callback));
+		Assert.Throws<ArgumentNullException>(() => builder.UseArgumentPreprocessor(callback));
+	}
+
+	[TestMethod]
 	[Description("Legacy syntax must reach adaptation before parsing, without restarting the chain after a rewrite.")]
 	public async Task When_LegacyArgumentsAreRewritten_Then_AdaptersRunOnceBeforeParsing()
 	{

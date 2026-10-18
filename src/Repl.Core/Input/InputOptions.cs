@@ -10,5 +10,8 @@ public sealed class InputOptions
 	/// <summary>Gets validators with injectable ParsedInputContext, services and CancellationToken parameters.</summary>
 	public IList<Delegate> Validators { get; } = new List<Delegate>();
 
-	internal bool IsEnabled => Preprocessors.Count != 0 || Validators.Count != 0;
+	/// <summary>Gets parsed invocation hooks, invoked in registration order before final validation.</summary>
+	public IList<Delegate> InvocationHooks { get; } = new List<Delegate>();
+
+	internal bool IsEnabled => Preprocessors.Count != 0 || Validators.Count != 0 || InvocationHooks.Count != 0;
 }

@@ -32,6 +32,8 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			{
 				var processed = await app.PreprocessInputAsync(arguments, [], InputProcessingMode.ShellCompletion,
 					inputText, Math.Max(0, cursor - start), token).ConfigureAwait(false);
+				processed = await app.InvokeInvocationHooksAsync(processed, serviceProvider, token).ConfigureAwait(false);
+				using var inputScope = app.PushProcessedInput(processed);
 				var analysis = processed.IsHandled ? null
 					: await app.AnalyzeInputAsync(processed, serviceProvider, token).ConfigureAwait(false);
 				return new AnalyzedShellInput(processed, analysis);
@@ -39,6 +41,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (analyzed is null || analyzed.Input.IsHandled
 				|| analyzed.Analysis?.ApplicationValidation.State == InputValidationState.Invalid) { return []; }
 			var input = analyzed.Input;
+			using var inputScope = app.PushProcessedInput(input);
 			// Re-encoding loses shell quoting and escaping; never insert into that original context.
 			if (input.WasRewritten && HasUnsafeOriginalShellContext(line, cursor)) { return []; }
 			var normalized = input.WasRewritten ? InputTokenizer.Format(input.Context.Arguments) : inputText;
@@ -47,8 +50,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			if (input.WasRewritten && AnalyzeShellCompletionInput(line, cursor).CurrentTokenPrefix.Length != 0)
 			{
 				if (!cursorMapped) { return []; }
-				var mappedTokens = InputTokenizer.Tokenize(normalized);
-				var currentIndex = mappedTokens.FindIndex(token => mappedCursor >= token.Start && mappedCursor <= token.Start + token.Length);
+				var currentIndex = InputTokenizer.Tokenize(normalized).FindIndex(token => mappedCursor >= token.Start && mappedCursor <= token.Start + token.Length);
 				if (currentIndex < 0 || input.Context.ArgumentOrigins.ElementAtOrDefault(currentIndex) is null) { return []; }
 			}
 			var globals = GlobalOptionParser.Parse(input.Context.Arguments, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);

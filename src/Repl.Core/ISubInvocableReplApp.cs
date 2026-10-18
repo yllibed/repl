@@ -2,6 +2,10 @@
 
 internal interface ISubInvocableReplApp
 {
+	ValueTask<SubInvocationOutcome> RunSubInvocationWithOutcomeAsync(
+		ReplInvocationRequest request, string[] transportArguments, IServiceProvider serviceProvider,
+		IServiceProvider? presenceServiceProvider = null, CancellationToken cancellationToken = default);
+
 	/// <summary>
 	/// Runs a nested invocation against the host's own command graph, and reports how it ended.
 	/// </summary>

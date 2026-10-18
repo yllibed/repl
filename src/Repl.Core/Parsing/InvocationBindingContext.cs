@@ -32,6 +32,7 @@ internal sealed class InvocationBindingContext(
 	public IServiceProvider ServiceProvider { get; } = serviceProvider;
 
 	internal IServiceProvider KeyedServiceProvider { get; init; } = serviceProvider;
+	internal IReadOnlyDictionary<string, object?> NativeValues { get; init; } = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 
 	public InteractionOptions InteractionOptions { get; } = interactionOptions;
 

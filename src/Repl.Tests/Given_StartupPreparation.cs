@@ -8,6 +8,35 @@ namespace Repl.Tests;
 public sealed class Given_StartupPreparation
 {
 	[TestMethod]
+	[Description("Synchronous startup adapters transfer to later invocations without replaying prepared input, and configuration freezes after preparation.")]
+	public async Task When_StartupUsesASynchronousAdapter_Then_ItTransfersWithoutReplaying()
+	{
+		var calls = new List<string>();
+		var builder = ReplStartup.CreateBuilder()
+			.UseArgumentPreprocessor((input, _) =>
+			{
+				calls.Add("sync");
+				return ArgumentPreprocessingResult.Replace(["query", input.Arguments[0]]);
+			})
+			.UseArgumentPreprocessor(async (input, _) =>
+			{
+				await Task.Yield();
+				calls.Add("async");
+				input.Arguments[0].Should().Be("query");
+				return ArgumentPreprocessingResult.Continue();
+			});
+		var prepared = await builder.PrepareAsync(["first"]);
+		var app = CoreReplApp.Create(prepared);
+		app.Map("query {text}", (string text) => { calls.Add(text); });
+
+		(await app.RunAsync(prepared)).Should().Be(0);
+		(await app.RunAsync(["second"])).Should().Be(0);
+
+		calls.Should().Equal("sync", "async", "first", "sync", "async", "second");
+		Assert.Throws<InvalidOperationException>(() => builder.UseArgumentPreprocessor((_, _) => ArgumentPreprocessingResult.Continue()));
+	}
+
+	[TestMethod]
 	[Description("Preparation shares typed declarations with Core and does not replay adapters or preparation hooks during execution.")]
 	public async Task When_CoreRunsPreparedInput_Then_TypedOptionsAndOriginalArgumentsArePreserved()
 	{

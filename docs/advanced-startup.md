@@ -130,7 +130,7 @@ The explicit preparation path has this order:
 | 6 | Any adapters added to the app after preparation | Run/session services |
 | 7 | Startup hooks, in registration order | Context, current typed globals and scoped services |
 | 8 | Start `IHostedService` instances, only in `Head` mode | Root provider |
-| 9 | Normal help/completion/command dispatch and input validation | Run/session services |
+| 9 | Preliminary parsing, then per-input invocation hooks, then final help/completion/command dispatch and input validation | Run/session services |
 | 10 | Handler binding, context validation, middleware and handler | Run/session services |
 | 11 | Render the result and dispose Repl-owned session scope | Existing run cleanup policy |
 | 12 | Stop started hosted services, then resolve the final exit code | Existing lifecycle ownership |
@@ -156,7 +156,9 @@ to compose services, while later hooks see the effective values after rewriting.
 
 Startup hooks run once for each run/session. They do not run for subsequent
 interactive commands, background editor analysis or nested MCP tool calls.
-Ordinary argument adapters and input validators retain their per-input behavior.
+Ordinary argument adapters, [invocation hooks](advanced-input.md#intercept-a-parsed-invocation)
+and input validators retain their per-input behavior. Invocation replacements do
+not replay preparation, startup hooks or hosted-service startup.
 Hooks run for help and completion too: check `Purpose` before external actions.
 Both the ambient `complete` command and the `completion __complete` shell bridge
 are identified as completion.
