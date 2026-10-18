@@ -181,6 +181,116 @@ public sealed class Given_InvocationChannels
 			new Dictionary<string, object?>(StringComparer.Ordinal) { ["tenant"] = value }), cancellationToken: cts.Token).AsTask();
 	}
 
+	[TestMethod]
+	[Description("Required group input must not trigger an external action with a fabricated default before validation.")]
+	[DataRow(false, "missing")]
+	[DataRow(true, "missing")]
+	[DataRow(false, "invalid")]
+	[DataRow(true, "invalid")]
+	[DataRow(false, "present")]
+	[DataRow(true, "present")]
+	public async Task When_HookRequiresAGroupProperty_Then_OnlyAvailableInputReachesIt(bool native, string state)
+	{
+		var app = CoreReplApp.Create();
+		var calls = new List<int>();
+		app.Map("run", (RequiredGroup group) => Assert.Fail("Handled or refused input must not execute."));
+		app.UseInvocationHook((RequiredGroup group) =>
+		{
+			calls.Add(group.Count);
+			return ReplInvocationResult.Handled();
+		});
+		var values = new Dictionary<string, object?>(StringComparer.Ordinal);
+		if (state is not "missing") { values["Count"] = state is "invalid" ? "bad" : 4; }
+		string[] arguments = state is "missing" ? ["run"] : ["run", state is "invalid" ? "--count=bad" : "--count=4"];
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run", values)) : app.RunAsync(arguments));
+
+		code.Should().Be(state is "present" ? 0 : 2);
+		if (state is "present") { calls.Should().Equal(4); }
+		else
+		{
+			calls.Should().BeEmpty();
+			writer.ToString().Should().Contain("Cannot bind invocation hook input 'Count'");
+		}
+	}
+
+	[TestMethod]
+	[Description("OneOrMore group properties must be supplied before a typed hook can perform an external action.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_RequiredGroupCollectionIsMissing_Then_TheHookIsRefused(bool native)
+	{
+		var app = CoreReplApp.Create();
+		var hookCalled = false;
+		app.Map("run", (RequiredCollectionGroup group) => Assert.Fail("Missing required collection must not execute."));
+		app.UseInvocationHook((RequiredCollectionGroup group) => { hookCalled = true; return ReplInvocationResult.Handled(); });
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run")) : app.RunAsync(["run"]));
+
+		code.Should().Be(2);
+		hookCalled.Should().BeFalse();
+		writer.ToString().Should().Contain("Cannot bind invocation hook input 'Items'");
+	}
+
+	[TestMethod]
+	[Description("A context hook can repair an absent required group value before a later typed hook binds it.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_ContextRepairsARequiredGroup_Then_TheNextHookAndHandlerReceiveIt(bool native)
+	{
+		var app = CoreReplApp.Create();
+		var received = new List<int>();
+		app.Map("run", (RequiredGroup group) => { received.Add(group.Count); });
+		app.UseInvocationHook((ReplInvocationContext context) =>
+		{
+			context.Parsed.Values["Count"].State.Should().Be(InputValueState.Missing);
+			return ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("run",
+				new Dictionary<string, object?>(StringComparer.Ordinal) { ["Count"] = 6 }));
+		});
+		app.UseInvocationHook((RequiredGroup group) => { received.Add(group.Count); return ReplInvocationResult.Continue(); });
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run")) : app.RunAsync(["run"]));
+
+		code.Should().Be(0);
+		received.Should().Equal(6, 6);
+	}
+
+	[TestMethod]
+	[Description("An omitted optional group property retains its initializer rather than being treated as unavailable required input.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_OptionalGroupPropertyIsMissing_Then_ItsInitializerIsPreserved(bool native)
+	{
+		var app = CoreReplApp.Create();
+		var received = new List<int>();
+		app.Map("run", (OptionalGroup group) => { received.Add(group.Count); });
+		app.UseInvocationHook((OptionalGroup group) => { received.Add(group.Count); return ReplInvocationResult.Continue(); });
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run")) : app.RunAsync(["run"]));
+
+		code.Should().Be(0);
+		received.Should().Equal(42, 42);
+	}
+
+	[ReplOptionsGroup]
+	private sealed class RequiredGroup
+	{
+		[ReplOption(Arity = ReplArity.ExactlyOne)]
+		public int Count { get; set; }
+	}
+	[ReplOptionsGroup]
+	private sealed class RequiredCollectionGroup
+	{
+		[ReplOption(Arity = ReplArity.OneOrMore)]
+		public string[] Items { get; set; } = [];
+	}
+	[ReplOptionsGroup]
+	private sealed class OptionalGroup { public int Count { get; set; } = 42; }
+
 	[ReplOptionsGroup]
 	private sealed class Group { public int Count { get; set; } }
 	private sealed class Globals { public string Tenant { get; set; } = "default"; }

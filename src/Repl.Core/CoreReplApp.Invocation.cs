@@ -221,7 +221,11 @@ public sealed partial class CoreReplApp
 			{
 				foreach (var property in parameter.ParameterType.GetProperties())
 				{
-					if (parsed.Values.TryGetValue(property.Name, out var propertyValue) && propertyValue.State == InputValueState.Invalid) { return property.Name; }
+					if (!parsed.Values.TryGetValue(property.Name, out var propertyValue)) { continue; }
+					if (propertyValue.State == InputValueState.Invalid
+						|| (propertyValue.State == InputValueState.Missing
+							&& parsed.OptionSchema.TryGetParameter(property.Name, out var metadata)
+							&& metadata.ExplicitArity is ReplArity.ExactlyOne or ReplArity.OneOrMore)) { return property.Name; }
 				}
 			}
 		}

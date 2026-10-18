@@ -240,6 +240,7 @@ public sealed partial class CoreReplApp
 		return new(input.Context, match?.Route.Template.Template, values, globalValues, CombineInputValidation(checks))
 		{
 			ApplicationValidation = input.Validation,
+			OptionSchema = match?.Route.OptionSchema ?? OptionSchema.Empty,
 		};
 	}
 

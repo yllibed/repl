@@ -102,6 +102,8 @@ globals, diagnostics, mode and purpose. Hooks run **before final validation** an
 can repair malformed or partial input. Use a context-based signature when that
 input may be invalid. A required typed hook parameter that is unavailable produces
 a binding diagnostic; it does not silently receive a default numeric value.
+This also applies to options-group properties with an explicit required arity
+(`ExactlyOne` or `OneOrMore`); omitted optional properties retain their initializers.
 
 `Continue` advances to the next hook. `Replace` replaces the whole request,
 including its globals; explicitly carry forward the values you want to preserve.
