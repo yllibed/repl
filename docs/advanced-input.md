@@ -36,16 +36,21 @@ app.UseArgumentPreprocessor((input, ct) =>
 
     if (input.Arguments is ["/find", var query])
     {
-        return ValueTask.FromResult(
-            ArgumentPreprocessingResult.Replace(["query", query]));
+        return ArgumentPreprocessingResult.Replace(["query", query]);
     }
 
-    return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+    return ArgumentPreprocessingResult.Continue();
 });
 
 app.Map("query {text}", (string text) => text);
 return await app.RunAsync(args);
 ```
+
+`UseArgumentPreprocessor` accepts a synchronous callback returning
+`ArgumentPreprocessingResult`, as above. An asynchronous overload with the signature
+`Func<ArgumentPreprocessingContext, CancellationToken, ValueTask<ArgumentPreprocessingResult>>`
+is also available on `ReplApp`, `CoreReplApp` and `ReplStartupBuilder`. Use an `async`
+lambda when the adapter needs to `await` asynchronous work.
 
 For example, `/find "hello world"` becomes the argument array
 `["query", "hello world"]`. Argument boundaries are retained; adapters do not
@@ -60,10 +65,10 @@ from the editable arguments and must not be prepended by an adapter.
 To choose a default startup command, replace an empty invocation:
 
 ```csharp
-app.UseArgumentPreprocessor((input, _) => ValueTask.FromResult(
+app.UseArgumentPreprocessor((input, _) =>
     input.Mode == InputProcessingMode.Execution && input.Arguments.Count == 0
         ? ArgumentPreprocessingResult.Replace(["serve"])
-        : ArgumentPreprocessingResult.Continue()));
+        : ArgumentPreprocessingResult.Continue());
 ```
 
 On ordinary runs, these callbacks run after the hosting path provides its services.
@@ -234,17 +239,17 @@ app.UseArgumentPreprocessor((input, _) =>
 {
     if (input.Arguments is not ["/external"])
     {
-        return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+        return ArgumentPreprocessingResult.Continue();
     }
 
     if (input.Mode != InputProcessingMode.Execution ||
         input.Purpose is InputPurpose.Help or InputPurpose.Completion)
     {
-        return ValueTask.FromResult(ArgumentPreprocessingResult.Handled());
+        return ArgumentPreprocessingResult.Handled();
     }
 
     // Perform the application's external action here.
-    return ValueTask.FromResult(ArgumentPreprocessingResult.Handled("Action completed."));
+    return ArgumentPreprocessingResult.Handled("Action completed.");
 });
 ```
 

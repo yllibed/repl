@@ -11,20 +11,20 @@ startup.UseArgumentPreprocessor((input, ct) =>
 	ct.ThrowIfCancellationRequested();
 	if (input.Arguments is ["/find"])
 	{
-		return ValueTask.FromResult(ArgumentPreprocessingResult.Continue(
-			InputValidationResult.Incomplete("Supply a search term: /find \"hello world\" [limit].")));
+		return ArgumentPreprocessingResult.Continue(
+			InputValidationResult.Incomplete("Supply a search term: /find \"hello world\" [limit]."));
 	}
 
 	if (input.Arguments.Count >= 2 && input.Arguments[0] is "/find")
 	{
 		var text = input.Arguments[1];
 		var trailing = input.Arguments.Skip(2).ToArray();
-		return ValueTask.FromResult(ArgumentPreprocessingResult.Replace(
+		return ArgumentPreprocessingResult.Replace(
 			trailing.Length != 0 && !trailing[0].StartsWith("--", StringComparison.Ordinal)
-				? ["query", text, "--limit", trailing[0], .. trailing.Skip(1)] : ["query", text, .. trailing]));
+				? ["query", text, "--limit", trailing[0], .. trailing.Skip(1)] : ["query", text, .. trailing]);
 	}
 
-	return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+	return ArgumentPreprocessingResult.Continue();
 });
 
 var prepared = await startup.PrepareAsync(args);
@@ -52,9 +52,9 @@ app.UseStartupHook((ReplStartupContext context, SampleStartupOptions options, Se
 		? ArgumentPreprocessingResult.Handled(result) : ArgumentPreprocessingResult.Continue();
 });
 
-app.UseArgumentPreprocessor((input, _) => ValueTask.FromResult(
+app.UseArgumentPreprocessor((input, _) =>
 	input.Arguments is ["/refresh"] && input.Mode == InputProcessingMode.Preview
-		? ArgumentPreprocessingResult.Handled() : ArgumentPreprocessingResult.Continue()));
+		? ArgumentPreprocessingResult.Handled() : ArgumentPreprocessingResult.Continue());
 
 app.UseInvocationHook((ReplInvocationContext context, SearchIndex search, CancellationToken ct) =>
 {
