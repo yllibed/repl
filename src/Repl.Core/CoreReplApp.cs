@@ -876,7 +876,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			[typeof(IReplIoContext)] = new LiveReplIoContext(),
 			[typeof(TimeProvider)] = TimeProvider.System,
 		};
-		return new DefaultServiceProvider(defaults);
+		return new DefaultServiceProvider(this, defaults);
 	}
 
 	internal static bool IsHelpToken(string token) =>
@@ -984,7 +984,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		}
 	}
 
-	private sealed class DefaultServiceProvider(IReadOnlyDictionary<Type, object> services) : IServiceProvider
+	private sealed class DefaultServiceProvider(CoreReplApp app, IReadOnlyDictionary<Type, object> services) : IServiceProvider
 	{
 		public object? GetService(Type serviceType)
 		{
@@ -999,7 +999,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				return this;
 			}
 
-			return services.TryGetValue(serviceType, out var service) ? service : null;
+			return services.TryGetValue(serviceType, out var service) ? service : app.CreateGlobalOptions(serviceType, app.GlobalOptionsAccessor);
 		}
 	}
 

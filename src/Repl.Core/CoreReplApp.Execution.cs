@@ -26,21 +26,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	/// <param name="args">Command-line arguments.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Process exit code.</returns>
-	public ValueTask<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
+	public async ValueTask<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(args);
 		_ = _description;
 		_ = _commands.Count;
 		_ = _middleware.Count;
 		_ = _options;
-		return ExecuteCoreAsync(args, _services, cancellationToken: cancellationToken);
+		return ResolveProcessExitCode(await RunOutcomeWithServicesAsync(args, _services, cancellationToken).ConfigureAwait(false));
 	}
 
-	internal ValueTask<int> RunWithServicesAsync(
+	internal async ValueTask<int> RunWithServicesAsync(
 		string[] args,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
-		ExecuteCoreAsync(args, serviceProvider, cancellationToken: cancellationToken);
+		ResolveProcessExitCode(await RunOutcomeWithServicesAsync(args, serviceProvider, cancellationToken).ConfigureAwait(false));
 
 	/// <summary>
 	/// Executes a nested command invocation that preserves the session baseline.
@@ -98,7 +98,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		string[] args,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
-		RunUnderCancellationPolicyAsync(args, serviceProvider, isSubInvocation: false, cancellationToken);
+		RunStartupOutcomeAsync(args, serviceProvider, beforeDispatch: null, cancellationToken);
+
+	internal ValueTask<ExecutionOutcome> RunOutcomeWithServicesAsync(string[] args, IServiceProvider services,
+		Func<CancellationToken, ValueTask> beforeDispatch, CancellationToken cancellationToken) =>
+		RunStartupOutcomeAsync(args, services, beforeDispatch, cancellationToken);
 
 	/// <summary>
 	/// Converts an already-cancelled caller token into a <see cref="ReplExecutionOutcomeKind.Cancelled"/>
@@ -608,8 +612,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		if (options.RemainingTokens.Count == 0
-			|| !string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase))
+		if (!IsAmbientCompletion(options))
 		{
 			return null;
 		}
@@ -622,6 +625,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			.ConfigureAwait(false);
 		return completed ? ExecutionOutcome.Success : ExecutionOutcome.UsageError();
 	}
+
+	private static bool IsAmbientCompletion(GlobalInvocationOptions options) => options.RemainingTokens.Count != 0
+		&& string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase);
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbientInNonInteractiveAsync(
 		GlobalInvocationOptions options,

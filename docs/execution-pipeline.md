@@ -8,6 +8,11 @@ Applications integrating an existing CLI or a larger host can opt into
 the global-option stage; typed input validators run before handler binding. The
 ordinary command-definition workflow does not require these hooks.
 
+[Startup preparation and hooks](advanced-startup.md#callback-and-lifecycle-order)
+document the outer lifecycle: preparation before composition, startup hooks in the
+run/session scope, then hosted-service startup and the dispatch pipeline below.
+Startup hooks do not repeat for each interactive command or nested tool call.
+
 ```text
 Input
   |

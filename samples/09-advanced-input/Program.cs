@@ -2,18 +2,11 @@ using System.ComponentModel;
 using Microsoft.Extensions.DependencyInjection;
 using Repl;
 
-var index = new SearchIndex();
-var app = ReplApp.Create(services =>
-	{
-		services.AddSingleton(index);
-		services.AddSingleton(new SearchPolicy(MaximumLimit: 5));
-	})
-	.WithDescription("Advanced input: adapt a legacy CLI inside a larger application.")
-	.WithBanner("Type demo for a walkthrough. Try /find \"hello world\" 3, then press Tab.")
-	.UseDefaultInteractive()
-	.UseCliProfile();
+var startup = ReplStartup.CreateBuilder().UseGlobalOptions<SampleStartupOptions>();
+startup.UsePreparationHook((SampleStartupOptions options) => ArgumentPreprocessingResult.Continue(
+	options.MaximumLimit > 0 ? InputValidationResult.Valid() : InputValidationResult.Invalid("MaximumLimit must be positive.")));
 
-app.UseArgumentPreprocessor((input, ct) =>
+startup.UseArgumentPreprocessor((input, ct) =>
 {
 	ct.ThrowIfCancellationRequested();
 	if (input.Arguments is ["/find"])
@@ -22,17 +15,41 @@ app.UseArgumentPreprocessor((input, ct) =>
 			InputValidationResult.Incomplete("Supply a search term: /find \"hello world\" [limit].")));
 	}
 
-	if (input.Arguments is ["/find", var text])
+	if (input.Arguments.Count >= 2 && input.Arguments[0] is "/find")
 	{
-		return ValueTask.FromResult(ArgumentPreprocessingResult.Replace(["query", text]));
-	}
-
-	if (input.Arguments is ["/find", var query, var limit])
-	{
-		return ValueTask.FromResult(ArgumentPreprocessingResult.Replace(["query", query, "--limit", limit]));
+		var text = input.Arguments[1];
+		var trailing = input.Arguments.Skip(2).ToArray();
+		return ValueTask.FromResult(ArgumentPreprocessingResult.Replace(
+			trailing.Length != 0 && !trailing[0].StartsWith("--", StringComparison.Ordinal)
+				? ["query", text, "--limit", trailing[0], .. trailing.Skip(1)] : ["query", text, .. trailing]));
 	}
 
 	return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+});
+
+var prepared = await startup.PrepareAsync(args);
+if (!prepared.CanContinue) { return await prepared.CompleteAsync(); }
+
+var index = new SearchIndex();
+var app = ReplApp.Create(prepared, services =>
+	{
+		services.AddSingleton(index);
+		services.AddSingleton(new SearchPolicy(prepared.GetOptions<SampleStartupOptions>().MaximumLimit));
+	})
+	.WithDescription("Advanced input: adapt a legacy CLI inside a larger application.")
+	.WithBanner("Type demo for a walkthrough. Try /find \"hello world\" 3, then press Tab.")
+	.UseDefaultInteractive()
+	.UseCliProfile();
+
+app.UseStartupHook((ReplStartupContext context, SampleStartupOptions options, SearchIndex search) =>
+{
+	if (!options.RefreshOnStart || context.Purpose is InputPurpose.Help or InputPurpose.Completion)
+	{
+		return ArgumentPreprocessingResult.Continue();
+	}
+	var result = search.Refresh();
+	return context.RemainingArguments.Count == 0
+		? ArgumentPreprocessingResult.Handled(result) : ArgumentPreprocessingResult.Continue();
 });
 
 app.UseArgumentPreprocessor((input, ct) =>
@@ -83,11 +100,19 @@ app.Map("demo",
 		4. Submit /find "hello world" 9: the injected SearchPolicy rejects the limit.
 		5. Submit status, then type /refresh and pause: no refresh runs while typing.
 		6. Submit /refresh, then status: the host refresh count increases once; the session stays open.
+		7. At startup, --maximum-limit 2 configures SearchPolicy before DI; /find "hello world" 3 is then refused.
+		8. At startup, --refresh-on-start status refreshes once before dispatch; --refresh-on-start alone finishes without a command.
 		""");
 
-return await app.RunAsync(args);
+return await app.RunAsync(prepared);
 
 internal sealed record SearchPolicy(int MaximumLimit);
+
+internal sealed class SampleStartupOptions
+{
+	public int MaximumLimit { get; set; } = 5;
+	public bool RefreshOnStart { get; set; }
+}
 
 internal sealed class SearchIndex
 {

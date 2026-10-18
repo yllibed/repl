@@ -22,16 +22,19 @@ public sealed partial class CoreReplApp
 
 	internal async ValueTask<ProcessedInput> PreprocessInputAsync(
 		IReadOnlyList<string> arguments, IReadOnlyList<string> scopeTokens, InputProcessingMode mode,
-		string? text, int? cursor, CancellationToken cancellationToken, bool isInteractive = false)
+		string? text, int? cursor, CancellationToken cancellationToken, bool isInteractive = false,
+		ProcessedInput? previous = null, int skip = 0, Action<ProcessedInput>? onProcessed = null)
 	{
-		var original = arguments.ToArray();
-		IReadOnlyList<string> effective = original;
+		var original = previous?.Context.OriginalArguments.ToArray() ?? arguments.ToArray();
+		IReadOnlyList<string> effective = previous?.Context.Arguments ?? original;
 		IReadOnlyList<InputSourceRange?> origins = text is null
 			? new InputSourceRange?[original.Length]
 			: InputTokenizer.Tokenize(text).Select(static token => (InputSourceRange?)new InputSourceRange(token.Start, token.Length)).ToArray();
 		var checks = new List<InputValidationResult>();
+		if (previous is not null) { checks.Add(previous.Validation); }
 		var context = CreateContext();
-		foreach (var adapter in _options.Input.Preprocessors.ToArray())
+		onProcessed?.Invoke(new(context, CombineInputValidation(checks)));
+		foreach (var adapter in _options.Input.Preprocessors.Skip(skip).ToArray())
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			var decision = await adapter(context, cancellationToken).ConfigureAwait(false)
@@ -48,10 +51,9 @@ public sealed partial class CoreReplApp
 				origins = replacementOrigins;
 				context = CreateContext();
 			}
-			if (decision.IsHandled)
-			{
-				return new(context, CombineInputValidation(checks), IsHandled: true, decision.Result);
-			}
+			var processed = new ProcessedInput(context, CombineInputValidation(checks), decision.IsHandled, decision.Result);
+			onProcessed?.Invoke(processed);
+			if (decision.IsHandled) { return processed; }
 		}
 		return new(context, CombineInputValidation(checks));
 
@@ -85,6 +87,7 @@ public sealed partial class CoreReplApp
 		{
 			return InputPurpose.Help;
 		}
+		if (IsAmbientCompletion(globals) || IsCompletionBridge(arguments)) { return InputPurpose.Completion; }
 		return arguments.Count == 0 ? InputPurpose.Unknown : InputPurpose.Command;
 	}
 
@@ -93,7 +96,7 @@ public sealed partial class CoreReplApp
 		CancellationToken cancellationToken, IServiceProvider? presenceServiceProvider = null)
 	{
 		// Structured adapters retain their native invocation contract; #115 owns their interception.
-		if (!_options.Input.IsEnabled || ReplSessionIO.IsProgrammatic)
+		if ((!_options.Input.IsEnabled && _startupInput.Value is null) || ReplSessionIO.IsProgrammatic)
 		{
 			using var inputScope = PushProcessedInput(input: null);
 			return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
@@ -109,8 +112,8 @@ public sealed partial class CoreReplApp
 				return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
 					cancellationToken, presenceServiceProvider).ConfigureAwait(false);
 			}
-			var input = await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken)
-				.ConfigureAwait(false);
+			var input = !isSubInvocation && _startupInput.Value is { } startup ? startup
+				: await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken).ConfigureAwait(false);
 			_currentInput.Value = input;
 			if (await TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false) is { } finished)
 			{

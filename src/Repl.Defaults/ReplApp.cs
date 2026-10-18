@@ -13,7 +13,7 @@ namespace Repl;
 /// <summary>
 /// DI-enabled REPL application facade for common hosting scenarios.
 /// </summary>
-public sealed class ReplApp : IReplApp
+public sealed partial class ReplApp : IReplApp
 {
 	private readonly CoreReplApp _core;
 	private readonly IServiceCollection _services;
@@ -459,6 +459,7 @@ public sealed class ReplApp : IReplApp
 		ValidateSessionScope(sessionScope);
 
 		IReadOnlyList<IHostedService> started = [];
+		var startupBeforeServices = _core.HasStartupWork;
 		ExecutionOutcome? outcome = null;
 		Exception? propagating = null;
 		try
@@ -466,15 +467,14 @@ public sealed class ReplApp : IReplApp
 			// A startup failure rolls back whatever the coordinator managed to start. That rollback is
 			// best-effort: it swallows its own stop errors, so a service that refuses to stop during
 			// rollback survives unreported, unlike one that fails in the normal shutdown below.
-			started = await HostedServiceLifecycleCoordinator.StartAsync(services, cancellationToken)
-				.ConfigureAwait(false);
+			if (!startupBeforeServices)
+			{
+				started = await HostedServiceLifecycleCoordinator.StartAsync(services, cancellationToken).ConfigureAwait(false);
+			}
 			// The scope wraps the pipeline only: hosted services are app-level and keep starting from
 			// the unscoped provider above, so their lifetime is not tied to this session.
-			outcome = await RunInSessionScopeAsync(
-				services,
-				sessionScope,
-				(sessionServices, token) => _core.RunOutcomeWithServicesAsync(args, sessionServices, token),
-				cancellationToken).ConfigureAwait(false);
+			outcome = await RunHostedPipelineAsync(args, services, sessionScope, startupBeforeServices,
+				value => started = value, cancellationToken).ConfigureAwait(false);
 		}
 		catch (HostedServiceLifecycleException ex)
 		{
