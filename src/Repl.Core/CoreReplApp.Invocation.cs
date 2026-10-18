@@ -198,8 +198,13 @@ public sealed partial class CoreReplApp
 	{
 		try
 		{
-			flag = (bool)ParameterValueConverter.ConvertNative(value, typeof(bool), _options.Parsing.NumericFormatProvider)!;
-			return true;
+			if (ParameterValueConverter.ConvertNative(value, typeof(bool), _options.Parsing.NumericFormatProvider) is bool converted)
+			{
+				flag = converted;
+				return true;
+			}
+			flag = false;
+			return false;
 		}
 		catch (Exception exception) when (IsInputConversionFailure(exception)) { flag = false; return false; }
 	}

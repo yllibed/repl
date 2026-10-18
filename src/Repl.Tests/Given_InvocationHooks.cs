@@ -7,6 +7,7 @@ namespace Repl.Tests;
 public sealed class Given_InvocationHooks
 {
 	[TestMethod]
+	[Description("Repair must refresh typed values without replaying earlier hooks or losing the original submission.")]
 	public async Task When_InvalidInputIsReplaced_Then_NextHookSeesFreshParsedValues()
 	{
 		var events = new List<string>();
@@ -31,6 +32,7 @@ public sealed class Given_InvocationHooks
 	}
 
 	[TestMethod]
+	[Description("Native collections preserve literal option-like strings and explicit emptiness without CLI token interpretation.")]
 	public async Task When_StructuredValuesContainEmptyAndOptionLikeStrings_Then_BindingPreservesThem()
 	{
 		var app = CoreReplApp.Create();
@@ -45,6 +47,7 @@ public sealed class Given_InvocationHooks
 	}
 
 	[TestMethod]
+	[Description("Native decimals must retain their value when the active text parsing culture uses a different separator.")]
 	public async Task When_NativeNumbersUseDifferentCulture_Then_NoTextRoundTripOccurs()
 	{
 		using var culture = new CultureScope(CultureInfo.GetCultureInfo("fr-CA"));
@@ -56,6 +59,7 @@ public sealed class Given_InvocationHooks
 	}
 
 	[TestMethod]
+	[Description("External actions can terminate invocation processing before later hooks or the command produce side effects.")]
 	public async Task When_HookHandlesRequest_Then_HandlerAndFollowingHooksDoNotRun()
 	{
 		var app = CoreReplApp.Create();
@@ -66,6 +70,7 @@ public sealed class Given_InvocationHooks
 	}
 
 	[TestMethod]
+	[Description("Async hooks share invocation services and caller cancellation with ordinary command execution.")]
 	public async Task When_HookUsesServices_Then_ItReceivesTheRunScopeAndCancellation()
 	{
 		var service = new Marker();
@@ -87,6 +92,7 @@ public sealed class Given_InvocationHooks
 	}
 
 	[TestMethod]
+	[Description("A rewrite cannot bypass the final command schema by introducing undeclared values.")]
 	public async Task When_ReplacementHasUnknownValues_Then_ItIsRejected()
 	{
 		var app = CoreReplApp.Create();
@@ -96,6 +102,7 @@ public sealed class Given_InvocationHooks
 	}
 
 	[TestMethod]
+	[Description("Request copies isolate mutable native collections so repeated submissions remain independent.")]
 	public async Task When_RequestIsReused_Then_HookMutationsDoNotChangeItsValues()
 	{
 		var app = CoreReplApp.Create();

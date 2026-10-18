@@ -695,7 +695,6 @@ internal static class HandlerArgumentBinder
 		"Trimming",
 		"IL2067",
 		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
-	[SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Group binding keeps native, named and positional precedence together.")]
 	private static object BindOptionsGroup(
 		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
 		Type groupType,
@@ -711,63 +710,69 @@ internal static class HandlerArgumentBinder
 				continue;
 			}
 
-			var propertyName = property.Name;
-			var bindingMode = ResolvePropertyBindingMode(propertyName, property, context.OptionSchema);
-			var enumIgnoreCase = ResolveEnumIgnoreCase(propertyName, context);
-			if (context.NativeValues.TryGetValue(propertyName, out var native))
-			{
-				ValidateNativeArity(context.OptionSchema, propertyName, native);
-				AssignProperty(property, instance, ParameterValueConverter.ConvertNative(native, property.PropertyType,
-					context.NumericFormatProvider, enumIgnoreCase), context.CancellationToken);
-				continue;
-			}
-
-			if (bindingMode != ReplParameterMode.ArgumentOnly
-				&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
-			{
-				if (bindingMode == ReplParameterMode.OptionAndPositional
-					&& CanConsumePositionalForProperty(property, context.PositionalArguments, positionalIndex))
-				{
-					throw new InvalidOperationException(
-						$"Property '{propertyName}' cannot receive both named and positional values in the same invocation.");
-				}
-
-				var converted = ConvertPropertyManyOrSingle(
-					property,
-					namedValues,
-					property.PropertyType,
-					context.NumericFormatProvider,
-					enumIgnoreCase);
-				AssignProperty(property, instance, converted, context.CancellationToken);
-				continue;
-			}
-
-			if (bindingMode != ReplParameterMode.OptionOnly)
-			{
-				var positionalStart = positionalIndex;
-				if (TryConsumePositionalForProperty(
-					property,
-					context.PositionalArguments,
-					context.NumericFormatProvider,
-					enumIgnoreCase,
-					ref positionalIndex,
-					out var positionalValue))
-				{
-					// Same positional upper-bound parity as the handler-parameter path.
-					ThrowIfExplicitUpperBoundExceeded(
-						context.OptionSchema, propertyName, positionalIndex - positionalStart);
-					AssignProperty(property, instance, positionalValue, context.CancellationToken);
-					continue;
-				}
-			}
-
-			// Mirrors the handler-parameter path: an explicit lower bound rejects absence
-			// after both named and positional attempts, instead of silently keeping the
-			// property default.
-			ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, propertyName);
+			BindOptionsGroupProperty(property, instance, context, ref positionalIndex);
 		}
 
 		return instance;
+	}
+
+	private static void BindOptionsGroupProperty(
+		PropertyInfo property, object instance, InvocationBindingContext context, ref int positionalIndex)
+	{
+		var propertyName = property.Name;
+		var bindingMode = ResolvePropertyBindingMode(propertyName, property, context.OptionSchema);
+		var enumIgnoreCase = ResolveEnumIgnoreCase(propertyName, context);
+		if (context.NativeValues.TryGetValue(propertyName, out var native))
+		{
+			ValidateNativeArity(context.OptionSchema, propertyName, native);
+			AssignProperty(property, instance, ParameterValueConverter.ConvertNative(native, property.PropertyType,
+				context.NumericFormatProvider, enumIgnoreCase), context.CancellationToken);
+			return;
+		}
+
+		if (bindingMode != ReplParameterMode.ArgumentOnly
+			&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
+		{
+			if (bindingMode == ReplParameterMode.OptionAndPositional
+				&& CanConsumePositionalForProperty(property, context.PositionalArguments, positionalIndex))
+			{
+				throw new InvalidOperationException(
+					$"Property '{propertyName}' cannot receive both named and positional values in the same invocation.");
+			}
+
+			var converted = ConvertPropertyManyOrSingle(
+				property,
+				namedValues,
+				property.PropertyType,
+				context.NumericFormatProvider,
+				enumIgnoreCase);
+			AssignProperty(property, instance, converted, context.CancellationToken);
+			return;
+		}
+
+		if (bindingMode != ReplParameterMode.OptionOnly)
+		{
+			var positionalStart = positionalIndex;
+			if (TryConsumePositionalForProperty(
+				property,
+				context.PositionalArguments,
+				context.NumericFormatProvider,
+				enumIgnoreCase,
+				ref positionalIndex,
+				out var positionalValue))
+			{
+				// Same positional upper-bound parity as the handler-parameter path.
+				ThrowIfExplicitUpperBoundExceeded(
+					context.OptionSchema, propertyName, positionalIndex - positionalStart);
+				AssignProperty(property, instance, positionalValue, context.CancellationToken);
+				return;
+			}
+		}
+
+		// Mirrors the handler-parameter path: an explicit lower bound rejects absence
+		// after both named and positional attempts, instead of silently keeping the
+		// property default.
+		ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, propertyName);
 	}
 
 	internal static void ValidateNativeArity(OptionSchema schema, string name, object? value)

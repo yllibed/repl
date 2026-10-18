@@ -7,6 +7,7 @@ namespace Repl.McpTests;
 public sealed class Given_McpInvocationHooks
 {
 	[TestMethod]
+	[Description("MCP rewrites must preserve native collections and the scoped service shared by hooks and the handler.")]
 	public async Task When_ToolArgumentsAreRewritten_Then_HooksAndHandlerKeepNativeCollectionsAndScope()
 	{
 		Marker? hookService = null;
@@ -39,6 +40,7 @@ public sealed class Given_McpInvocationHooks
 	}
 
 	[TestMethod]
+	[Description("MCP schema guards must reject undeclared arguments before hooks can perform external actions.")]
 	public async Task When_ClientSuppliesAnUndeclaredField_Then_ItIsRejectedBeforeHooks()
 	{
 		var calls = 0;
@@ -53,6 +55,7 @@ public sealed class Given_McpInvocationHooks
 	}
 
 	[TestMethod]
+	[Description("Context hooks can handle malformed tool input without forcing command binding or execution.")]
 	public async Task When_ToolHookHandlesAnUnbindableValue_Then_TheHandlerDoesNotRun()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app =>
@@ -71,6 +74,7 @@ public sealed class Given_McpInvocationHooks
 	private sealed class Marker;
 
 	[TestMethod]
+	[Description("The native MCP handoff must preserve shipped boolean and null string coercions when no hook is registered.")]
 	[DataRow("true")]
 	[DataRow("false")]
 	[DataRow("null")]
@@ -94,6 +98,7 @@ public sealed class Given_McpInvocationHooks
 	}
 
 	[TestMethod]
+	[Description("MCP paging and forced output belong to the tool call and must not leak into a public child or disappear after failure.")]
 	[DataRow(false)]
 	[DataRow(true)]
 	public async Task When_McpStartsAPublicChild_Then_PagingStaysWithItsOwningInvocation(bool childFails)

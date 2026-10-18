@@ -4,6 +4,7 @@ namespace Repl.IntegrationTests;
 public sealed class Given_InvocationBridge
 {
 	[TestMethod]
+	[Description("The real shell transport must invoke hooks only for its payload and keep stdout valid for the completion protocol.")]
 	public void When_RealShellBridgeIsHandled_Then_TheHookRunsOnceAndStdoutContainsNoPayload()
 	{
 		var result = ShellCompletionTestHostRunner.Run("invocation-hook",

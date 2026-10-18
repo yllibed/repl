@@ -7,6 +7,7 @@ namespace Repl.Tests;
 public sealed class Given_InvocationChannels
 {
 	[TestMethod]
+	[Description("Legacy text adaptation must precede startup and parsed hooks, with validation and middleware applied once afterward.")]
 	public async Task When_TextIsAdapted_Then_StartupAndInvocationCallbacksHaveSeparateOrdering()
 	{
 		var events = new List<string>();
@@ -32,6 +33,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("External actions and native rewrites must preserve interactive context and leave the session available for another command.")]
 	[DataRow(false)]
 	[DataRow(true)]
 	public async Task When_InteractiveHookHandlesOrRewrites_Then_TheNextCommandStillRuns(bool hosted)
@@ -62,6 +64,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("Background analysis must not trigger hook side effects, and handled completion must not render a result.")]
 	public async Task When_TabOrHelpRuns_Then_HooksRunButBackgroundPreviewDoesNot()
 	{
 		var app = CoreReplApp.Create();
@@ -84,6 +87,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("The shell bridge exposes its user payload as completion input without leaking handled output to stdout.")]
 	public async Task When_ShellPayloadIsAnalyzed_Then_HookSeesCompletionMode()
 	{
 		var app = CoreReplApp.Create();
@@ -104,6 +108,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("A literal route value resembling a flag must not change help or global-option behavior.")]
 	public async Task When_NativeRouteContainsAnOptionLikeValue_Then_ItRemainsARouteValue()
 	{
 		var app = CoreReplApp.Create();
@@ -114,6 +119,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("Malformed scalar input must refuse the typed hook instead of allowing actions based on a default integer.")]
 	public async Task When_RequiredHookInputIsInvalid_Then_ItReceivesABindingDiagnostic()
 	{
 		var app = CoreReplApp.Create();
@@ -126,6 +132,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("Group values, typed globals and keyed services must agree with the effective request and its service provider.")]
 	public async Task When_HookReceivesOptionsAndKeyedServices_Then_ItUsesTheCurrentInvocation()
 	{
 		var marker = new object();
@@ -143,6 +150,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("A public child invocation must own its submission without consuming the native parent waiting to execute.")]
 	public async Task When_HookInvokesANestedRun_Then_TheChildDoesNotInheritTheParentRequest()
 	{
 		var app = CoreReplApp.Create();
@@ -159,6 +167,7 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("Concurrent async hooks must retain their own native values and globals across an await boundary.")]
 	public async Task When_RunsOverlap_Then_ValuesAndGlobalsRemainIndependent()
 	{
 		var app = ReplApp.Create().UseGlobalOptions<Globals>();

@@ -7,6 +7,7 @@ namespace Repl.Tests;
 public sealed class Given_InvocationStartup
 {
 	[TestMethod]
+	[Description("Startup decisions govern native dispatch while original values remain available for provenance across Core and the facade.")]
 	[DataRow(false, "continue")]
 	[DataRow(true, "continue")]
 	[DataRow(false, "replace")]
@@ -47,6 +48,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("Invalid built-in flags must remain inspectable and repairable instead of failing before invocation hooks.")]
 	[DataRow(false, false)]
 	[DataRow(true, false)]
 	[DataRow(false, true)]
@@ -71,6 +73,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("Unrepaired native flags must be rejected before command execution rather than silently ignored.")]
 	public async Task When_AnInvalidGlobalIsNotRepaired_Then_FinalValidationRefusesIt()
 	{
 		var app = CoreReplApp.Create();
@@ -82,6 +85,7 @@ public sealed class Given_InvocationStartup
 	private sealed class Globals { public string Tenant { get; set; } = "default"; }
 
 	[TestMethod]
+	[Description("Nested textual runs from startup must not consume the pending parent, including when the child fails.")]
 	[DataRow(false, false)]
 	[DataRow(true, false)]
 	[DataRow(false, true)]
@@ -116,6 +120,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("Dependencies created during startup must observe the same native null and restored parent globals as direct injection.")]
 	[DataRow(false)]
 	[DataRow(true)]
 	public async Task When_NativeStartupCreatesDependencies_Then_DirectAndDiGlobalsAgree(bool childFails)
@@ -152,6 +157,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("Head service startup must see native globals even when no startup hook was registered.")]
 	[DataRow(false)]
 	[DataRow(true)]
 	public async Task When_HostedServicesStart_Then_TheySeeNativeGlobals(bool startupHook)
@@ -167,6 +173,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("A terminal startup result must retain native globals until its output transformer finishes.")]
 	public async Task When_StartupHandlesANativeRequest_Then_TerminalRenderingSeesItsGlobals()
 	{
 		var app = CoreReplApp.Create().UseGlobalOptions<Globals>();
@@ -187,6 +194,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("Hosted startup callbacks must not consume their native parent when they run a successful or failing textual child.")]
 	[DataRow(false)]
 	[DataRow(true)]
 	public async Task When_HeadStartupRunsATextualChild_Then_TheParentSubmissionIsRestored(bool childFails)
@@ -228,6 +236,7 @@ public sealed class Given_InvocationStartup
 	}
 
 	[TestMethod]
+	[Description("Independent public submissions use configured defaults and restore their enclosing invocation afterward.")]
 	public async Task When_APublicChildOmitsGlobals_Then_ItUsesDefaultsAndRestoresItsParent()
 	{
 		var app = CoreReplApp.Create().UseGlobalOptions<Globals>();
