@@ -8,6 +8,17 @@ Use normal option definitions, route constraints and context validation first.
 Input adapters are useful when the old interface cannot be expressed through
 ordinary routes or option aliases.
 
+## Choose an Extension Point
+
+| Need | Extension point | Stage |
+| --- | --- | --- |
+| Configure application objects or service registration from arguments | [Preparation hooks](advanced-startup.md#preparation-before-composition) | Explicit preparation before application composition |
+| Perform an action using the run's services before dispatch | [Startup hooks](advanced-startup.md) | Once per run, after services are available |
+| Translate legacy textual syntax | Raw argument adapter | Before strict parsing and routing |
+| Inspect parsed values, redirect a request or handle an external action | Invocation hook | After preliminary parsing, before final validation |
+| Accept or refuse input using parsed values | Input validator | Input analysis and submission, after invocation hooks when they run |
+| Wrap ordinary command execution | Command middleware | After final command validation and binding |
+
 ## Translate an Existing Command Line
 
 Register adapters on the root `ReplApp` or `CoreReplApp`. They run before strict
@@ -102,8 +113,10 @@ globals, diagnostics, mode and purpose. Hooks run **before final validation** an
 can repair malformed or partial input. Use a context-based signature when that
 input may be invalid. A required typed hook parameter that is unavailable produces
 a binding diagnostic; it does not silently receive a default numeric value.
-This also applies to options-group properties with an explicit required arity
-(`ExactlyOne` or `OneOrMore`); omitted optional properties retain their initializers.
+This also applies to options-group properties declared by the resolved command
+schema with an explicit required arity (`ExactlyOne` or `OneOrMore`); omitted
+optional properties retain their initializers. A hook-only options group does not
+add parameters to the command schema.
 
 `Continue` advances to the next hook. `Replace` replaces the whole request,
 including its globals; explicitly carry forward the values you want to preserve.
