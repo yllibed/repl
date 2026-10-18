@@ -540,7 +540,11 @@ internal sealed partial class McpToolAdapter
 			.Where(static option => IsBooleanTypeName(option.Type))
 			.Select(static option => option.Name)
 			.ToHashSet(StringComparer.Ordinal);
-		return PrepareExecution(command.Path, arguments, allowedArgumentNames, optionTokens, boolOptionNames);
+		var collectionOptionNames = command.Options
+			.Where(static option => McpSchemaGenerator.IsCollectionType(option.Type))
+			.Select(static option => option.Name)
+			.ToHashSet(StringComparer.Ordinal);
+		return PrepareExecution(command.Path, arguments, allowedArgumentNames, optionTokens, boolOptionNames, collectionOptionNames);
 	}
 
 	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
@@ -548,7 +552,8 @@ internal sealed partial class McpToolAdapter
 		IDictionary<string, JsonElement> arguments,
 		AllowedArgumentNames? allowedArgumentNames,
 		IReadOnlyDictionary<string, string> optionTokens,
-		IReadOnlySet<string>? boolOptionNames = null)
+		IReadOnlySet<string>? boolOptionNames = null,
+		HashSet<string>? collectionOptionNames = null)
 	{
 		var stringArgs = new Dictionary<string, object?>(StringComparer.Ordinal);
 		var prefills = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -564,6 +569,12 @@ internal sealed partial class McpToolAdapter
 			{
 				throw new InvalidOperationException(
 					$"The MCP argument '{requestedKey}' duplicates the schema field '{key}'.");
+			}
+			if (field.Kind == McpArgumentFieldKind.Command
+				&& value.ValueKind == JsonValueKind.Array && collectionOptionNames?.Contains(key) == true)
+			{
+				stringArgs.Add(key, GetCollectionValues(key, value));
+				continue;
 			}
 			var strValue = value.ValueKind == JsonValueKind.String
 				? value.GetString() ?? ""
@@ -595,6 +606,14 @@ internal sealed partial class McpToolAdapter
 		tokens.InsertRange(0, resultFlowTokens);
 		return (tokens, prefills);
 	}
+
+	private static string[] GetCollectionValues(string name, JsonElement array) =>
+		array.EnumerateArray().Select(item => item.ValueKind switch
+		{
+			JsonValueKind.String => item.GetString() ?? "",
+			JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => item.GetRawText(),
+			_ => throw new McpException($"The MCP collection argument '{name}' must contain only non-null scalar values."),
+		}).ToArray();
 
 	private static void ValidateResultCursor(string cursor)
 		=> ResultFlowCursorPolicy.ValidateOrThrow(cursor);
@@ -758,25 +777,47 @@ internal sealed partial class McpToolAdapter
 		{
 			if (!consumedArgs.Contains(key))
 			{
-				var token = ResolveOptionToken(key, optionTokens);
-				var strValue = value?.ToString() ?? "";
-				if (boolOptionNames?.Contains(key) == true)
-				{
-					// Single inline token: TrySplitOptionToken (InvocationOptionParser) splits on
-					// the first '=' only, so the value survives intact even when it starts with
-					// '-' or contains '=' itself, and it can never be left dangling by
-					// ApplyBoolFlagValue to be re-lexed as a fresh option on the next iteration.
-					tokens.Add($"{token}={strValue}");
-				}
-				else
-				{
-					tokens.Add(token);
-					tokens.Add(strValue);
-				}
+				AppendOptionTokens(tokens, key, value, optionTokens, boolOptionNames);
 			}
 		}
 
 		return tokens;
+	}
+
+	private static void AppendOptionTokens(
+		List<string> tokens,
+		string key,
+		object? value,
+		IReadOnlyDictionary<string, string>? optionTokens,
+		IReadOnlySet<string>? boolOptionNames)
+	{
+		var token = ResolveOptionToken(key, optionTokens);
+		if (value is string[] values)
+		{
+			// Repeated inline occurrences preserve empty and option-looking values.
+			// An empty array has the same behavior as an omitted option.
+			foreach (var item in values)
+			{
+				tokens.Add($"{token}={item}");
+			}
+
+			return;
+		}
+
+		var strValue = value?.ToString() ?? "";
+		if (boolOptionNames?.Contains(key) == true)
+		{
+			// Single inline token: TrySplitOptionToken (InvocationOptionParser) splits on
+			// the first '=' only, so the value survives intact even when it starts with
+			// '-' or contains '=' itself, and it can never be left dangling by
+			// ApplyBoolFlagValue to be re-lexed as a fresh option on the next iteration.
+			tokens.Add($"{token}={strValue}");
+		}
+		else
+		{
+			tokens.Add(token);
+			tokens.Add(strValue);
+		}
 	}
 
 	// Guards the ONE place an MCP-supplied value becomes a bare CLI token: a positional route
