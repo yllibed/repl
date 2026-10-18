@@ -4,6 +4,64 @@ namespace Repl;
 
 internal static class ParameterValueConverter
 {
+	internal static object? ConvertNative(object? value, Type targetType, IFormatProvider provider, bool enumIgnoreCase = true)
+	{
+		if (value is not null && HandlerArgumentBinder.TryGetCollectionElementType(targetType, out var elementType))
+		{
+			var items = value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } array
+				? array.EnumerateArray().Select(static item => (object?)item.Clone())
+				: value is System.Collections.IEnumerable collection && value is not string ? collection.Cast<object?>() : [value];
+			return HandlerArgumentBinder.ConvertMatchesToTargetCollection(targetType, elementType,
+				items.Select(item => ConvertNative(item, elementType, provider, enumIgnoreCase)).ToArray());
+		}
+		if (value is System.Text.Json.JsonElement json)
+		{
+			if (targetType == typeof(string))
+			{
+				return json.ValueKind == System.Text.Json.JsonValueKind.String ? json.GetString() : json.GetRawText();
+			}
+			if (json.ValueKind == System.Text.Json.JsonValueKind.Number)
+			{
+				return ConvertSingle(json.GetRawText(), targetType, CultureInfo.InvariantCulture, enumIgnoreCase);
+			}
+			value = json.ValueKind switch
+			{
+				System.Text.Json.JsonValueKind.String => json.GetString(),
+				System.Text.Json.JsonValueKind.True => true,
+				System.Text.Json.JsonValueKind.False => false,
+				System.Text.Json.JsonValueKind.Null => null,
+				_ => throw new InvalidCastException("Invocation values must be scalars or collections of scalars."),
+			};
+		}
+		if (value is null)
+		{
+			if (targetType.IsValueType && Nullable.GetUnderlyingType(targetType) is null)
+			{
+				throw new InvalidCastException($"Null cannot be bound to {targetType.Name}.");
+			}
+			return null;
+		}
+		if (targetType.IsInstanceOfType(value)) { return value; }
+		if (value is string text) { return ConvertSingle(text, targetType, provider, enumIgnoreCase); }
+		var type = Nullable.GetUnderlyingType(targetType) ?? targetType;
+		if (type == typeof(bool) || value is bool)
+		{
+			return ConvertSingle(Convert.ToString(value, CultureInfo.InvariantCulture), type, CultureInfo.InvariantCulture, enumIgnoreCase);
+		}
+		if (type == typeof(int) || type == typeof(long) || type == typeof(short) || type == typeof(byte)
+			|| type == typeof(uint) || type == typeof(ulong) || type == typeof(ushort) || type == typeof(sbyte))
+		{
+			if ((value is decimal number && decimal.Truncate(number) != number)
+				|| (value is double real && Math.Truncate(real) != real)
+				|| (value is float single && MathF.Truncate(single) != single))
+			{
+				throw new InvalidCastException($"A fractional value cannot be bound to {type.Name}.");
+			}
+		}
+		if (type.IsEnum) { return Enum.ToObject(type, value); }
+		return Convert.ChangeType(value, type, provider);
+	}
+
 	public static object? ConvertSingle(
 		string? value,
 		Type targetType,

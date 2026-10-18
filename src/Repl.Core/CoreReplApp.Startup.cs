@@ -48,7 +48,7 @@ public sealed partial class CoreReplApp
 		_globalOptionsFactories.TryGetValue(type, out var factory) ? factory(accessor) : null;
 	internal IEnumerable<Type> GlobalOptionsTypes => _globalOptionsFactories.Keys;
 	internal void SetStartupConfiguration(object key) => _startupConfiguration = key;
-	internal bool HasStartupWork => _startupHooks.Count != 0 || _preparedStartup.Value is not null;
+	internal bool HasStartupWork => _startupHooks.Count != 0 || _preparedStartup.Value is not null || _submittedRequest.Value is not null;
 
 	internal IDisposable PushPreparedStartup(PreparedReplStartup prepared)
 	{
@@ -77,10 +77,14 @@ public sealed partial class CoreReplApp
 		return invocation;
 	}
 
-	private async ValueTask<ProcessedInput> PrepareStartupInputAsync(IReadOnlyList<string> args, PreparedReplStartup? prepared,
+	private async ValueTask<ProcessedInput> PrepareStartupInputAsync(string[] args, PreparedReplStartup? prepared,
 		StartupInvocation invocation, CancellationToken cancellationToken)
 	{
 		var mode = IsCompletionBridge(args) ? InputProcessingMode.ShellCompletion : InputProcessingMode.Execution;
+		if (invocation.Input.Request?.Command is not null)
+		{
+			return ValidateStartupInput(invocation.Input);
+		}
 		var input = await PreprocessInputAsync(args, [], mode, text: null, cursor: null, cancellationToken,
 			previous: prepared?.Invocation.Input, skip: prepared?.AdapterCount ?? 0,
 			onProcessed: input => invocation.Input = input).ConfigureAwait(false);
@@ -89,6 +93,7 @@ public sealed partial class CoreReplApp
 
 	private ProcessedInput ValidateStartupInput(ProcessedInput input)
 	{
+		using var inputScope = PushProcessedInput(input);
 		var globals = ParseInputGlobals(input);
 		var checks = new List<InputValidationResult> { input.Validation };
 		foreach (var diagnostic in globals.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic)); }
@@ -103,6 +108,7 @@ public sealed partial class CoreReplApp
 		foreach (var hook in hooks)
 		{
 			var input = invocation.Input;
+			using var inputScope = PushProcessedInput(input);
 			cancellationToken.ThrowIfCancellationRequested();
 			if (input.IsHandled || input.Validation.State != InputValidationState.Valid) { break; }
 			if (preparation) { ValidatePreparationParameters(hook); }
@@ -119,7 +125,11 @@ public sealed partial class CoreReplApp
 			var arguments = decision.Arguments ?? input.Context.Arguments;
 			var rewritten = new ArgumentPreprocessingContext(input.Context.OriginalArguments, arguments, [], input.Context.Mode,
 				IdentifyInputPurpose(arguments, input.Context.Mode, isInteractive: false), text: null, cursor: null, new InputSourceRange?[arguments.Count]);
-			invocation.Input = ValidateStartupInput(new(rewritten, CombineInputValidation([input.Validation, decision.Validation]), decision.IsHandled, decision.Result));
+			invocation.Input = ValidateStartupInput(new(rewritten, CombineInputValidation([input.Validation, decision.Validation]), decision.IsHandled, decision.Result)
+			{
+				Request = decision.Arguments is null ? input.Request : ReplInvocationRequest.FromArguments(arguments),
+				OriginalRequest = input.OriginalRequest ?? input.Request,
+			});
 		}
 	}
 
@@ -138,6 +148,7 @@ public sealed partial class CoreReplApp
 
 	private async ValueTask<ExecutionOutcome> FinishStartupAsync(StartupInvocation invocation, CancellationToken cancellationToken)
 	{
+		using var inputScope = PushProcessedInput(invocation.Input);
 		var globals = ParseInputGlobals(invocation.Input);
 		using var frame = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: false);
 		if (invocation.Failure is { } exception)
@@ -177,14 +188,15 @@ public sealed partial class CoreReplApp
 	private async ValueTask<ExecutionOutcome> RunStartupOutcomeAsync(string[] args, IServiceProvider services,
 		Func<CancellationToken, ValueTask>? beforeDispatch, CancellationToken cancellationToken)
 	{
+		using var submission = new PendingInvocationScope(this, newRun: true);
+		var submittedInput = submission.Request?.Command is not null ? CreateSubmittedInput(args, submission.Request) : null;
+		using var inputScope = PushProcessedInput(submittedInput);
 		if (!HasStartupWork && beforeDispatch is null)
 		{
-			return await RunUnderCancellationPolicyAsync(args, services, isSubInvocation: false, cancellationToken).ConfigureAwait(false);
+			return await DispatchSubmittedInputAsync(args, submission, services, cancellationToken).ConfigureAwait(false);
 		}
 		var prepared = _preparedStartup.Value;
 		_preparedStartup.Value = null;
-		var previous = _startupInput.Value;
-		_startupInput.Value = null;
 		var started = false;
 		using var runtime = PushRuntimeState(services, isInteractiveSession: false);
 		try
@@ -193,32 +205,39 @@ public sealed partial class CoreReplApp
 			started = true;
 			if (_startupHooks.Count != 0 || prepared is not null)
 			{
-				var invocation = await PrepareRunStartupAsync(args, prepared, services, cancellationToken).ConfigureAwait(false);
+				var invocation = await PrepareRunStartupAsync(args, prepared, submittedInput, services, cancellationToken).ConfigureAwait(false);
 				if (invocation.Failure is not null || invocation.Input.IsHandled || invocation.Input.Validation.State != InputValidationState.Valid)
 				{
 					return await FinishStartupAsync(invocation, cancellationToken).ConfigureAwait(false);
 				}
 				_startupInput.Value = invocation.Input;
 			}
+			using var effectiveInputScope = PushProcessedInput(_startupInput.Value ?? submittedInput);
 			var globals = GlobalOptionParser.Parse(_startupInput.Value?.Context.Arguments ?? args, _options.Output, _options.Parsing);
 			using var frame = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: false);
 			if (beforeDispatch is not null) { await beforeDispatch(cancellationToken).ConfigureAwait(false); }
-			return await RunUnderCancellationPolicyAsync(_startupInput.Value?.Context.Arguments ?? args, services,
-				isSubInvocation: false, cancellationToken).ConfigureAwait(false);
+			return await DispatchSubmittedInputAsync(_startupInput.Value?.Context.Arguments.ToArray() ?? args, submission,
+				services, cancellationToken).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException ex) when (IsConvertibleCancellation(isSubInvocation: false, cancellationToken)) { return ExecutionOutcome.Cancelled(ex); }
 		finally
 		{
 			if (started) { await TryClearProgressAsync(services).ConfigureAwait(false); }
-			_startupInput.Value = previous;
 			_preparedStartup.Value = prepared;
 		}
 	}
 
-	private async ValueTask<StartupInvocation> PrepareRunStartupAsync(string[] args, PreparedReplStartup? prepared,
+	private async ValueTask<ExecutionOutcome> DispatchSubmittedInputAsync(string[] args, PendingInvocationScope submission,
 		IServiceProvider services, CancellationToken cancellationToken)
 	{
-		var input = prepared?.Invocation.Input ?? new(new(args, args, [], InputProcessingMode.Execution, InputPurpose.Unknown,
+		using var requestScope = submission.Request is null ? null : PushInvocationRequest(submission.Request, submission.Channel ?? ReplInvocationChannel.Programmatic);
+		return await RunUnderCancellationPolicyAsync(args, services, isSubInvocation: false, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<StartupInvocation> PrepareRunStartupAsync(string[] args, PreparedReplStartup? prepared,
+		ProcessedInput? submittedInput, IServiceProvider services, CancellationToken cancellationToken)
+	{
+		var input = prepared?.Invocation.Input ?? submittedInput ?? new(new(args, args, [], InputProcessingMode.Execution, InputPurpose.Unknown,
 			text: null, cursor: null, new InputSourceRange?[args.Length]), InputValidationResult.Valid());
 		var invocation = new StartupInvocation(input);
 		try

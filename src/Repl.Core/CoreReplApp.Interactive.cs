@@ -13,6 +13,7 @@ public sealed partial class CoreReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
+		using var inputScope = PushProcessedInput(input: null);
 		await Interactive.RunInteractiveSessionAsync(initialScopeTokens, serviceProvider, cancellationToken)
 			.ConfigureAwait(false);
 		return ExecutionOutcome.Success;

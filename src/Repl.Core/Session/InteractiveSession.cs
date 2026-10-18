@@ -302,6 +302,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			{
 				input = await app.PreprocessInputAsync(inputTokens, cycle.ScopeTokens, InputProcessingMode.Execution,
 					line, line.Length, commandCts.Token, isInteractive: true).ConfigureAwait(false);
+				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
 				input = await ValidateAmbientInputAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
 				if (input.IsHandled || input.Validation.State != InputValidationState.Valid)
 				{
@@ -352,9 +353,9 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		CancellationToken cancellationToken)
 	{
 		var marks = cycle.Marks;
-		var globals = GlobalOptionParser.Parse([.. cycle.ScopeTokens, .. inputTokens], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+		var globals = GlobalOptionParser.Parse([.. (app.CurrentInputScopeTokens ?? cycle.ScopeTokens), .. inputTokens], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
 		using var invocationGlobals = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
-		var resolution = CommittedResolver.Resolve(inputTokens, cycle.ScopeTokens);
+		var resolution = CommittedResolver.Resolve(inputTokens, app.CurrentInputScopeTokens ?? cycle.ScopeTokens);
 
 		// A protocol-passthrough command turns the output stream into a protocol
 		// channel: no mark may precede or trail its payload. A/B were already

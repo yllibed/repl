@@ -7,6 +7,7 @@ public sealed partial class CoreReplApp
 {
 	internal Func<IServiceProvider, Type, bool>? InputServiceAvailability { get; set; }
 	private readonly AsyncLocal<ProcessedInput?> _currentInput = new();
+	internal IReadOnlyList<string>? CurrentInputScopeTokens => _currentInput.Value?.Context.ScopeTokens;
 
 	internal IDisposable PushProcessedInput(ProcessedInput? input)
 	{
@@ -95,8 +96,16 @@ public sealed partial class CoreReplApp
 		IReadOnlyList<string> args, IServiceProvider serviceProvider, bool isSubInvocation,
 		CancellationToken cancellationToken, IServiceProvider? presenceServiceProvider = null)
 	{
-		// Structured adapters retain their native invocation contract; #115 owns their interception.
-		if ((!_options.Input.IsEnabled && _startupInput.Value is null) || ReplSessionIO.IsProgrammatic)
+		using var submissionScope = new PendingInvocationScope(this, newRun: false);
+		var submitted = submissionScope.Request;
+		var channel = submissionScope.Channel;
+		if (ReplSessionIO.IsProgrammatic && !ReplSessionIO.HasCurrentProgrammaticInvocationContract)
+		{
+			using var inputScope = PushProcessedInput(input: null);
+			return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation, cancellationToken, presenceServiceProvider).ConfigureAwait(false);
+		}
+		if ((!_options.Input.IsEnabled && _startupInput.Value is null && submitted is null)
+			|| (ReplSessionIO.IsProgrammatic && submitted is null && _options.Input.InvocationHooks.Count == 0))
 		{
 			using var inputScope = PushProcessedInput(input: null);
 			return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
@@ -112,8 +121,13 @@ public sealed partial class CoreReplApp
 				return await ExecuteUnprocessedCoreOutcomeAsync(args, serviceProvider, isSubInvocation,
 					cancellationToken, presenceServiceProvider).ConfigureAwait(false);
 			}
-			var input = !isSubInvocation && _startupInput.Value is { } startup ? startup
-				: await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken).ConfigureAwait(false);
+			var startup = !isSubInvocation ? _startupInput.Value : null;
+			var effectiveRequest = startup is not null && submitted?.Command is not null ? startup.Request : submitted;
+			var input = startup ?? (effectiveRequest?.Command is not null
+				? CreateSubmittedInput(args, effectiveRequest)
+				: await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken).ConfigureAwait(false));
+			input = input with { Request = effectiveRequest?.Command is not null ? effectiveRequest.Copy() : null, OriginalRequest = submitted?.Copy(), Channel = channel, InheritSessionGlobals = isSubInvocation };
+			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
 			_currentInput.Value = input;
 			if (await TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false) is { } finished)
 			{
@@ -195,7 +209,7 @@ public sealed partial class CoreReplApp
 	{
 		var globals = GlobalOptionParser.Parse(
 			[.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
-		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions);
+		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
 		var context = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null);
 		return await ValidateParsedInputAsync(context, services, cancellationToken).ConfigureAwait(false);
 	}
@@ -213,8 +227,8 @@ public sealed partial class CoreReplApp
 		var values = new Dictionary<string, InputValue>(StringComparer.OrdinalIgnoreCase);
 		if (match is not null)
 		{
-			parsedOptions ??= InvocationOptionParser.Parse(match.RemainingTokens, match.Route.OptionSchema,
-				BuildEffectiveCommandParsingOptions(globals.GlobalOptionConfiguration.CaseSensitivity), globals.CustomGlobalTokenOwnership);
+			parsedOptions ??= ParseInvocationOptions(match,
+				BuildEffectiveCommandParsingOptions(globals.GlobalOptionConfiguration.CaseSensitivity), globals);
 			foreach (var diagnostic in parsedOptions.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic, match.Route.OptionSchema)); }
 			ReadTypedInputValues(input, match, parsedOptions, services, values, checks, executionBinding);
 		}
@@ -301,11 +315,13 @@ public sealed partial class CoreReplApp
 		{
 			var raw = _globalOptionsSnapshot.GetRawValues(definition.Name);
 			var value = raw.Count != 0 ? raw[0] : definition.DefaultValue;
-			if (value is null) { values[definition.Name] = new(InputValueState.Missing); continue; }
+			if (value is null && !_globalOptionsSnapshot.TryGetNativeValue(definition.Name, out _)) { values[definition.Name] = new(InputValueState.Missing); continue; }
 			try
 			{
 				values[definition.Name] = new(InputValueState.Available,
-					ParameterValueConverter.ConvertSingle(value, definition.ValueType, _options.Parsing.NumericFormatProvider));
+					_globalOptionsSnapshot.TryGetNativeValue(definition.Name, out var native)
+						? ParameterValueConverter.ConvertNative(native, definition.ValueType, _options.Parsing.NumericFormatProvider)
+						: ParameterValueConverter.ConvertSingle(value, definition.ValueType, _options.Parsing.NumericFormatProvider));
 			}
 			catch (Exception exception) when (IsInputConversionFailure(exception))
 			{
@@ -313,9 +329,11 @@ public sealed partial class CoreReplApp
 				checks.Add(InputValidationResult.Invalid(exception.Message));
 			}
 		}
+		ReadNativeInvocationFlags(values, checks);
 		return values;
 	}
 
+	[SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Typed analysis follows the binder's native, named, service and positional precedence.")]
 	private void ReadTypedInputValues(ProcessedInput input, RouteMatch match, OptionParsingResult parsed, IServiceProvider services,
 		Dictionary<string, InputValue> values, List<InputValidationResult> checks, InvocationBindingContext? executionBinding)
 	{
@@ -330,6 +348,13 @@ public sealed partial class CoreReplApp
 			var missing = false;
 			try
 			{
+				if (_currentInput.Value?.Request is { Command: not null } native && native.Values.ContainsKey(parameter.Name))
+				{
+					HandlerArgumentBinder.ValidateNativeArity(match.Route.OptionSchema, parameter.Name, native.Values[parameter.Name]);
+					AddTypedInputValue(input, parameter.Name, [], parameter.ParameterType, values, checks,
+						(parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive);
+					continue;
+				}
 				if (InputValueSelector.TrySelectNamed(parameter.Name, parameter.Mode, parsed.NamedOptions,
 					parsed.PositionalArguments, positionalUncertain ? parsed.PositionalArguments.Count : positionalIndex, out var named)) { raw = named; }
 				else
@@ -447,7 +472,9 @@ public sealed partial class CoreReplApp
 		var first = length == 0 ? null : raw[start];
 		try
 		{
-			var converted = HandlerArgumentBinder.TryGetCollectionElementType(type, out var elementType)
+			var converted = _currentInput.Value?.Request is { Command: not null } request && request.Values.TryGetValue(name, out var native)
+				? ParameterValueConverter.ConvertNative(native, type, _options.Parsing.NumericFormatProvider, enumIgnoreCase)
+				: HandlerArgumentBinder.TryGetCollectionElementType(type, out var elementType)
 				? HandlerArgumentBinder.ConvertMany(start == 0 && length == raw.Count ? raw : raw.Skip(start).Take(length).ToArray(),
 					type, elementType, _options.Parsing.NumericFormatProvider, enumIgnoreCase)
 				: ParameterValueConverter.ConvertSingle(first, type,
@@ -493,8 +520,9 @@ public sealed partial class CoreReplApp
 		GlobalInvocationOptions globals, OptionParsingResult parsed, IServiceProvider services,
 		InvocationBindingContext executionBinding, CancellationToken cancellationToken)
 	{
-		if (_currentInput.Value is not { } input || _options.Input.Validators.Count == 0) { return null; }
-		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions);
+		if (_currentInput.Value is not { } input || _options.Input.Validators.Count == 0
+			|| (ReplSessionIO.IsProgrammatic && _options.Input.InvocationHooks.Count == 0)) { return null; }
+		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
 		// Fallback resolution belongs to binding; only validator invocation uses the callback-error policy.
 		var context = CreateParsedInputContext(input, services, globals, match, parsed, executionBinding);
 		try

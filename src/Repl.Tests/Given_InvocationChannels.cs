@@ -1,0 +1,187 @@
+using Microsoft.Extensions.DependencyInjection;
+using Repl.Parameters;
+
+namespace Repl.Tests;
+
+[TestClass]
+public sealed class Given_InvocationChannels
+{
+	[TestMethod]
+	public async Task When_TextIsAdapted_Then_StartupAndInvocationCallbacksHaveSeparateOrdering()
+	{
+		var events = new List<string>();
+		var app = CoreReplApp.Create();
+		app.UseArgumentPreprocessor((_, _) =>
+		{
+			events.Add("adapter");
+			return ValueTask.FromResult(ArgumentPreprocessingResult.Replace(["run", "--count=3"]));
+		});
+		app.UseStartupHook(() => { events.Add("startup"); return ArgumentPreprocessingResult.Continue(); });
+		app.UseInvocationHook((ReplInvocationContext context, int count) =>
+		{
+			context.OriginalRequest.Arguments.Should().Equal("legacy");
+			count.Should().Be(3);
+			events.Add("hook");
+			return ReplInvocationResult.Continue();
+		});
+		app.UseInputValidator((ParsedInputContext _) => { events.Add("validator"); return InputValidationResult.Valid(); });
+		app.Use(async (_, next) => { events.Add("middleware"); await next().ConfigureAwait(false); });
+		app.Map("run", (int count) => { events.Add("handler"); });
+		(await app.RunAsync(["legacy"])).Should().Be(0);
+		events.Should().Equal("adapter", "startup", "hook", "validator", "middleware", "handler");
+	}
+
+	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_InteractiveHookHandlesOrRewrites_Then_TheNextCommandStillRuns(bool hosted)
+	{
+		var app = CoreReplApp.Create();
+		var received = new List<int>();
+		var channels = new List<ReplInvocationChannel>();
+		app.Context("tools", scope => scope.Map("next", () => { received.Add(1); }));
+		app.Map("other", (int count) => { received.Add(count); });
+		app.UseInvocationHook((ReplInvocationContext context) =>
+		{
+			if (!context.Parsed.Input.IsInteractive) { return ReplInvocationResult.Continue(); }
+			channels.Add(context.Channel);
+			return (context.Request.Arguments.Count == 0 ? null : context.Request.Arguments[0]) switch
+			{
+				"external" => ReplInvocationResult.Handled("external done"),
+				"rewrite" => ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("other", new Dictionary<string, object?>(StringComparer.Ordinal) { ["count"] = 9 })),
+				_ => ReplInvocationResult.Continue(),
+			};
+		});
+		using var writer = new StringWriter();
+		using var reader = new StringReader("tools\nexternal\nrewrite\nnext\nexit\n");
+		using var io = ReplSessionIO.SetSession(writer, reader, isHostedSession: hosted);
+		(await app.RunAsync([])).Should().Be(0);
+		received.Should().Equal(9, 1);
+		channels.Should().OnlyContain(channel => channel == (hosted ? ReplInvocationChannel.HostedInteractive : ReplInvocationChannel.Interactive));
+		writer.ToString().Should().Contain("external done");
+	}
+
+	[TestMethod]
+	public async Task When_TabOrHelpRuns_Then_HooksRunButBackgroundPreviewDoesNot()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("run", (int count) => count);
+		var purposes = new List<InputPurpose>();
+		app.UseInvocationHook((ReplInvocationContext context) =>
+		{
+			purposes.Add(context.Parsed.Input.Purpose);
+			return ReplInvocationResult.Handled("must not render during completion");
+		});
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		await app.Autocomplete.ResolveAutocompleteAsync(new("run --count", 11, MenuRequested: false), [], app.CurrentServiceProvider, CancellationToken.None);
+		purposes.Should().BeEmpty();
+		var tab = await app.Autocomplete.ResolveAutocompleteAsync(new("run --count", 11, MenuRequested: false, ExplicitCompletion: true), [], app.CurrentServiceProvider, CancellationToken.None);
+		tab!.Value.Suggestions.Should().BeEmpty();
+		writer.ToString().Should().BeEmpty();
+		(await app.RunAsync(["run", "--help"])).Should().Be(0);
+		purposes.Should().Equal(InputPurpose.Completion, InputPurpose.Help);
+	}
+
+	[TestMethod]
+	public async Task When_ShellPayloadIsAnalyzed_Then_HookSeesCompletionMode()
+	{
+		var app = CoreReplApp.Create();
+		var calls = 0;
+		app.Map("run", (int count) => count);
+		app.UseInvocationHook((ReplInvocationContext context) =>
+		{
+			calls++;
+			context.Request.Arguments.Should().Equal("run", "--count");
+			context.Parsed.Input.Mode.Should().Be(InputProcessingMode.ShellCompletion);
+			return ReplInvocationResult.Handled("must not render");
+		});
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		(await new ShellCompletionEngine(app).ResolveShellCompletionCandidatesAsync("app run --count", 15, ShellKind.Bash, app.CurrentServiceProvider, CancellationToken.None)).Should().BeEmpty();
+		calls.Should().Be(1);
+		writer.ToString().Should().BeEmpty();
+	}
+
+	[TestMethod]
+	public async Task When_NativeRouteContainsAnOptionLikeValue_Then_ItRemainsARouteValue()
+	{
+		var app = CoreReplApp.Create();
+		string? received = null;
+		app.Map("run {text}", (string text) => { received = text; });
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("run {text}", new Dictionary<string, object?>(StringComparer.Ordinal) { ["text"] = "--help" }))).Should().Be(0);
+		received.Should().Be("--help");
+	}
+
+	[TestMethod]
+	public async Task When_RequiredHookInputIsInvalid_Then_ItReceivesABindingDiagnostic()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("run", (int count) => Assert.Fail("Invalid input must not execute."));
+		app.UseInvocationHook((int count) => { Assert.Fail("Invalid input must not become a default integer."); return ReplInvocationResult.Continue(); });
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		(await app.RunAsync(["run", "--count=bad"])).Should().Be(2);
+		writer.ToString().Should().Contain("Cannot bind invocation hook input 'count'");
+	}
+
+	[TestMethod]
+	public async Task When_HookReceivesOptionsAndKeyedServices_Then_ItUsesTheCurrentInvocation()
+	{
+		var marker = new object();
+		var app = ReplApp.Create(services => services.AddKeyedSingleton("chosen", marker)).UseGlobalOptions<Globals>();
+		app.Map("run", (Group group, Globals globals) => { group.Count.Should().Be(4); globals.Tenant.Should().Be("native"); });
+		app.UseInvocationHook((Group group, Globals globals, [FromServices("chosen")] object selected) =>
+		{
+			group.Count.Should().Be(4);
+			globals.Tenant.Should().Be("native");
+			selected.Should().BeSameAs(marker);
+			return ReplInvocationResult.Continue();
+		});
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("run", new Dictionary<string, object?>(StringComparer.Ordinal) { ["Count"] = 4 },
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["tenant"] = "native" }))).Should().Be(0);
+	}
+
+	[TestMethod]
+	public async Task When_HookInvokesANestedRun_Then_TheChildDoesNotInheritTheParentRequest()
+	{
+		var app = CoreReplApp.Create();
+		var received = new List<string>();
+		app.Map("outer", (int count) => { received.Add($"outer:{count}"); });
+		app.Map("inner", () => { received.Add("inner"); });
+		app.UseInvocationHook(async (ReplInvocationContext context) =>
+		{
+			if (string.Equals(context.Parsed.Command, "outer", StringComparison.Ordinal)) { (await app.RunAsync(["inner"]).ConfigureAwait(false)).Should().Be(0); }
+			return ReplInvocationResult.Continue();
+		});
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("outer", new Dictionary<string, object?>(StringComparer.Ordinal) { ["count"] = 8 }))).Should().Be(0);
+		received.Should().Equal("inner", "outer:8");
+	}
+
+	[TestMethod]
+	public async Task When_RunsOverlap_Then_ValuesAndGlobalsRemainIndependent()
+	{
+		var app = ReplApp.Create().UseGlobalOptions<Globals>();
+		var arrived = 0;
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		app.Map("run", (string expected, Globals globals) => { globals.Tenant.Should().Be(expected); });
+		app.UseInvocationHook(async (ReplInvocationContext context, Globals globals, CancellationToken token) =>
+		{
+			if (Interlocked.Increment(ref arrived) == 2) { release.TrySetResult(); }
+			await release.Task.WaitAsync(token).ConfigureAwait(false);
+			context.Parsed.TryGetValue<string>("expected", out var expected).Should().BeTrue();
+			globals.Tenant.Should().Be(expected);
+			return ReplInvocationResult.Continue();
+		});
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		var codes = await Task.WhenAll(RunAsync("first"), RunAsync("second"));
+		codes.Should().Equal(0, 0);
+		Task<int> RunAsync(string value) => app.RunAsync(ReplInvocationRequest.ForCommand("run",
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["expected"] = value },
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["tenant"] = value }), cancellationToken: cts.Token).AsTask();
+	}
+
+	[ReplOptionsGroup]
+	private sealed class Group { public int Count { get; set; } }
+	private sealed class Globals { public string Tenant { get; set; } = "default"; }
+}

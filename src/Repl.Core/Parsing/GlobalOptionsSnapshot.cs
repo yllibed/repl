@@ -2,6 +2,7 @@
 
 internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGlobalOptionsAccessor
 {
+	internal Func<IReadOnlyDictionary<string, object?>?>? NativeValues { get; set; }
 	private readonly AsyncLocal<InputFrame?> _inputFrame = new();
 	private sealed record InputFrame(IReadOnlyDictionary<string, IReadOnlyList<string>> Values, HashSet<string> ExplicitKeys);
 	private IReadOnlyDictionary<string, IReadOnlyList<string>> CurrentValues => _inputFrame.Value?.Values ?? _currentValues;
@@ -91,6 +92,10 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
+		if (TryGetNativeValue(name, out var native))
+		{
+			return (T?)ParameterValueConverter.ConvertNative(native, typeof(T), parsingOptions.NumericFormatProvider);
+		}
 		if (CurrentValues.TryGetValue(name, out var values) && values.Count > 0)
 		{
 			return (T?)ParameterValueConverter.ConvertSingle(
@@ -124,7 +129,13 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-		return CurrentExplicitKeys.Contains(name);
+		return TryGetNativeValue(name, out _) || CurrentExplicitKeys.Contains(name);
+	}
+
+	internal bool TryGetNativeValue(string name, out object? value)
+	{
+		value = null;
+		return NativeValues?.Invoke()?.TryGetValue(name, out value) == true;
 	}
 
 	public IEnumerable<string> GetOptionNames() => CurrentValues.Keys;

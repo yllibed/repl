@@ -32,6 +32,8 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			{
 				var processed = await app.PreprocessInputAsync(arguments, [], InputProcessingMode.ShellCompletion,
 					inputText, Math.Max(0, cursor - start), token).ConfigureAwait(false);
+				processed = await app.InvokeInvocationHooksAsync(processed, serviceProvider, token).ConfigureAwait(false);
+				using var inputScope = app.PushProcessedInput(processed);
 				var analysis = processed.IsHandled ? null
 					: await app.AnalyzeInputAsync(processed, serviceProvider, token).ConfigureAwait(false);
 				return new AnalyzedShellInput(processed, analysis);

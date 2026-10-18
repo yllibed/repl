@@ -58,6 +58,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			InvalidateRoutingFromOptionsMutation,
 			_configurationMutationGate);
 		_globalOptionsSnapshot = new GlobalOptionsSnapshot(_options.Parsing);
+		_globalOptionsSnapshot.NativeValues = () => _currentInput.Value?.Request?.GlobalValues;
 		_services = CreateDefaultServiceProvider();
 		_shellCompletionRuntime = new ShellCompletionRuntime(
 			_options,
@@ -548,7 +549,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 	internal RouteResolver.RouteResolutionResult ResolveWithDiagnostics(
 		IReadOnlyList<string> inputTokens,
 		IReadOnlyList<RouteDefinition> routes) =>
-		RouteResolver.ResolveWithDiagnostics(routes, inputTokens, _options.Parsing);
+		ResolveInvocationRoute(inputTokens, routes);
 
 	private void MapModuleCore(
 		IReplModule module,

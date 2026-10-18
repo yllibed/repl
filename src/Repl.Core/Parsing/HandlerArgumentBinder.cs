@@ -77,6 +77,12 @@ internal static class HandlerArgumentBinder
 		}
 #pragma warning restore IL2072
 
+		if (context.NativeValues.TryGetValue(parameterName, out var native))
+		{
+			ValidateNativeArity(context.OptionSchema, parameterName, native);
+			return ParameterValueConverter.ConvertNative(native, parameter.ParameterType, context.NumericFormatProvider, enumIgnoreCase);
+		}
+
 		if (context.RouteValues.TryGetValue(parameterName, out var routeValue))
 		{
 			return ParameterValueConverter.ConvertSingle(
@@ -656,7 +662,7 @@ internal static class HandlerArgumentBinder
 		return false;
 	}
 
-	private static object ConvertMatchesToTargetCollection(
+	internal static object ConvertMatchesToTargetCollection(
 		Type targetType,
 		Type elementType,
 		object?[] matches)
@@ -689,6 +695,7 @@ internal static class HandlerArgumentBinder
 		"Trimming",
 		"IL2067",
 		Justification = "Options group types are user-defined and always preserved by the handler delegate reference.")]
+	[SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Group binding keeps native, named and positional precedence together.")]
 	private static object BindOptionsGroup(
 		[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicParameterlessConstructor)]
 		Type groupType,
@@ -707,6 +714,13 @@ internal static class HandlerArgumentBinder
 			var propertyName = property.Name;
 			var bindingMode = ResolvePropertyBindingMode(propertyName, property, context.OptionSchema);
 			var enumIgnoreCase = ResolveEnumIgnoreCase(propertyName, context);
+			if (context.NativeValues.TryGetValue(propertyName, out var native))
+			{
+				ValidateNativeArity(context.OptionSchema, propertyName, native);
+				AssignProperty(property, instance, ParameterValueConverter.ConvertNative(native, property.PropertyType,
+					context.NumericFormatProvider, enumIgnoreCase), context.CancellationToken);
+				continue;
+			}
 
 			if (bindingMode != ReplParameterMode.ArgumentOnly
 				&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
@@ -754,6 +768,15 @@ internal static class HandlerArgumentBinder
 		}
 
 		return instance;
+	}
+
+	internal static void ValidateNativeArity(OptionSchema schema, string name, object? value)
+	{
+		var count = value is null or System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Null } ? 0
+			: value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } json ? json.GetArrayLength()
+			: value is System.Collections.IEnumerable items && value is not string ? items.Cast<object?>().Count() : 1;
+		ThrowIfExplicitUpperBoundExceeded(schema, name, count);
+		if (count == 0) { ThrowIfExplicitLowerBoundUnsatisfied(schema, name); }
 	}
 
 	private static ReplParameterMode ResolvePropertyBindingMode(

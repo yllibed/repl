@@ -114,6 +114,11 @@ public static class CoreGlobalOptionsExtensions
 		{
 			var optionAttr = property.GetCustomAttribute<ReplOptionAttribute>();
 			var name = optionAttr?.Name ?? ToKebabCase(property.Name);
+			if (accessor is GlobalOptionsSnapshot snapshot && snapshot.TryGetNativeValue(name, out var native))
+			{
+				property.SetValue(instance, ParameterValueConverter.ConvertNative(native, property.PropertyType, numericFormatProvider));
+				continue;
+			}
 
 			var rawValues = accessor.GetRawValues(name);
 			if (rawValues.Count == 0)
