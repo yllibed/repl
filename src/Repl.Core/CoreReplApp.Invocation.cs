@@ -125,7 +125,9 @@ public sealed partial class CoreReplApp
 			using var inputScope = PushProcessedInput(input);
 			var globals = ParseInputGlobals(input);
 			using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
-			var parsed = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null, invocationHook: hook, cancellationToken: cancellationToken);
+			ParsedInputContext parsed;
+			try { parsed = CreateParsedInputContext(input, services, globals, match: null, parsedOptions: null, invocationHook: hook, cancellationToken: cancellationToken); }
+			catch (ReplBindingCallbackException failure) { return input with { IsHandled = true, BindingFailure = failure }; }
 			var channel = input.Channel ?? (ReplSessionIO.IsProgrammatic ? ReplInvocationChannel.Mcp
 				: input.Context.IsInteractive ? ReplSessionIO.IsHostedSession ? ReplInvocationChannel.HostedInteractive : ReplInvocationChannel.Interactive
 				: ReplInvocationChannel.Cli);
@@ -134,16 +136,7 @@ public sealed partial class CoreReplApp
 			{
 				return input with { Validation = InputValidationResult.Invalid($"Cannot bind invocation hook input '{unavailable}'. Inspect ReplInvocationContext to handle partial or invalid input.") };
 			}
-			var provider = new InvocationServiceProvider(this, services);
-			var binding = new InvocationBindingContext(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
-				[], OptionSchema.Empty, _options.Parsing.OptionCaseSensitivity, [context, parsed], _options.Parsing.NumericFormatProvider,
-				provider, _options.Interaction, _implicitServiceParameters, cancellationToken)
-			{
-				KeyedServiceProvider = services,
-				NativeValues = parsed.Values.Where(static pair => pair.Value.State == InputValueState.Available)
-					.ToDictionary(static pair => pair.Key, static pair => pair.Value.Value, StringComparer.OrdinalIgnoreCase),
-			};
-			var result = await CommandInvoker.InvokeAsync(hook, HandlerArgumentBinder.Bind(hook, binding)).ConfigureAwait(false);
+			var result = await CommandInvoker.InvokeAsync(hook, BindInvocationHookArguments(hook, context, parsed, services, cancellationToken)).ConfigureAwait(false);
 			var decision = result as ReplInvocationResult ?? throw new InvalidOperationException(
 				"Invocation hooks must return ReplInvocationResult, Task<ReplInvocationResult> or ValueTask<ReplInvocationResult>.");
 			if (decision.IsHandled) { return input with { IsHandled = true, Result = decision.Result }; }
@@ -161,6 +154,21 @@ public sealed partial class CoreReplApp
 			}
 		}
 		return _options.Input.InvocationHooks.Count != 0 || input.Request?.Command is not null ? ValidateInvocationGlobals(input) : input;
+	}
+
+	private object?[] BindInvocationHookArguments(Delegate hook, ReplInvocationContext context, ParsedInputContext parsed,
+		IServiceProvider services, CancellationToken cancellationToken)
+	{
+		var provider = new InvocationServiceProvider(this, services);
+		var binding = new InvocationBindingContext(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
+			[], OptionSchema.Empty, _options.Parsing.OptionCaseSensitivity, [context, parsed], _options.Parsing.NumericFormatProvider,
+			provider, _options.Interaction, _implicitServiceParameters, cancellationToken)
+		{
+			KeyedServiceProvider = services,
+			NativeValues = parsed.Values.Where(static pair => pair.Value.State == InputValueState.Available)
+				.ToDictionary(static pair => pair.Key, static pair => pair.Value.Value, StringComparer.OrdinalIgnoreCase),
+		};
+		return HandlerArgumentBinder.Bind(hook, binding);
 	}
 
 	private ProcessedInput ValidateInvocationGlobals(ProcessedInput input)
@@ -213,7 +221,8 @@ public sealed partial class CoreReplApp
 			if (parameter.ParameterType == typeof(ReplInvocationContext) || parameter.ParameterType == typeof(ParsedInputContext)
 				|| parameter.ParameterType == typeof(CancellationToken)) { continue; }
 			if (parameter.IsDefined(typeof(FromServicesAttribute), inherit: true)
-				|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)) { continue; }
+				|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
+				|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)) { continue; }
 			if (parameter.Name is { } name && parsed.Values.TryGetValue(name, out var value)
 				&& (value.State == InputValueState.Invalid || (value.State == InputValueState.Missing && !parameter.HasDefaultValue))) { return name; }
 			if (IsInputScalar(parameter.ParameterType) && !parameter.HasDefaultValue

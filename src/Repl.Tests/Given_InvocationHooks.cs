@@ -231,6 +231,148 @@ public sealed class Given_InvocationHooks
 		writer.ToString().Should().Contain("Cannot bind invocation hook input 'limit'").And.NotContain("input_callback_error");
 	}
 
+	[TestMethod]
+	[Description("Registered typed globals take precedence over an unrelated invalid command parameter with the same name, allowing inspection and repair.")]
+	[DataRow(false, false)]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[DataRow(true, true)]
+	public async Task When_GlobalInjectionNamesCollideWithCommandInput_Then_TheHookCanHandleOrRepairIt(bool native, bool repair)
+	{
+		var app = ReplApp.Create().UseGlobalOptions<NumericGlobals>();
+		var seen = new List<int>();
+		app.Map("run", (int globals) => { seen.Add(globals); });
+		app.UseInvocationHook((ReplInvocationContext context, NumericGlobals globals) =>
+		{
+			context.Parsed.Values["globals"].State.Should().Be(InputValueState.Invalid);
+			seen.Add(globals.Limit);
+			return repair ? ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("run",
+				new Dictionary<string, object?>(StringComparer.Ordinal) { ["globals"] = 7 })) : ReplInvocationResult.Handled();
+		});
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run",
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["globals"] = "bad" })) : app.RunAsync(["run", "--globals=bad"]));
+
+		code.Should().Be(0);
+		if (repair) { seen.Should().Equal(3, 7); }
+		else { seen.Should().Equal(3); }
+	}
+
+	[TestMethod]
+	[Description("A handler fallback factory retains its JSON binding diagnostic, outcome and exit mapping when typed hook analysis activates it early.")]
+	[DataRow(false, false)]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[DataRow(true, true)]
+	public async Task When_HandlerFallbackFailsDuringHookAnalysis_Then_NormalBindingFailurePolicyApplies(bool native, bool validate)
+	{
+		foreach (var hook in new[] { false, true })
+		{
+			foreach (var bindingCode in new[] { 2, 17 })
+			{
+				var factories = 0;
+				var outcomes = new List<ReplExecutionOutcomeKind>();
+				var app = ReplApp.Create(services => services.AddTransient<string>(_ => { factories++; throw new InvalidOperationException("factory failed"); }));
+				app.Options(options =>
+				{
+					options.ExitCodes.BindingError = bindingCode;
+					options.ExitCodes.Resolver = outcome => { outcomes.Add(outcome.Kind); return outcome.ExitCode; };
+				});
+				app.Map("run", (string prefix, int count) => Assert.Fail("A failing dependency must not execute the handler."));
+				if (hook) { app.UseInvocationHook((int count) => { Assert.Fail("Failed analysis must stop before invoking the hook."); return ReplInvocationResult.Continue(); }); }
+				if (validate) { app.UseInputValidator((ParsedInputContext _) => InputValidationResult.Valid()); }
+				using var writer = new StringWriter();
+				using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+				var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run",
+					new Dictionary<string, object?>(StringComparer.Ordinal) { ["count"] = 5 },
+					new Dictionary<string, object?>(StringComparer.Ordinal) { ["output"] = "json" })) : app.RunAsync(["run", "5", "--output:json"]));
+
+				code.Should().Be(bindingCode);
+				outcomes.Should().Equal(ReplExecutionOutcomeKind.BindingError);
+				factories.Should().Be(1);
+				using var json = System.Text.Json.JsonDocument.Parse(writer.ToString());
+				json.RootElement.GetRawText().Should().Contain("execution_error").And.NotContain("input_callback_error");
+			}
+		}
+	}
+
+	[TestMethod]
+	[Description("A factory failure for a dependency requested by the hook itself remains a callback error rather than a handler binding error.")]
+	public async Task When_AHookDependencyFactoryFails_Then_TheCallbackPolicyIsPreserved()
+	{
+		var app = ReplApp.Create(services => services.AddTransient<Marker>(_ => throw new InvalidOperationException("hook factory failed")));
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options => options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; });
+		app.Map("run", (int count) => { });
+		app.UseInvocationHook((Marker marker) => ReplInvocationResult.Continue());
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		(await app.RunAsync(["run", "5"])).Should().Be(1);
+
+		kind.Should().Be(ReplExecutionOutcomeKind.HandlerException);
+		writer.ToString().Should().Contain("hook factory failed");
+	}
+
+	[TestMethod]
+	[Description("Caller cancellation during early handler fallback activation remains cancellation and does not become a rendered binding failure.")]
+	public async Task When_HandlerFallbackObservesCallerCancellation_Then_TheCancellationPolicyIsPreserved()
+	{
+		using var cancellation = new CancellationTokenSource();
+		var factories = 0;
+		var app = ReplApp.Create(services => services.AddTransient<string>(_ =>
+		{
+			factories++;
+			cancellation.Cancel();
+			throw new OperationCanceledException(cancellation.Token);
+		}));
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options => { options.ExitCodes.Cancelled = 130; options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; }; });
+		app.Map("run", (string prefix, int count) => { });
+		app.UseInvocationHook((int count) => ReplInvocationResult.Continue());
+
+		(await app.RunAsync(["run", "5"], cancellationToken: cancellation.Token)).Should().Be(130);
+
+		kind.Should().Be(ReplExecutionOutcomeKind.Cancelled);
+		factories.Should().Be(1);
+	}
+
+	[TestMethod]
+	[Description("Rendering an early binding failure must expose the same effective globals through direct access and DI as ordinary execution.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public async Task When_EarlyBindingFailureUsesACustomRenderer_Then_ItsGlobalsRemainAvailable(bool native)
+	{
+		var seen = new List<int>();
+		var app = ReplApp.Create(services => services.AddTransient<string>(_ => throw new InvalidOperationException("factory failed"))).UseGlobalOptions<NumericGlobals>();
+		app.Options(options => options.Output.AddTransformer("binding", new BindingFailureTransformer(app.Core, seen)));
+		app.Map("run", (string prefix, int count) => { });
+		app.UseInvocationHook((int count) => ReplInvocationResult.Continue());
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run",
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["count"] = 5 },
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 7, ["output"] = "binding" }))
+			: app.RunAsync(["run", "5", "--limit=7", "--output:binding"]));
+
+		code.Should().Be(2);
+		seen.Should().Equal(7, 7);
+		writer.ToString().Should().Contain("binding rendered");
+	}
+
+	private sealed class BindingFailureTransformer(CoreReplApp app, List<int> seen) : IOutputTransformer
+	{
+		public string Name => "binding";
+		public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
+		{
+			seen.Add(app.GlobalOptionsAccessor.GetValue<int>("limit"));
+			seen.Add(app.CurrentServiceProvider.GetRequiredService<NumericGlobals>().Limit);
+			return ValueTask.FromResult("binding rendered");
+		}
+	}
+
 	private sealed class NumericGlobals { public int Limit { get; set; } = 3; }
 	private sealed class ScalarProvider : IServiceProvider
 	{

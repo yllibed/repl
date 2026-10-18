@@ -167,6 +167,12 @@ public sealed partial class CoreReplApp
 	{
 		if (!input.IsHandled && input.Validation.State == InputValidationState.Valid) { return null; }
 		var globals = ParseInputGlobals(input);
+		if (input.BindingFailure is { } failure)
+		{
+			using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
+			return await RenderFailureAsync(Results.Error("execution_error", DescribeLocally(failure)), failure, bound: false,
+				globals, CurrentServiceProvider, cancellationToken).ConfigureAwait(false);
+		}
 		if (input.Validation.State != InputValidationState.Valid)
 		{
 			return await RefuseInputAsync(input.Validation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
