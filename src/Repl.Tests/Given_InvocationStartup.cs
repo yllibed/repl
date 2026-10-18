@@ -7,6 +7,34 @@ namespace Repl.Tests;
 public sealed class Given_InvocationStartup
 {
 	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Invalid structured typed globals are usage errors before any hosted-service factory or startup side effect runs.")]
+	public async Task When_NativeGlobalsAreInvalid_Then_HostedServicesDoNotStart(bool startupHook)
+	{
+		var factories = 0;
+		var seen = new List<string?>();
+		var app = ReplApp.Create(services => services.AddSingleton<IHostedService>(provider =>
+		{
+			factories++;
+			provider.GetRequiredService<NullableGlobals>();
+			return new HostedProbe(new Globals(), seen);
+		})).UseGlobalOptions<NullableGlobals>();
+		app.Map("run", () => Assert.Fail("Invalid globals must not dispatch."));
+		if (startupHook) { app.UseStartupHook(() => ArgumentPreprocessingResult.Continue()); }
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+		var request = ReplInvocationRequest.ForCommand("run", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = "invalid", ["output"] = "json" });
+
+		(await app.RunAsync(request, new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.Head })).Should().Be(2);
+
+		factories.Should().Be(0);
+		seen.Should().BeEmpty();
+		writer.ToString().Should().NotContain("startup_error");
+	}
+
+	[TestMethod]
 	[Description("Startup decisions govern native dispatch while original values remain available for provenance across Core and the facade.")]
 	[DataRow(false, "continue")]
 	[DataRow(true, "continue")]

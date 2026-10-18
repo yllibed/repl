@@ -170,9 +170,10 @@ usual `ReplApp` provider and host overloads.
 Native command scalars and arrays bind directly; they are not serialized into a
 shell command and reparsed. This preserves empty strings, option-looking strings,
 numeric values independent of CLI culture, and explicit empty collections.
-Requests copy their dictionaries, arrays and enumerable collections on creation
-and submission. Treat other mutable application objects as caller-owned; their
-internal state is not cloned. Do not mutate app configuration while runs are active.
+Requests copy their value maps and arrays and clone JSON elements on creation
+and submission. Other native objects, including concrete dictionaries, lists and
+sets supplied as parameter values, retain their type and remain caller-owned;
+their internal state is not cloned. Do not mutate app configuration while runs are active.
 
 Command-backed MCP tools and resources use this same native path after schema
 allowlisting and reserved-field validation. Typed arrays reach hooks and binding
@@ -204,6 +205,8 @@ refuse invalid globals before invocation hooks become available; use preparation
 or startup hooks for decisions needed at that earlier stage.
 For structured `RunAsync`, submission ownership and native globals are established
 before owned hosted services start, including when no startup hook is registered.
+Native globals are validated before that service startup; invocation hooks run
+afterward and cannot repair globals rejected at this earlier stage.
 
 Later interactive commands and nested MCP calls do not repeat startup. Native
 structured requests bypass raw token adapters. Existing validators remain the

@@ -167,9 +167,9 @@ public sealed partial class CoreReplApp
 	{
 		if (!input.IsHandled && input.Validation.State == InputValidationState.Valid) { return null; }
 		var globals = ParseInputGlobals(input);
+		using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
 		if (input.BindingFailure is { } failure)
 		{
-			using var globalsScope = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
 			return await RenderFailureAsync(Results.Error("execution_error", DescribeLocally(failure)), failure, bound: false,
 				globals, CurrentServiceProvider, cancellationToken).ConfigureAwait(false);
 		}
@@ -239,8 +239,7 @@ public sealed partial class CoreReplApp
 			foreach (var diagnostic in parsedOptions.Diagnostics) { checks.Add(ToInputValidation(input, diagnostic, match.Route.OptionSchema)); }
 			var resolveInputServices = invocationHook is not null && input.Context.Mode == InputProcessingMode.Execution
 				&& FindUnavailableHookGlobal(invocationHook, globalValues) is null
-				&& invocationHook.Method.GetParameters().Any(static parameter => parameter.ParameterType != typeof(ReplInvocationContext)
-					&& parameter.ParameterType != typeof(ParsedInputContext) && parameter.ParameterType != typeof(CancellationToken));
+				&& HookReadsCommandInput(invocationHook, match);
 			if (executionBinding is null && resolveInputServices)
 			{
 				executionBinding = new InvocationBindingContext(match.Values, parsedOptions.NamedOptions, parsedOptions.PositionalArguments,

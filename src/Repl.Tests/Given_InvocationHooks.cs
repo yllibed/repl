@@ -7,6 +7,121 @@ namespace Repl.Tests;
 public sealed class Given_InvocationHooks
 {
 	[TestMethod]
+	[DataRow(true)]
+	[DataRow(false)]
+	[Description("Required hook-only scalar services resolve once without availability metadata; an absent value remains a usage refusal.")]
+	public async Task When_AHookOnlyScalarUsesAnExternalProvider_Then_ItIsResolvedAtSubmission(bool available)
+	{
+		var app = ReplApp.Create();
+		var provider = new HookOnlyProvider(available);
+		var called = false;
+		app.Map("run", () => { });
+		app.UseInvocationHook((int injected) =>
+		{
+			injected.Should().Be(42);
+			called = true;
+			return ReplInvocationResult.Continue();
+		});
+
+		(await app.RunAsync(ReplInvocationRequest.ForCommand("run"), provider)).Should().Be(available ? 0 : 2);
+		called.Should().Be(available);
+		provider.Resolutions.Should().Be(1);
+	}
+
+	[TestMethod]
+	[DataRow("explicit", false)]
+	[DataRow("global", false)]
+	[DataRow("service", false)]
+	[DataRow("explicit", true)]
+	[DataRow("global", true)]
+	[DataRow("service", true)]
+	[Description("Hooks consuming only services or typed globals can handle or redirect input without activating unused handler fallbacks.")]
+	public async Task When_AServiceOnlyHookIntercepts_Then_HandlerFactoriesRemainDeferred(string kind, bool replace)
+	{
+		var factories = 0;
+		var app = ReplApp.Create(services =>
+		{
+			services.AddSingleton<Marker>();
+			services.AddTransient<string>(_ => { factories++; throw new InvalidOperationException("unused handler dependency"); });
+		}).UseGlobalOptions<NumericGlobals>();
+		app.Map("run", (string prefix) => Assert.Fail("The intercepted handler must not run."));
+		var redirected = false;
+		app.Map("safe", () => { redirected = true; });
+		ReplInvocationResult Intercept() => replace
+			? ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand("safe")) : ReplInvocationResult.Handled();
+		if (kind is "explicit") { app.UseInvocationHook(([FromServices] Marker marker) => Intercept()); }
+		else if (kind is "global") { app.UseInvocationHook((NumericGlobals globals) => Intercept()); }
+		else { app.UseInvocationHook((Marker marker) => Intercept()); }
+
+		(await app.RunAsync(["run"])).Should().Be(0);
+
+		factories.Should().Be(0);
+		redirected.Should().Be(replace);
+	}
+
+	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Handled results retain invocation globals throughout custom rendering, then restore the previous global frame.")]
+	public async Task When_AnInvocationHookHandles_Then_RenderingUsesEffectiveGlobals(bool native)
+	{
+		var seen = new List<int>();
+		var app = ReplApp.Create().UseGlobalOptions<NumericGlobals>();
+		app.Options(options => options.Output.AddTransformer("binding", new BindingFailureTransformer(app.Core, seen)));
+		app.Map("run", () => Assert.Fail("Handled input must not dispatch."));
+		app.UseInvocationHook(() => ReplInvocationResult.Handled("done"));
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var code = await (native ? app.RunAsync(ReplInvocationRequest.ForCommand("run", globalValues:
+			new Dictionary<string, object?>(StringComparer.Ordinal) { ["limit"] = 7, ["output"] = "binding" }))
+			: app.RunAsync(["run", "--limit=7", "--output:binding"]));
+
+		code.Should().Be(0);
+		seen.Should().Equal(7, 7);
+		app.Core.GlobalOptionsAccessor.GetValue<int>("limit").Should().Be(3);
+	}
+
+	[TestMethod]
+	[Description("Concrete enumerable native objects must retain their assignable shape through request, hook and handler binding.")]
+	public async Task When_NativeScalarsAreConcreteEnumerables_Then_TheirTypesArePreserved()
+	{
+		var app = CoreReplApp.Create();
+		var called = false;
+		app.Map("run", (Dictionary<string, string> dictionary, HashSet<int> set, object list) =>
+		{
+			dictionary["key"].Should().Be("value");
+			set.Should().BeEquivalentTo([42]);
+			list.Should().BeOfType<List<int>>().Which.Should().Equal(1, 2);
+			called = true;
+		});
+		app.UseInvocationHook((Dictionary<string, string> dictionary) =>
+		{
+			dictionary["key"].Should().Be("value");
+			return ReplInvocationResult.Continue();
+		});
+		var request = ReplInvocationRequest.ForCommand("run", new Dictionary<string, object?>(StringComparer.Ordinal)
+		{
+			["dictionary"] = new Dictionary<string, string>(StringComparer.Ordinal) { ["key"] = "value" },
+			["set"] = new HashSet<int> { 42 }, ["list"] = new List<int> { 1, 2 },
+		});
+
+		(await app.RunAsync(request)).Should().Be(0);
+		called.Should().BeTrue();
+	}
+
+	private sealed class HookOnlyProvider(bool available) : IServiceProvider
+	{
+		public int Resolutions { get; private set; }
+		public object? GetService(Type serviceType)
+		{
+			if (serviceType != typeof(int)) { return null; }
+			Resolutions++;
+			return available ? 42 : null;
+		}
+	}
+
+	[TestMethod]
 	[Description("Repair must refresh typed values without replaying earlier hooks or losing the original submission.")]
 	public async Task When_InvalidInputIsReplaced_Then_NextHookSeesFreshParsedValues()
 	{

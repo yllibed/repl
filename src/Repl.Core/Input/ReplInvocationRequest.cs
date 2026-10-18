@@ -60,7 +60,6 @@ public sealed class ReplInvocationRequest
 	{
 		System.Text.Json.JsonElement json => json.Clone(),
 		Array array => CopyArray(array),
-		System.Collections.IEnumerable items when value is not string => items.Cast<object?>().Select(CopyValue).ToArray(),
 		_ => value,
 	};
 

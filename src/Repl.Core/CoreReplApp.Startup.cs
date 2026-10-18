@@ -148,8 +148,9 @@ public sealed partial class CoreReplApp
 
 	private async ValueTask<ExecutionOutcome> FinishStartupAsync(StartupInvocation invocation, CancellationToken cancellationToken)
 	{
-		using var inputScope = PushProcessedInput(invocation.Input);
-		var globals = ParseInputGlobals(invocation.Input);
+		var input = invocation.Input with { InheritSessionGlobals = false };
+		using var inputScope = PushProcessedInput(input);
+		var globals = ParseInputGlobals(input);
 		using var frame = _globalOptionsSnapshot.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: false);
 		if (invocation.Failure is { } exception)
 		{
@@ -160,7 +161,7 @@ public sealed partial class CoreReplApp
 		try
 		{
 			await TryClearProgressAsync(CurrentServiceProvider).ConfigureAwait(false);
-			return await TryFinishProcessedInputAsync(invocation.Input, cancellationToken).ConfigureAwait(false) ?? ExecutionOutcome.Success;
+			return await TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false) ?? ExecutionOutcome.Success;
 		}
 		catch (Exception renderFailure) when (!IsCallerCancellation(renderFailure, cancellationToken))
 		{
@@ -203,7 +204,7 @@ public sealed partial class CoreReplApp
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			started = true;
-			if (_startupHooks.Count != 0 || prepared is not null)
+			if (_startupHooks.Count != 0 || prepared is not null || (submittedInput is not null && beforeDispatch is not null))
 			{
 				var invocation = await PrepareRunStartupAsync(args, prepared, submittedInput, services, cancellationToken).ConfigureAwait(false);
 				if (invocation.Failure is not null || invocation.Input.IsHandled || invocation.Input.Validation.State != InputValidationState.Valid)

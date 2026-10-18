@@ -132,11 +132,12 @@ public sealed partial class CoreReplApp
 				: input.Context.IsInteractive ? ReplSessionIO.IsHostedSession ? ReplInvocationChannel.HostedInteractive : ReplInvocationChannel.Interactive
 				: ReplInvocationChannel.Cli);
 			var context = new ReplInvocationContext(original, request, parsed, channel);
-			if (FindUnavailableHookValue(hook, parsed, services) is { } unavailable)
+			var arguments = BindInvocationHookArguments(hook, context, parsed, services, cancellationToken, out var unavailable);
+			if (unavailable is not null)
 			{
 				return input with { Validation = InputValidationResult.Invalid($"Cannot bind invocation hook input '{unavailable}'. Inspect ReplInvocationContext to handle partial or invalid input.") };
 			}
-			var result = await CommandInvoker.InvokeAsync(hook, BindInvocationHookArguments(hook, context, parsed, services, cancellationToken)).ConfigureAwait(false);
+			var result = await CommandInvoker.InvokeAsync(hook, arguments).ConfigureAwait(false);
 			var decision = result as ReplInvocationResult ?? throw new InvalidOperationException(
 				"Invocation hooks must return ReplInvocationResult, Task<ReplInvocationResult> or ValueTask<ReplInvocationResult>.");
 			if (decision.IsHandled) { return input with { IsHandled = true, Result = decision.Result }; }
@@ -157,17 +158,35 @@ public sealed partial class CoreReplApp
 	}
 
 	private object?[] BindInvocationHookArguments(Delegate hook, ReplInvocationContext context, ParsedInputContext parsed,
-		IServiceProvider services, CancellationToken cancellationToken)
+		IServiceProvider services, CancellationToken cancellationToken, out string? unavailable)
 	{
+		unavailable = FindUnavailableHookValue(hook, parsed);
+		if (unavailable is not null) { return []; }
+		var nativeValues = parsed.Values.Where(static pair => pair.Value.State == InputValueState.Available)
+			.ToDictionary(static pair => pair.Key, static pair => pair.Value.Value, StringComparer.OrdinalIgnoreCase);
 		var provider = new InvocationServiceProvider(this, services);
 		var binding = new InvocationBindingContext(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase),
 			[], OptionSchema.Empty, _options.Parsing.OptionCaseSensitivity, [context, parsed], _options.Parsing.NumericFormatProvider,
 			provider, _options.Interaction, _implicitServiceParameters, cancellationToken)
 		{
 			KeyedServiceProvider = services,
-			NativeValues = parsed.Values.Where(static pair => pair.Value.State == InputValueState.Available)
-				.ToDictionary(static pair => pair.Key, static pair => pair.Value.Value, StringComparer.OrdinalIgnoreCase),
+			NativeValues = nativeValues,
 		};
+		foreach (var parameter in hook.Method.GetParameters())
+		{
+			if (!IsInputScalar(parameter.ParameterType) || parameter.HasDefaultValue
+				|| parameter.ParameterType == typeof(CancellationToken)
+				|| parameter.IsDefined(typeof(FromServicesAttribute), inherit: true)
+				|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
+				|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)
+				|| parsed.Values.ContainsKey(parameter.Name ?? string.Empty)) { continue; }
+			if (!HandlerArgumentBinder.TryResolveInputServiceFallback(parameter, binding, out var service))
+			{
+				unavailable = parameter.Name;
+				return [];
+			}
+			nativeValues[parameter.Name!] = service;
+		}
 		return HandlerArgumentBinder.Bind(hook, binding);
 	}
 
@@ -213,7 +232,7 @@ public sealed partial class CoreReplApp
 	}
 
 	[UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Options-group properties are preserved by the registered command handler and group binding contract.")]
-	private string? FindUnavailableHookValue(Delegate hook, ParsedInputContext parsed, IServiceProvider services)
+	private string? FindUnavailableHookValue(Delegate hook, ParsedInputContext parsed)
 	{
 		if (FindUnavailableHookGlobal(hook, parsed.GlobalValues) is { } global) { return global; }
 		foreach (var parameter in hook.Method.GetParameters())
@@ -225,8 +244,6 @@ public sealed partial class CoreReplApp
 				|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)) { continue; }
 			if (parameter.Name is { } name && parsed.Values.TryGetValue(name, out var value)
 				&& (value.State == InputValueState.Invalid || (value.State == InputValueState.Missing && !parameter.HasDefaultValue))) { return name; }
-			if (IsInputScalar(parameter.ParameterType) && !parameter.HasDefaultValue
-				&& !parsed.Values.ContainsKey(parameter.Name ?? string.Empty) && !IsInputServiceAvailable(parameter.ParameterType, services)) { return parameter.Name; }
 			if (parameter.ParameterType.IsDefined(typeof(ReplOptionsGroupAttribute), inherit: true))
 			{
 				foreach (var property in parameter.ParameterType.GetProperties())
@@ -240,6 +257,24 @@ public sealed partial class CoreReplApp
 			}
 		}
 		return null;
+	}
+
+	[UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Options-group properties are preserved by the registered command handler and group binding contract.")]
+	private bool HookReadsCommandInput(Delegate hook, RouteMatch match)
+	{
+		foreach (var parameter in hook.Method.GetParameters())
+		{
+			if (parameter.ParameterType == typeof(ReplInvocationContext) || parameter.ParameterType == typeof(ParsedInputContext)
+				|| parameter.ParameterType == typeof(CancellationToken)
+				|| parameter.IsDefined(typeof(FromServicesAttribute), inherit: true)
+				|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
+				|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)) { continue; }
+			if (match.Values.ContainsKey(parameter.Name ?? string.Empty)
+				|| match.Route.OptionSchema.TryGetParameter(parameter.Name ?? string.Empty, out _)) { return true; }
+			if (parameter.ParameterType.IsDefined(typeof(ReplOptionsGroupAttribute), inherit: true)
+				&& parameter.ParameterType.GetProperties().Any(property => match.Route.OptionSchema.TryGetParameter(property.Name, out _))) { return true; }
+		}
+		return false;
 	}
 
 	private string? FindUnavailableHookGlobal(Delegate hook, IReadOnlyDictionary<string, InputValue> values)
