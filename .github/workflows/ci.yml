@@ -82,12 +82,17 @@ jobs:
         with:
           node-version: '22.19.0'
 
-      - name: Build remote hosting sample
-        run: dotnet build samples/05-hosting-remote/HostingRemoteSample.csproj -c Release -warnaserror
+      - name: Build MCP tests
+        run: dotnet build src/Repl.McpTests/Repl.McpTests.csproj -c Release -warnaserror
 
       - name: Test with MCP Inspector
-        shell: pwsh
-        run: ./eng/ci/mcp-http-smoke.ps1
+        env:
+          REPL_RUN_MCP_INSPECTOR_TESTS: '1'
+        run: >-
+          dotnet test --project src/Repl.McpTests/Repl.McpTests.csproj
+          -c Release --no-build --no-restore
+          --filter FullyQualifiedName~When_InspectorCallsAStatelessHttpProjection
+          --minimum-expected-tests 1
 
   process-signal-stress:
     name: Process Signal Stress

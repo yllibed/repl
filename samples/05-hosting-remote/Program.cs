@@ -3,10 +3,8 @@ using System.Net.WebSockets;
 using HostingRemoteSample;
 
 using Microsoft.Extensions.DependencyInjection;
-using ModelContextProtocol.AspNetCore;
 
 using Repl;
-using Repl.Mcp;
 using Repl.Telnet;
 using Repl.WebSocket;
 
@@ -34,26 +32,8 @@ builder.Services.AddRepl((sp, replApp) =>
 		sp.GetRequiredService<SessionTracker>()));
 });
 
-builder.Services.AddMcpServer().WithHttpTransport(options =>
-{
-	options.SessionMode = HttpServerSessionMode.Stateless;
-	options.ConfigureSessionOptions = (context, target, cancellationToken) =>
-	{
-		cancellationToken.ThrowIfCancellationRequested();
-		var repl = context.RequestServices.GetRequiredService<ReplApp>();
-		repl.ConfigureMcpServerOptions(target, mcp =>
-		{
-			mcp.ServerName = "HostingRemoteSample";
-			mcp.AutoPromoteReadOnlyToResources = false;
-			mcp.CommandFilter = command => command.Path is "settings show {key}" or "who";
-		}, context.RequestServices);
-		return Task.CompletedTask;
-	};
-});
-
 var webApp = builder.Build();
 
-webApp.MapMcp("/mcp");
 webApp.UseWebSockets();
 webApp.UseDefaultFiles();
 webApp.UseStaticFiles();

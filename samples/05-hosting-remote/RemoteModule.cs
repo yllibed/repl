@@ -28,8 +28,7 @@ internal sealed class RemoteModule(
 					(string key) =>
 						settings.Get(key) is { } value
 							? Results.Ok($"{key} = {value}")
-							: Results.NotFound($"Setting '{key}' not found."))
-					.ReadOnly();
+							: Results.NotFound($"Setting '{key}' not found."));
 
 				m.Map(
 					"set {key} {value}",
@@ -90,7 +89,7 @@ internal sealed class RemoteModule(
 				return sessions.Count == 0
 					? Results.Ok("No active sessions.")
 					: Results.Ok(string.Join('\n', sessions));
-			}).ReadOnly();
+			});
 
 		map.Map(
 			"configure",

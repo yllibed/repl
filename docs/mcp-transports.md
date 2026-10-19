@@ -148,9 +148,22 @@ repl.ConfigureMcpServerOptions(target, services: context.RequestServices);
 
 For Core commands without application DI, the `services` argument may be omitted. The Defaults overload uses `repl.Services` when that argument is omitted; that is an application-wide provider, so **always supply the HTTP request provider in the hosted recipe**. Retain a projection only as long as its supplied provider remains alive.
 
-### Try the running example
+### Validate with Inspector
 
-The existing [remote hosting sample](../samples/05-hosting-remote/README.md#mcp-over-http) exposes a read-only subset of the same graph used by its browser terminals. Its README includes Inspector CLI and web UI instructions. The independent [Inspector smoke test](../eng/ci/mcp-http-smoke.ps1) also runs in CI; the .NET tests exercise scope isolation, disposal and cancellation with a real HTTP client.
+The HTTP tests start their own Kestrel endpoint on an ephemeral loopback port. The opt-in Inspector test uses the same host fixture to check tool discovery, schema portability, invocation and rejection of an excluded command, independently of the C# MCP client. It uses Inspector 2.6.0 and requires Node 22.19.0 or later:
+
+```powershell
+$env:REPL_RUN_MCP_INSPECTOR_TESTS = '1'
+dotnet test --project src/Repl.McpTests/Repl.McpTests.csproj --filter FullyQualifiedName~When_InspectorCallsAStatelessHttpProjection
+```
+
+This check runs in a separate CI job; the regular .NET tests do not require Node or npm. For an application using the recipe above, Inspector can also connect directly:
+
+```powershell
+npx --yes @modelcontextprotocol/inspector@2.6.0 --cli http://localhost:5000/mcp --transport http --method tools/list --strict
+```
+
+Adjust the URL to the application's listener. To inspect it interactively, launch `npx --yes @modelcontextprotocol/inspector@2.6.0`, add a `streamable-http` connection for that URL and use the Tools tab.
 
 ## What is isolated, and at which boundary
 
