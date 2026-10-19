@@ -89,6 +89,58 @@ public static class McpReplExtensions
 		return handler.BuildStaticServerOptions();
 	}
 
+	/// <summary>
+	/// Applies the current Repl projection to SDK-owned server options.
+	/// </summary>
+	/// <remarks>
+	/// Replaces server identity, capabilities, tools, resources and prompts; preserves other SDK settings.
+	/// The supplied services are borrowed. For stateless HTTP, call from the transport's per-request
+	/// configuration callback with the HTTP request's service provider, which the host disposes.
+	/// Without an explicit provider, this overload uses the app's shared services.
+	/// </remarks>
+	/// <param name="app">The Repl app.</param>
+	/// <param name="target">SDK-owned options to configure.</param>
+	/// <param name="configure">Optional Repl MCP configuration.</param>
+	/// <param name="services">Services whose lifetime covers use of the resulting projection.</param>
+	public static void ConfigureMcpServerOptions(
+		this ReplApp app,
+		McpServerOptions target,
+		Action<ReplMcpServerOptions>? configure = null,
+		IServiceProvider? services = null)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+		ArgumentNullException.ThrowIfNull(target);
+		app.Core.ConfigureMcpServerOptions(target, configure, services ?? app.Services);
+	}
+
+	/// <summary>
+	/// Applies the current Core Repl projection to SDK-owned server options.
+	/// </summary>
+	/// <remarks>
+	/// Uses the same snapshot semantics as <see cref="BuildMcpServerOptions(ICoreReplApp, Action{ReplMcpServerOptions}?, IServiceProvider?)"/>.
+	/// Replaces server identity, capabilities and primitive collections without merging them.
+	/// Other SDK settings, including handlers, filters and request scoping, are preserved.
+	/// The caller owns the optional service provider; omitting it supports commands without DI.
+	/// </remarks>
+	/// <param name="app">The core Repl app.</param>
+	/// <param name="target">SDK-owned options to configure.</param>
+	/// <param name="configure">Optional Repl MCP configuration.</param>
+	/// <param name="services">Services whose lifetime covers use of the resulting projection.</param>
+	public static void ConfigureMcpServerOptions(
+		this ICoreReplApp app,
+		McpServerOptions target,
+		Action<ReplMcpServerOptions>? configure = null,
+		IServiceProvider? services = null)
+	{
+		ArgumentNullException.ThrowIfNull(target);
+		var source = app.BuildMcpServerOptions(configure, services);
+		target.ServerInfo = source.ServerInfo;
+		target.Capabilities = source.Capabilities;
+		target.ToolCollection = source.ToolCollection;
+		target.ResourceCollection = source.ResourceCollection;
+		target.PromptCollection = source.PromptCollection;
+	}
+
 	private sealed class EmptyServiceProvider : IServiceProvider
 	{
 		public static readonly EmptyServiceProvider Instance = new();

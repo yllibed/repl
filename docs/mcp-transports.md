@@ -77,21 +77,80 @@ connection sees its own — that is a property of the request, not of the option
 
 ## Scenario B: MCP-over-HTTP
 
-The MCP spec also defines an HTTP transport. For that, you typically host MCP inside ASP.NET Core rather than through `mcp serve`.
+This advanced integration is for applications where Repl is one component of an ASP.NET Core host. The host and the MCP SDK own HTTP, request scopes, authentication, authorization and shutdown. Repl projects and executes the command graph.
+
+Reference `Repl.Mcp` and `ModelContextProtocol.AspNetCore` (use the same MCP SDK version as `Repl.Mcp`). No additional Repl HTTP package is required.
 
 ```csharp
-var app = ReplApp.Create();
-app.Map("greet {name}", (string name) => $"Hello, {name}!");
-app.Map("status", () => "all systems go").ReadOnly();
+using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.AspNetCore;
+using Repl;
+using Repl.Mcp;
 
-var mcpOptions = app.Core.BuildMcpServerOptions(configure: o =>
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddRepl((_, repl) =>
 {
-    o.ServerName = "MyApi";
-    o.ResourceUriScheme = "myapi";
+    repl.UseEmbeddedConsoleProfile();
+    repl.Map("status", () => "all systems go").ReadOnly();
+    repl.Map("admin reset", () => "reset requested");
 });
+
+builder.Services.AddMcpServer().WithHttpTransport(http =>
+{
+    http.SessionMode = HttpServerSessionMode.Stateless;
+    http.ConfigureSessionOptions = (context, target, cancellationToken) =>
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var repl = context.RequestServices.GetRequiredService<ReplApp>();
+        repl.ConfigureMcpServerOptions(target, options =>
+        {
+            options.ServerName = "MyApi";
+            options.AutoPromoteReadOnlyToResources = false;
+            options.CommandFilter = command =>
+                string.Equals(command.Path, "status", StringComparison.Ordinal);
+        }, context.RequestServices);
+        return Task.CompletedTask;
+    };
+});
+
+var webApp = builder.Build();
+webApp.MapMcp("/mcp");
+await webApp.RunAsync();
 ```
 
-You can then pass those options to the MCP SDK's HTTP integration.
+Only `status` is projected. `CommandFilter` controls Repl-generated primitives; it does not filter independent tools or fallback handlers the host registers directly with the SDK. Compose authentication and authorization on the SDK endpoint using the host's normal policies.
+
+### Startup and request order
+
+1. Register business services in `builder.Services` and declare the Repl graph through `AddRepl`. Its configuration runs when the singleton Repl application is first resolved; it must not capture request-scoped business services in module constructors.
+2. Register the SDK HTTP transport, build the host, map `/mcp` and start it. The host owns process signals and service disposal.
+3. For each HTTP request, the SDK creates request-local options and invokes `ConfigureSessionOptions` despite the callback's name. Pass `context.RequestServices` into the helper so projection and execution use the same HTTP scope.
+4. The SDK dispatches the request to the generated tools, resources or prompts. Command execution goes through the Repl invocation pipeline and its applicable hooks. See [advanced input processing](advanced-input.md) for hook semantics.
+5. The SDK cleans up its request-local server; ASP.NET Core disposes the request services, including asynchronous disposables. Cancellation of one request does not stop the host or another request.
+
+Register shared business state as singleton and request-local dependencies as scoped in the host. Repl borrows the supplied provider without building another business-service container or opening a nested DI scope. There is no persistent per-client Repl session on this path.
+
+### Options and Core usage
+
+`ConfigureMcpServerOptions` replaces server identity, capabilities and the tool/resource/prompt collections with the Repl projection. It preserves other SDK settings, including handlers, filters, protocol selection and request scoping. It does not merge existing primitive collections. Configure server identity and Repl capabilities through its Repl options callback.
+
+Both the helper and `BuildMcpServerOptions` use snapshot projection semantics. Build the application graph at startup; this integration adds no dynamic catalog notifications or cross-request session state. A new snapshot is built for each request in the example above. Stateless HTTP client capabilities have the limits described under Scenario A; this example needs neither client roots nor server-to-client interactions. Stateful and hybrid compatibility modes are not covered by this recipe.
+
+Core applications use the same helper directly:
+
+```csharp
+var repl = CoreReplApp.Create();
+repl.Map("status", () => "ready");
+
+// Inside ConfigureSessionOptions:
+repl.ConfigureMcpServerOptions(target, services: context.RequestServices);
+```
+
+For Core commands without application DI, the `services` argument may be omitted. The Defaults overload uses `repl.Services` when that argument is omitted; that is an application-wide provider, so **always supply the HTTP request provider in the hosted recipe**. Retain a projection only as long as its supplied provider remains alive.
+
+### Try the running example
+
+The existing [remote hosting sample](../samples/05-hosting-remote/README.md#mcp-over-http) exposes a read-only subset of the same graph used by its browser terminals. Its README includes Inspector CLI and web UI instructions. The independent [Inspector smoke test](../eng/ci/mcp-http-smoke.ps1) also runs in CI; the .NET tests exercise scope isolation, disposal and cancellation with a real HTTP client.
 
 ## What is isolated, and at which boundary
 
@@ -120,9 +179,10 @@ A server created from a reused `BuildMcpServerOptions()` result — which is how
 custom-transport host reaches Repl — has everything above **except the connection row**: see the known
 limitation above. There is no per-connection context to give a DI scope to either, so `Scoped` resolves
 once from the application root and is shared by every client the process serves, for as long as it runs.
-That is true under stateless HTTP hosting too, even though the SDK itself builds one short-lived server
-per request there: Repl's own scope is a property of the *context* it built at construction, not of the
-SDK's per-request server, so it does not follow the SDK's request boundary.
+That is also true if a stateless HTTP host reuses one projection across requests: Repl's own scope is a
+property of the *context* it built at construction, not of the SDK's per-request server. Scenario B
+avoids this by constructing a projection for each request with that request's provider; scoped
+dependencies then follow the HTTP request boundary and are disposed by ASP.NET Core.
 
 **Calling `BuildMcpServerOptions()` again for each connection does not isolate `Scoped` either.** The
 `ReplApp` overload always passes that app's one `Services` root (`app.Services`, cached for the app's

@@ -6,6 +6,8 @@ Remote-hosted REPL sample running over three transports:
 - Telnet-over-WebSocket
 - SignalR
 
+It also exposes a read-only subset of the same command graph through stateless MCP HTTP.
+
 It demonstrates shared state, session visibility, transport-aware terminal metadata, and hosted user feedback in one app.
 
 ## Architecture snapshot
@@ -54,6 +56,38 @@ http://localhost:5000/?autoconnect=telnet
 Supported values: `ws`, `websocket`, `telnet`, `signalr`, `sr`.
 
 If Kestrel binds to another port, use the URL printed in the console.
+
+## MCP over HTTP
+
+The MCP endpoint is `/mcp` on the same listener as the browser terminal. Only `settings_show` and `who` are published as tools. Mutation and interactive commands remain available to terminal sessions. Changing a setting in a terminal is visible to a subsequent MCP read because both use the same singleton settings service.
+
+With the sample running at its default address:
+
+```powershell
+npx --yes @modelcontextprotocol/inspector@2.6.0 --cli http://localhost:5000/mcp --transport http --method tools/list --strict
+npx --yes @modelcontextprotocol/inspector@2.6.0 --cli http://localhost:5000/mcp --transport http --method tools/call --tool-name settings_show --tool-arg key=maintenance
+```
+
+For the Inspector web UI, run:
+
+```powershell
+npx --yes @modelcontextprotocol/inspector@2.6.0
+```
+
+Open the local Inspector URL printed by the launcher. Choose **Add Servers > Add manually**, give the connection a server ID, select `streamable-http` and enter the sample's `/mcp` URL. Add the server and turn on its connection switch. In **Tools**, select `settings_show`, enter `maintenance` for `key` and execute it. Adjust the endpoint if the sample uses another port. Node 22.19.0 or later is required for this Inspector version.
+
+To run the automated check from the repository root (it starts and stops its own sample on an ephemeral loopback port):
+
+```powershell
+dotnet build samples/05-hosting-remote/HostingRemoteSample.csproj -c Release
+pwsh -File eng/ci/mcp-http-smoke.ps1
+```
+
+Inspector is downloaded through npm, separately from the .NET tests. The smoke test checks discovery, schema portability, a successful call and rejection of an excluded command.
+
+This is an advanced hosting integration. The SDK invokes `ConfigureSessionOptions` for every stateless HTTP request. The callback resolves the existing Repl app and projects it using that request's services; the host owns cleanup. See [MCP transports](../../docs/mcp-transports.md#scenario-b-mcp-over-http) for startup order, service lifetimes and Core usage.
+
+The sample supplies no authentication. Bind it to loopback for local use; applications exposing it remotely must configure their host's access policies.
 
 ## Browser UI
 

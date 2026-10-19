@@ -8,5 +8,7 @@
 		<ProjectReference Include="..\..\src\Repl\Repl.csproj" />
 		<ProjectReference Include="..\..\src\Repl.WebSocket\Repl.WebSocket.csproj" />
 		<ProjectReference Include="..\..\src\Repl.Telnet\Repl.Telnet.csproj" />
+		<ProjectReference Include="..\..\src\Repl.Mcp\Repl.Mcp.csproj" />
+		<PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
 	</ItemGroup>
 </Project>
