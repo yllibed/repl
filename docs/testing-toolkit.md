@@ -48,8 +48,12 @@ propagate or maps it to an exit code through `ReplOptions.ExitCodes.Cancelled`.
 
 ```csharp
 execution.ExitCode.Should().Be(0);
+execution.OutcomeKind.Should().Be(ReplExecutionOutcomeKind.Success);
 execution.OutputText.Should().Contain("world");
 ```
+
+`OutcomeKind` tells apart runs that the exit code may not, such as a command that completed with
+failures (`Results.CompletedWithFailures`) and one that failed.
 
 ### Typed result object
 
@@ -57,6 +61,9 @@ execution.OutputText.Should().Contain("world");
 var contact = execution.GetResult<Contact>();      // throws if wrong/missing type
 var ok = execution.TryGetResult<Contact>(out var typed);
 ```
+
+For a result that carries an outcome of its own (`Results.Exit(code, payload)`,
+`Results.CompletedWithFailures(payload)`), both read through to the payload.
 
 ### Rendered output contract (optional)
 

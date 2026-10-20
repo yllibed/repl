@@ -220,6 +220,7 @@ that is rendered and classified in the handler's place.
 The raw handler return value is unwrapped and interpreted:
 
 - `IExitResult` — carries an explicit exit code and optional message.
+- `ICompletedWithFailuresResult` — the command completed and reports failures; only its payload renders.
 - `ITuple` — destructured into result components.
 - `EnterInteractiveResult` — transitions the session into interactive mode.
 - Navigation transformations are applied if the result triggers context changes.
@@ -256,6 +257,7 @@ mapped to an integer by `ReplOptions.ExitCodes` (`ExitCodeOptions`), then handed
 | `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
 | `Interrupted` | a process signal (SIGINT, Ctrl+Break, SIGTERM) the framework claimed, for a standalone run that opted in through `ReplRunOptions.ProcessSignalHandling`. Only a clean or cancelled run is reclassified: one that already produced a refusal or failure keeps reporting it | `ExitCodes.Interrupted`, else the `128 + signal` code the handler supplies, else `130` |
 | `FrameworkError` | incompatible programmatic adapter, unsupported hosting capability, hosted-service start or stop failure | `1` |
+| `CompletedWithFailures` | handler returned `Results.CompletedWithFailures` — the command ran to completion and its report contains failures (tests that failed). Not success-like: it does not enter interactive mode, even with `--interactive`, and a process signal does not reclassify it. It keeps its outcome when a cancellation lands while its payload renders, whatever code it maps to | `1` |
 
 The table is the **process** exit code. Ctrl+C during an interactive command is also a `Cancelled`
 outcome, but it decorates that command's shell-integration command-end mark and the loop continues —
