@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Repl.Testing;
 
 namespace Repl.IntegrationTests;
@@ -62,18 +63,28 @@ public sealed class Given_FeedbackStream
 	}
 
 	[TestMethod]
-	[Description("Verifies feedback written before the command is resolved — by an invocation hook, a hook that answers the invocation itself, a startup hook, or a hook after another one rewrote the invocation into JSON — also leaves a machine-readable payload alone.")]
+	[Description("Verifies feedback written before the command is resolved — by an argument preprocessor, an invocation hook, a hook that answers the invocation itself, a startup hook, or a preprocessor or hook after an earlier one rewrote the invocation into JSON — also leaves a machine-readable payload alone.")]
+	[DataRow(HookKind.Preprocessor, DisplayName = "Argument preprocessor")]
+	[DataRow(HookKind.PreprocessorAfterRewrite, DisplayName = "Argument preprocessor after another rewrote the invocation into JSON")]
 	[DataRow(HookKind.Invocation, DisplayName = "Invocation hook")]
 	[DataRow(HookKind.Handled, DisplayName = "Invocation hook that handles the invocation")]
 	[DataRow(HookKind.Startup, DisplayName = "Startup hook")]
 	[DataRow(HookKind.AfterRewrite, DisplayName = "Invocation hook after another rewrote the invocation into JSON")]
-	public void When_AHookWritesFeedbackForJsonOutput_Then_ItGoesToTheErrorWriter(HookKind hook)
+	public void When_FeedbackIsWrittenBeforeTheCommandIsResolvedForJsonOutput_Then_ItGoesToTheErrorWriter(HookKind hook)
 	{
 		var sut = ReplApp.Create();
 		sut.Map("sync", () => new { Count = 3 });
 		var args = new[] { "sync", "--json", "--no-logo" };
 		switch (hook)
 		{
+			case HookKind.Preprocessor:
+				sut.UseArgumentPreprocessor(WriteStatusFromPreprocessor(sut));
+				break;
+			case HookKind.PreprocessorAfterRewrite:
+				args = ["sync", "--no-logo"];
+				sut.UseArgumentPreprocessor((input, _) => ArgumentPreprocessingResult.Replace([.. input.Arguments, "--json"]));
+				sut.UseArgumentPreprocessor(WriteStatusFromPreprocessor(sut));
+				break;
 			case HookKind.Invocation:
 				sut.UseInvocationHook(WriteStatusAndContinueAsync);
 				break;
@@ -113,6 +124,29 @@ public sealed class Given_FeedbackStream
 		error.ToString().Should().Contain("Hook ran");
 		using var payload = JsonDocument.Parse(output.ToString());
 		payload.RootElement.GetProperty("count").GetInt32().Should().Be(3);
+	}
+
+	[TestMethod]
+	[Description("Verifies a preprocessor's feedback follows the arguments it receives: once an earlier preprocessor rewrote --json away, the feedback stays beside the human output.")]
+	public void When_AnEarlierPreprocessorDropsJson_Then_FeedbackStaysOnTheOutputWriter()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("sync", () => "done");
+		sut.UseArgumentPreprocessor((input, _) => ArgumentPreprocessingResult.Replace(
+			[.. input.Arguments.Where(static argument => !string.Equals(argument, "--json", StringComparison.Ordinal))]));
+		sut.UseArgumentPreprocessor(WriteStatusFromPreprocessor(sut));
+
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		int exitCode;
+		using (ReplSessionIO.SetSession(output, TextReader.Null, error: error, isHostedSession: false))
+		{
+			exitCode = sut.Run(["sync", "--json", "--no-logo"]);
+		}
+
+		exitCode.Should().Be(0);
+		output.ToString().Should().Contain("Hook ran");
+		error.ToString().Should().NotContain("Hook ran");
 	}
 
 	[TestMethod]
@@ -219,11 +253,22 @@ public sealed class Given_FeedbackStream
 
 	public enum HookKind
 	{
+		Preprocessor,
+		PreprocessorAfterRewrite,
 		Invocation,
 		Handled,
 		Startup,
 		AfterRewrite,
 	}
+
+	// A preprocessor is given no services, so it reaches the channel the way an app capturing it would.
+	private static Func<ArgumentPreprocessingContext, CancellationToken, ValueTask<ArgumentPreprocessingResult>> WriteStatusFromPreprocessor(ReplApp app) =>
+		async (_, ct) =>
+		{
+			await app.Core.CurrentServiceProvider.GetRequiredService<IReplInteractionChannel>()
+				.WriteStatusAsync("Hook ran", ct).ConfigureAwait(false);
+			return ArgumentPreprocessingResult.Continue();
+		};
 
 	private static async ValueTask<ReplInvocationResult> WriteStatusAndContinueAsync(IReplInteractionChannel channel, CancellationToken ct)
 	{

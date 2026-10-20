@@ -607,11 +607,14 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		_options.Output.Transformers.TryGetValue(ResolveOutputFormat(requestedFormat), out var transformer)
 		&& transformer.IsMachineReadable;
 
-	// Hooks, validators and a hook's own answer run before a command is resolved, so the format is read from
-	// the input as it stands at that point, rewrites included; the matched command then refines it with the
-	// format it resolved.
-	private IDisposable PushMachineReadableOutputFor(ProcessedInput input) =>
-		ReplSessionIO.PushMachineReadableOutput(IsMachineReadableFormat(ParseInputGlobals(input).OutputFormat));
+	// Preprocessors, hooks, validators and a hook's own answer run before a command is resolved, so the format
+	// is read from the input as it stands at that point, rewrites included; the matched command then refines
+	// it with the format it resolved.
+	private IDisposable PushMachineReadableOutputFor(ArgumentPreprocessingContext input) =>
+		ReplSessionIO.PushMachineReadableOutput(IsMachineReadableInput(input));
+
+	private bool IsMachineReadableInput(ArgumentPreprocessingContext input) =>
+		IsMachineReadableFormat(ParseInputGlobals(input).OutputFormat);
 
 	// A framework refusal, not command output: it goes to Error so a headless run's stdout keeps
 	// carrying only the payload a parent process parses. Reported rather than swallowed, because this

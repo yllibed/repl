@@ -140,8 +140,8 @@ standard output carries the payload alone:
 Otherwise feedback stays on standard output, beside the result. A progress line is rewritten in place
 only when the stream it is written to reaches a terminal. Colour and the terminal progress sequence
 follow that stream's colour rule: a terminal is coloured, a file or a pipe is not, unless `AnsiMode.Always`
-or `CLICOLOR_FORCE=1` forces colour. Feedback written by input hooks, validators and startup hooks
-follows the format the invocation asks for at that point, as the command's own feedback does.
+or `CLICOLOR_FORCE=1` forces colour. Feedback written by argument preprocessors, input hooks, validators and startup
+hooks follows the format the invocation asks for at that point, as the command's own feedback does.
 
 A session uses its own error writer, and the process's redirection does not apply to it. Most hosts
 (WebSocket, Telnet, `Repl.Testing` sessions) give a session one stream, so their feedback does not move.
