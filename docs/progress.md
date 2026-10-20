@@ -161,6 +161,13 @@ and menus of `RichPromptInteractionHandler` and Spectre still render on the outp
 
 `ReplFeedbackStream.Error` forces the error stream instead.
 
+A [protocol-passthrough](commands.md#protocol-passthrough-commands) command run from the console writes
+the feedback of its handler to standard error, uncoloured, whatever the format and `FeedbackStream`:
+standard output belongs to the protocol. Feedback written before the command is resolved, by
+preprocessors and hooks, follows the rules above: a server started by a client with standard output
+piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a hosted session, the feedback
+goes to the session's writers, which most transports share with the protocol.
+
 ## Advanced Terminal Progress
 
 The console presenter can emit `OSC 9;4` progress sequences in addition to normal text feedback. These sequences are useful for terminal taskbar progress or hosted terminal integrations.
