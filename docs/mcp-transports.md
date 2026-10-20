@@ -118,7 +118,7 @@ webApp.MapMcp("/mcp");
 await webApp.RunAsync();
 ```
 
-Only `status` is projected. `CommandFilter` controls Repl-generated primitives; it does not filter independent tools or fallback handlers the host registers directly with the SDK. Compose authentication and authorization on the SDK endpoint using the host's normal policies.
+Only `status` is projected. `CommandFilter` controls Repl-generated primitives; it does not filter fallback handlers or independent tools the host adds after applying the projection. Primitive collections registered before the helper runs are replaced. Compose authentication and authorization on the SDK endpoint using the host's normal policies.
 
 ### Startup and request order
 
@@ -134,7 +134,7 @@ Register shared business state as singleton and request-local dependencies as sc
 
 `ConfigureMcpServerOptions` replaces server identity, capabilities and the tool/resource/prompt collections with the Repl projection. It preserves other SDK settings, including handlers, filters, protocol selection and request scoping. It does not merge existing primitive collections. Configure server identity and Repl capabilities through its Repl options callback.
 
-Both the helper and `BuildMcpServerOptions` use snapshot projection semantics. Build the application graph at startup; this integration adds no dynamic catalog notifications or cross-request session state. A new snapshot is built for each request in the example above. Stateless HTTP client capabilities have the limits described under Scenario A; this example needs neither client roots nor server-to-client interactions. Stateful and hybrid compatibility modes are not covered by this recipe.
+Both the helper and `BuildMcpServerOptions` use snapshot projection semantics. Build the application graph at startup; this integration adds no dynamic catalog notifications or cross-request session state. The example above rebuilds the catalog and generated schemas for each request; it does not cache the projection. Stateless HTTP client capabilities have the limits described under Scenario A; this example needs neither client roots nor server-to-client interactions. The static projection does not install the `DiscoverAndCallShim` compatibility handlers. Stateful and hybrid HTTP modes are not covered by this recipe.
 
 Core applications use the same helper directly:
 
@@ -150,7 +150,7 @@ For Core commands without application DI, the `services` argument may be omitted
 
 ### Validate with Inspector
 
-The HTTP tests start their own Kestrel endpoint on an ephemeral loopback port. The opt-in Inspector test uses the same host fixture to check tool discovery, schema portability, invocation and rejection of an excluded command, independently of the C# MCP client. It uses Inspector 2.6.0 and requires Node 22.19.0 or later:
+The HTTP tests start their own Kestrel endpoint on an ephemeral loopback port. The opt-in Inspector test uses the same host fixture to check filtered tool discovery, schema portability and invocation, independently of the C# MCP client. Server-side rejection of excluded commands and aliases is covered by `When_ACommandIsFilteredOut_Then_DirectAndAliasCallsCannotExecuteIt` in the C# HTTP tests. It uses Inspector 2.6.0 and requires Node 22.19.0 or later:
 
 ```powershell
 $env:REPL_RUN_MCP_INSPECTOR_TESTS = '1'

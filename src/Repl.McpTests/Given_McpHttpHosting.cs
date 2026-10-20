@@ -13,7 +13,9 @@ namespace Repl.McpTests;
 [TestClass]
 public sealed class Given_McpHttpHosting
 {
+	private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 	[TestMethod]
+	[Description("The SDK HTTP transport negotiates the modern protocol and executes a parameterized Repl command.")]
 	public async Task When_AReplCatalogIsHostedStatelessly_Then_ARealClientCanDiscoverAndCallIt()
 	{
 		var app = ReplApp.Create();
@@ -26,7 +28,7 @@ public sealed class Given_McpHttpHosting
 				protocolVersion = context.Request.Headers["MCP-Protocol-Version"];
 				await next(context).ConfigureAwait(false);
 			})).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		var client = await host.ConnectAsync(timeout.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 
@@ -41,6 +43,7 @@ public sealed class Given_McpHttpHosting
 	}
 
 	[TestMethod]
+	[Description("Core projections expose all three primitive kinds without requiring an application service provider.")]
 	public async Task When_CoreHasNoApplicationDi_Then_HttpServesToolsResourcesAndPrompts()
 	{
 		var app = CoreReplApp.Create();
@@ -49,29 +52,37 @@ public sealed class Given_McpHttpHosting
 		app.Map("guide", () => "helpful instructions").AsPrompt();
 		await using var host = await McpHttpTestHost.StartAsync(
 			(_, target) => app.ConfigureMcpServerOptions(target)).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		var client = await host.ConnectAsync(timeout.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 
 		var tools = await client.ListToolsAsync(cancellationToken: timeout.Token).ConfigureAwait(false);
 		tools.Should().ContainSingle().Which.Name.Should().Be("ping");
 		var result = await client.CallToolAsync("ping", cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		Text(result).Should().Contain("pong");
+
 		var resources = await client.ListResourcesAsync(cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		resources.Should().ContainSingle();
+
 		var resource = await client.ReadResourceAsync(resources[0].Uri, cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		resource.Contents.OfType<TextResourceContents>().Should().ContainSingle().Which.Text.Should().Contain("configuration");
+
 		var prompts = await client.ListPromptsAsync(cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		prompts.Should().ContainSingle();
+
 		var prompt = await client.GetPromptAsync(prompts[0].Name, cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		prompt.Messages.Should().ContainSingle().Which.Content.Should().BeOfType<TextContentBlock>()
 			.Which.Text.Should().Contain("helpful instructions");
 	}
 
 	[TestMethod]
-	[DataRow(DynamicToolCompatibilityMode.Disabled)]
-	[DataRow(DynamicToolCompatibilityMode.DiscoverAndCallShim)]
-	public async Task When_ACommandIsFilteredOut_Then_DirectAliasesAndShimCallsCannotExecuteIt(DynamicToolCompatibilityMode compatibility)
+	[Description("Filtering removes a command from discovery and prevents HTTP invocation through its name or alias.")]
+	public async Task When_ACommandIsFilteredOut_Then_DirectAndAliasCallsCannotExecuteIt()
 	{
 		var executions = 0;
 		var app = ReplApp.Create();
@@ -81,18 +92,16 @@ public sealed class Given_McpHttpHosting
 			app.ConfigureMcpServerOptions(target, options =>
 			{
 				options.CommandFilter = command => string.Equals(command.Path, "allowed", StringComparison.Ordinal);
-				options.DynamicToolCompatibility = compatibility;
 			}, services)).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		var client = await host.ConnectAsync(timeout.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 
 		var tools = await client.ListToolsAsync(cancellationToken: timeout.Token).ConfigureAwait(false);
 		tools.Should().ContainSingle().Which.Name.Should().Be("allowed");
-		foreach (var name in new[] { "admin", "wipe", "call_tool" })
+		foreach (var name in new[] { "admin", "wipe" })
 		{
 			var invoke = async () => await client.CallToolAsync(name,
-				new Dictionary<string, object?>(StringComparer.Ordinal) { ["name"] = "admin" },
 				cancellationToken: timeout.Token).ConfigureAwait(false);
 			await invoke.Should().ThrowAsync<McpException>().ConfigureAwait(false);
 		}
@@ -100,10 +109,10 @@ public sealed class Given_McpHttpHosting
 		executions.Should().Be(0);
 	}
 
-#pragma warning disable VSTHRD003 // Tests await gates completed by HTTP requests in another execution context.
 	[TestMethod]
-	[DataRow(false)]
-	[DataRow(true)]
+	[DataRow(false, DisplayName = "Core uses the HTTP request scope")]
+	[DataRow(true, DisplayName = "Defaults uses the HTTP request scope")]
+	[Description("Concurrent Core and Defaults invocations borrow the middleware request scope while retaining shared singleton state.")]
 	public async Task When_RequestsRunConcurrently_Then_TheyUseTheirHttpScopeAndShareOnlySingletons(bool useDefaults)
 	{
 		var probes = new ConcurrentBag<RequestProbe>();
@@ -137,7 +146,7 @@ public sealed class Given_McpHttpHosting
 				probe.MiddlewareId = probe.Id;
 				await next(context).ConfigureAwait(false);
 			})).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		var client = await host.ConnectAsync(timeout.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 
@@ -145,6 +154,7 @@ public sealed class Given_McpHttpHosting
 			client.CallToolAsync("scope", cancellationToken: timeout.Token).AsTask(),
 			client.CallToolAsync("scope", cancellationToken: timeout.Token).AsTask()).ConfigureAwait(false);
 		var identities = results.Select(result => Text(result).Trim('"').Split('|')).ToArray();
+
 		identities[0][0].Should().NotBe(identities[1][0]);
 		foreach (var identity in identities)
 		{
@@ -152,10 +162,13 @@ public sealed class Given_McpHttpHosting
 			identity[2].Should().Be(shared.Id.ToString());
 		}
 
+#pragma warning disable VSTHRD003 // HTTP requests complete these test synchronization gates.
 		await Task.WhenAll(probes.Select(probe => probe.Disposed.Task)).WaitAsync(timeout.Token).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 	}
 
 	[TestMethod]
+	[Description("Request cancellation and command errors release asynchronous scoped dependencies without interrupting healthy calls.")]
 	public async Task When_ARequestFailsOrIsCancelled_Then_ScopedServicesAreDisposedAndOtherCallsSurvive()
 	{
 		var probes = new ConcurrentBag<RequestProbe>();
@@ -184,28 +197,36 @@ public sealed class Given_McpHttpHosting
 				probes.Add(probe);
 				return probe;
 			})).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		var client = await host.ConnectAsync(timeout.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 		using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
 		var waiting = client.CallToolAsync("wait", cancellationToken: cancelled.Token).AsTask();
+#pragma warning disable VSTHRD003 // HTTP requests complete these test synchronization gates.
 		await entered.Task.WaitAsync(timeout.Token).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 		var healthy = await client.CallToolAsync("ok", cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		healthy.IsError.Should().NotBeTrue();
+
 		await cancelled.CancelAsync().ConfigureAwait(false);
+#pragma warning disable VSTHRD003 // HTTP requests complete these test synchronization gates.
 		var observeCancellation = async () => await waiting.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 		await observeCancellation.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
 		var failure = await client.CallToolAsync("fail", cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		failure.IsError.Should().BeTrue();
 		Text(failure).Should().Contain("failure");
+
+#pragma warning disable VSTHRD003 // HTTP requests complete these test synchronization gates.
 		await Task.WhenAll(probes.Select(probe => probe.Disposed.Task)).WaitAsync(timeout.Token).ConfigureAwait(false);
+#pragma warning restore VSTHRD003
 		probes.Should().Contain(probe => probe.Cancelled);
 	}
-#pragma warning restore VSTHRD003
-
-	private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(block => block.Text));
 
 	[TestMethod]
+	[Description("A failed projection callback releases its HTTP scope and leaves the host available for subsequent requests.")]
 	public async Task When_ProjectionConfigurationThrows_Then_TheHttpScopeIsReleased()
 	{
 		var probe = new RequestProbe();
@@ -222,7 +243,7 @@ public sealed class Given_McpHttpHosting
 				app.ConfigureMcpServerOptions(target, services: services);
 			},
 			services => services.AddScoped(_ => probe)).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		using var http = new HttpClient();
 		using var request = new HttpRequestMessage(HttpMethod.Post, host.Endpoint);
 		request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
@@ -242,6 +263,7 @@ public sealed class Given_McpHttpHosting
 	}
 
 	[TestMethod]
+	[Description("The Defaults fallback resolves dependencies from the application provider rather than the HTTP host.")]
 	public async Task When_DefaultsProviderIsOmitted_Then_ApplicationServicesAreUsed()
 	{
 		var applicationProbe = new SharedProbe();
@@ -250,13 +272,16 @@ public sealed class Given_McpHttpHosting
 		await using var host = await McpHttpTestHost.StartAsync(
 			(_, target) => app.ConfigureMcpServerOptions(target),
 			services => services.AddSingleton<SharedProbe>()).ConfigureAwait(false);
-		using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var timeout = new CancellationTokenSource(RequestTimeout);
 		var client = await host.ConnectAsync(timeout.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 
 		var result = await client.CallToolAsync("id", cancellationToken: timeout.Token).ConfigureAwait(false);
+
 		Text(result).Should().Contain(applicationProbe.Id.ToString());
 	}
+
+	private static string Text(CallToolResult result) => string.Concat(result.Content.OfType<TextContentBlock>().Select(block => block.Text));
 
 	private sealed class SharedProbe
 	{

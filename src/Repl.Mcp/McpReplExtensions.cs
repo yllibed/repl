@@ -80,13 +80,7 @@ public static class McpReplExtensions
 		Action<ReplMcpServerOptions>? configure = null,
 		IServiceProvider? services = null)
 	{
-		ArgumentNullException.ThrowIfNull(app);
-
-		var options = new ReplMcpServerOptions();
-		configure?.Invoke(options);
-
-		var handler = new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
-		return handler.BuildStaticServerOptions();
+		return CreateHandler(app, configure, services).BuildStaticServerOptions();
 	}
 
 	/// <summary>
@@ -101,7 +95,7 @@ public static class McpReplExtensions
 	/// <param name="app">The Repl app.</param>
 	/// <param name="target">SDK-owned options to configure.</param>
 	/// <param name="configure">Optional Repl MCP configuration.</param>
-	/// <param name="services">Services whose lifetime covers use of the resulting projection.</param>
+	/// <param name="services">Services whose lifetime covers use of the resulting projection; defaults to the app's shared services.</param>
 	public static void ConfigureMcpServerOptions(
 		this ReplApp app,
 		McpServerOptions target,
@@ -133,12 +127,18 @@ public static class McpReplExtensions
 		IServiceProvider? services = null)
 	{
 		ArgumentNullException.ThrowIfNull(target);
-		var source = app.BuildMcpServerOptions(configure, services);
-		target.ServerInfo = source.ServerInfo;
-		target.Capabilities = source.Capabilities;
-		target.ToolCollection = source.ToolCollection;
-		target.ResourceCollection = source.ResourceCollection;
-		target.PromptCollection = source.PromptCollection;
+		CreateHandler(app, configure, services).ApplyStaticServerOptions(target);
+	}
+
+	private static McpServerHandler CreateHandler(
+		ICoreReplApp app,
+		Action<ReplMcpServerOptions>? configure,
+		IServiceProvider? services)
+	{
+		ArgumentNullException.ThrowIfNull(app);
+		var options = new ReplMcpServerOptions();
+		configure?.Invoke(options);
+		return new McpServerHandler(app, options, services ?? EmptyServiceProvider.Instance);
 	}
 
 	private sealed class EmptyServiceProvider : IServiceProvider
