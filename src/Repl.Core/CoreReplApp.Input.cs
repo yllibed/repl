@@ -9,16 +9,25 @@ public sealed partial class CoreReplApp
 	private readonly AsyncLocal<ProcessedInput?> _currentInput = new();
 	internal IReadOnlyList<string>? CurrentInputScopeTokens => _currentInput.Value?.Context.ScopeTokens;
 
+	/// <summary>
+	/// Makes <paramref name="input"/> the current input, and routes the feedback written while it is current
+	/// by the output format it asks for.
+	/// </summary>
 	internal IDisposable PushProcessedInput(ProcessedInput? input)
 	{
 		var previous = _currentInput.Value;
+		var feedbackScope = input is null ? null : PushMachineReadableOutputFor(input.Context);
 		_currentInput.Value = input;
-		return new ProcessedInputScope(this, previous);
+		return new ProcessedInputScope(this, previous, feedbackScope);
 	}
 
-	private sealed class ProcessedInputScope(CoreReplApp owner, ProcessedInput? previous) : IDisposable
+	private sealed class ProcessedInputScope(CoreReplApp owner, ProcessedInput? previous, IDisposable? feedbackScope) : IDisposable
 	{
-		public void Dispose() => owner._currentInput.Value = previous;
+		public void Dispose()
+		{
+			owner._currentInput.Value = previous;
+			feedbackScope?.Dispose();
+		}
 	}
 
 	internal async ValueTask<ProcessedInput> PreprocessInputAsync(
@@ -35,11 +44,17 @@ public sealed partial class CoreReplApp
 		if (previous is not null) { checks.Add(previous.Validation); }
 		var context = CreateContext();
 		onProcessed?.Invoke(new(context, CombineInputValidation(checks)));
+		// Read from the arguments each preprocessor receives, and parsed again only after a rewrite.
+		bool? isMachineReadable = null;
 		foreach (var adapter in _options.Input.Preprocessors.Skip(skip).ToArray())
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			var decision = await adapter(context, cancellationToken).ConfigureAwait(false)
-				?? throw new InvalidOperationException("An argument preprocessor returned null.");
+			ArgumentPreprocessingResult decision;
+			using (ReplSessionIO.PushMachineReadableOutput(isMachineReadable ??= IsMachineReadableInput(context)))
+			{
+				decision = await adapter(context, cancellationToken).ConfigureAwait(false)
+					?? throw new InvalidOperationException("An argument preprocessor returned null.");
+			}
 			checks.Add(decision.Validation);
 			if (decision.Arguments is { } replacement)
 			{
@@ -51,6 +66,7 @@ public sealed partial class CoreReplApp
 				effective = replacement;
 				origins = replacementOrigins;
 				context = CreateContext();
+				isMachineReadable = null;
 			}
 			var processed = new ProcessedInput(context, CombineInputValidation(checks), decision.IsHandled, decision.Result);
 			onProcessed?.Invoke(processed);
@@ -129,6 +145,7 @@ public sealed partial class CoreReplApp
 			input = input with { Request = effectiveRequest?.Command is not null ? effectiveRequest.Copy() : null, OriginalRequest = submitted?.Copy(), Channel = channel, InheritSessionGlobals = isSubInvocation };
 			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
 			_currentInput.Value = input;
+			using var feedbackScope = PushMachineReadableOutputFor(input.Context);
 			if (await TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false) is { } finished)
 			{
 				return finished;
@@ -160,8 +177,10 @@ public sealed partial class CoreReplApp
 			&& string.Equals(globals.RemainingTokens[1], "__complete", StringComparison.OrdinalIgnoreCase);
 	}
 
-	private GlobalInvocationOptions ParseInputGlobals(ProcessedInput input) =>
-		GlobalOptionParser.Parse([.. input.Context.ScopeTokens, .. input.Context.Arguments], _options.Output, _options.Parsing);
+	private GlobalInvocationOptions ParseInputGlobals(ProcessedInput input) => ParseInputGlobals(input.Context);
+
+	private GlobalInvocationOptions ParseInputGlobals(ArgumentPreprocessingContext input) =>
+		GlobalOptionParser.Parse([.. input.ScopeTokens, .. input.Arguments], _options.Output, _options.Parsing);
 
 	internal async ValueTask<ExecutionOutcome?> TryFinishProcessedInputAsync(ProcessedInput input, CancellationToken cancellationToken)
 	{

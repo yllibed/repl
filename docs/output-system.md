@@ -137,6 +137,15 @@ The output width used for wrapping and table layout is resolved as:
 
 In interactive mode, when ANSI is supported, JSON output is syntax-highlighted automatically. This applies only to the `json` format rendered to a terminal — redirected or non-ANSI output remains plain.
 
+## Interaction Feedback And Machine Formats
+
+A transformer declares whether its output is meant for a program through `IOutputTransformer.IsMachineReadable`
+(`false` by default; `true` for `json`, `xml` and `yaml`). While a command renders such a format, the
+console presenter writes its interaction feedback (progress, status, notices, warnings, problems and
+prompt labels) to the error stream, so the payload on standard output stays parseable. A redirected
+standard output has the same effect in a local console run.
+`OutputOptions.FeedbackStream` overrides both rules; see [Progress](progress.md#which-stream-receives-progress).
+
 ## Paging
 
 Human terminal formats (`human` and `spectre`) can use the integrated result pager when rendered output exceeds the visible row capacity or a result-flow page source has more data. The pager is never used for redirected stdout, protocol passthrough, MCP/programmatic execution, or machine formats.

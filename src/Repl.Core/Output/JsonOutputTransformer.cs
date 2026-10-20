@@ -9,6 +9,8 @@ internal sealed class JsonOutputTransformer(JsonSerializerOptions serializerOpti
 
 	public string MimeType => "application/json";
 
+	public bool IsMachineReadable => true;
+
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();

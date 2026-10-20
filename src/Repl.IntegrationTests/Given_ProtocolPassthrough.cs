@@ -115,6 +115,42 @@ public sealed partial class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Verifies interaction feedback a protocol-passthrough handler writes stays off the protocol stream, on standard error, whatever the output format or feedback stream, and carries no terminal progress sequence.")]
+	[DataRow("--human", ReplFeedbackStream.Auto)]
+	[DataRow("--json", ReplFeedbackStream.Auto)]
+	[DataRow("--json", ReplFeedbackStream.Output)]
+	[DataRow("--human", ReplFeedbackStream.Error)]
+	public void When_ProtocolPassthroughHandlerWritesFeedback_Then_StdOutCarriesTheProtocolAlone(string formatFlag, ReplFeedbackStream stream)
+	{
+		// Colour and the terminal progress sequence are forced, so only the passthrough contract keeps the
+		// sequence away: its session turns ANSI off, and the presenter refuses it under passthrough.
+		var sut = ReplApp.Create().Options(o =>
+		{
+			o.Output.FeedbackStream = stream;
+			o.Output.AnsiMode = AnsiMode.Always;
+			o.Interaction.AdvancedProgressMode = AdvancedProgressMode.Always;
+		});
+		sut.Map(
+				"mcp start",
+				async (IReplIoContext io, IReplInteractionChannel channel, CancellationToken ct) =>
+				{
+					await channel.WriteStatusAsync("Server starting", ct).ConfigureAwait(false);
+					await channel.WriteProgressAsync("Indexing", 50, ct).ConfigureAwait(false);
+					await io.Output.WriteLineAsync("rpc-ready").ConfigureAwait(false);
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+
+		var output = ConsoleCaptureHelper.CaptureStdOutAndErr(() => sut.Run(["mcp", "start", formatFlag, "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.StdOut.Should().Be($"rpc-ready{Environment.NewLine}");
+		output.StdErr.Should().Contain("Server starting");
+		output.StdErr.Should().Contain("Indexing: 50%");
+		output.StdErr.Should().NotContain("\u001b]9;4;", "a protocol-passthrough command never emits terminal progress sequences");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies framework-rendered handler return values are emitted on stderr in protocol passthrough mode.")]
 	public void When_ProtocolPassthroughHandlerReturnsPlainValue_Then_ValueIsRenderedToStderr()
 	{
