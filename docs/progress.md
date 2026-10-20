@@ -127,6 +127,37 @@ The built-in hosts render that semantic event differently:
 
 The framework clears visible progress automatically when a command completes, fails, or is cancelled.
 
+## Which Stream Receives Progress
+
+The console presenter writes progress and the other interaction feedback (status, notices, warnings,
+problems, and the label of a text prompt) to the error stream when the output is for a program, so
+standard output carries the payload alone:
+
+- the command renders a machine-readable format (`--json`, `--xml`, `--yaml`, or any transformer whose
+  `IsMachineReadable` is `true`);
+- or, in a local console run, standard output is redirected (`app sync > report.txt`, `app sync | jq`).
+
+Otherwise feedback stays on standard output, beside the result. A progress line is rewritten in place,
+and coloured, only when the stream it is written to reaches a terminal.
+
+A session uses its own error writer, and the process's redirection does not apply to it. Most hosts
+(WebSocket, Telnet, `Repl.Testing` sessions) give a session one stream, so their feedback does not move.
+A session with a separate error writer, such as the one `ReplProcessSignalHarness` opens, receives the
+feedback of a `--json` command in that writer (`DiagnosticText`) rather than in its output.
+
+Not covered: the echo of what a user types at a terminal prompt, masked secret input, and the prompts
+and menus of `RichPromptInteractionHandler` and Spectre still render on the output stream.
+
+> **Changed in 0.12.** Feedback used to stay on standard output in every case. A script that read status
+> or progress lines from a redirected standard output, or a test that captures `Console.Out` in a test
+> host that redirects it, now finds them on standard error. To restore the previous behaviour:
+>
+> ```csharp
+> app.Options(o => o.Output.FeedbackStream = ReplFeedbackStream.Output);
+> ```
+
+`ReplFeedbackStream.Error` forces the error stream instead.
+
 ## Advanced Terminal Progress
 
 The console presenter can emit `OSC 9;4` progress sequences in addition to normal text feedback. These sequences are useful for terminal taskbar progress or hosted terminal integrations.

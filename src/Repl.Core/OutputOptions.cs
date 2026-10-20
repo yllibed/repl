@@ -62,6 +62,13 @@ public sealed class OutputOptions
 	public IAnsiPaletteProvider PaletteProvider { get; set; } = new DefaultAnsiPaletteProvider();
 
 	/// <summary>
+	/// Gets or sets the stream that receives interaction feedback; see <see cref="ReplFeedbackStream"/>.
+	/// The default, <see cref="ReplFeedbackStream.Auto"/>, keeps standard output for the payload alone
+	/// when a program reads it.
+	/// </summary>
+	public ReplFeedbackStream FeedbackStream { get; set; } = ReplFeedbackStream.Auto;
+
+	/// <summary>
 	/// Gets or sets a value indicating whether banner output is enabled.
 	/// </summary>
 	public bool BannerEnabled { get; set; } = true;
