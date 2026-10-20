@@ -70,6 +70,14 @@ public sealed class ExitCodeOptions
 	public int FrameworkError { get; set; } = 1;
 
 	/// <summary>
+	/// Gets or sets the exit code for <see cref="ReplExecutionOutcomeKind.CompletedWithFailures"/>.
+	/// Default <c>1</c>, the code test runners such as pytest use when tests fail; Microsoft.Testing.Platform
+	/// uses <c>2</c>. The default is shared with <see cref="HandlerError"/> and <see cref="HandlerException"/>:
+	/// give it a code of its own when a script must tell a run with failures from a failed command.
+	/// </summary>
+	public int CompletedWithFailures { get; set; } = 1;
+
+	/// <summary>
 	/// Gets or sets a final interception hook invoked with the structured outcome (whose
 	/// <see cref="ReplExecutionOutcome.ExitCode"/> already reflects this table); its return value becomes
 	/// the exit code.
@@ -140,6 +148,7 @@ public sealed class ExitCodeOptions
 			ReplExecutionOutcomeKind.HandlerException => HandlerException,
 			ReplExecutionOutcomeKind.Cancelled => Cancelled ?? carriedExitCode ?? ConventionalInterruptedExitCode,
 			ReplExecutionOutcomeKind.Interrupted => Interrupted ?? carriedExitCode ?? ConventionalInterruptedExitCode,
+			ReplExecutionOutcomeKind.CompletedWithFailures => CompletedWithFailures,
 			_ => FrameworkError,
 		};
 }

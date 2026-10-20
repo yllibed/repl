@@ -168,6 +168,76 @@ public sealed class Given_ExitCodes
 	}
 
 	[TestMethod]
+	[Description("Verifies a run that completed with failures has its own kind, distinct from a handler failure, and exits 1 by default.")]
+	public void When_HandlerCompletesWithFailures_Then_KindIsCompletedWithFailuresAndExitCodeIsOne()
+	{
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder);
+		sut.Map("test", () => Results.CompletedWithFailures(new TestReport(Passed: 3, Failed: 1)));
+
+		var exitCode = Run(sut, ["test"], out _);
+
+		exitCode.Should().Be(1);
+		recorder.Last!.Kind.Should().Be(ReplExecutionOutcomeKind.CompletedWithFailures);
+		recorder.Last.Result.Should().BeAssignableTo<ICompletedWithFailuresResult>()
+			.Which.Payload.Should().Be(new TestReport(Passed: 3, Failed: 1));
+	}
+
+	[TestMethod]
+	[Description("Verifies the completed-with-failures code is configurable, so an app can follow another tool's convention (Microsoft.Testing.Platform exits 2 when tests fail).")]
+	public void When_CompletedWithFailuresIsMapped_Then_TheConfiguredCodeIsReturned()
+	{
+		var sut = CreateApp(recorder: null, options => options.ExitCodes.CompletedWithFailures = 2);
+		sut.Map("test", () => Results.CompletedWithFailures(new TestReport(Passed: 3, Failed: 1)));
+
+		var exitCode = Run(sut, ["test"], out _);
+
+		exitCode.Should().Be(2);
+	}
+
+	[TestMethod]
+	[Description("Verifies the payload of a run that completed with failures renders as the result itself, not wrapped and not as an error.")]
+	public void When_HandlerCompletesWithFailures_Then_ThePayloadIsRenderedAsTheResult()
+	{
+		var sut = CreateApp(recorder: null);
+		sut.Map("test", () => Results.CompletedWithFailures(new TestReport(Passed: 3, Failed: 1)));
+
+		_ = Run(sut, ["test", "--json"], out var output);
+
+		using var payload = System.Text.Json.JsonDocument.Parse(output);
+		payload.RootElement.GetProperty("passed").GetInt32().Should().Be(3);
+		payload.RootElement.GetProperty("failed").GetInt32().Should().Be(1);
+	}
+
+	[TestMethod]
+	[Description("Verifies human output of a run that completed with failures shows the payload without an error prefix, since the command itself did not fail.")]
+	public void When_HandlerCompletesWithFailuresInHumanFormat_Then_NoErrorPrefixIsShown()
+	{
+		var sut = CreateApp(recorder: null);
+		sut.Map("test", () => Results.CompletedWithFailures("1 of 4 tests failed"));
+
+		_ = Run(sut, ["test"], out var output);
+
+		output.Should().Contain("1 of 4 tests failed");
+		output.Should().NotContain("Error");
+	}
+
+	[TestMethod]
+	[Description("Verifies a tuple whose last element completed with failures gives the run that outcome, as the last element decides for every other result.")]
+	public void When_TupleEndsWithCompletedWithFailures_Then_TheRunCompletedWithFailures()
+	{
+		var recorder = new OutcomeRecorder();
+		var sut = CreateApp(recorder);
+		sut.Map("test", () => ("Ran 4 tests", Results.CompletedWithFailures(new TestReport(Passed: 3, Failed: 1))));
+
+		var exitCode = Run(sut, ["test"], out var output);
+
+		exitCode.Should().Be(1);
+		output.Should().Contain("Ran 4 tests");
+		recorder.Last!.Kind.Should().Be(ReplExecutionOutcomeKind.CompletedWithFailures);
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies an unhandled handler exception is HandlerException and exposes the unwrapped exception to the resolver.")]
 	public void When_HandlerThrows_Then_KindIsHandlerExceptionAndExceptionIsExposed()
 	{
@@ -460,6 +530,7 @@ public sealed class Given_ExitCodes
 			Cancelled = 16,
 			Interrupted = 17,
 			FrameworkError = 18,
+			CompletedWithFailures = 19,
 		};
 		const int carried = 99;
 
@@ -477,6 +548,7 @@ public sealed class Given_ExitCodes
 			[ReplExecutionOutcomeKind.Cancelled] = 16,
 			[ReplExecutionOutcomeKind.Interrupted] = 17,
 			[ReplExecutionOutcomeKind.FrameworkError] = 18,
+			[ReplExecutionOutcomeKind.CompletedWithFailures] = 19,
 		};
 
 		expectedByKind.Keys.Should().BeEquivalentTo(
@@ -1209,6 +1281,8 @@ public sealed class Given_ExitCodes
 	}
 
 	private interface IMissingDependency;
+
+	private sealed record TestReport(int Passed, int Failed);
 
 	// Stands in for a torn-down transport: every write fails.
 	private sealed class ThrowingWriter : StringWriter

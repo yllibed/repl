@@ -321,6 +321,10 @@ app.Options(options =>
   as `44`.
 - Map `Help` to a non-zero code when a bare invocation must not pass a CI step that forgot its
   arguments.
+- Return `Results.CompletedWithFailures(report)` when the command did its job and the report contains
+  failures (tests that failed, records that were rejected), rather than `Results.Error` or
+  `Results.Exit`. Scripts get `ExitCodes.CompletedWithFailures`, tests see
+  `CommandExecution.OutcomeKind`, and an MCP agent receives the report instead of a tool error.
 - Use `Results.Exit(code)` for codes a specific command owns; use `ExitCodes.Resolver` to apply an
   organisation-wide convention to every final outcome — it also sees the `Result` object and the
   `Exception`, so it can map on an error code rather than on a message.

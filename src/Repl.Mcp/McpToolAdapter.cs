@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -17,6 +18,10 @@ internal sealed partial class McpToolAdapter
 	private const int ProgrammaticInvocationContractVersion = 2;
 	internal const string ForcedOutputFormat = "json";
 	private const string TextPlainMimeType = "text/plain";
+
+	// A _meta key under a prefix this project owns: MCP reserves the modelcontextprotocol and mcp labels.
+	private const string OutcomeMetaKey = "io.github.yllibed.repl/outcome";
+	private const string CompletedWithFailuresOutcome = "completedWithFailures";
 
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
@@ -144,15 +149,17 @@ internal sealed partial class McpToolAdapter
 		var (request, transport, prefills) = PrepareStructuredExecution(command, arguments);
 		var invocation = await ExecuteThroughPipelineAsync(request, transport, prefills, server, progressToken, ct)
 			.ConfigureAwait(false);
-		var output = invocation.ExitCode == 0 ? invocation.Output : DescribeFailure(invocation);
+		var output = invocation.Completed ? invocation.Output : DescribeFailure(invocation);
 		if (string.IsNullOrWhiteSpace(output))
 		{
-			// Only a success reaches here: DescribeFailure names the exit code when it has nothing else.
-			output = "OK";
+			// Only a completed run reaches here: DescribeFailure names the exit code when it has nothing else.
+			// A client may hide _meta from the model, so the text alone must not read as a success.
+			output = invocation.Kind == ReplExecutionOutcomeKind.CompletedWithFailures
+				? "Completed with failures."
+				: "OK";
 		}
 
-		return BuildToolResult(
-			output, invocation.ExitCode, _options.PagedResultTextMode, invocation.UndeliveredMessages);
+		return BuildToolResult(output, invocation, _options.PagedResultTextMode);
 	}
 
 	internal async Task<McpResourceReadInvocation> InvokeResourceAsync(
@@ -178,7 +185,7 @@ internal sealed partial class McpToolAdapter
 			captureCommandOutput: false)
 			.ConfigureAwait(false);
 
-		if (invocation.ExitCode != 0)
+		if (!invocation.Completed)
 		{
 			// A failed read has no body to carry what the command reported — the success path's body has
 			// to match the advertised MIME type — so the surfaced error is the only place left for it.
@@ -288,7 +295,14 @@ internal sealed partial class McpToolAdapter
 		int ExitCode,
 		ReplExecutionOutcomeKind Kind,
 		Exception? Failure,
-		IReadOnlyList<string> UndeliveredMessages);
+		IReadOnlyList<string> UndeliveredMessages)
+	{
+		/// <summary>
+		/// Whether the command ran to completion, so its output is the result rather than a failure to
+		/// describe. A run that completed with failures exits non-zero yet produced its own report.
+		/// </summary>
+		public bool Completed => ExitCode == 0 || Kind == ReplExecutionOutcomeKind.CompletedWithFailures;
+	}
 
 	/// <summary>
 	/// The two writers one pipeline run captures, and whether they are the same one. Bundled instead of
@@ -354,26 +368,32 @@ internal sealed partial class McpToolAdapter
 
 	private static CallToolResult BuildToolResult(
 		string output,
-		int exitCode,
-		McpPagedResultTextMode pagedTextMode,
-		IReadOnlyList<string> undeliveredMessages)
+		in McpPipelineInvocation invocation,
+		McpPagedResultTextMode pagedTextMode)
 	{
-		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
+		// A run that completed with failures is not a tool error: the agent reads the report, and the
+		// marker tells it the report contains failures without parsing the payload.
+		var meta = invocation.Kind == ReplExecutionOutcomeKind.CompletedWithFailures
+			? new JsonObject { [OutcomeMetaKey] = CompletedWithFailuresOutcome }
+			: null;
+		if (invocation.Completed && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
 		{
 			return new CallToolResult
 			{
 				Content = WithMessages(
 					new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) },
-					undeliveredMessages),
+					invocation.UndeliveredMessages),
 				StructuredContent = structuredContent,
 				IsError = false,
+				Meta = meta,
 			};
 		}
 
 		return new CallToolResult
 		{
-			Content = WithMessages(new TextContentBlock { Text = output }, undeliveredMessages),
-			IsError = exitCode != 0,
+			Content = WithMessages(new TextContentBlock { Text = output }, invocation.UndeliveredMessages),
+			IsError = !invocation.Completed,
+			Meta = meta,
 		};
 	}
 

@@ -37,6 +37,9 @@ internal readonly record struct ExecutionOutcome(
 	public static ExecutionOutcome HandlerExitCode(IExitResult exitResult) =>
 		new(ReplExecutionOutcomeKind.HandlerExitCode, exitResult, ExplicitExitCode: exitResult.ExitCode);
 
+	public static ExecutionOutcome CompletedWithFailures(ICompletedWithFailuresResult result) =>
+		new(ReplExecutionOutcomeKind.CompletedWithFailures, result);
+
 	/// <summary>
 	/// A failure the framework reported on user code's behalf. <paramref name="rendered"/> is the
 	/// <see cref="IReplResult"/> shown to the caller, when the framework produced one, so the outcome
@@ -60,9 +63,6 @@ internal readonly record struct ExecutionOutcome(
 		new(ReplExecutionOutcomeKind.FrameworkError, rendered, exception);
 
 	/// <summary>
-	/// True when the outcome should not prevent an automatic transition into the interactive loop.
-	/// </summary>
-	/// <summary>
 	/// True when a claimed process signal should reclassify this outcome as
 	/// <see cref="ReplExecutionOutcomeKind.Interrupted"/>. A run that completed cleanly, or that the
 	/// signal's own token cancelled, has nothing of its own to report and the interruption is the story.
@@ -72,6 +72,9 @@ internal readonly record struct ExecutionOutcome(
 	public bool IsInterruptible =>
 		IsSuccessLike || Kind is ReplExecutionOutcomeKind.Cancelled;
 
+	/// <summary>
+	/// True when the outcome should not prevent an automatic transition into the interactive loop.
+	/// </summary>
 	public bool IsSuccessLike =>
 		Kind is ReplExecutionOutcomeKind.Success or ReplExecutionOutcomeKind.Help
 		|| (Kind == ReplExecutionOutcomeKind.HandlerExitCode && ExplicitExitCode == 0);

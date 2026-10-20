@@ -210,7 +210,7 @@ public sealed partial class CoreReplApp
 				.ConfigureAwait(false);
 			return rendered ? classified : ExecutionOutcome.UsageError(input.Result);
 		}
-		catch (OperationCanceledException exception) when (PreservesExplicitExitCode(classified, exception, cancellationToken))
+		catch (OperationCanceledException exception) when (PreservesHandlerVerdict(classified, exception, cancellationToken))
 		{
 			return classified;
 		}

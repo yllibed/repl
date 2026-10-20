@@ -906,7 +906,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 						.ConfigureAwait(false);
 				}
 				catch (OperationCanceledException ex)
-					when (PreservesExplicitExitCode(classified, ex, cancellationToken))
+					when (PreservesHandlerVerdict(classified, ex, cancellationToken))
 				{
 					// The handler had already chosen its exit code; only showing its payload was
 					// interrupted. The code stays authoritative, which is what IExitResult promises and
@@ -1038,26 +1038,33 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
 
 	/// <summary>
-	/// Whether an exception raised while rendering a result should leave that result's explicit exit
-	/// code in force. Three conditions, and each excludes a way of getting this wrong.
+	/// Whether an exception raised while rendering a result should leave the verdict the handler already
+	/// reached in force. Three conditions, and each excludes a way of getting this wrong.
 	/// <list type="bullet">
-	/// <item>An <see cref="IExitResult"/>, because only that carries a code of the handler's choosing.</item>
-	/// <item>A <em>non-zero</em> one. A zero code reports nothing, so preserving it would let a cancelled
-	/// run exit successfully — swallowing the cancellation instead of propagating it or applying
-	/// <see cref="ExitCodeOptions.Cancelled"/>. <c>IsSuccessLike</c> is what draws that line, the same
-	/// one a process signal uses when it decides whether to reclassify a run as interrupted.</item>
+	/// <item>A verdict of the handler's own: an <see cref="IExitResult"/>, the only result with a code of
+	/// the handler's choosing, or an <see cref="ICompletedWithFailuresResult"/>, whose verdict is its kind
+	/// whatever code a policy later maps it to.</item>
+	/// <item>For an <see cref="IExitResult"/>, a <em>non-zero</em> code. A zero code reports nothing, so
+	/// preserving it would let a cancelled run exit successfully — swallowing the cancellation instead of
+	/// propagating it or applying <see cref="ExitCodeOptions.Cancelled"/>. <c>IsSuccessLike</c> is what
+	/// draws that line, the same one a process signal uses when it decides whether to reclassify a run as
+	/// interrupted.</item>
 	/// <item>A cancellation the run itself owns. A transformer raising
 	/// <see cref="OperationCanceledException"/> on its own account is a broken renderer, not an
 	/// intentional exit, and stays a failure like any other transformer fault.</item>
 	/// </list>
 	/// </summary>
-	private static bool PreservesExplicitExitCode(
+	private static bool PreservesHandlerVerdict(
 		ExecutionOutcome classified,
 		Exception exception,
 		CancellationToken cancellationToken) =>
-		classified.Kind == ReplExecutionOutcomeKind.HandlerExitCode
-		&& !classified.IsSuccessLike
-		&& IsCallerCancellation(exception, cancellationToken);
+		IsCallerCancellation(exception, cancellationToken)
+		&& classified.Kind switch
+		{
+			ReplExecutionOutcomeKind.HandlerExitCode => !classified.IsSuccessLike,
+			ReplExecutionOutcomeKind.CompletedWithFailures => true,
+			_ => false,
+		};
 
 	/// <summary>
 	/// Turns a reported failure into an outcome. Pure by design: every fallible step happened in
@@ -1188,7 +1195,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				.ConfigureAwait(false);
 		}
 		catch (OperationCanceledException ex)
-			when (PreservesExplicitExitCode(classified, ex, cancellationToken))
+			when (PreservesHandlerVerdict(classified, ex, cancellationToken))
 		{
 			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			return classified;
@@ -1260,14 +1267,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	}
 
 	/// <summary>
-	/// Classifies a rendered handler result. Anything that is not an <see cref="IReplResult"/> — including a
-	/// bare <see cref="int"/> — is data and therefore a success; only <see cref="IExitResult"/> carries a code.
+	/// Classifies a rendered handler result. Two results carry an outcome of their own:
+	/// <see cref="IExitResult"/>, the only one with a code, and <see cref="ICompletedWithFailuresResult"/>.
+	/// Anything else that is not an <see cref="IReplResult"/> — including a bare <see cref="int"/> — is data
+	/// and therefore a success.
 	/// </summary>
 	private static ExecutionOutcome ClassifyResult(object? result)
 	{
 		if (result is IExitResult exitResult)
 		{
 			return ExecutionOutcome.HandlerExitCode(exitResult);
+		}
+
+		if (result is ICompletedWithFailuresResult completedWithFailures)
+		{
+			return ExecutionOutcome.CompletedWithFailures(completedWithFailures);
 		}
 
 		if (result is not IReplResult replResult)
@@ -1284,6 +1298,24 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			: ExecutionOutcome.HandlerError(replResult);
 	}
 
+	// The results that carry an outcome of their own render only their payload, and nothing without one.
+	// Repl.Testing's CommandExecution.TryGetResult reads through the same results.
+	private static bool TryUnwrapPayload(object? result, out object? payload)
+	{
+		switch (result)
+		{
+			case IExitResult exitResult:
+				payload = exitResult.Payload;
+				return true;
+			case ICompletedWithFailuresResult completedWithFailures:
+				payload = completedWithFailures.Payload;
+				return true;
+			default:
+				payload = null;
+				return false;
+		}
+	}
+
 	internal async ValueTask<bool> RenderOutputAsync(
 		object? result,
 		string? requestedFormat,
@@ -1291,14 +1323,14 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		bool isInteractive = false,
 		ResultFlowInvocationOptions? resultFlow = null)
 	{
-		if (result is IExitResult exitResult)
+		if (TryUnwrapPayload(result, out var unwrapped))
 		{
-			if (exitResult.Payload is null)
+			if (unwrapped is null)
 			{
 				return true;
 			}
 
-			result = exitResult.Payload;
+			result = unwrapped;
 		}
 
 		var format = ResolveOutputFormat(requestedFormat);

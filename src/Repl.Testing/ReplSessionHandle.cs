@@ -194,6 +194,7 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 			exitCode,
 			outputText,
 			observer.LastResult,
+			observer.LastOutcome,
 			observer.Events.ToArray(),
 			timeline,
 			startedAt,
@@ -414,8 +415,13 @@ public sealed class ReplSessionHandle : IAsyncDisposable
 
 		public void OnResult(object? result) => LastResult = result;
 
-		public void OnOutcome(ReplExecutionOutcomeKind kind) =>
+		public ReplExecutionOutcomeKind LastOutcome { get; private set; }
+
+		public void OnOutcome(ReplExecutionOutcomeKind kind)
+		{
+			LastOutcome = kind;
 			WasCancelled = kind is ReplExecutionOutcomeKind.Cancelled or ReplExecutionOutcomeKind.Interrupted;
+		}
 
 		public void OnInteractionEvent(ReplInteractionEvent evt)
 		{

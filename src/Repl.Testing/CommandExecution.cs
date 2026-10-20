@@ -15,6 +15,7 @@ public sealed class CommandExecution
 		int exitCode,
 		string outputText,
 		object? resultObject,
+		ReplExecutionOutcomeKind outcomeKind,
 		IReadOnlyList<ReplInteractionEvent> interactionEvents,
 		IReadOnlyList<CommandEvent> timelineEvents,
 		DateTimeOffset startedAtUtc,
@@ -24,6 +25,7 @@ public sealed class CommandExecution
 		ExitCode = exitCode;
 		OutputText = outputText;
 		ResultObject = resultObject;
+		OutcomeKind = outcomeKind;
 		InteractionEvents = interactionEvents;
 		TimelineEvents = timelineEvents;
 		StartedAtUtc = startedAtUtc;
@@ -55,6 +57,12 @@ public sealed class CommandExecution
 	public object? ResultObject { get; }
 
 	/// <summary>
+	/// How the run ended — a success, a run that completed with failures, a refusal, a crash — which
+	/// <see cref="ExitCode"/> alone cannot always tell apart.
+	/// </summary>
+	public ReplExecutionOutcomeKind OutcomeKind { get; }
+
+	/// <summary>
 	/// The semantic interaction events the command raised — statuses, notices, warnings, problems —
 	/// in the order they were observed.
 	/// </summary>
@@ -82,14 +90,25 @@ public sealed class CommandExecution
 
 	/// <summary>
 	/// Reads <see cref="ResultObject"/> as <typeparamref name="T"/>, reporting failure instead of
-	/// throwing when the command produced no result or produced a different type.
+	/// throwing when the command produced no result or produced a different type. A result that carries
+	/// an outcome of its own (<see cref="IExitResult"/>, <see cref="ICompletedWithFailuresResult"/>) is
+	/// read through to its payload when it is not itself a <typeparamref name="T"/>.
 	/// </summary>
 	/// <typeparam name="T">The type the result is expected to have.</typeparam>
 	/// <param name="result">The typed result when this returns <see langword="true"/>.</param>
 	/// <returns><see langword="true"/> when the result was available as <typeparamref name="T"/>.</returns>
 	public bool TryGetResult<T>([NotNullWhen(true)] out T? result)
 	{
-		if (ResultObject is T typed)
+		// The same results Core renders through to their payload (CoreReplApp.TryUnwrapPayload); kept as a
+		// copy rather than shared, since a Core internal used by this shipped assembly would become ABI.
+		var candidate = ResultObject switch
+		{
+			T => ResultObject,
+			IExitResult exitResult => exitResult.Payload,
+			ICompletedWithFailuresResult completedWithFailures => completedWithFailures.Payload,
+			_ => null,
+		};
+		if (candidate is T typed)
 		{
 			result = typed;
 			return true;
@@ -101,13 +120,14 @@ public sealed class CommandExecution
 
 	/// <summary>
 	/// Reads <see cref="ResultObject"/> as <typeparamref name="T"/>, failing the test outright when the
-	/// command produced no result or produced a different type.
+	/// command produced no result or produced a different type. Reads through to the payload as
+	/// <see cref="TryGetResult{T}"/> does.
 	/// </summary>
 	/// <typeparam name="T">The type the result is expected to have.</typeparam>
 	/// <returns>The typed result.</returns>
 	/// <exception cref="InvalidOperationException">The result is not available as <typeparamref name="T"/>.</exception>
 	public T GetResult<T>() =>
-		ResultObject is T typed
+		TryGetResult<T>(out var typed)
 			? typed
 			: throw new InvalidOperationException($"Command result is not available as '{typeof(T).FullName}'.");
 

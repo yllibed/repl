@@ -375,6 +375,7 @@ Handlers can return any type. The framework renders the return value through the
 | `IReplResult` | Structured result with kind prefix (`Results.Ok`, `Error`, `NotFound`...) |
 | `ReplNavigationResult` | Renders payload and navigates scope (`Results.NavigateUp`, `NavigateTo`) |
 | `IExitResult` | Renders optional payload and sets the process exit code verbatim (`Results.Exit`); the only return type that carries an exit code — bypasses the `ReplOptions.ExitCodes` table, still visible to `ExitCodes.Resolver` |
+| `ICompletedWithFailuresResult` | The command ran to completion and its report contains failures (`Results.CompletedWithFailures`): renders the payload as the result, with no error prefix, and exits with `ExitCodes.CompletedWithFailures` (default `1`). Over MCP it is not a tool error |
 | `EnterInteractiveResult` | Renders optional payload and enters interactive REPL mode (`Results.EnterInteractive`). A payload that cannot be rendered — an unknown `--output` format — is a `UsageError` and the loop is not entered |
 | `void` / `null` | No output |
 | `int` and other scalars | Rendered as data like any other value — **never** interpreted as an exit code (`int Count() => 3` prints `3`, exits `0`) |
@@ -392,6 +393,7 @@ Results.Cancelled("user declined")          // cancellation
 Results.NavigateUp(payload)                 // navigate up one scope level
 Results.NavigateTo("client/42", payload)    // navigate to explicit scope
 Results.Exit(0, payload)                    // explicit exit code
+Results.CompletedWithFailures(report)       // ran to completion, report contains failures
 Results.EnterInteractive()                  // enter interactive REPL after command
 Results.EnterInteractive(payload)           // render payload then enter interactive REPL
 ```
@@ -424,7 +426,10 @@ The process exit code is not read off the handler's return value; it is selected
 structured outcome of the whole run (`ReplExecutionOutcomeKind`) through `ReplOptions.ExitCodes`.
 By default a success or help invocation exits `0`, framework refusals — unknown command, invalid
 option, unbindable argument — exit `2`, and a handler failure (`Results.Error`, an exception)
-exits `1`. `Results.Exit(code)` is the only way for a handler to pick a code directly, and
+exits `1`. A command that ran to completion but whose report contains failures (tests that failed)
+returns `Results.CompletedWithFailures(report)`: it is not a handler failure, and it has its own kind
+and its own code (`ExitCodes.CompletedWithFailures`, default `1`).
+`Results.Exit(code)` is the only way for a handler to pick a code directly, and
 `ExitCodes.Resolver` is the one place an application can remap every final outcome. A middleware
 registered with `app.Use(...)` can read or replace the handler's return value through
 `ReplExecutionContext.Result` after awaiting `next()`. See
