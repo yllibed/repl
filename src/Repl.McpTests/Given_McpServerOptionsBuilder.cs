@@ -12,6 +12,44 @@ namespace Repl.McpTests;
 public sealed class Given_McpServerOptionsBuilder
 {
 	[TestMethod]
+	[Description("Applying a new projection replaces the previous catalog and advertised capabilities without changing SDK transport settings.")]
+	public void When_ConfiguringSdkOptions_Then_ProjectionIsReplacedAndHostSettingsSurvive()
+	{
+		var original = ReplApp.Create();
+		original.Map("old", () => "old");
+		var target = original.BuildMcpServerOptions();
+		var originalTools = target.ToolCollection;
+		var originalCapabilities = new ServerCapabilities();
+		target.Capabilities = originalCapabilities;
+		target.ProtocolVersion = "2026-07-28";
+		target.ServerInstructions = "host instructions";
+		target.ScopeRequests = false;
+		var handlers = target.Handlers;
+		var filters = target.Filters;
+		var app = CoreReplApp.Create();
+		app.Map("new", () => "new");
+		app.Map("resource", () => "data").AsResource();
+		app.Map("prompt", () => "instructions").AsPrompt();
+
+		app.ConfigureMcpServerOptions(target, options => options.ServerName = "projected");
+
+		target.ToolCollection.Should().ContainSingle().Which.ProtocolTool.Name.Should().Be("new");
+		originalTools.Should().ContainSingle().Which.ProtocolTool.Name.Should().Be("old");
+		target.ResourceCollection.Should().ContainSingle();
+		target.PromptCollection.Should().ContainSingle();
+		target.ServerInfo!.Name.Should().Be("projected");
+		target.Capabilities.Should().NotBeSameAs(originalCapabilities);
+		target.Capabilities!.Tools.Should().NotBeNull();
+		target.Capabilities.Resources.Should().NotBeNull();
+		target.Capabilities.Prompts.Should().NotBeNull();
+		target.ProtocolVersion.Should().Be("2026-07-28");
+		target.ServerInstructions.Should().Be("host instructions");
+		target.ScopeRequests.Should().BeFalse();
+		target.Handlers.Should().BeSameAs(handlers);
+		target.Filters.Should().BeSameAs(filters);
+	}
+
+	[TestMethod]
 	[Description("BuildMcpServerOptions captures the current tools as a pre-populated collection.")]
 	public void When_AppHasCommands_Then_OptionsContainToolCollection()
 	{
