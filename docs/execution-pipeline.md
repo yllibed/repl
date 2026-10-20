@@ -285,7 +285,9 @@ hosting defect: it is a `Cancelled` outcome, it prints no startup error, and wit
 policy configured it propagates the `OperationCanceledException` like every other path.
 
 Framework diagnostics go to **stderr** — the hosted-lifecycle failures and the unknown-`--output`
-refusal alike — so a headless run's stdout carries the command payload alone.
+refusal alike — so a headless run's stdout carries the command payload alone. Interaction feedback
+follows it there whenever the payload is for a program (a machine-readable format, or a redirected
+stdout); see [Progress](progress.md#which-stream-receives-progress).
 
 Exit codes should stay within `0`-`255`: POSIX `wait` exposes only the low eight bits to the parent
 process, so `Help = 300` reaches a shell as `44`. Repl does not clamp — a code outside the range is
@@ -338,7 +340,7 @@ Errors at each stage produce targeted diagnostics:
   exists.
 - **Binding errors** — renders a message identifying the missing or invalid parameter.
 - **Handler exceptions** — caught and unwrapped from `TargetInvocationException`,
-  then rendered as an error to stderr.
+  then rendered as an error result through the active output format, on stdout.
 - **Cancellation** — in one-shot mode the caller's own token produces
   `ReplExecutionOutcomeKind.Cancelled`; a handler that raises `OperationCanceledException` on its own
   account is a `HandlerException` instead. The interactive loop treats both as an abort and prints

@@ -570,6 +570,12 @@ In protocol passthrough mode:
 
 - global and command banners are suppressed
 - repl/framework diagnostics are written to `stderr`
+- in local console execution, the handler's interaction feedback (status, progress, warnings, prompt
+  labels) is written to `stderr`, whatever `OutputOptions.FeedbackStream` says; in a hosted session it
+  goes to the session's writers, which most transports share with the protocol, so prefer not to write
+  feedback from a hosted protocol handler (see [Which Stream Receives Progress](progress.md#which-stream-receives-progress))
+- terminal progress sequences are never emitted
+- a prompt reads its answer from the protocol's input, so a protocol handler should not prompt
 - framework-rendered handler return payloads (if any) are also written to `stderr`
 - `stdout` remains reserved for protocol payloads
 - interactive follow-up is skipped after command execution

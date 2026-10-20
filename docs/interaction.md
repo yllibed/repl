@@ -93,6 +93,11 @@ await channel.WriteProblemAsync(
     cancellationToken: cancellationToken);
 ```
 
+On the console host, this feedback, progress and the label of a text prompt move to standard error when
+the output is for a program (`--json`, or a redirected standard output), so they stay out of the payload.
+See [Progress](progress.md#which-stream-receives-progress) for what is not covered, and
+`OutputOptions.FeedbackStream`.
+
 ---
 
 ## Extension methods

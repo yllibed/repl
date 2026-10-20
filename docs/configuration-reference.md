@@ -107,13 +107,14 @@ Accessed via `ReplOptions.Output`.
 - `PaletteProvider` (`IAnsiPaletteProvider`, default: `DefaultAnsiPaletteProvider`) — Custom color palette provider.
 - `BannerEnabled` (`bool`, default: `true`) — Enable banner output.
 - `BannerFormats` (`ISet<string>`, default: `{"human"}`) — Output formats that display banners.
+- `FeedbackStream` (`ReplFeedbackStream`, default: `Auto`) — Stream for progress, status, notices, warnings, problems and prompts. `Auto` uses standard error when the output is machine-readable (`IOutputTransformer.IsMachineReadable`) or the local standard output is redirected; `Output` and `Error` force one stream.
 - `ColorizeStructuredInteractive` (`bool`, default: `true`) — Colorize JSON/XML in interactive mode.
 - `PreferredWidth` (`int?`, default: `null`) — Preferred render width. `null` uses automatic detection.
 - `FallbackWidth` (`int`, default: `120`) — Fallback width when the terminal is unavailable.
 - `ResultFlow` (`ResultFlowOptions`) - Paging and large-result behavior.
 - `JsonSerializerOptions` (`JsonSerializerOptions`, default: Web defaults + indented) — JSON serializer options.
 
-Built-in transformers: `human`, `json`, `xml`, `yaml`, `markdown`.
+Built-in transformers: `human`, `json`, `xml`, `yaml`, `markdown`. Of these, `json`, `xml` and `yaml` are machine-readable.
 
 ### ResultFlowOptions
 

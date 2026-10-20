@@ -127,6 +127,47 @@ The built-in hosts render that semantic event differently:
 
 The framework clears visible progress automatically when a command completes, fails, or is cancelled.
 
+## Which Stream Receives Progress
+
+The console presenter writes progress and the other interaction feedback (status, notices, warnings,
+problems, and the label of a text prompt) to the error stream when the output is for a program, so
+standard output carries the payload alone:
+
+- the command renders a machine-readable format (`--json`, `--xml`, `--yaml`, or any transformer whose
+  `IsMachineReadable` is `true`);
+- or, in a local console run, standard output is redirected (`app sync > report.txt`, `app sync | jq`).
+
+Otherwise feedback stays on standard output, beside the result. A progress line is rewritten in place
+only when the stream it is written to reaches a terminal. Colour and the terminal progress sequence
+follow that stream's colour rule: a terminal is coloured, a file or a pipe is not, unless `AnsiMode.Always`
+or `CLICOLOR_FORCE=1` forces colour. Feedback written by argument preprocessors, input hooks, validators and startup
+hooks follows the format the invocation asks for at that point, as the command's own feedback does.
+
+A session uses its own error writer, and the process's redirection does not apply to it. Most hosts
+(WebSocket, Telnet, `Repl.Testing` sessions) give a session one stream, so their feedback does not move.
+A session with a separate error writer, such as the one `ReplProcessSignalHarness` opens, receives the
+feedback of a `--json` command in that writer (`DiagnosticText`) rather than in its output.
+
+Not covered: the echo of what a user types at a terminal prompt, masked secret input, and the prompts
+and menus of `RichPromptInteractionHandler` and Spectre still render on the output stream.
+
+> **Changed in 0.12.** Feedback used to stay on standard output in every case. A script that read status
+> or progress lines from a redirected standard output, or a test that captures `Console.Out` in a test
+> host that redirects it, now finds them on standard error. To restore the previous behaviour:
+>
+> ```csharp
+> app.Options(o => o.Output.FeedbackStream = ReplFeedbackStream.Output);
+> ```
+
+`ReplFeedbackStream.Error` forces the error stream instead.
+
+A [protocol-passthrough](commands.md#protocol-passthrough-commands) command run from the console writes
+the feedback of its handler to standard error, uncoloured, whatever the format and `FeedbackStream`:
+standard output belongs to the protocol. Feedback written before the command is resolved, by
+preprocessors and hooks, follows the rules above: a server started by a client with standard output
+piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a hosted session, the feedback
+goes to the session's writers, which most transports share with the protocol.
+
 ## Advanced Terminal Progress
 
 The console presenter can emit `OSC 9;4` progress sequences in addition to normal text feedback. These sequences are useful for terminal taskbar progress or hosted terminal integrations.

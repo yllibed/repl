@@ -601,6 +601,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	private string ResolveOutputFormat(string? requestedFormat) =>
 		string.IsNullOrWhiteSpace(requestedFormat) ? _options.Output.DefaultFormat : requestedFormat;
 
+	// An unknown format is refused only when the result renders, after the handler ran, so the handler's
+	// feedback is routed as for human output.
+	private bool IsMachineReadableFormat(string? requestedFormat) =>
+		_options.Output.Transformers.TryGetValue(ResolveOutputFormat(requestedFormat), out var transformer)
+		&& transformer.IsMachineReadable;
+
+	// Preprocessors, hooks, validators and a hook's own answer run before a command is resolved, so the format
+	// is read from the input as it stands at that point, rewrites included; the matched command then refines
+	// it with the format it resolved.
+	private IDisposable PushMachineReadableOutputFor(ArgumentPreprocessingContext input) =>
+		ReplSessionIO.PushMachineReadableOutput(IsMachineReadableInput(input));
+
+	private bool IsMachineReadableInput(ArgumentPreprocessingContext input) =>
+		IsMachineReadableFormat(ParseInputGlobals(input).OutputFormat);
+
 	// A framework refusal, not command output: it goes to Error so a headless run's stdout keeps
 	// carrying only the payload a parent process parses. Reported rather than swallowed, because this
 	// refusal is what makes the run a UsageError.
@@ -756,6 +771,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		List<string>? scopeTokens,
 		CancellationToken cancellationToken)
 	{
+		using var feedbackScope = ReplSessionIO.PushMachineReadableOutput(IsMachineReadableFormat(globalOptions.OutputFormat));
 		var activeGraph = ResolveActiveRoutingGraph();
 		_options.Interaction.SetPrefilledAnswers(globalOptions.PromptAnswers);
 		var commandParsingOptions = BuildEffectiveCommandParsingOptions(globalOptions.GlobalOptionConfiguration.CaseSensitivity);
