@@ -9,16 +9,25 @@ public sealed partial class CoreReplApp
 	private readonly AsyncLocal<ProcessedInput?> _currentInput = new();
 	internal IReadOnlyList<string>? CurrentInputScopeTokens => _currentInput.Value?.Context.ScopeTokens;
 
+	/// <summary>
+	/// Makes <paramref name="input"/> the current input, and routes the feedback written while it is current
+	/// by the output format it asks for.
+	/// </summary>
 	internal IDisposable PushProcessedInput(ProcessedInput? input)
 	{
 		var previous = _currentInput.Value;
+		var feedbackScope = input is null ? null : PushMachineReadableOutputFor(input);
 		_currentInput.Value = input;
-		return new ProcessedInputScope(this, previous);
+		return new ProcessedInputScope(this, previous, feedbackScope);
 	}
 
-	private sealed class ProcessedInputScope(CoreReplApp owner, ProcessedInput? previous) : IDisposable
+	private sealed class ProcessedInputScope(CoreReplApp owner, ProcessedInput? previous, IDisposable? feedbackScope) : IDisposable
 	{
-		public void Dispose() => owner._currentInput.Value = previous;
+		public void Dispose()
+		{
+			owner._currentInput.Value = previous;
+			feedbackScope?.Dispose();
+		}
 	}
 
 	internal async ValueTask<ProcessedInput> PreprocessInputAsync(
@@ -129,6 +138,7 @@ public sealed partial class CoreReplApp
 			input = input with { Request = effectiveRequest?.Command is not null ? effectiveRequest.Copy() : null, OriginalRequest = submitted?.Copy(), Channel = channel, InheritSessionGlobals = isSubInvocation };
 			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
 			_currentInput.Value = input;
+			using var feedbackScope = PushMachineReadableOutputFor(input);
 			if (await TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false) is { } finished)
 			{
 				return finished;

@@ -1,3 +1,5 @@
+using Repl.Tests.TerminalSupport;
+
 namespace Repl.Tests;
 
 /// <summary>
@@ -87,44 +89,48 @@ public sealed class Given_ConsoleReplInteractionPresenter_FeedbackStream
 	}
 
 	[TestMethod]
-	[Description("Verifies the routing reads the stream it actually writes to: feedback moved to a redirected standard error is not a terminal even when standard output is one.")]
-	[DataRow(ReplFeedbackStream.Auto, true, false, true, true, DisplayName = "Redirected stdout, terminal stderr: error stream, a terminal")]
-	[DataRow(ReplFeedbackStream.Error, false, true, true, false, DisplayName = "Terminal stdout, redirected stderr: error stream, not a terminal")]
-	[DataRow(ReplFeedbackStream.Output, false, true, false, true, DisplayName = "Forced output on a terminal stdout")]
-	[DataRow(ReplFeedbackStream.Output, true, false, false, false, DisplayName = "Forced output on a redirected stdout")]
-	public void When_ResolvingOutsideASession_Then_TheTargetReflectsItsOwnStream(
-		ReplFeedbackStream stream,
-		bool isOutputRedirected,
-		bool isErrorRedirected,
-		bool expectedIsError,
-		bool expectedIsTerminal)
+	[Description("Verifies sessions that interleave progress keep their own open line: a session's next feedback still starts on a new line after another session wrote progress in between.")]
+	public async Task When_SessionsInterleaveProgress_Then_EachClosesItsOwnLine()
 	{
-		var target = InteractionFeedbackRouting.Resolve(
-			new OutputOptions { FeedbackStream = stream },
-			isOutputRedirected,
-			isErrorRedirected);
+		var presenter = CreatePresenter(ReplFeedbackStream.Auto);
+		using var first = new StringWriter();
+		using var second = new StringWriter();
 
-		target.IsError.Should().Be(expectedIsError);
-		target.IsTerminal.Should().Be(expectedIsTerminal);
-		target.Writer.Should().BeSameAs(expectedIsError ? Console.Error : Console.Out);
+		using (OpenSession(first, first))
+		{
+			await presenter.PresentAsync(new ReplProgressEvent("Syncing", Percent: 25), CancellationToken.None);
+		}
+
+		using (OpenSession(second, second))
+		{
+			await presenter.PresentAsync(new ReplProgressEvent("Downloading", Percent: 50), CancellationToken.None);
+		}
+
+		using (OpenSession(first, first))
+		{
+			await presenter.PresentAsync(new ReplStatusEvent("Done A"), CancellationToken.None);
+		}
+
+		first.ToString().Should().Be($"\rSyncing: 25%{Environment.NewLine}Done A{Environment.NewLine}");
+		second.ToString().Should().Be("\rDownloading: 50%");
 	}
 
 	[TestMethod]
-	[Description("Verifies colour follows the stream it is written to: never into a redirected standard error, even when standard output's own colour rule allows it.")]
-	[DataRow(true, false, true, true, DisplayName = "Output on a terminal")]
-	[DataRow(true, true, true, true, DisplayName = "Error on a terminal")]
-	[DataRow(true, true, false, false, DisplayName = "Error redirected")]
-	[DataRow(false, true, true, false, DisplayName = "Colour disabled for the output")]
-	[DataRow(true, false, false, true, DisplayName = "Output redirected but coloured by its own rule (CLICOLOR_FORCE)")]
-	public void When_StylingFeedback_Then_ColourFollowsTheTargetStream(
-		bool ansiEnabledForOutput,
-		bool isError,
-		bool isTerminal,
-		bool expected)
+	[Description("Verifies feedback moved to a terminal standard error is coloured and carries the terminal progress sequence while standard output is piped: both follow the stream feedback is written to.")]
+	public async Task When_FeedbackGoesToATerminalErrorStreamWhileOutputIsPiped_Then_ItIsColouredWithTerminalProgress()
 	{
-		new FeedbackTarget(TextWriter.Null, IsError: isError, IsTerminal: isTerminal)
-			.CanStyle(ansiEnabledForOutput)
-			.Should().Be(expected);
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		using var error = new StringWriter();
+		var presenter = new ConsoleReplInteractionPresenter(
+			new InteractionOptions { AdvancedProgressMode = AdvancedProgressMode.Always },
+			new OutputOptions { AnsiMode = AnsiMode.Auto },
+			_ => new FeedbackTarget(error, IsError: true, IsSessionWriter: false, IsStreamRedirected: false));
+
+		await presenter.PresentAsync(new ReplWarningEvent("Cache is warming up"), CancellationToken.None);
+		await presenter.PresentAsync(new ReplProgressEvent("Syncing", Percent: 25), CancellationToken.None);
+
+		error.ToString().Should().Contain("\u001b[", "the warning is coloured");
+		error.ToString().Should().Contain("\u001b]9;4;1;25\u0007", "the terminal progress sequence is emitted");
 	}
 
 	private static ConsoleReplInteractionPresenter CreatePresenter(ReplFeedbackStream stream) =>

@@ -19,7 +19,8 @@ internal static class InteractionFeedbackRouting
 	/// </summary>
 	/// <remarks>
 	/// The redirection only counts outside a session. A session supplies its own writers — a transport,
-	/// a test harness, the protocol-passthrough split — and they are treated as terminals.
+	/// a test harness, the protocol-passthrough split — and they are treated as terminals; their colour
+	/// keeps following standard output's redirection, which is what it has always followed.
 	/// </remarks>
 	public static FeedbackTarget Resolve(OutputOptions? outputOptions, bool isOutputRedirected, bool isErrorRedirected)
 	{
@@ -28,11 +29,11 @@ internal static class InteractionFeedbackRouting
 			outputOptions?.FeedbackStream ?? ReplFeedbackStream.Auto,
 			ReplSessionIO.IsMachineReadableOutput,
 			isLocalOutputRedirected: isLocal && isOutputRedirected);
-		var isRedirected = isLocal && (toError ? isErrorRedirected : isOutputRedirected);
 		return new FeedbackTarget(
 			toError ? ReplSessionIO.Error : ReplSessionIO.Output,
 			IsError: toError,
-			IsTerminal: !isRedirected);
+			IsSessionWriter: !isLocal,
+			IsStreamRedirected: (isLocal && toError) ? isErrorRedirected : isOutputRedirected);
 	}
 
 	/// <summary>

@@ -207,7 +207,13 @@ public sealed class OutputOptions
 			UseAnsi: IsAnsiEnabled(),
 			Palette: ResolvePalette());
 
-	internal bool IsAnsiEnabled()
+	internal bool IsAnsiEnabled() => IsAnsiEnabled(Console.IsOutputRedirected);
+
+	/// <summary>
+	/// The colour rule applied to a stream whose redirection is <paramref name="isStreamRedirected"/>, for
+	/// output written somewhere other than standard output.
+	/// </summary>
+	internal bool IsAnsiEnabled(bool isStreamRedirected)
 	{
 		if (ReplSessionIO.IsSessionActive && ReplSessionIO.AnsiSupport is { } sessionAnsi)
 		{
@@ -239,12 +245,7 @@ public sealed class OutputOptions
 			return true;
 		}
 
-		if (Console.IsOutputRedirected)
-		{
-			return false;
-		}
-
-		return true;
+		return !isStreamRedirected;
 	}
 
 	internal AnsiPalette ResolvePalette()
