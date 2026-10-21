@@ -302,11 +302,14 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			SetCommandTokenOnChannel(cycle.ServiceProvider, commandCts.Token);
 			IDisposable? processedInputScope = null;
 			IDisposable? globalsScope = null;
+			ProcessedInput? processed = null;
 			try
 			{
 				input = await app.PreprocessInputAsync(inputTokens, cycle.ScopeTokens, InputProcessingMode.Execution,
-					line, line.Length, commandCts.Token, isInteractive: true).ConfigureAwait(false);
-				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
+					line, line.Length, commandCts.Token, isInteractive: true, onProcessed: reached => processed = reached).ConfigureAwait(false);
+				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token,
+					onProcessed: reached => processed = reached).ConfigureAwait(false);
+				processed = input;
 				processedInputScope = app.PushProcessedInput(input);
 				var globals = GlobalOptionParser.Parse([.. input.Context.ScopeTokens, .. input.Context.Arguments], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
 				globalsScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
@@ -327,9 +330,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			catch (Exception exception) when (exception is not OperationCanceledException || !commandCts.IsCancellationRequested)
 			{
 				await OpenOutputAsync().ConfigureAwait(false);
-				var failure = await app.ReportInputCallbackFailureAsync(exception, cancellationToken).ConfigureAwait(false);
-				await TryWriteResolvedCommandEndAsync(cycle.Marks, failure).ConfigureAwait(false);
-				return AmbientCommandOutcome.Handled;
+				return await ReportInputCallbackFailureAsync(exception, processed, cycle, inputTokens, cancellationToken).ConfigureAwait(false);
 			}
 			finally
 			{
@@ -341,6 +342,16 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		}
 		using var inputScope = app.PushProcessedInput(input);
 		return await ExecuteNormalizedCommittedInputAsync(cycle, line, input.Context.Arguments, cancellationToken).ConfigureAwait(false);
+	}
+
+	// Reported in the format the command asks for, as far as its input was processed, as a one-shot run does.
+	private async ValueTask<AmbientCommandOutcome> ReportInputCallbackFailureAsync(Exception exception,
+		ProcessedInput? processed, PromptCycleContext cycle, IReadOnlyList<string> inputTokens, CancellationToken cancellationToken)
+	{
+		var requestedFormat = app.RequestedOutputFormat(processed, [.. cycle.ScopeTokens, .. inputTokens]);
+		var failure = await app.ReportInputCallbackFailureAsync(exception, requestedFormat, cancellationToken).ConfigureAwait(false);
+		await TryWriteResolvedCommandEndAsync(cycle.Marks, failure).ConfigureAwait(false);
+		return AmbientCommandOutcome.Handled;
 	}
 
 	private async ValueTask<AmbientCommandOutcome> FinishCommittedInputAsync(

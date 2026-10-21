@@ -128,6 +128,7 @@ public sealed partial class CoreReplApp
 				cancellationToken, presenceServiceProvider).ConfigureAwait(false);
 		}
 		var previous = _currentInput.Value;
+		ProcessedInput? processed = null;
 		using var runtimeScope = PushRuntimeState(serviceProvider, isInteractiveSession: false, presenceServiceProvider);
 		try
 		{
@@ -141,9 +142,11 @@ public sealed partial class CoreReplApp
 			var effectiveRequest = startup is not null && submitted?.Command is not null ? startup.Request : submitted;
 			var input = startup ?? (effectiveRequest?.Command is not null
 				? CreateSubmittedInput(args, effectiveRequest)
-				: await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken).ConfigureAwait(false));
+				: await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken,
+					onProcessed: reached => processed = reached).ConfigureAwait(false));
 			input = input with { Request = effectiveRequest?.Command is not null ? effectiveRequest.Copy() : null, OriginalRequest = submitted?.Copy(), Channel = channel, InheritSessionGlobals = isSubInvocation };
-			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
+			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken, onProcessed: reached => processed = reached).ConfigureAwait(false);
+			processed = input;
 			_currentInput.Value = input;
 			using var feedbackScope = PushMachineReadableOutputFor(input.Context);
 			if (await TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false) is { } finished)
@@ -164,7 +167,8 @@ public sealed partial class CoreReplApp
 		}
 		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken))
 		{
-			return await ReportInputCallbackFailureAsync(exception, cancellationToken).ConfigureAwait(false);
+			return await ReportInputCallbackFailureAsync(exception, RequestedOutputFormat(processed, args), cancellationToken)
+				.ConfigureAwait(false);
 		}
 		finally { _currentInput.Value = previous; }
 	}
@@ -216,14 +220,25 @@ public sealed partial class CoreReplApp
 		}
 	}
 
-	internal async ValueTask<ExecutionOutcome> ReportInputCallbackFailureAsync(Exception exception, CancellationToken cancellationToken)
+	/// <summary>
+	/// Reports an input callback's failure in the format the invocation asked for, so a program reading
+	/// JSON gets JSON, and classifies it as any reported failure is: an application failure the caller
+	/// saw, even when the report fell back to unformatted text, or a usage error when the format is unknown.
+	/// </summary>
+	internal async ValueTask<ExecutionOutcome> ReportInputCallbackFailureAsync(
+		Exception exception, string? requestedFormat, CancellationToken cancellationToken)
 	{
 		var failure = Results.Error("input_callback_error", DescribeLocally(exception));
-		var report = await ReportFailureAsync(failure, requestedFormat: null, cancellationToken).ConfigureAwait(false);
-		return report == FailureReport.Rendered
-			? ExecutionOutcome.HandlerException(exception, failure)
-			: ExecutionOutcome.FrameworkError(failure, exception);
+		var report = await ReportFailureAsync(failure, requestedFormat, cancellationToken).ConfigureAwait(false);
+		return ClassifyFailure(report, failure, exception, bound: true);
 	}
+
+	// The format the invocation asks for, read from the input as far as it was processed, rewrites
+	// included, or from the arguments it arrived with when nothing was processed yet.
+	internal string? RequestedOutputFormat(ProcessedInput? input, IReadOnlyList<string> args) =>
+		input is not null
+			? ParseInputGlobals(input).OutputFormat
+			: GlobalOptionParser.Parse(args, _options.Output, _options.Parsing).OutputFormat;
 
 	private ValueTask<ExecutionOutcome> RefuseInputAsync(InputValidationResult validation, string? requestedFormat, CancellationToken cancellationToken) =>
 		RefuseAsync(Results.Validation(validation.Diagnostics.Count != 0 ? validation.Diagnostics[0].Message : "Input validation failed."),
@@ -573,7 +588,7 @@ public sealed partial class CoreReplApp
 		}
 		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken))
 		{
-			return await ReportInputCallbackFailureAsync(exception, cancellationToken).ConfigureAwait(false);
+			return await ReportInputCallbackFailureAsync(exception, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
 		}
 	}
 

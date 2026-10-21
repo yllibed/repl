@@ -133,6 +133,153 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Verifies an input callback that throws for an invocation asking for JSON — an argument preprocessor, or a validator of the resolved command — reports its failure as JSON, so a program reading the output can still parse it.")]
+	[DataRow(false, DisplayName = "Argument preprocessor")]
+	[DataRow(true, DisplayName = "Input validator")]
+	public async Task When_AnInputCallbackThrowsForJsonOutput_Then_TheFailureIsReportedAsJson(bool validator)
+	{
+		var app = CoreReplApp.Create();
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options => options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; });
+		app.Map("old", () => "ok");
+		if (validator)
+		{
+			app.UseInputValidator((Func<ParsedInputContext, InputValidationResult>)(_ => throw new InvalidOperationException("validator failed")));
+		}
+		else
+		{
+			app.UseArgumentPreprocessor((_, _) => throw new InvalidOperationException("adapter failed"));
+		}
+
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		(await app.RunAsync(["old", "--json"])).Should().Be(1);
+		kind.Should().Be(ReplExecutionOutcomeKind.HandlerException);
+		using var document = System.Text.Json.JsonDocument.Parse(writer.ToString());
+		document.RootElement.GetRawText().Should().Contain("input_callback_error");
+	}
+
+	[TestMethod]
+	[Description("Verifies the format of an input callback's failure report follows the input as far as it was processed: an earlier preprocessor rewrote the invocation into JSON before a later one threw.")]
+	public async Task When_AnEarlierPreprocessorRewroteIntoJsonAndALaterOneThrows_Then_TheFailureIsReportedAsJson()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("old", () => "ok");
+		app.UseArgumentPreprocessor((input, _) => ArgumentPreprocessingResult.Replace([.. input.Arguments, "--json"]));
+		app.UseArgumentPreprocessor((_, _) => throw new InvalidOperationException("adapter failed"));
+
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		(await app.RunAsync(["old"])).Should().Be(1);
+		using var document = System.Text.Json.JsonDocument.Parse(writer.ToString());
+		document.RootElement.GetRawText().Should().Contain("input_callback_error");
+	}
+
+	[TestMethod]
+	[DataRow(false, false, DisplayName = "One-shot, arguments")]
+	[DataRow(false, true, DisplayName = "One-shot, native command")]
+	[DataRow(true, false, DisplayName = "Interactive, arguments")]
+	[DataRow(true, true, DisplayName = "Interactive, native command")]
+	[Description("Verifies the format of an invocation hook's failure report follows the request as far as the hooks replaced it: an earlier hook asked for JSON, through arguments or a native global, before a later one threw.")]
+	public async Task When_AnEarlierHookReplacedTheRequestWithJsonAndALaterOneThrows_Then_TheFailureIsReportedAsJson(bool interactive, bool command)
+	{
+		var app = CoreReplApp.Create();
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options => options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; });
+		app.Map("old", () => "ok");
+		var replacement = command
+			? ReplInvocationRequest.ForCommand("old", globalValues: new Dictionary<string, object?>(StringComparer.Ordinal) { ["output"] = "json" })
+			: ReplInvocationRequest.FromArguments(["old", "--json"]);
+		app.UseInvocationHook((ReplInvocationContext context) => context.Request.Arguments is ["old"]
+			? ReplInvocationResult.Replace(replacement)
+			: ReplInvocationResult.Continue());
+		app.UseInvocationHook((ReplInvocationContext context) => context.Request.Command is "old" || context.Request.Arguments is ["old", "--json"]
+			? throw new InvalidOperationException("hook failed")
+			: ReplInvocationResult.Continue());
+
+		using var writer = new StringWriter();
+		using var reader = new StringReader(interactive ? "old\nexit\n" : string.Empty);
+		using var io = ReplSessionIO.SetSession(writer, reader);
+
+		var exitCode = await app.RunAsync(interactive ? [] : ["old"]);
+
+		writer.ToString().Should().Contain("\"code\": \"input_callback_error\"");
+		if (!interactive)
+		{
+			exitCode.Should().Be(1);
+			kind.Should().Be(ReplExecutionOutcomeKind.HandlerException);
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies an input callback failure whose report degrades to unformatted text, the requested transformer failing too, is still the application's failure the caller saw: a handler exception, as any degraded report is.")]
+	public async Task When_AnInputCallbackFailureReportDegrades_Then_ItIsAHandlerException()
+	{
+		var app = CoreReplApp.Create();
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options =>
+		{
+			options.Output.AddTransformer("broken", new BrokenTransformer());
+			options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; };
+		});
+		app.Map("old", () => "ok");
+		app.UseArgumentPreprocessor((_, _) => throw new InvalidOperationException("adapter failed"));
+
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		(await app.RunAsync(["old", "--output:broken"])).Should().Be(1);
+		kind.Should().Be(ReplExecutionOutcomeKind.HandlerException);
+	}
+
+	private sealed class BrokenTransformer : IOutputTransformer
+	{
+		public string Name => "broken";
+
+		public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default) =>
+			throw new InvalidOperationException("transformer is broken");
+	}
+
+	[TestMethod]
+	[Description("Verifies an argument preprocessor that throws for an interactive command asking for JSON reports its failure as JSON, as the same command run once does.")]
+	public async Task When_AnInputCallbackThrowsForAnInteractiveJsonCommand_Then_TheFailureIsReportedAsJson()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("old", () => "ok");
+		app.UseArgumentPreprocessor((input, _) =>
+			input.Arguments.Count != 0 && string.Equals(input.Arguments[0], "old", StringComparison.Ordinal)
+				? throw new InvalidOperationException("adapter failed")
+				: ArgumentPreprocessingResult.Continue());
+
+		using var writer = new StringWriter();
+		using var reader = new StringReader("old --json\nexit\n");
+		using var io = ReplSessionIO.SetSession(writer, reader);
+
+		_ = await app.RunAsync([]);
+
+		writer.ToString().Should().Contain("\"code\": \"input_callback_error\"");
+	}
+
+	[TestMethod]
+	[Description("Verifies an input callback failure reported in an unknown output format is the caller's mistake, refused as a usage error, as any other report in that format is.")]
+	public async Task When_AnInputCallbackThrowsForAnUnknownFormat_Then_ItIsAUsageError()
+	{
+		var app = CoreReplApp.Create();
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options => options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; });
+		app.Map("old", () => "ok");
+		app.UseArgumentPreprocessor((_, _) => throw new InvalidOperationException("adapter failed"));
+
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		(await app.RunAsync(["old", "--output:bogus"])).Should().Be(2);
+		kind.Should().Be(ReplExecutionOutcomeKind.UsageError);
+	}
+
+	[TestMethod]
 	[Description("Caller cancellation must prevent callback side effects before the chain starts.")]
 	public async Task When_InputIsAlreadyCancelled_Then_AdaptersDoNotRun()
 	{
