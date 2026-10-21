@@ -325,6 +325,9 @@ app.Options(options =>
   failures (tests that failed, records that were rejected), rather than `Results.Error` or
   `Results.Exit`. Scripts get `ExitCodes.CompletedWithFailures`, tests see
   `CommandExecution.OutcomeKind`, and an MCP agent receives the report instead of a tool error.
+- When a module follows another tool's conventions, declare them in the module through
+  `IReplModuleExitCodes` rather than in the application's table, so mounting the module does not
+  change the codes of every other command.
 - Use `Results.Exit(code)` for codes a specific command owns; use `ExitCodes.Resolver` to apply an
   organisation-wide convention to every final outcome — it also sees the `Result` object and the
   `Exception`, so it can map on an error code rather than on a message.

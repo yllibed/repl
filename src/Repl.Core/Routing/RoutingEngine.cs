@@ -427,8 +427,8 @@ internal sealed class RoutingEngine(CoreReplApp app)
 				// Ambiguous shorthand must fail fast so users don't execute the wrong command.
 				return new PrefixResolutionResult(
 					tokens: resolved,
-					ambiguousToken: token,
-					candidates: prefixMatches);
+					candidates: prefixMatches,
+					ambiguousIndex: index);
 			}
 		}
 

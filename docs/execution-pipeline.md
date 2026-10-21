@@ -304,10 +304,61 @@ app.Options(options =>
 });
 ```
 
-The resolver receives a `ReplExecutionOutcome` (`Kind`, table-mapped `ExitCode`, the final `Result`
-object when one exists, the `Exception` that ended the run when applicable, and a `Scope`). `Scope`
-is an init-only property rather than a positional parameter, so it is not part of the record's
-generated `Deconstruct` — read it by name.
+The resolver receives a `ReplExecutionOutcome` (`Kind`, the `ExitCode` mapped by the command's module
+codes and then the table, the final `Result` object when one exists, the `Exception` that ended the
+run when applicable, a `Scope`, and the `Route` template of the command the invocation resolved to
+or addressed — `null` otherwise, for example for help, an unknown command or ambiguous abbreviation,
+a refusal before routing, a framework failure, or a cancellation or interruption that stopped the run
+around the command).
+`Scope` and `Route` are init-only properties rather than positional parameters, so they are not part
+of the record's generated `Deconstruct` — read them by name.
+
+#### Exit codes declared by a module
+
+A module that follows another tool's conventions declares its own codes by implementing
+`IReplModuleExitCodes`. They are read once, when the module is mapped, travel with the module wherever
+it is mounted, and apply to the outcomes of its commands before the application's table:
+
+```csharp
+public sealed class TestRunnerModule : IReplModuleExitCodes
+{
+    // dotnet test (Microsoft.Testing.Platform): 2 = tests failed, 5 = invalid command line.
+    public ReplExitCodeOverrides ExitCodes { get; } = new() { CompletedWithFailures = 2, UsageError = 5 };
+
+    public void Map(IReplMap map) => map.Map("tests run", RunTests);
+}
+```
+
+- A code left `null` is inherited from the module that mapped this one, then from `ReplOptions.ExitCodes`.
+- The codes cover `Success`, `UsageError`, `BindingError`, `HandlerError`, `HandlerException` and
+  `CompletedWithFailures`. Help, cancellation, interruption and framework errors describe the run,
+  not one module's command, and keep the application's codes; a `Results.Exit` code is never remapped.
+- An outcome belongs to the module of the command the invocation resolved to, a refused option
+  included. An argument that fails a route constraint, or a missing argument, belongs to that route's
+  module as long as no other route, and no context, matches more of the words typed. An unknown
+  command belongs to the module whose routes share the most leading words with it (`tests bogus` is
+  refused as the `tests` module would refuse it). In both cases literal words count before parameters
+  that accept a word, so a route such as `{env} {region} deploy` does not take `tests` away from the
+  module that spells it out.
+- An ambiguous abbreviation belongs to the modules of what it could expand to. Each expansion, its
+  other abbreviations expanded too, is weighed as an unknown command is, and the expansions matching
+  the most words decide: `t run`, between a module's `tests run` and `tools run`, is refused as that
+  module would refuse it, even though `t` is not a whole word of either. When those expansions belong
+  to different modules, or to a module and the application, they are settled as tied modules are,
+  below.
+- A context decides only when it matches more words than every route — within one expansion, for an
+  ambiguous abbreviation — so a module mounted under one of the application's contexts still owns the
+  commands under its words. Modules that tie and apply the same codes share them; otherwise the module
+  that mapped them all decides — the application when none did.
+- A context's failed validation belongs to the module that mapped the context, unless the invocation
+  resolved to a command, whose module then decides.
+- Global options, input hooks and argument preprocessors run before any command is resolved: their
+  refusals and the results they answer with keep the application's codes. An unknown `--output`
+  format is the exception: a command reports it when it renders, so it takes that command's module
+  code, even when the command could not run, as a hosted protocol-passthrough command without
+  `IReplIoContext`.
+- The resolver runs after the module's codes, and receives them in `ExitCode`. Shell-integration
+  marks use them too, interactive refusals included; nested sub-invocations keep the built-in defaults.
 
 `Scope` says what the code is for, so a hook with side effects can tell one from the other:
 
@@ -321,10 +372,11 @@ generated `Deconstruct` — read it by name.
   with shell integration off (the default), never for a protocol-passthrough command, and never for
   an abandoned prompt cycle (empty line, Escape, end of input, session cancellation).
 
-The resolver must not throw. An exception from it is swallowed and the table-mapped code is used
-instead, with one diagnostic line written to the session's error stream on a best-effort basis — a
-faulty exit-code hook cannot replace the run's own outcome nor tear down an interactive session, and
-a failing error stream cannot turn the report of that hook's failure into the failure itself.
+The resolver must not throw. An exception from it is swallowed and the mapped code — the module's,
+then the table's — is used instead, with one diagnostic line written to the session's error stream on
+a best-effort basis — a faulty exit-code hook cannot replace the run's own outcome nor tear down an
+interactive session, and a failing error stream cannot turn the report of that hook's failure into the
+failure itself.
 
 Nested sub-invocations (MCP tool calls executed through the Repl pipeline) always use the built-in
 defaults and skip the resolver: the policy describes the *process* exit, and nested callers only test

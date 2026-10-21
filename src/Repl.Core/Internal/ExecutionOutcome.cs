@@ -2,7 +2,8 @@ namespace Repl;
 
 /// <summary>
 /// Internal carrier threaded through the execution pipeline until the exit-code policy is applied once
-/// at the top level. Mirrors <see cref="ReplExecutionOutcome"/> minus the resolved code.
+/// at the top level. Mirrors <see cref="ReplExecutionOutcome"/> minus the resolved code, plus the module
+/// codes that resolve it.
 /// </summary>
 /// <param name="Kind">Outcome category.</param>
 /// <param name="Result">Final result object, when one exists.</param>
@@ -17,6 +18,15 @@ internal readonly record struct ExecutionOutcome(
 	Exception? Exception = null,
 	int? ExplicitExitCode = null)
 {
+	/// <summary>
+	/// The codes of the module whose command the invocation addressed, which apply before the application's
+	/// table; <see langword="null"/> when it addressed none, or one that declares none.
+	/// </summary>
+	public ReplExitCodeOverrides? ModuleExitCodes { get; init; }
+
+	/// <summary>The route template the invocation resolved to or addressed, when there is one.</summary>
+	public string? Route { get; init; }
+
 	public static ExecutionOutcome Success { get; } = new(ReplExecutionOutcomeKind.Success);
 
 	public static ExecutionOutcome Help { get; } = new(ReplExecutionOutcomeKind.Help);

@@ -120,6 +120,70 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	}
 
 	[TestMethod]
+	[Description("Verifies the command-end mark of a module's command carries the code the module declared, as its process exit code would.")]
+	public void When_AModuleDeclaresItsCodes_Then_ItsCommandEndMarkUsesThem()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new FailingTestsModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "tests run\rexit\r");
+
+		raw.Should().Contain("]133;D;2");
+	}
+
+	[TestMethod]
+	[Description("Verifies a refusal under a module's words carries the module's code in the command-end mark, as the same input would exit in a one-shot run.")]
+	[DataRow("tests bogus", DisplayName = "Unknown command")]
+	[DataRow("tests show abc", DisplayName = "Route constraint failure")]
+	[DataRow("tests r", DisplayName = "Ambiguous abbreviation")]
+	[DataRow("guarded", DisplayName = "Context validation failure")]
+	public void When_InputUnderAModuleIsRefused_Then_ItsCommandEndMarkUsesTheModuleCode(string input)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new FailingTestsModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, $"{input}\rexit\r");
+
+		raw.Should().Contain("]133;D;5");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route whose argument failed does not take a refusal away from a context matching more of the literal words, typed in full or relative to the current scope: the command-end mark carries the context module's code.")]
+	[DataRow("tests bad extra\r", DisplayName = "Typed in full")]
+	[DataRow("tests\rbad extra\r", DisplayName = "Relative to the scope")]
+	public void When_AFailedRouteMatchesFewerLiteralWordsThanAContext_Then_TheCommandEndMarkUsesTheContextModuleCode(string input)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new CountingModule());
+		sut.MapModule(new BadGroupModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, $"{input}exit\r");
+
+		raw.Should().Contain("]133;D;7");
+		raw.Should().NotContain("]133;D;5");
+	}
+
+	[TestMethod]
+	[Description("Verifies an abbreviation ambiguous at the first word between commands of one module carries that module's code in the command-end mark, as the same input would exit in a one-shot run.")]
+	public void When_EveryExpansionOfAnAmbiguousAbbreviationBelongsToOneModule_Then_TheCommandEndMarkUsesTheModuleCode()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new ToolingModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "t run\rexit\r");
+
+		raw.Should().Contain("]133;D;5");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies the command-end mark goes through ExitCodes.Resolver, so an application-wide exit-code convention is visible in the terminal decoration too.")]
 	public void When_ResolverIsConfigured_Then_CommandEndMarkUsesItsReturnValue()
 	{
@@ -1013,6 +1077,45 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 				Threw = true;
 				throw new IOException("simulated transport failure on mark write");
 			}
+		}
+	}
+
+	private sealed class CountingModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 5 };
+
+		public void Map(IReplMap map) => map.Map("tests {count:int}", (int count) => count);
+	}
+
+	// Nested so that "tests" is a scope the relative row can enter.
+	private sealed class BadGroupModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
+
+		public void Map(IReplMap map) => map.Context("tests", static tests => tests.Context("bad group", static _ => { }));
+	}
+
+	private sealed class FailingTestsModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 5, CompletedWithFailures = 2 };
+
+		public void Map(IReplMap map)
+		{
+			map.Map("tests run", () => Results.CompletedWithFailures("1 failed"));
+			map.Map("tests rerun", () => "ok");
+			map.Map("tests show {id:int}", (int id) => id);
+			map.Context("guarded", scoped => scoped.Map("run", () => "ok"), validation: () => false);
+		}
+	}
+
+	private sealed class ToolingModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 5 };
+
+		public void Map(IReplMap map)
+		{
+			map.Map("tests run", () => "ok");
+			map.Map("tools run", () => "ok");
 		}
 	}
 }

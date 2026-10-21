@@ -226,7 +226,9 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			var ambiguous = RoutingEngine.CreateAmbiguousPrefixResult(resolution.Prefix);
 			_ = await app.RenderOutputAsync(ambiguous, resolution.Options.OutputFormat, cancellationToken, isInteractive: true)
 				.ConfigureAwait(false);
-			return (AmbientCommandOutcome.Handled, ExecutionOutcome.UsageError(ambiguous));
+			return (
+				AmbientCommandOutcome.Handled,
+				app.AttributeAmbiguous(ExecutionOutcome.UsageError(ambiguous), resolution.Graph, resolution.Prefix));
 		}
 
 		// Help or Routed: both flow through the command-cancellation scope so Ctrl-C and
@@ -655,7 +657,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 						cancellationToken,
 						isInteractive: true)
 					.ConfigureAwait(false);
-				return ExecutionOutcome.UsageError(contextValidation.Failure);
+				return app.AttributeToContext(ExecutionOutcome.UsageError(contextValidation.Failure), contextMatch.Context);
 			}
 
 			cycle.ScopeTokens.Clear();
@@ -679,7 +681,12 @@ internal sealed class InteractiveSession(CoreReplApp app)
 				cancellationToken,
 				isInteractive: true)
 			.ConfigureAwait(false);
-		return ExecutionOutcome.UsageError(failure);
+		return app.AttributeUnresolved(
+			ExecutionOutcome.UsageError(failure),
+			activeGraph,
+			globalOptions.RemainingTokens,
+			resolution.ConstraintFailure,
+			resolution.MissingArgumentsFailure);
 	}
 
 	/// <summary>
