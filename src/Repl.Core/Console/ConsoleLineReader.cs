@@ -155,11 +155,14 @@ internal static partial class ConsoleLineReader
 	/// When the console is redirected (tests, pipes), falls back to <c>Console.In.ReadLineAsync</c>.
 	/// When interactive, reads key-by-key with Esc detection and cancellation support.
 	/// </summary>
-	internal static async ValueTask<ReadResult> ReadLineAsync(CancellationToken ct)
+	/// <param name="ct">Cancels the read.</param>
+	/// <param name="output">Where what the user types is echoed; the session's output, or the console's, by default.</param>
+	internal static async ValueTask<ReadResult> ReadLineAsync(CancellationToken ct, TextWriter? output = null)
 	{
 		if (ReplSessionIO.KeyReader is { } keyReader)
 		{
-			return await ReadLineRemoteAsync(keyReader, navigator: null, editor: null, ct).ConfigureAwait(false);
+			return await ReadLineRemoteAsync(keyReader, navigator: null, editor: null, output ?? ReplSessionIO.Output, ct)
+				.ConfigureAwait(false);
 		}
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
@@ -169,7 +172,8 @@ internal static partial class ConsoleLineReader
 			return new ReadResult(line, Escaped: false);
 		}
 
-		return await Task.Run(() => ReadLineSync(navigator: null, editor: null, ct), ct).ConfigureAwait(false);
+		return await Task.Run(() => ReadLineSync(navigator: null, editor: null, output ?? Console.Out, ct), ct)
+			.ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -214,7 +218,7 @@ internal static partial class ConsoleLineReader
 		if (ReplSessionIO.KeyReader is { } keyReader)
 		{
 			var navigator = await CreateNavigatorAsync(history, ct).ConfigureAwait(false);
-			return await ReadLineRemoteAsync(keyReader, navigator, editor, ct).ConfigureAwait(false);
+			return await ReadLineRemoteAsync(keyReader, navigator, editor, ReplSessionIO.Output, ct).ConfigureAwait(false);
 		}
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
@@ -227,9 +231,9 @@ internal static partial class ConsoleLineReader
 		var nav = await CreateNavigatorAsync(history, ct).ConfigureAwait(false);
 		if (backgroundInputAnalysis)
 		{
-			return await ReadLineRemoteAsync(new ConsoleKeyReader(), nav, editor, ct).ConfigureAwait(false);
+			return await ReadLineRemoteAsync(new ConsoleKeyReader(), nav, editor, ReplSessionIO.Output, ct).ConfigureAwait(false);
 		}
-		return await Task.Run(() => ReadLineSync(nav, editor, ct), ct).ConfigureAwait(false);
+		return await Task.Run(() => ReadLineSync(nav, editor, Console.Out, ct), ct).ConfigureAwait(false);
 	}
 
 	// ---------- Remote async path (IReplKeyReader + TextWriter) ----------
@@ -238,9 +242,9 @@ internal static partial class ConsoleLineReader
 		IReplKeyReader keyReader,
 		HistoryNavigator? navigator,
 		LineEditorState? editor,
+		TextWriter output,
 		CancellationToken ct)
 	{
-		var output = ReplSessionIO.Output;
 		var buffer = new StringBuilder();
 		var cursor = 0;
 		var echo = new StringBuilder();
@@ -301,14 +305,14 @@ internal static partial class ConsoleLineReader
 
 	// ---------- Console sync path ----------
 
-	private static ReadResult ReadLineSync(HistoryNavigator? navigator, LineEditorState? editor, CancellationToken ct)
+	private static ReadResult ReadLineSync(HistoryNavigator? navigator, LineEditorState? editor, TextWriter output, CancellationToken ct)
 	{
 #pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadLineAsync
 		ConsoleInputGate.Gate.Wait(ct);
 #pragma warning restore MA0045
 		try
 		{
-			return ReadLineCore(navigator, editor, ct);
+			return ReadLineCore(navigator, editor, output, ct);
 		}
 		finally
 		{
@@ -317,7 +321,7 @@ internal static partial class ConsoleLineReader
 	}
 
 	[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Sync polling loop with inline pragma suppressions slightly exceeds threshold.")]
-	private static ReadResult ReadLineCore(HistoryNavigator? navigator, LineEditorState? editor, CancellationToken ct)
+	private static ReadResult ReadLineCore(HistoryNavigator? navigator, LineEditorState? editor, TextWriter output, CancellationToken ct)
 	{
 		var buffer = new StringBuilder();
 		var cursor = 0;
@@ -361,7 +365,9 @@ internal static partial class ConsoleLineReader
 
 				if (echo.Length > 0)
 				{
-					Console.Write(echo);
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run; cannot await in sync polling loop
+					output.Write(echo);
+#pragma warning restore MA0045
 					echo.Clear();
 				}
 
@@ -375,7 +381,9 @@ internal static partial class ConsoleLineReader
 
 			if (echo.Length > 0)
 			{
-				Console.Write(echo);
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run; cannot await in sync polling loop
+				output.Write(echo);
+#pragma warning restore MA0045
 				echo.Clear();
 			}
 		}

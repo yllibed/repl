@@ -331,7 +331,7 @@ public sealed class Given_ModuleExitCodes
 	}
 
 	[TestMethod]
-	[Description("Verifies an application route that accepts the first word only as a parameter, or fails on it, does not take an unknown command away from the module whose literal words it starts with.")]
+	[Description("Verifies an application route that accepts the first word only as a parameter, or fails on it, does not take an unknown command away from the module whose literal words it starts with, and the refusal says so.")]
 	[DataRow("{id:int}", DisplayName = "A root route whose constraint fails on the first word")]
 	[DataRow("{env} {region} deploy", DisplayName = "A root route whose parameters accept the first words")]
 	public void When_AnAppRouteOnlyAcceptsTheWordsAsParameters_Then_TheModuleStillOwnsThem(string appRoute)
@@ -340,14 +340,17 @@ public sealed class Given_ModuleExitCodes
 		sut.Map(appRoute, () => "ok");
 		sut.MapModule(new TestsModule());
 
-		Run(sut, ["tests", "bogus"]).Should().Be(5);
+		var (exitCode, output) = RunCapturing(sut, ["tests", "bogus"]);
+
+		exitCode.Should().Be(5);
+		output.Should().Contain("Unknown command 'tests bogus'");
 	}
 
 	[TestMethod]
-	[Description("Verifies a route whose arguments failed does not take a refusal away from a context matching more of the literal words: the context's module decides, and no route is named.")]
-	[DataRow("tests {count:int}", new[] { "tests", "bad", "extra" }, DisplayName = "Route constraint failure")]
-	[DataRow("tests {count} {id}", new[] { "tests", "bad" }, DisplayName = "Missing route argument")]
-	public void When_AFailedRouteMatchesFewerLiteralWordsThanAContext_Then_TheContextModuleDecides(string failedRoute, string[] args)
+	[Description("Verifies a route whose arguments failed does not take a refusal away from a context matching more of the literal words: the context's module decides, no route is named, and the refusal is an unknown command among those words rather than the failed route's argument error.")]
+	[DataRow("tests {count:int}", "tests bad extra", "Invalid value", DisplayName = "Route constraint failure")]
+	[DataRow("tests {count} {id}", "tests bad", "Missing value", DisplayName = "Missing route argument")]
+	public void When_AFailedRouteMatchesFewerLiteralWordsThanAContext_Then_TheContextModuleDecides(string failedRoute, string input, string argumentError)
 	{
 		ReplExecutionOutcome? observed = null;
 		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
@@ -358,14 +361,312 @@ public sealed class Given_ModuleExitCodes
 		sut.MapModule(new RoutesModule(5, failedRoute));
 		sut.MapModule(new BadGroupModule());
 
-		Run(sut, args).Should().Be(7);
+		var (exitCode, output) = RunCapturing(sut, input.Split(' '));
+
+		exitCode.Should().Be(7);
 		observed.Should().NotBeNull();
 		observed!.Route.Should().BeNull();
+		output.Should().Contain($"Unknown command '{input}'");
+		output.Should().NotContain(argumentError);
 	}
 
 	[TestMethod]
-	[Description("Verifies a route whose argument failed keeps the refusal when a context matches as many literal words: its module decides, and the route names what the invocation addressed.")]
-	public void When_AFailedRouteTiesAContext_Then_TheRouteKeepsTheRefusal()
+	[Description("Verifies the refusal of a failed route outscored by a context is an unknown command for a program too: its JSON carries the unknown-command code.")]
+	public void When_AFailedRouteMatchesFewerLiteralWordsThanAContextUnderJson_Then_TheRefusalIsAnUnknownCommand()
+	{
+		var sut = CreateApp();
+		sut.MapModule(new RoutesModule(5, "tests {count:int}"));
+		sut.MapModule(new BadGroupModule());
+
+		var (exitCode, output) = RunCapturing(sut, ["tests", "bad", "extra", "--json"]);
+
+		exitCode.Should().Be(7);
+		using var document = System.Text.Json.JsonDocument.Parse(output);
+		document.RootElement.GetProperty("code").GetString().Should().Be("unknown_command");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route whose argument failed does not keep the refusal when another route matches more of the literal words: the invocation is an unknown command among them, with that route suggested.")]
+	public void When_AFailedRouteMatchesFewerLiteralWordsThanAnotherRoute_Then_TheRefusalIsAnUnknownCommand()
+	{
+		var sut = CreateApp();
+		sut.MapModule(new RoutesModule(5, "tests {count:int}", "tests bad group"));
+
+		var (exitCode, output) = RunCapturing(sut, ["tests", "bad", "extra"]);
+
+		exitCode.Should().Be(5);
+		output.Should().Contain("Unknown command 'tests bad extra'. Did you mean 'tests bad group'?");
+	}
+
+	[TestMethod]
+	[Description("Verifies a parameter that rejects the word typed at its position still addresses it, whatever follows: a sibling route whose parameter accepts that word only ties it, so the refusal stays the argument's error rather than an unknown command for the start of a real command.")]
+	[DataRow("user bob", DisplayName = "The words the failed route has room for")]
+	[DataRow("user bob --force", DisplayName = "An option of the failed route after them")]
+	[DataRow("user bob rnme x", DisplayName = "Words neither route matches after them")]
+	public void When_AFailedParameterTiesASiblingThatAcceptsTheWord_Then_TheArgumentErrorStands(string input)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "user {id:int}", "user {name} rename {newName}"));
+
+		var (exitCode, output) = RunCapturing(sut, input.Split(' '));
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("user {id:int}");
+		output.Should().Contain("Invalid value 'bob' for parameter 'id'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a command typed inside a context whose parameter accepted a word is not refused for that word by a route rejecting it: the scope's words are not the line's, and the line is an unknown command in that context.")]
+	public void When_AnUnknownCommandIsTypedInsideAContext_Then_ARouteRejectingTheScopeWordDoesNotTakeTheRefusal()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.Output.BannerEnabled = false);
+		sut.MapModule(new RoutesModule(5, "project {id:int}"));
+		sut.MapModule(new ProjectContextModule());
+		using var writer = new StringWriter();
+		using var reader = new StringReader("project foo\nbogus\nexit\n");
+		using var session = ReplSessionIO.SetSession(writer, reader);
+
+		_ = sut.Run([]);
+
+		writer.ToString().Should().Contain("Unknown command 'project foo bogus'");
+		writer.ToString().Should().NotContain("Invalid value 'foo'");
+	}
+
+	[TestMethod]
+	[Description("Verifies the same words typed on one line, scope included, are a tie between the route rejecting the context's word and the context: the refusal stays that argument's error, since the user typed that word.")]
+	public void When_TheContextWordsAndAnUnknownCommandAreTypedOnOneLine_Then_TheRouteRejectingTheWordKeepsTheRefusal()
+	{
+		var sut = CreateApp();
+		sut.MapModule(new RoutesModule(5, "project {id:int}"));
+		sut.MapModule(new ProjectContextModule());
+
+		var (exitCode, output) = RunCapturing(sut, ["project", "foo", "bogus"]);
+
+		exitCode.Should().Be(5);
+		output.Should().Contain("Invalid value 'foo' for parameter 'id'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route rejecting a word of the scope never takes the line's refusal, even when it spells out more literal words than the context the session entered.")]
+	public void When_ARouteRejectingAScopeWordHasMoreLiteralWordsThanTheContext_Then_TheLineIsStillAnUnknownCommand()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.Output.BannerEnabled = false);
+		sut.MapModule(new RoutesModule(5, "repo dotnet {id:int}"));
+		sut.MapModule(new RepoContextModule());
+		using var writer = new StringWriter();
+		using var reader = new StringReader("repo dotnet runtime\nbogus\nexit\n");
+		using var session = ReplSessionIO.SetSession(writer, reader);
+
+		_ = sut.Run([]);
+
+		writer.ToString().Should().Contain("Unknown command 'repo dotnet runtime bogus'");
+		writer.ToString().Should().NotContain("Invalid value 'runtime'");
+	}
+
+	[TestMethod]
+	[Description("Verifies the scope rule weighs the words routing actually read: inside a context, a hook replacing the line with a native command leaves no scope before it, so that command's failed argument is still its error.")]
+	public void When_AHookInsideAContextReplacesTheLineWithANativeCommand_Then_ItsFailedArgumentIsItsError()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.Output.BannerEnabled = false);
+		sut.MapModule(new RoutesModule(5, "user {id:int} show"));
+		sut.MapModule(new ProjectContextModule());
+		sut.UseInvocationHook((ReplInvocationContext context) => context.Request.Arguments is ["bogus"]
+			? ReplInvocationResult.Replace(ReplInvocationRequest.ForCommand(
+				"user {id:int} show", new Dictionary<string, object?>(StringComparer.Ordinal) { ["id"] = "abc" }))
+			: ReplInvocationResult.Continue());
+		using var writer = new StringWriter();
+		using var reader = new StringReader("project foo\nbogus\nexit\n");
+		using var session = ReplSessionIO.SetSession(writer, reader);
+
+		_ = sut.Run([]);
+
+		writer.ToString().Should().Contain("Invalid value 'abc' for parameter 'id'");
+	}
+
+	[TestMethod]
+	[Description("Verifies the refusal weighs every route whose argument failed, not only the failure routing ranked first on its own scale: a route matching more literal words, whose own constraint failed, keeps the refusal with that argument's error rather than an unknown command.")]
+	public void When_TheRankedFailureIsOutscoredByAnotherFailedRoute_Then_ThatRoutesArgumentErrorStands()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "cmd {a:int} {b:int} {c:int} {d:int} {e:int} {bad:int}", "cmd 1 {bad:alpha}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["cmd", "1", "2", "3", "4", "5", "x"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("cmd 1 {bad:alpha}");
+		output.Should().Contain("Invalid value '2' for parameter 'bad'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route the words address keeps its failed constraint even when the line is shorter than the route: a value it rejects is an argument error, not an unknown command.")]
+	[DataRow(false, DisplayName = "The route alone")]
+	[DataRow(true, DisplayName = "Beside a root route whose constraint fails too")]
+	public void When_AnAddressedRouteRejectsAValueOfAnIncompleteLine_Then_ThatArgumentErrorStands(bool withRootRoute)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		if (withRootRoute)
+		{
+			sut.Map("{root:int}", (int root) => root);
+		}
+
+		sut.MapModule(new RoutesModule(5, "x {id:int} {name}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["x", "y"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("x {id:int} {name}");
+		output.Should().Contain("Invalid value 'y' for parameter 'id'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route still waiting for words, which accepts every word typed, is refused for its missing argument rather than for a value an overload of it rejects on a line too short for that overload.")]
+	public void When_AnOverloadRejectsAValueOfAnIncompleteLine_Then_TheSiblingsMissingArgumentStands()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "deploy {version:int} {target}", "deploy {name} {target}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["deploy", "foo"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("deploy {name} {target}");
+		output.Should().Contain("Missing value for parameter 'target'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route whose arity fits the line keeps the refusal over one rejecting the same value on a line too short for it, whichever was mapped first.")]
+	[DataRow(false, DisplayName = "Shorter route mapped first")]
+	[DataRow(true, DisplayName = "Longer route mapped first")]
+	public void When_TwoRoutesRejectTheSameValue_Then_TheOneTheLineFitsKeepsTheRefusal(bool longerFirst)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, longerFirst ? ["a {y:int} {z}", "a {x:int}"] : ["a {x:int}", "a {y:int} {z}"]));
+
+		var (exitCode, output) = RunCapturing(sut, ["a", "foo"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("a {x:int}");
+		output.Should().Contain("Invalid value 'foo' for parameter 'x'");
+	}
+
+	[TestMethod]
+	[Description("Verifies an addressed failed constraint comes before a missing argument, whichever failure routing ranked first: a route rejecting a word it has room for is a sharper refusal than another route waiting for more.")]
+	public void When_AnAddressedConstraintFailureAndAMissingArgumentCompete_Then_TheConstraintFailureStands()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "t {p} {q} {r} {s}", "t {x} {y} {z:int}", "t {a:int} {b:bool}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["t", "1", "2", "x"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("t {x} {y} {z:int}");
+		output.Should().Contain("Invalid value 'x' for parameter 'z'");
+	}
+
+	[TestMethod]
+	[Description("Verifies the choice among several addressed failed routes is the same whichever of them was mapped first.")]
+	[DataRow(false, DisplayName = "Shorter route mapped first")]
+	[DataRow(true, DisplayName = "Longer route mapped first")]
+	public void When_SeveralFailedRoutesAreAddressed_Then_TheMappingOrderDoesNotChangeTheChoice(bool longerFirst)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		string[] addressed = longerFirst
+			? ["cmd 1 {a:int} {bad:alpha}", "cmd 1 {bad:alpha}"]
+			: ["cmd 1 {bad:alpha}", "cmd 1 {a:int} {bad:alpha}"];
+		sut.MapModule(new RoutesModule(5, ["cmd {a:int} {b:int} {c:int} {d:int} {e:int} {f:int} {bad:int}", .. addressed]));
+
+		var (exitCode, output) = RunCapturing(sut, ["cmd", "1", "2", "3", "4", "5", "6", "x"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("cmd 1 {a:int} {bad:alpha}");
+		output.Should().Contain("Invalid value '3' for parameter 'bad'");
+	}
+
+	[TestMethod]
+	[Description("Verifies that when a route's failed constraint is outscored but the route missing an argument matches as many words as any owner, the refusal is that missing argument rather than an unknown command.")]
+	public void When_AConstraintFailureIsOutscoredButAMissingArgumentIsNot_Then_TheMissingArgumentIsReported()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "tests {count:int}", "tests bad {name}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["tests", "bad"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("tests bad {name}");
+		output.Should().Contain("Missing value for parameter 'name'");
+	}
+
+	[TestMethod]
+	[Description("Verifies an interactive session refuses a route whose argument failed, when a context matches more of the words typed, as an unknown command, as a one-shot run does.")]
+	public void When_AFailedRouteMatchesFewerLiteralWordsThanAContextInteractively_Then_TheRefusalIsAnUnknownCommand()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.Output.BannerEnabled = false);
+		sut.MapModule(new RoutesModule(5, "tests {count:int}"));
+		sut.MapModule(new BadGroupModule());
+		using var writer = new StringWriter();
+		using var reader = new StringReader("tests bad extra\nexit\n");
+		using var session = ReplSessionIO.SetSession(writer, reader);
+
+		_ = sut.Run([]);
+
+		writer.ToString().Should().Contain("Unknown command 'tests bad extra'");
+		writer.ToString().Should().NotContain("Invalid value");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route whose argument failed keeps the refusal when a context matches as many literal words: its module decides, the route names what the invocation addressed, and the message is the argument's error.")]
+	public void When_AFailedRouteMatchesAsManyLiteralWordsAsAContext_Then_TheRouteKeepsTheRefusal()
 	{
 		ReplExecutionOutcome? observed = null;
 		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
@@ -376,9 +677,12 @@ public sealed class Given_ModuleExitCodes
 		sut.MapModule(new RoutesModule(5, "tests bad {count:int}"));
 		sut.MapModule(new BadGroupModule());
 
-		Run(sut, ["tests", "bad", "x"]).Should().Be(5);
+		var (exitCode, output) = RunCapturing(sut, ["tests", "bad", "x"]);
+
+		exitCode.Should().Be(5);
 		observed.Should().NotBeNull();
 		observed!.Route.Should().Be("tests bad {count:int}");
+		output.Should().Contain("Invalid value 'x' for parameter 'count'");
 	}
 
 	[TestMethod]
@@ -550,11 +854,14 @@ public sealed class Given_ModuleExitCodes
 		return app;
 	}
 
-	private static int Run(ReplApp sut, string[] args)
+	private static int Run(ReplApp sut, string[] args) => RunCapturing(sut, args).ExitCode;
+
+	private static (int ExitCode, string Output) RunCapturing(ReplApp sut, string[] args)
 	{
 		using var writer = new StringWriter();
 		using var session = ReplSessionIO.SetSession(writer, TextReader.Null, commandOutput: writer, error: writer);
-		return sut.Run(args);
+		var exitCode = sut.Run(args);
+		return (exitCode, writer.ToString());
 	}
 
 	private sealed class TestsModule : IReplModuleExitCodes
@@ -707,6 +1014,20 @@ public sealed class Given_ModuleExitCodes
 		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
 
 		public void Map(IReplMap map) => map.Context("tests bad group", static _ => { });
+	}
+
+	private sealed class RepoContextModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
+
+		public void Map(IReplMap map) => map.Context("repo {owner} {name}", static repo => repo.Map("clone", () => "cloned"));
+	}
+
+	private sealed class ProjectContextModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
+
+		public void Map(IReplMap map) => map.Context("project {name}", static project => project.Map("build", () => "built"));
 	}
 
 	private sealed class SharedWordsModule(string command, int usageError) : IReplModuleExitCodes

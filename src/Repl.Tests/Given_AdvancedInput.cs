@@ -344,6 +344,80 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Live analysis and execution must agree on a route whose argument failed: outscored by a route matching more of the literal words, it is an unknown command, and otherwise its argument's error.")]
+	[DataRow("tests bad extra", "Unknown command.", DisplayName = "Outscored by another route")]
+	[DataRow("tests x", "An argument does not satisfy its route constraint.", DisplayName = "Addressed by the failed route")]
+	public async Task When_ARouteArgumentFails_Then_LiveAnalysisRefusesItAsExecutionDoes(string text, string message)
+	{
+		var app = CoreReplApp.Create();
+		app.Map("tests {count:int}", (int count) => count);
+		app.Map("tests bad group", () => "ok");
+
+		var analysis = await AnalyzeAsync(app, text);
+
+		analysis.Validation.State.Should().Be(InputValidationState.Invalid);
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message).Should().Contain(message);
+	}
+
+	[TestMethod]
+	[Description("Live analysis weighs every route whose argument failed, as execution does: a route matching more literal words, whose own constraint failed, makes the input invalid rather than an unknown command.")]
+	public async Task When_TheRankedFailureIsOutscoredByAnotherFailedRoute_Then_LiveAnalysisReportsTheArgument()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("cmd {a:int} {b:int} {c:int} {d:int} {e:int} {bad:int}", (int a, int b, int c, int d, int e, int bad) => bad);
+		app.Map("cmd 1 {bad:alpha}", (string bad) => bad);
+
+		var analysis = await AnalyzeAsync(app, "cmd 1 2 3 4 5 x");
+
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().Contain("An argument does not satisfy its route constraint.");
+	}
+
+	[TestMethod]
+	[Description("Live analysis keeps a line incomplete while a route accepting every word typed waits for more, even when an overload rejects one of those words on a line too short for it.")]
+	public async Task When_AnOverloadRejectsAWordAnotherRouteAccepts_Then_LiveAnalysisStaysIncomplete()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("deploy {version:int} {target}", (int version, string target) => target);
+		app.Map("deploy {name} {target}", (string name, string target) => target);
+
+		var analysis = await AnalyzeAsync(app, "deploy foo");
+
+		analysis.Validation.State.Should().Be(InputValidationState.Incomplete);
+	}
+
+	[TestMethod]
+	[Description("Live analysis reports a value an addressed route rejects even before the line is complete, as execution refuses it: no more words can make that value valid.")]
+	public async Task When_AnIncompleteLineHasARejectedValue_Then_LiveAnalysisReportsTheArgument()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("x {id:int} {name}", (int id, string name) => name);
+
+		var analysis = await AnalyzeAsync(app, "x y");
+
+		analysis.Validation.State.Should().Be(InputValidationState.Invalid);
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().Contain("An argument does not satisfy its route constraint.");
+	}
+
+	[TestMethod]
+	[Description("Live analysis inside a context must not blame a route rejecting a word of the scope, which the context accepted and the line does not contain: the line is an unknown command there, as execution refuses it.")]
+	public async Task When_ARouteRejectsAScopeWord_Then_LiveAnalysisDoesNotBlameIt()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("project {id:int}", (int id) => id);
+		app.Context("project {name}", project => project.Map("build", () => "built"));
+		const string text = "bogus";
+
+		var input = await app.PreprocessInputAsync([text], ["project", "foo"], InputProcessingMode.Preview, text, text.Length,
+			CancellationToken.None, isInteractive: true);
+		var analysis = await app.AnalyzeInputAsync(input, app.CurrentServiceProvider, CancellationToken.None);
+
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().Contain("Unknown command.").And.NotContain("An argument does not satisfy its route constraint.");
+	}
+
+	[TestMethod]
 	[Description("A missing typed value must not be confused with a failed conversion or a default numeric value.")]
 	public async Task When_ARequiredValueIsMissing_Then_TheSnapshotDistinguishesItFromInvalidInput()
 	{

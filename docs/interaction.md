@@ -453,7 +453,7 @@ The interaction pipeline evaluates handlers in this order:
 3. **Built-in rich handler** (`RichPromptInteractionHandler`) — renders arrow-key menus when ANSI + key reader are available.
 4. **Text fallback** — numbered list with typed input; works in all environments (redirected stdin, hosted sessions, no ANSI).
 
-If the terminal cannot support rich prompts (e.g. ANSI disabled, stdin redirected, or hosted session), the framework falls back to the text-based prompt automatically.
+If the terminal cannot support rich prompts (e.g. ANSI disabled, stdin redirected, or hosted session), or while the command's feedback goes to the error stream because its output is for a program (see [Which Stream Receives Progress](progress.md#which-stream-receives-progress)), the framework falls back to the text-based prompt automatically.
 
 ---
 

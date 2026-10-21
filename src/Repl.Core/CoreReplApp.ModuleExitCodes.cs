@@ -26,27 +26,90 @@ public sealed partial class CoreReplApp
 		outcome with { ModuleExitCodes = _moduleExitCodes.GetValueOrDefault(moduleId), Route = route };
 
 	/// <summary>
-	/// Attributes the refusal of an invocation that resolved to no command to the owners
-	/// <see cref="RoutePrefixOwners.Find"/> finds,
-	/// so <c>tests bogus</c> is refused as the <c>tests</c> module would refuse it; a route whose arguments
-	/// failed keeps the refusal unless they score higher.
+	/// Decides the refusal of an invocation that resolved to no command and the module it belongs to: the
+	/// owners <see cref="RoutePrefixOwners.Find"/> finds, so <c>tests bogus</c> is refused as the
+	/// <c>tests</c> module would refuse it. A route whose argument failed keeps the refusal, its argument's
+	/// error, unless another route or a context matches more of the words typed. When no failure is
+	/// addressed that way, the invocation is refused as an unknown command among those words, so the
+	/// message names what the exit code follows.
 	/// </summary>
-	internal ExecutionOutcome AttributeUnresolved(
-		in ExecutionOutcome refusal,
+	internal UnresolvedRefusal DecideUnresolvedRefusal(
 		ActiveRoutingGraph graph,
 		IReadOnlyList<string> tokens,
-		RouteResolver.RouteConstraintFailure? constraintFailure = null,
-		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure = null)
+		int scopeTokenCount,
+		RouteResolver.RouteResolutionResult resolution)
 	{
-		var (ownerScore, owners) = RoutePrefixOwners.Find(graph, tokens, _options.Parsing);
-		if ((constraintFailure?.Route ?? missingArgumentsFailure?.Route) is { } addressedRoute
-			&& RoutePrefixOwners.Score(addressedRoute, tokens, _options.Parsing) >= ownerScore)
+		var owners = RoutePrefixOwners.Find(graph, tokens, _options.Parsing);
+		return FindAddressedFailure(graph, tokens, scopeTokenCount, owners.Score, resolution) switch
 		{
-			return AttributeTo(refusal, addressedRoute.ModuleId, addressedRoute.Template.Template);
+			{ Constraint: { } constraint } => new(
+				RoutingEngine.CreateInvalidRouteValueResult(constraint),
+				constraint.Route.ModuleId,
+				constraint.Route.Template.Template),
+			{ Missing: { } missing } => new(
+				RoutingEngine.CreateMissingRouteValuesResult(missing),
+				missing.Route.ModuleId,
+				missing.Route.Template.Template),
+			_ => new(CreateUnknownCommandResult(tokens, graph), ResolveOwner(owners.ModuleIds), Route: null),
+		};
+	}
+
+	/// <summary>Whether <see cref="DecideUnresolvedRefusal"/> refuses with an argument's failed constraint.</summary>
+	internal bool RefusesWithAConstraintFailure(ActiveRoutingGraph graph, IReadOnlyList<string> tokens, int scopeTokenCount,
+		RouteResolver.RouteResolutionResult resolution) =>
+		FindAddressedFailure(
+			graph, tokens, scopeTokenCount, RoutePrefixOwners.Find(graph, tokens, _options.Parsing).Score, resolution)
+			.Constraint is not null;
+
+	// The failure the words typed address. Routing ranks failures on its own scale while ownership counts
+	// literal words first, so its pick may be outscored by another failed route: the routes that no owner
+	// outscores are resolved again on their own. When routing saw no failure at all, no route failed.
+	private AddressedFailure FindAddressedFailure(ActiveRoutingGraph graph, IReadOnlyList<string> tokens,
+		int scopeTokenCount, long ownerScore, RouteResolver.RouteResolutionResult resolution)
+	{
+		if (resolution.ConstraintFailure is null && resolution.MissingArgumentsFailure is null)
+		{
+			return default;
 		}
 
-		return AttributeTo(refusal, ResolveOwner(owners), route: null);
+		// A native request names its route, resolved from its values rather than these words: its failure is
+		// the refusal.
+		if (_currentInput.Value?.Request is { Command: not null })
+		{
+			return resolution.ConstraintFailure is { } requested
+				? new(requested, Missing: null)
+				: new(Constraint: null, resolution.MissingArgumentsFailure);
+		}
+
+		var addressed = graph.Routes
+			.Where(route => RoutePrefixOwners.ScoreFailedRoute(route, tokens, scopeTokenCount, _options.Parsing) >= ownerScore)
+			.ToArray();
+		if (addressed.Length == 0)
+		{
+			return default;
+		}
+
+		// A value rejected on a line the route fits, then a route only waiting for more words, then a value
+		// rejected on a line too short for its route.
+		var own = RouteResolver.ResolveWithDiagnostics(addressed, tokens, _options.Parsing);
+		return own switch
+		{
+			{ ConstraintFailure: { IsIncompleteLine: false } constraint } => new(constraint, Missing: null),
+			{ MissingArgumentsFailure: { } missing } => new(Constraint: null, missing),
+			_ => new(own.ConstraintFailure, Missing: null),
+		};
 	}
+
+	private readonly record struct AddressedFailure(
+		RouteResolver.RouteConstraintFailure? Constraint,
+		RouteResolver.RouteMissingArgumentsFailure? Missing);
+
+	/// <summary>Attributes a refusal to the module and route <see cref="DecideUnresolvedRefusal"/> decided.</summary>
+	internal ExecutionOutcome AttributeUnresolved(in ExecutionOutcome refusal, UnresolvedRefusal unresolved) =>
+		AttributeTo(refusal, unresolved.ModuleId, unresolved.Route);
+
+	/// <summary>The refusal of an invocation that resolved to no command, with the module and route it belongs to.</summary>
+	internal readonly record struct UnresolvedRefusal(IReplResult Failure, int ModuleId, string? Route);
 
 	/// <summary>
 	/// Attributes the refusal of an ambiguous abbreviation to the modules owning what it could expand to,

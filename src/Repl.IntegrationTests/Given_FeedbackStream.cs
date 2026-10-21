@@ -212,7 +212,7 @@ public sealed class Given_FeedbackStream
 	}
 
 	[TestMethod]
-	[Description("Verifies the label of a console prompt follows the feedback to standard error. Input is redirected here, so nothing is echoed: the echo of a terminal user's typing is not routed.")]
+	[Description("Verifies the label of a console prompt follows the feedback to standard error. Input is redirected here, so nothing is echoed; the echo, which follows the label, is covered in Given_InteractionFeedbackRouting.")]
 	public void When_OutputIsJsonAndCommandPrompts_Then_PromptGoesToStandardError()
 	{
 		var sut = ReplApp.Create();

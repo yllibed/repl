@@ -326,7 +326,8 @@ public sealed partial class CoreReplApp
 				|| Autocomplete.CollectVisibleMatchingRoutes(prefix.Tokens.ToArray(), comparison, graph.Routes, graph.Contexts).Count != 0;
 			if (!isContext)
 			{
-				checks.Add(resolution.ConstraintFailure is not null
+				// Live analysis refuses a failed constraint as execution does.
+				checks.Add(RefusesWithAConstraintFailure(graph, prefix.Tokens, input.Context.ScopeTokens.Count, resolution)
 					? InputValidationResult.Invalid("An argument does not satisfy its route constraint.")
 					: canComplete ? InputValidationResult.Incomplete("Complete the command and its required arguments.")
 					: InputValidationResult.Invalid("Unknown command."));

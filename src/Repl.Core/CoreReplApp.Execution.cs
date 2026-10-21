@@ -384,9 +384,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 							resolvedGlobalOptions,
 							prefixGraph,
 							serviceProvider,
-							cancellationToken,
-							constraintFailure: resolution.ConstraintFailure,
-							missingArgumentsFailure: resolution.MissingArgumentsFailure)
+							resolution,
+							cancellationToken)
 						.ConfigureAwait(false);
 			}
 
@@ -558,7 +557,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	// - run from the console, the process's own streams, the payload alone on standard output;
 	// - in a session that is not hosted and has an error writer of its own, standing in for the process
 	//   as the signal harness does, the same split onto that session's writers;
-	// - in any other session, a hosted one or one with a single stream, the session as it is.
+	// - in any other session, a hosted one or one with a single stream, the session as it is, whose feedback
+	//   InteractionFeedbackRouting keeps off the protocol's writer.
 	private static IDisposable? OpenPassthroughSession()
 	{
 		if (!ReplSessionIO.IsSessionActive)
@@ -738,25 +738,20 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		GlobalInvocationOptions globalOptions,
 		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
-		CancellationToken cancellationToken,
-		RouteResolver.RouteConstraintFailure? constraintFailure = null,
-		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure = null)
+		RouteResolver.RouteResolutionResult resolution,
+		CancellationToken cancellationToken)
 	{
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, _options.Parsing);
 		if (contextMatch is null)
 		{
-			var failure = CreateRouteResolutionFailureResult(
-				tokens: globalOptions.RemainingTokens,
-				constraintFailure,
-				missingArgumentsFailure);
-			var refusal = await RefuseAsync(failure, globalOptions.OutputFormat, cancellationToken)
-				.ConfigureAwait(false);
-			return AttributeUnresolved(
-				refusal,
+			var unresolved = DecideUnresolvedRefusal(
 				activeGraph,
 				globalOptions.RemainingTokens,
-				constraintFailure,
-				missingArgumentsFailure);
+				scopeTokenCount: 0,
+				resolution);
+			var refusal = await RefuseAsync(unresolved.Failure, globalOptions.OutputFormat, cancellationToken)
+				.ConfigureAwait(false);
+			return AttributeUnresolved(refusal, unresolved);
 		}
 
 		var contextValidation = await ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
