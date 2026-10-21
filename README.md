@@ -124,6 +124,8 @@ One command graph. CLI, REPL, remote interactive sessions, and AI agents — all
 
 [**`Repl`**](https://www.nuget.org/packages/Repl) is the meta-package that bundles Core + Defaults + Protocol — **start here**.
 
+For advanced administration of an existing process, [Repl.Remote and Repl.Remote.Defaults](docs/remote-cli.md) add native console attachment and one-shot commands over a local named pipe. The protocol package is independent of the application engine and DI.
+
 ## Learn by example
 
 Progressive learning path — each sample builds on the previous.

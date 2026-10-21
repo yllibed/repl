@@ -13,10 +13,14 @@ namespace Repl;
 internal sealed class DocumentationEngine(CoreReplApp app)
 {
 	// Keep dispatch metadata out of public record equality and serialization.
-	private static readonly ConditionalWeakTable<ReplDocOption, string> OptionParameterNames = new();
+	private sealed record InvocationParameter(string Name, Type Type);
+	private static readonly ConditionalWeakTable<ReplDocOption, InvocationParameter> OptionParameters = new();
 
 	internal static string ResolveInvocationParameterName(ReplDocOption option) =>
-		OptionParameterNames.TryGetValue(option, out var name) ? name : option.Name;
+		OptionParameters.TryGetValue(option, out var parameter) ? parameter.Name : option.Name;
+
+	internal static Type? ResolveInvocationParameterType(ReplDocOption option) =>
+		OptionParameters.TryGetValue(option, out var parameter) ? parameter.Type : null;
 
 	/// <summary>
 	/// Creates a documentation model for the given target path.
@@ -670,7 +674,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			IsHidden = schema.IsOptionHidden(property.Name),
 			IsAutomationHidden = schema.IsOptionAutomationHidden(property.Name),
 		};
-		OptionParameterNames.Add(option, property.Name);
+		OptionParameters.Add(option, new(property.Name, property.PropertyType));
 		return option;
 	}
 
@@ -721,7 +725,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			IsHidden = schema.IsOptionHidden(parameter.Name!),
 			IsAutomationHidden = schema.IsOptionAutomationHidden(parameter.Name!),
 		};
-		OptionParameterNames.Add(option, parameter.Name!);
+		OptionParameters.Add(option, new(parameter.Name!, parameter.ParameterType));
 		return option;
 	}
 

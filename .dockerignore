@@ -1,0 +1,13 @@
+**/bin
+**/obj
+.git
+.claude
+.codex
+.agents
+.review
+.journal
+.codegraph
+.dotnethome
+**/TestResults
+artifacts
+specs

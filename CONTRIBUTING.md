@@ -10,6 +10,8 @@ Thanks for contributing.
 
 ## Local checks
 
+The remote interoperability tests require Python 3 (`python` on Windows, `python3` on Unix). CI installs it explicitly.
+
 ```powershell
 dotnet restore src/Repl.slnx
 dotnet build src/Repl.slnx -c Release

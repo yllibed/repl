@@ -5,8 +5,15 @@ using HostingRemoteSample;
 using Microsoft.Extensions.DependencyInjection;
 
 using Repl;
+using Repl.Remote;
 using Repl.Telnet;
 using Repl.WebSocket;
+
+// Client modes must exit before building the web host or starting another server instance.
+if (args is ["--remote-console" or "--remote-exec", ..])
+{
+	return await RemoteClientMode.RunAsync(args);
+}
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
@@ -32,7 +39,13 @@ builder.Services.AddRepl((sp, replApp) =>
 		sp.GetRequiredService<SessionTracker>()));
 });
 
-var webApp = builder.Build();
+await using var webApp = builder.Build();
+var pipeName = webApp.Configuration["Repl:PipeName"] ?? "repl-hosting-sample";
+var connectionFailed = LoggerMessage.Define(LogLevel.Warning, eventId: default, "Remote CLI connection failed");
+await using var remote = new NamedPipeReplServer(pipeName,
+	_ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(
+		webApp.Services.GetRequiredService<ReplApp>(), webApp.Services)),
+	error => connectionFailed(webApp.Logger, error));
 
 webApp.UseWebSockets();
 webApp.UseDefaultFiles();
@@ -137,7 +150,10 @@ webApp.Map("/ws/telnet", async (HttpContext context, ReplApp repl, SessionTracke
 // SignalR endpoint
 webApp.MapHub<ReplHub>("/hub/repl");
 
-webApp.Run();
+// Keep host services alive until the local listener has drained its sessions.
+await webApp.StartAsync();
+await webApp.WaitForShutdownAsync();
+return 0;
 
 static string? FormatRemotePeer(HttpContext context)
 {

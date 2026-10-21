@@ -9,3 +9,5 @@ using System.Runtime.CompilerServices;
 [assembly: InternalsVisibleTo("Repl.Mcp")]
 [assembly: InternalsVisibleTo("Repl.McpTests")]
 [assembly: InternalsVisibleTo("Repl.SpectreTests")]
+
+[assembly: InternalsVisibleTo("Repl.Remote.Defaults")]

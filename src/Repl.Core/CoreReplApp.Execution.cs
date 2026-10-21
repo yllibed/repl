@@ -214,7 +214,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		{
 			var contractFailure = Results.Validation(
 				"The programmatic invocation adapter is incompatible with this Repl.Core version. "
-				+ "Update Repl.Mcp to the same package version.");
+				+ "Update the programmatic adapter to the same package version as Repl.Core.");
 			// requestedFormat: null resolves to the session default, which always exists, so FormatUnknown
 			// is unreachable here. Routed through the reporter regardless: the guard against a throwing
 			// transformer belongs at every site, not only the ones a reader can prove need it.
