@@ -16,6 +16,7 @@
 		<PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.5"/>
 		<PackageVersion Include="ModelContextProtocol" Version="2.2.0"/>
 		<PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0"/>
+		<PackageVersion Include="StreamJsonRpc" Version="2.26.150"/>
 		<PackageVersion Include="Spectre.Console" Version="0.55.0"/>
 	</ItemGroup>
 

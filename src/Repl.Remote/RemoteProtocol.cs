@@ -1,0 +1,65 @@
+using System.Text.Json;
+using System.Reflection;
+using System.Text.Json.Serialization;
+using StreamJsonRpc;
+using StreamJsonRpc.Protocol;
+
+namespace Repl.Remote;
+
+/// <summary>Wire conventions shared by clients and engine adapters.</summary>
+public static class RemoteProtocol
+{
+	/// <summary>Gets the experimental CLI profile version.</summary>
+	public const string Version = "1.0.0";
+
+	/// <summary>Gets the OpenRPC description of this profile.</summary>
+	public static JsonElement Discover()
+	{
+		using var stream = typeof(RemoteProtocol).Assembly.GetManifestResourceStream("Repl.Remote.openrpc.json")!;
+		using var document = JsonDocument.Parse(stream);
+		return document.RootElement.Clone();
+	}
+
+	internal static JsonRpc CreateRpc(Stream input, Stream output)
+	{
+		var formatter = new SystemTextJsonFormatter
+		{
+			JsonSerializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+			{
+				DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+				PropertyNameCaseInsensitive = false,
+			},
+		};
+		return new PortableJsonRpc(new HeaderDelimitedMessageHandler(new BorrowedStream(output), new BorrowedStream(input), formatter))
+		{
+			CancelLocallyInvokedMethodsWhenConnectionIsClosed = true,
+		};
+	}
+
+	private sealed class PortableJsonRpc(IJsonRpcMessageHandler handler) : JsonRpc(handler)
+	{
+		protected override JsonRpcError.ErrorDetail CreateErrorDetails(JsonRpcRequest request, Exception exception)
+		{
+			var error = base.CreateErrorDetails(request, exception);
+			error.Data = null;
+			if (exception is not (LocalRpcException or OperationCanceledException))
+			{
+				System.Diagnostics.Trace.TraceError("Remote backend failure: {0}", exception);
+				error.Code = JsonRpcErrorCode.InternalError;
+				error.Message = "The remote backend failed.";
+			}
+			return error;
+		}
+	}
+
+	internal static void RegisterTarget(JsonRpc rpc, object target)
+	{
+		foreach (var method in target.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static))
+		{
+			if (method.GetCustomAttribute<JsonRpcMethodAttribute>() is { } attribute)
+			{
+				rpc.AddLocalRpcMethod(method, method.IsStatic ? null : target, attribute);
+			}
+		}
+	}
+}
