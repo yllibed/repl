@@ -8,6 +8,10 @@ namespace Repl.IntegrationTests;
 [DoNotParallelize]
 public sealed class Given_ProcessSignalHarness
 {
+	// Bounds every wait for a command to reach its body, so a regression that keeps it from starting fails
+	// the test instead of hanging the suite; the harness already bounds the runs themselves.
+	private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(30);
+
 	[TestMethod]
 	[Description("Verifies a protocol-passthrough command run under the harness splits its streams as the process does: the handler's payload alone on the run's output, its feedback on the run's error stream.")]
 	public async Task When_AProtocolPassthroughCommandRuns_Then_ItsStreamsAreSplitAsInTheProcess()
@@ -65,7 +69,7 @@ public sealed class Given_ProcessSignalHarness
 		// Starting a run guarantees a signal will reach it, not that the command body is executing yet:
 		// the scope is installed before the arguments are even parsed. Asserting on cleanup means
 		// waiting for the command to say it is running.
-		await started.Task;
+		await started.Task.WaitAsync(StartTimeout);
 
 		var delivery = harness.SendSignal(ReplProcessSignal.Interrupt);
 		var result = await run.Completion;
@@ -121,7 +125,7 @@ public sealed class Given_ProcessSignalHarness
 			() => CreateBlockingApp(started, cleanupGate: holdRunInCleanup),
 			options => options.Platform = ReplPlatformProfile.Unix);
 		var run = await harness.StartRunAsync("work");
-		await started.Task;
+		await started.Task.WaitAsync(StartTimeout);
 
 		ReplSignalDelivery first, second, third;
 		try
@@ -158,7 +162,7 @@ public sealed class Given_ProcessSignalHarness
 		await using var harness = ReplProcessSignalHarness.Create(
 			() => CreateBlockingApp(started, cleanupGate: holdFirstRunInCleanup));
 		var first = await harness.StartRunAsync("work");
-		await started.Task;
+		await started.Task.WaitAsync(StartTimeout);
 
 		ReplSignalRunResult lateResult;
 		try
@@ -301,7 +305,7 @@ public sealed class Given_ProcessSignalHarness
 		});
 
 		var run = await harness.StartRunAsync("work");
-		await started.Task;
+		await started.Task.WaitAsync(StartTimeout);
 		harness.SendSignal(ReplProcessSignal.Interrupt);
 		var result = await run.Completion;
 
@@ -336,7 +340,7 @@ public sealed class Given_ProcessSignalHarness
 		});
 
 		var run = await harness.StartRunAsync("work");
-		await started.Task;
+		await started.Task.WaitAsync(StartTimeout);
 		harness.SendSignal(ReplProcessSignal.Interrupt);
 		var result = await run.Completion;
 
@@ -627,7 +631,7 @@ public sealed class Given_ProcessSignalHarness
 			// The second start arms its own wait and then blocks in its factory, so it is outstanding when
 			// the abandoned first launch finally registers.
 			var secondStart = Task.Run(async () => await harness.StartRunAsync("echo").ConfigureAwait(false));
-			await secondFactoryEntered.Task.ConfigureAwait(false);
+			await secondFactoryEntered.Task.WaitAsync(StartTimeout).ConfigureAwait(false);
 
 			releaseFirstFactory.Release();
 			var releasedEarly = await Task.WhenAny(secondStart, Task.Delay(TimeSpan.FromMilliseconds(300)))
