@@ -223,9 +223,9 @@ internal static class RouteResolver
 		return null;
 	}
 
-	// Shared with the autocomplete engine so the alias rule cannot drift between routing
-	// and completion; the comparison is a parameter because autocomplete honors its own
-	// configurable case sensitivity.
+	// Shared with the autocomplete engine and RoutePrefixOwners so the alias rule cannot drift
+	// between routing, completion and exit-code attribution; the comparison is a parameter because
+	// autocomplete honors its own configurable case sensitivity.
 	internal static bool IsLiteralMatch(
 		RouteDefinition route,
 		LiteralRouteSegment segment,

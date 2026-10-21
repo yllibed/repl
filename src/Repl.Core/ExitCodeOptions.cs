@@ -79,8 +79,8 @@ public sealed class ExitCodeOptions
 
 	/// <summary>
 	/// Gets or sets a final interception hook invoked with the structured outcome (whose
-	/// <see cref="ReplExecutionOutcome.ExitCode"/> already reflects this table); its return value becomes
-	/// the exit code.
+	/// <see cref="ReplExecutionOutcome.ExitCode"/> already reflects the codes the command's module declares
+	/// through <see cref="IReplModuleExitCodes"/>, then this table); its return value becomes the exit code.
 	/// </summary>
 	/// <remarks>
 	/// <para>
@@ -102,10 +102,10 @@ public sealed class ExitCodeOptions
 	/// hook must therefore not assume a one-to-one relationship with a process exit.
 	/// </para>
 	/// <para>
-	/// The hook must not throw: an exception from it is swallowed and the table-mapped code is used
-	/// instead. One diagnostic line is written to the session's error stream on a best-effort basis — the
-	/// fallback code is the contract, so a failing error stream cannot turn a resolver bug into a failed
-	/// run either.
+	/// The hook must not throw: an exception from it is swallowed and the mapped code — the module's, then
+	/// this table's — is used instead. One diagnostic line is written to the session's error stream on a
+	/// best-effort basis — the fallback code is the contract, so a failing error stream cannot turn a
+	/// resolver bug into a failed run either.
 	/// </para>
 	/// </remarks>
 	public Func<ReplExecutionOutcome, int>? Resolver { get; set; }

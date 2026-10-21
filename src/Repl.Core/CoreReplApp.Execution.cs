@@ -269,7 +269,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private int ResolveConfiguredExitCode(ExecutionOutcome outcome, ReplExitCodeScope scope)
 	{
-		var exitCode = _options.ExitCodes.Map(outcome.Kind, outcome.ExplicitExitCode);
+		var exitCode = outcome.ModuleExitCodes?.For(outcome.Kind) ?? _options.ExitCodes.Map(outcome.Kind, outcome.ExplicitExitCode);
 		if (_options.ExitCodes.Resolver is { } resolver)
 		{
 			exitCode = InvokeResolver(resolver, outcome, exitCode, scope);
@@ -286,7 +286,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	[SuppressMessage(
 		"Design",
 		"CA1031:Do not catch general exception types",
-		Justification = "A faulty exit-code resolver must not replace the run's own outcome; it degrades to the table-mapped code.")]
+		Justification = "A faulty exit-code resolver must not replace the run's own outcome; it degrades to the code mapped before it ran.")]
 	private static int InvokeResolver(
 		Func<ReplExecutionOutcome, int> resolver,
 		ExecutionOutcome outcome,
@@ -296,7 +296,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		try
 		{
 			return resolver(
-				new ReplExecutionOutcome(outcome.Kind, mappedExitCode, outcome.Result, outcome.Exception) { Scope = scope });
+				new ReplExecutionOutcome(outcome.Kind, mappedExitCode, outcome.Result, outcome.Exception)
+				{
+					Scope = scope,
+					Route = outcome.Route,
+				});
 		}
 		catch (Exception ex)
 		{
@@ -338,10 +342,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				serviceProvider,
 				isInteractiveSession: false,
 				presenceServiceProvider);
-			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
+			var prefixGraph = ResolveActiveRoutingGraph();
+			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens, prefixGraph);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
 			var ambiguousOutcome = await TryHandleAmbiguousPrefixAsync(
 						prefixResolution,
+						prefixGraph,
 						globalOptions,
 						resolvedGlobalOptions,
 						serviceProvider,
@@ -352,7 +358,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				return ambiguousOutcome.Value;
 			}
 
-			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions);
+			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions, prefixGraph);
 			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedRouteResolution?.Match))
 			{
 				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
@@ -368,13 +374,15 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				return preExecutionOutcome.Value;
 			}
 
+			// One snapshot, even if a banner invalidated routing: a refusal is owned by the routes that refused it.
 			var resolution = preResolvedRouteResolution
-				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
+				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens, prefixGraph.Routes);
 			var match = resolution.Match;
 			if (match is null)
 			{
 				return await TryHandleContextDeeplinkAsync(
 							resolvedGlobalOptions,
+							prefixGraph,
 							serviceProvider,
 							cancellationToken,
 							constraintFailure: resolution.ConstraintFailure,
@@ -399,6 +407,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbiguousPrefixAsync(
 		PrefixResolutionResult prefixResolution,
+		ActiveRoutingGraph prefixGraph,
 		GlobalInvocationOptions globalOptions,
 		GlobalInvocationOptions resolvedGlobalOptions,
 		IServiceProvider serviceProvider,
@@ -415,8 +424,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 
 		var ambiguous = CreateAmbiguousPrefixResult(prefixResolution);
-		return await RefuseAsync(ambiguous, globalOptions.OutputFormat, cancellationToken)
+		var refusal = await RefuseAsync(ambiguous, globalOptions.OutputFormat, cancellationToken)
 			.ConfigureAwait(false);
+		return AttributeAmbiguous(refusal, prefixGraph, prefixResolution);
 	}
 
 	private static bool ShouldSuppressGlobalBanner(
@@ -431,14 +441,16 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return preResolvedMatch?.Route.Command.IsProtocolPassthrough == true;
 	}
 
-	private RouteResolver.RouteResolutionResult? TryPreResolveRouteForBanner(GlobalInvocationOptions globalOptions)
+	private RouteResolver.RouteResolutionResult? TryPreResolveRouteForBanner(
+		GlobalInvocationOptions globalOptions,
+		ActiveRoutingGraph graph)
 	{
 		if (globalOptions.HelpRequested || globalOptions.RemainingTokens.Count == 0)
 		{
 			return null;
 		}
 
-		return ResolveWithDiagnostics(globalOptions.RemainingTokens);
+		return ResolveWithDiagnostics(globalOptions.RemainingTokens, graph.Routes);
 	}
 
 	private async ValueTask<ExecutionOutcome?> TryHandlePreExecutionAsync(
@@ -520,11 +532,13 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				$"Command '{match.Route.Template.Template}' is protocol passthrough and requires a handler parameter of type IReplIoContext in hosted sessions.");
 			// An unknown --output format outranks the refusal: a diagnostic the caller never saw cannot
 			// stand as the run's outcome, and here the format is the caller's own mistake. A degraded report
-			// still reached the caller, so that stays a hosting defect.
+			// still reached the caller, so that stays a hosting defect, which is the application's: it keeps
+			// the application's code and names no route. The format refusal is the resolved command's, as it
+			// is for any other command, so its module decides it.
 			var report = await ReportFailureAsync(refusal, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
 			return report == FailureReport.FormatUnknown
-				? ExecutionOutcome.UsageError(refusal)
+				? AttributeTo(ExecutionOutcome.UsageError(refusal), match.Route.ModuleId, match.Route.Template.Template)
 				: ExecutionOutcome.FrameworkError(refusal);
 		}
 
@@ -717,12 +731,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private async ValueTask<ExecutionOutcome> TryHandleContextDeeplinkAsync(
 		GlobalInvocationOptions globalOptions,
+		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken,
 		RouteResolver.RouteConstraintFailure? constraintFailure = null,
 		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure = null)
 	{
-		var activeGraph = ResolveActiveRoutingGraph();
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, _options.Parsing);
 		if (contextMatch is null)
 		{
@@ -730,8 +744,14 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				tokens: globalOptions.RemainingTokens,
 				constraintFailure,
 				missingArgumentsFailure);
-			return await RefuseAsync(failure, globalOptions.OutputFormat, cancellationToken)
+			var refusal = await RefuseAsync(failure, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
+			return AttributeUnresolved(
+				refusal,
+				activeGraph,
+				globalOptions.RemainingTokens,
+				constraintFailure,
+				missingArgumentsFailure);
 		}
 
 		var contextValidation = await ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
@@ -740,8 +760,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		// is valid, and FromFailure, which requires a failure — so an invalid outcome always carries one.
 		if (contextValidation is { IsValid: false, Failure: { } contextValidationFailure })
 		{
-			return await RefuseAsync(contextValidationFailure, globalOptions.OutputFormat, cancellationToken)
+			var refusal = await RefuseAsync(contextValidationFailure, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
+			return AttributeToContext(refusal, contextMatch.Context);
 		}
 
 		if (!ShouldEnterInteractive(globalOptions, allowAuto: true))
@@ -760,11 +781,37 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			.ConfigureAwait(false);
 	}
 
+	/// <summary>
+	/// Runs a resolved command and attributes its outcome to the command's route and module, whose
+	/// declared exit codes then apply. A framework failure is the run's, not the command's: it keeps the
+	/// application's codes and names no route.
+	/// </summary>
+	internal async ValueTask<(ExecutionOutcome Outcome, bool EnterInteractive)> ExecuteMatchedCommandAsync(
+		RouteMatch match,
+		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
+		List<string>? scopeTokens,
+		CancellationToken cancellationToken)
+	{
+		var (outcome, enterInteractive) = await ExecuteMatchedCommandCoreAsync(
+				match,
+				globalOptions,
+				serviceProvider,
+				scopeTokens,
+				cancellationToken)
+			.ConfigureAwait(false);
+		return (
+			outcome.Kind == ReplExecutionOutcomeKind.FrameworkError
+				? outcome
+				: AttributeTo(outcome, match.Route.ModuleId, match.Route.Template.Template),
+			enterInteractive);
+	}
+
 	[SuppressMessage(
 		"Maintainability",
 		"MA0051:Method is too long",
 		Justification = "Execution path intentionally keeps validation, binding, middleware and rendering in one place.")]
-	internal async ValueTask<(ExecutionOutcome Outcome, bool EnterInteractive)> ExecuteMatchedCommandAsync(
+	private async ValueTask<(ExecutionOutcome Outcome, bool EnterInteractive)> ExecuteMatchedCommandCoreAsync(
 		RouteMatch match,
 		GlobalInvocationOptions globalOptions,
 		IServiceProvider serviceProvider,

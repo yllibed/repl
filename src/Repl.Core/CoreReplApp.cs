@@ -65,7 +65,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			ResolveEntryAssemblyName,
 			ResolveShellCompletionCommandName,
 			ResolveShellCompletionCandidatesAsync);
-		_moduleRegistrations.Add(new ModuleRegistration(ModuleId: 0, IsPresent: static _ => true));
+		_moduleRegistrations.Add(new ModuleRegistration(ModuleId: 0, ParentModuleId: 0, IsPresent: static _ => true));
 		_moduleMappingScope.Push(0);
 		MapModule(
 			new ShellCompletionModule(_shellCompletionRuntime),
@@ -537,12 +537,6 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return Resolve(inputTokens, activeGraph.Routes);
 	}
 
-	internal RouteResolver.RouteResolutionResult ResolveWithDiagnostics(IReadOnlyList<string> inputTokens)
-	{
-		var activeGraph = ResolveActiveRoutingGraph();
-		return ResolveWithDiagnostics(inputTokens, activeGraph.Routes);
-	}
-
 	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens, IReadOnlyList<RouteDefinition> routes) =>
 		RouteResolver.Resolve(routes, inputTokens, _options.Parsing);
 
@@ -556,7 +550,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		Func<ModulePresenceContext, bool> isPresent,
 		IReplMap map)
 	{
-		var moduleId = RegisterModule(isPresent);
+		var moduleId = RegisterModule(module, isPresent);
 		_moduleMappingScope.Push(moduleId);
 		try
 		{
@@ -568,10 +562,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		}
 	}
 
-	private int RegisterModule(Func<ModulePresenceContext, bool> isPresent)
+	private int RegisterModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent)
 	{
+		// Read before anything is registered: a getter that throws leaves no half-registered module.
+		var declaredExitCodes = (module as IReplModuleExitCodes)?.ExitCodes;
 		var moduleId = _nextModuleId++;
-		_moduleRegistrations.Add(new ModuleRegistration(moduleId, isPresent));
+		var parentModuleId = ResolveCurrentMappingModuleId();
+		_moduleRegistrations.Add(new ModuleRegistration(moduleId, parentModuleId, isPresent));
+		RegisterModuleExitCodes(moduleId, parentModuleId, declaredExitCodes);
 		InvalidateRouting();
 		return moduleId;
 	}
@@ -913,6 +911,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	private readonly record struct ModuleRegistration(
 		int ModuleId,
+		int ParentModuleId,
 		Func<ModulePresenceContext, bool> IsPresent);
 
 	/// <param name="ServiceProvider">Resolves handler arguments for this invocation.</param>
