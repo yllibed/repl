@@ -346,10 +346,12 @@ public sealed class TestRunnerModule : IReplModuleExitCodes
   module would refuse it). In both cases literal words count before parameters that accept a word, so a
   route such as `{env} {region} deploy` does not take `tests` away from the module that spells it out.
 
-  > **Changed in 0.12.** Such an invocation used to be refused with the failed route's argument error
-  > even when another route or a context matched more of its words. It is now refused as an unknown
-  > command: under `--json`, an error result with the code `unknown_command` rather than a validation
-  > result. The exit code is a usage error either way.
+  > **Changed in 0.12.** Such an invocation used to be refused with the argument error of the failed
+  > route routing ranked first, even when another route or a context matched more of its words. It is
+  > now refused with the argument error of a failed route that no other route or context outscores,
+  > which can name another route, parameter and module, or else as an unknown command: under `--json`,
+  > an error result with the code `unknown_command` rather than a validation result. The exit code is a
+  > usage error either way.
 
 - An ambiguous abbreviation belongs to the modules of what it could expand to. Each expansion, its
   other abbreviations expanded too, is weighed as an unknown command is, and the expansions matching

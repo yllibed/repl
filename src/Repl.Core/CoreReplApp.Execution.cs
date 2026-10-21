@@ -384,9 +384,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 							resolvedGlobalOptions,
 							prefixGraph,
 							serviceProvider,
-							cancellationToken,
-							constraintFailure: resolution.ConstraintFailure,
-							missingArgumentsFailure: resolution.MissingArgumentsFailure)
+							resolution,
+							cancellationToken)
 						.ConfigureAwait(false);
 			}
 
@@ -739,9 +738,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		GlobalInvocationOptions globalOptions,
 		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
-		CancellationToken cancellationToken,
-		RouteResolver.RouteConstraintFailure? constraintFailure = null,
-		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure = null)
+		RouteResolver.RouteResolutionResult resolution,
+		CancellationToken cancellationToken)
 	{
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, _options.Parsing);
 		if (contextMatch is null)
@@ -750,8 +748,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				activeGraph,
 				globalOptions.RemainingTokens,
 				scopeTokenCount: 0,
-				constraintFailure,
-				missingArgumentsFailure);
+				resolution);
 			var refusal = await RefuseAsync(unresolved.Failure, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
 			return AttributeUnresolved(refusal, unresolved);

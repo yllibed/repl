@@ -327,8 +327,7 @@ public sealed partial class CoreReplApp
 			if (!isContext)
 			{
 				// Live analysis refuses a failed constraint as execution does.
-				checks.Add(resolution.ConstraintFailure is { } failure
-					&& IsAddressedConstraintFailure(graph, prefix.Tokens, input.Context.ScopeTokens.Count, failure)
+				checks.Add(RefusesWithAConstraintFailure(graph, prefix.Tokens, input.Context.ScopeTokens.Count, resolution)
 					? InputValidationResult.Invalid("An argument does not satisfy its route constraint.")
 					: canComplete ? InputValidationResult.Incomplete("Complete the command and its required arguments.")
 					: InputValidationResult.Invalid("Unknown command."));

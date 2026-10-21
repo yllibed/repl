@@ -687,8 +687,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			activeGraph,
 			globalOptions.RemainingTokens,
 			scopeTokenCount,
-			resolution.ConstraintFailure,
-			resolution.MissingArgumentsFailure);
+			resolution);
 		_ = await app.RenderOutputAsync(
 				unresolved.Failure,
 				globalOptions.OutputFormat,

@@ -360,6 +360,20 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Live analysis weighs every route whose argument failed, as execution does: a route matching more literal words, whose own constraint failed, makes the input invalid rather than an unknown command.")]
+	public async Task When_TheRankedFailureIsOutscoredByAnotherFailedRoute_Then_LiveAnalysisReportsTheArgument()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("cmd {a:int} {b:int} {c:int} {d:int} {e:int} {bad:int}", (int a, int b, int c, int d, int e, int bad) => bad);
+		app.Map("cmd 1 {bad:alpha}", (string bad) => bad);
+
+		var analysis = await AnalyzeAsync(app, "cmd 1 2 3 4 5 x");
+
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().Contain("An argument does not satisfy its route constraint.");
+	}
+
+	[TestMethod]
 	[Description("Live analysis inside a context must not blame a route rejecting a word of the scope, which the context accepted and the line does not contain: the line is an unknown command there, as execution refuses it.")]
 	public async Task When_ARouteRejectsAScopeWord_Then_LiveAnalysisDoesNotBlameIt()
 	{

@@ -30,10 +30,13 @@ internal static class RoutePrefixOwners
 	/// of <see cref="Find"/>. The word its parameter rejects counts as that parameter's, since it was typed
 	/// where the route expects one, so a sibling whose parameter accepts the word ties it rather than
 	/// outscoring it, while a literal word still does. The words after it are not weighed: they may be the
-	/// route's own options and arguments.
+	/// route's own options and arguments. A route rejecting a word among the first
+	/// <paramref name="scopeTokenCount"/>, an interactive scope, addresses nothing, scoring -1, below any
+	/// owner's: that word is not on the line typed, and the context the session entered accepted it.
 	/// </summary>
-	public static long ScoreFailedRoute(RouteDefinition route, IReadOnlyList<string> tokens, ParsingOptions parsingOptions) =>
-		Score(route.Template, route, tokens, parsingOptions, creditRejectedParameter: true);
+	public static long ScoreFailedRoute(
+		RouteDefinition route, IReadOnlyList<string> tokens, int scopeTokenCount, ParsingOptions parsingOptions) =>
+		Score(route.Template, route, tokens, parsingOptions, failedRouteScope: scopeTokenCount);
 
 	/// <summary>The owners with the best non-zero score, each once, and that score; ties keep every owner.</summary>
 	public static (long Score, IReadOnlyList<int> ModuleIds) FindBest(IEnumerable<(long Score, int ModuleId)> candidates)
@@ -69,7 +72,7 @@ internal static class RoutePrefixOwners
 		RouteDefinition? route,
 		IReadOnlyList<string> tokens,
 		ParsingOptions parsingOptions,
-		bool creditRejectedParameter = false)
+		int? failedRouteScope = null)
 	{
 		var segments = template.Segments;
 		var literals = 0L;
@@ -84,7 +87,12 @@ internal static class RoutePrefixOwners
 				case DynamicRouteSegment dynamic when RouteConstraintEvaluator.IsMatch(dynamic, tokens[i], parsingOptions):
 					parameters++;
 					continue;
-				case DynamicRouteSegment when creditRejectedParameter:
+				case DynamicRouteSegment when failedRouteScope is { } scope:
+					if (i < scope)
+					{
+						return -1;
+					}
+
 					parameters++;
 					break;
 			}

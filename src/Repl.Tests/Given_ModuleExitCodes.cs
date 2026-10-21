@@ -454,6 +454,24 @@ public sealed class Given_ModuleExitCodes
 	}
 
 	[TestMethod]
+	[Description("Verifies a route rejecting a word of the scope never takes the line's refusal, even when it spells out more literal words than the context the session entered.")]
+	public void When_ARouteRejectingAScopeWordHasMoreLiteralWordsThanTheContext_Then_TheLineIsStillAnUnknownCommand()
+	{
+		var sut = ReplApp.Create();
+		sut.Options(options => options.Output.BannerEnabled = false);
+		sut.MapModule(new RoutesModule(5, "repo dotnet {id:int}"));
+		sut.MapModule(new RepoContextModule());
+		using var writer = new StringWriter();
+		using var reader = new StringReader("repo dotnet runtime\nbogus\nexit\n");
+		using var session = ReplSessionIO.SetSession(writer, reader);
+
+		_ = sut.Run([]);
+
+		writer.ToString().Should().Contain("Unknown command 'repo dotnet runtime bogus'");
+		writer.ToString().Should().NotContain("Invalid value 'runtime'");
+	}
+
+	[TestMethod]
 	[Description("Verifies the scope rule weighs the words routing actually read: inside a context, a hook replacing the line with a native command leaves no scope before it, so that command's failed argument is still its error.")]
 	public void When_AHookInsideAContextReplacesTheLineWithANativeCommand_Then_ItsFailedArgumentIsItsError()
 	{
@@ -472,6 +490,71 @@ public sealed class Given_ModuleExitCodes
 		_ = sut.Run([]);
 
 		writer.ToString().Should().Contain("Invalid value 'abc' for parameter 'id'");
+	}
+
+	[TestMethod]
+	[Description("Verifies the refusal weighs every route whose argument failed, not only the failure routing ranked first on its own scale: a route matching more literal words, whose own constraint failed, keeps the refusal with that argument's error rather than an unknown command.")]
+	public void When_TheRankedFailureIsOutscoredByAnotherFailedRoute_Then_ThatRoutesArgumentErrorStands()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "cmd {a:int} {b:int} {c:int} {d:int} {e:int} {bad:int}", "cmd 1 {bad:alpha}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["cmd", "1", "2", "3", "4", "5", "x"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("cmd 1 {bad:alpha}");
+		output.Should().Contain("Invalid value '2' for parameter 'bad'");
+	}
+
+	[TestMethod]
+	[Description("Verifies an addressed failed constraint comes before a missing argument, whichever failure routing ranked first: a route rejecting a word it has room for is a sharper refusal than another route waiting for more.")]
+	public void When_AnAddressedConstraintFailureAndAMissingArgumentCompete_Then_TheConstraintFailureStands()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "t {p} {q} {r} {s}", "t {x} {y} {z:int}", "t {a:int} {b:bool}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["t", "1", "2", "x"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("t {x} {y} {z:int}");
+		output.Should().Contain("Invalid value 'x' for parameter 'z'");
+	}
+
+	[TestMethod]
+	[Description("Verifies the choice among several addressed failed routes is the same whichever of them was mapped first.")]
+	[DataRow(false, DisplayName = "Shorter route mapped first")]
+	[DataRow(true, DisplayName = "Longer route mapped first")]
+	public void When_SeveralFailedRoutesAreAddressed_Then_TheMappingOrderDoesNotChangeTheChoice(bool longerFirst)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		string[] addressed = longerFirst
+			? ["cmd 1 {a:int} {bad:alpha}", "cmd 1 {bad:alpha}"]
+			: ["cmd 1 {bad:alpha}", "cmd 1 {a:int} {bad:alpha}"];
+		sut.MapModule(new RoutesModule(5, ["cmd {a:int} {b:int} {c:int} {d:int} {e:int} {f:int} {bad:int}", .. addressed]));
+
+		var (exitCode, output) = RunCapturing(sut, ["cmd", "1", "2", "3", "4", "5", "6", "x"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("cmd 1 {a:int} {bad:alpha}");
+		output.Should().Contain("Invalid value '3' for parameter 'bad'");
 	}
 
 	[TestMethod]
@@ -862,6 +945,13 @@ public sealed class Given_ModuleExitCodes
 		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
 
 		public void Map(IReplMap map) => map.Context("tests bad group", static _ => { });
+	}
+
+	private sealed class RepoContextModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
+
+		public void Map(IReplMap map) => map.Context("repo {owner} {name}", static repo => repo.Map("clone", () => "cloned"));
 	}
 
 	private sealed class ProjectContextModule : IReplModuleExitCodes
