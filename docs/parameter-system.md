@@ -12,7 +12,9 @@ This document describes Repl Toolkit's parameter/option model and key design dec
 
 - unknown command options are validation errors by default
 - option value syntaxes: `--name value`, `--name=value`, `--name:value`
-- option parsing is case-sensitive by default, configurable via `ParsingOptions.OptionCaseSensitivity`
+- option parsing is case-sensitive by default, configurable via `ParsingOptions.OptionCaseSensitivity`; handler
+  parameter names, by contrast, are matched without regard to case, so two that differ only by case are rejected at
+  registration
 - response files are supported with `@file.rsp` (non-recursive)
 - custom global options can be registered via `ParsingOptions.AddGlobalOption<T>(...)` or `AddGlobalOption(name, typeName)`, and accessed outside handlers via `IGlobalOptionsAccessor` (see [Commands — Accessing global options](commands.md#accessing-global-options-outside-handlers))
 - signed numeric literals (`-1`, `-0.5`, `-1e3`) are treated as positional values, not options

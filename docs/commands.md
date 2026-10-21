@@ -29,7 +29,9 @@ These flags are parsed before route execution:
 Global parsing notes:
 
 - unknown command options are validation errors by default (`options.Parsing.AllowUnknownOptions = false`)
-- option name matching is case-sensitive by default (`options.Parsing.OptionCaseSensitivity = CaseSensitive`)
+- option name matching is case-sensitive by default (`options.Parsing.OptionCaseSensitivity = CaseSensitive`); this
+  applies to option tokens only: handler parameter names are matched without regard to case, so two parameters whose
+  names differ only by case (or repeat, as two `_` discards do) cause an `InvalidOperationException` at registration
 - option value syntaxes accepted by command parsing: `--name value`, `--name=value`, `--name:value`
 - use `--` to stop option parsing and force remaining tokens to positional arguments
 - response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported

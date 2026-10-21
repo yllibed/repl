@@ -508,9 +508,8 @@ public sealed class ParsingOptions
 		{
 			null => null,
 			string text => text,
-			System.Collections.ICollection items => string.Join(", ", items.Cast<object?>()) is { Length: > 0 } joined
-				? joined
-				: null,
+			System.Collections.ICollection { Count: 0 } => null,
+			System.Collections.ICollection items => string.Join(", ", items.Cast<object?>()),
 			System.Collections.IEnumerable => null,
 			_ => value.ToString(),
 		};

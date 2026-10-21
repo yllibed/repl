@@ -342,7 +342,8 @@ internal static partial class HelpTextBuilder
 
 		// Option rows are looked up by schema name, and the schema also holds the group properties' names: a
 		// parameter sharing such a name, the options group itself, a service or a route value, is not that
-		// option. No option shares a group property's name, which mapping refuses.
+		// option. No option shares a group property's name, and no two parameters differ only by case: mapping
+		// refuses both.
 		var parameters = new Dictionary<string, ParameterInfo>(StringComparer.OrdinalIgnoreCase);
 		foreach (var parameter in handlerParameters)
 		{

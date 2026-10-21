@@ -257,6 +257,31 @@ public sealed class Given_OptionsGroupBinding
 		line.Should().NotContain("projectoptions").And.NotContain("timeprovider").And.NotContain("<int>");
 	}
 
+	[TestMethod]
+	[Description("Verifies two handler parameters whose names differ only by case are refused at Map with a message naming both, since Repl matches parameter names without regard to case: an option and a service named this way could not be told apart.")]
+	public void When_TwoParametersDifferOnlyByCase_Then_MapRefusesThem()
+	{
+		var sut = ReplApp.Create();
+
+		var act = () => sut.Map("run", (string? project, [FromServices] TimeProvider PROJECT) => project ?? "none");
+
+		// WithMessage wildcards ignore case, so each spelling is checked with an ordinal Contain.
+		var message = act.Should().Throw<InvalidOperationException>().Which.Message;
+		message.Should().Contain("'project'").And.Contain("'PROJECT'").And.Contain("differ only by case");
+	}
+
+	[TestMethod]
+	[Description("Verifies two handler parameters with the same name, such as two lambda discards, are refused at Map with a message saying they share that name rather than that they differ by case.")]
+	public void When_TwoParametersShareAName_Then_MapRefusesThemNamingIt()
+	{
+		var sut = ReplApp.Create();
+
+		var act = () => sut.Map("run", (CancellationToken _, TimeProvider _) => "ok");
+
+		var message = act.Should().Throw<InvalidOperationException>().Which.Message;
+		message.Should().Contain("share the name '_'").And.NotContain("differ only by case");
+	}
+
 	[ReplOptionsGroup]
 	public class ProjectOptions
 	{
@@ -282,10 +307,13 @@ public sealed class Given_OptionsGroupBinding
 		lines.Single(line => line.Contains("--tags")).Should().Contain("[default: a, b]");
 		lines.Single(line => line.Contains("--labels")).Should().Contain("[default: x, y]");
 		lines.Single(line => line.Contains("--names")).Should().Contain("[default: m, n]");
+		lines.Single(line => line.Contains("--blanks")).Should().Contain("[default: ]");
 		options.Single(option => string.Equals(option.Name, "uids", StringComparison.Ordinal)).DefaultValue.Should().BeNull();
 		options.Single(option => string.Equals(option.Name, "tags", StringComparison.Ordinal)).DefaultValue.Should().Be("a, b");
 		options.Single(option => string.Equals(option.Name, "labels", StringComparison.Ordinal)).DefaultValue.Should().Be("x, y");
 		options.Single(option => string.Equals(option.Name, "names", StringComparison.Ordinal)).DefaultValue.Should().Be("m, n");
+		// One empty element is still a default, unlike an empty collection.
+		options.Single(option => string.Equals(option.Name, "blanks", StringComparison.Ordinal)).DefaultValue.Should().BeEmpty();
 	}
 
 	[TestMethod]
@@ -333,8 +361,12 @@ public sealed class Given_OptionsGroupBinding
 		[ReplOption(Arity = ReplArity.ZeroOrMore)]
 		public IReadOnlyList<string> Labels { get; set; } = ["x", "y"];
 
+		// Declared like LazyDefaultOptions.Items, but holding a materialized list, so its elements show.
 		[ReplOption(Arity = ReplArity.ZeroOrMore)]
-		public IEnumerable<string> Names { get; set; } = ["m", "n"];
+		public IEnumerable<string> Names { get; set; } = new List<string> { "m", "n" };
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public string[] Blanks { get; set; } = [""];
 	}
 
 	[TestMethod]
