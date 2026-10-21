@@ -34,6 +34,47 @@ public sealed class Given_ParameterSchemaBinding
 	}
 
 	[TestMethod]
+	[Description("Verifies a parameter Repl supplies itself cannot declare option metadata: it is never an option, so the attribute would do nothing and command registration fails instead of silently ignoring it.")]
+	[DataRow("progress", "ReplOption", DisplayName = "Structured progress with ReplOption")]
+	[DataRow("percentage", "ReplArgument", DisplayName = "Percentage progress with ReplArgument")]
+	[DataRow("channel", "ReplOption", DisplayName = "Interaction channel with ReplOption")]
+	[DataRow("cancellation", "ReplOption", DisplayName = "Cancellation token with ReplOption")]
+	public void When_AReplSuppliedParameterDeclaresOptionMetadata_Then_MapFailsWithConfigurationError(string parameter, string attribute)
+	{
+		var sut = ReplApp.Create();
+
+		Action act = parameter switch
+		{
+			"progress" => () => sut.Map("sync", ([ReplOption(AutomationHidden = true)] IProgress<ReplProgressEvent> progress) => "ok"),
+			"percentage" => () => sut.Map("sync", ([ReplArgument] IProgress<double> progress) => "ok"),
+			"channel" => () => sut.Map("sync", ([ReplOption] IReplInteractionChannel channel) => "ok"),
+			"cancellation" => () => sut.Map("sync", ([ReplOption] CancellationToken cancellationToken) => "ok"),
+			_ => throw new ArgumentOutOfRangeException(nameof(parameter), parameter, "Unknown test row."),
+		};
+
+		act.Should().Throw<InvalidOperationException>()
+			.WithMessage($"*is supplied by Repl*[{attribute}]*");
+	}
+
+	[TestMethod]
+	[Description("Verifies an options-group property cannot share its name with a parameter Repl supplies: values are matched to parameters by name, ignoring case, so the option's value would be bound to the supplied parameter.")]
+	public void When_AnOptionSharesItsNameWithAReplSuppliedParameter_Then_MapFailsWithConfigurationError()
+	{
+		var sut = ReplApp.Create();
+
+		var act = () => sut.Map("sync", (ProgressNamedOptions options, IProgress<double> progress) => options.Progress);
+
+		act.Should().Throw<InvalidOperationException>()
+			.WithMessage("*'Progress'*parameter 'progress' that Repl supplies*");
+	}
+
+	[ReplOptionsGroup]
+	public sealed class ProgressNamedOptions
+	{
+		public bool Progress { get; set; }
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies OptionOnly mode blocks positional fallback so handlers cannot accidentally consume unnamed user input.")]
 	public void When_ParameterIsOptionOnlyAndOnlyPositionalValueIsProvided_Then_InvocationFails()
 	{

@@ -51,8 +51,11 @@ internal sealed class ImplicitServiceParameterRegistry
 		return true;
 	}
 
-	private static bool IsFrameworkInjectedParameter(Type parameterType) =>
-		parameterType == typeof(IServiceProvider)
+	/// <summary>Whether Repl itself supplies a parameter of this type, which is therefore never an option.</summary>
+	public static bool IsFrameworkInjectedParameter(Type parameterType) =>
+		parameterType == typeof(CancellationToken)
+		|| InteractionProgressFactory.IsSupportedProgressType(parameterType)
+		|| parameterType == typeof(IServiceProvider)
 		|| parameterType == typeof(ICoreReplApp)
 		|| parameterType == typeof(CoreReplApp)
 		|| parameterType == typeof(IGlobalOptionsAccessor)

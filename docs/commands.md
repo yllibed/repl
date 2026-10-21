@@ -134,7 +134,7 @@ Hidden options are omitted from help, interactive and shell completion (includin
 
 Over MCP the omission is stricter. The advertised tool schema and the list of accepted arguments are built from the same option list, so a `tools/call` that supplies a hidden option is **rejected** — exactly like a call to a hidden command. A hidden option is therefore reachable from a human-driven CLI or REPL session, but not from an agent.
 
-A hidden option must be omittable for the provider that builds a discovery surface, because that client otherwise has no valid invocation path. Repl checks the same fallbacks and precedence as the handler binder: a CLR default or nullable shape, synthetic `IProgress<double>`/`IProgress<ReplProgressEvent>` from an available `IReplInteractionChannel`, then direct `IServiceProvider.GetService` before explicit `ExactlyOne`/`OneOrMore` lower bounds are enforced. Direct handler parameters are validated when aggregate documentation or MCP discovery is built, not by `Map` or `.Hidden()`, because `Run` and MCP may receive an external provider only after mapping. If the active provider cannot supply the value, discovery fails with the required-hidden diagnostic rather than advertising an impossible command. Required options-group properties still fail immediately during mapping because that binding path never consults DI.
+A hidden option must be omittable for the provider that builds a discovery surface, because that client otherwise has no valid invocation path. Repl checks the same fallbacks and precedence as the handler binder: a CLR default or nullable shape, then direct `IServiceProvider.GetService` before explicit `ExactlyOne`/`OneOrMore` lower bounds are enforced. Direct handler parameters are validated when aggregate documentation or MCP discovery is built, not by `Map` or `.Hidden()`, because `Run` and MCP may receive an external provider only after mapping. If the active provider cannot supply the value, discovery fails with the required-hidden diagnostic rather than advertising an impossible command. Required options-group properties still fail immediately during mapping because that binding path never consults DI.
 
 A fluent `.Hidden(isHidden: false)` overrides `ReplOptionAttribute.Hidden`. For direct handler parameters this can restore visibility before provider-aware discovery. A required hidden options-group property is rejected while the command is mapped, before a fluent override can run, so fix that attribute instead.
 
@@ -606,5 +606,15 @@ Handler parameters are resolved in priority order:
 7. Positional arguments — remaining tokens consumed left-to-right
 8. Parameter defaults — C# default values
 9. Null — for nullable types without other source
+
+Some parameters are supplied by Repl itself: `CancellationToken`, `IProgress<double>`, `IProgress<ReplProgressEvent>`,
+`IReplInteractionChannel`, `IReplIoContext`, `IReplKeyReader`, `IReplPagingContext`, `IReplSessionState`,
+`IGlobalOptionsAccessor`, `IServiceProvider`, `ICoreReplApp`, and the MCP client services. They are never options or
+arguments, on any surface, so `Map` refuses `[ReplOption]` or `[ReplArgument]` on them, and refuses an option, such as
+an options-group property, named like one of them, since its value would be bound to that parameter.
+
+> **Changed in 0.12.** Option metadata on a parameter Repl supplies used to be ignored, except on a progress parameter,
+> which was an option. Remove the attribute, or a `.WithOption(...)` naming that parameter, which now fails as for any
+> unknown option.
 
 See [`docs/route-system.md`](route-system.md) for details on constraint types and binding modes.

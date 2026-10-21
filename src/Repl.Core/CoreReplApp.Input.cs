@@ -496,13 +496,9 @@ public sealed partial class CoreReplApp
 		return HandlerArgumentBinder.TryResolveInputServiceFallback(metadata, executionBinding, out _);
 	}
 
-	private bool IsInputServiceAvailable(Type type, IServiceProvider services)
-	{
-		if (InteractionProgressFactory.IsSupportedProgressType(type) &&
-			IsInputServiceAvailable(typeof(IReplInteractionChannel), services)) { return true; }
-		return InputServiceAvailability?.Invoke(services, type)
+	private bool IsInputServiceAvailable(Type type, IServiceProvider services) =>
+		InputServiceAvailability?.Invoke(services, type)
 			?? (services is DefaultServiceProvider && services.GetService(type) is not null);
-	}
 
 	private static bool IsInputScalar(Type type) => type.IsValueType || type == typeof(string)
 		|| type == typeof(Uri) || type == typeof(FileInfo) || type == typeof(DirectoryInfo);

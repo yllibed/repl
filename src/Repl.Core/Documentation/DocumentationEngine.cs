@@ -303,7 +303,6 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		var regularOptions = handlerParams
 			.Where(parameter =>
 				parameter.Name is { } name
-				&& parameter.ParameterType != typeof(CancellationToken)
 				&& !routeParameterNames.Contains(name)
 				&& !app.ImplicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
 				&& parameter.GetCustomAttribute<FromServicesAttribute>() is null
@@ -414,24 +413,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			|| !parameter.CanBeOmitted;
 		return requiresFallback
 			&& (!parameter.SupportsServiceFallback
-				|| !CanResolveFromActiveServices(parameter.ParameterType, serviceProvider, serviceAvailability));
-	}
-
-	private static bool CanResolveFromActiveServices(
-		Type parameterType,
-		IServiceProvider serviceProvider,
-		Dictionary<Type, bool> serviceAvailability)
-	{
-		// HandlerArgumentBinder synthesizes these progress types from the interaction channel before
-		// direct service lookup. Discovery must apply that same fallback and still allow an explicitly
-		// registered IProgress<T> when no channel is available.
-		if (InteractionProgressFactory.IsSupportedProgressType(parameterType)
-			&& IsServiceAvailable(typeof(IReplInteractionChannel), serviceProvider, serviceAvailability))
-		{
-			return true;
-		}
-
-		return IsServiceAvailable(parameterType, serviceProvider, serviceAvailability);
+				|| !IsServiceAvailable(parameter.ParameterType, serviceProvider, serviceAvailability));
 	}
 
 	private static bool IsServiceAvailable(
@@ -504,7 +486,6 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		var regularOptionNames = handlerParams
 			.Where(parameter =>
 				parameter.Name is not null
-				&& parameter.ParameterType != typeof(CancellationToken)
 				&& !routeParameterNames.Contains(parameter.Name)
 				&& !app.ImplicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
 				&& parameter.GetCustomAttribute<FromServicesAttribute>() is null

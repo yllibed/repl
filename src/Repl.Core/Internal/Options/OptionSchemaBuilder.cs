@@ -26,10 +26,17 @@ internal static class OptionSchemaBuilder
 		var parameters = new Dictionary<string, OptionSchemaParameter>(StringComparer.OrdinalIgnoreCase);
 		var regularPositionalParameterNames = new List<string>();
 		var groupPositionalPropertyNames = new List<string>();
+		List<string>? suppliedParameterNames = null;
 		foreach (var parameter in command.Handler.Method.GetParameters())
 		{
 			if (ShouldSkipSchemaParameter(parameter, routeParameterNames, implicitServiceParameters))
 			{
+				if (parameter.Name is { } suppliedName
+					&& ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType))
+				{
+					(suppliedParameterNames ??= []).Add(suppliedName);
+				}
+
 				continue;
 			}
 
@@ -55,6 +62,7 @@ internal static class OptionSchemaBuilder
 		}
 
 		ValidatePositionalBindingCompatibility(regularPositionalParameterNames, groupPositionalPropertyNames);
+		ValidateSuppliedParameterNames(parameters, suppliedParameterNames);
 		ValidateTokenCollisions(entries, parsingOptions.OptionCaseSensitivity, template);
 		return new OptionSchema(
 			entries,
@@ -73,20 +81,29 @@ internal static class OptionSchemaBuilder
 		{
 			if (optionAttribute is not null || argumentAttribute is not null)
 			{
-				var attributeName = optionAttribute is not null
-					? nameof(ReplOptionAttribute).Replace("Attribute", string.Empty, StringComparison.Ordinal)
-					: nameof(ReplArgumentAttribute).Replace("Attribute", string.Empty, StringComparison.Ordinal);
 				throw new InvalidOperationException(
 					$"Parameter '{parameter.Name}' uses typed global options '{globalOptionsType.Name}' registered through "
-					+ $"UseGlobalOptions<T>() and cannot declare [{attributeName}]. Remove the attribute or use a separate command options type.");
+					+ $"UseGlobalOptions<T>() and cannot declare [{DescribeAttribute(optionAttribute)}]. Remove the attribute or use a separate command options type.");
+			}
+
+			return true;
+		}
+
+		// A parameter Repl supplies, such as the interaction channel or a progress reporter, is never an option,
+		// so option metadata on it would silently do nothing.
+		if (ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType))
+		{
+			if (optionAttribute is not null || argumentAttribute is not null)
+			{
+				throw new InvalidOperationException(
+					$"Parameter '{parameter.Name}' is supplied by Repl and is never an option or an argument; "
+					+ $"remove [{DescribeAttribute(optionAttribute)}].");
 			}
 
 			return true;
 		}
 
 		if (string.IsNullOrWhiteSpace(parameter.Name)
-			|| parameter.ParameterType == typeof(CancellationToken)
-			|| implicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
 			|| parameter.GetCustomAttribute<FromContextAttribute>() is not null
 			|| parameter.GetCustomAttribute<FromServicesAttribute>() is not null)
 		{
@@ -431,6 +448,25 @@ internal static class OptionSchemaBuilder
 				$"Options group type '{groupType.Name}' must have a public parameterless constructor.");
 		}
 	}
+
+	// Binding matches values to parameters by name, ignoring case, before it supplies a parameter, so an
+	// option named like a parameter Repl supplies would have its value bound to that parameter.
+	private static void ValidateSuppliedParameterNames(
+		Dictionary<string, OptionSchemaParameter> parameters,
+		List<string>? suppliedParameterNames)
+	{
+		foreach (var suppliedName in suppliedParameterNames ?? [])
+		{
+			if (parameters.TryGetValue(suppliedName, out var option))
+			{
+				throw new InvalidOperationException(
+					$"Option '{option.Name}' shares its name with the parameter '{suppliedName}' that Repl supplies. Rename one of them.");
+			}
+		}
+	}
+
+	private static string DescribeAttribute(ReplOptionAttribute? optionAttribute) =>
+		optionAttribute is not null ? "ReplOption" : "ReplArgument";
 
 	// Mirrors the requiredness rule the documentation model reports: a value type with no default and
 	// no nullable wrapper has nothing to bind from when the option is absent, so the binder rejects
