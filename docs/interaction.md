@@ -281,6 +281,10 @@ The host displays a countdown and selects the default when time expires.
 - **Ctrl+C** during a command cancels the per-command `CancellationToken`
 - A second **Ctrl+C** exits the session
 
+> **Changed in 0.12.** Esc in a secret prompt with a timeout, on a local console, used to return an empty
+> answer or ask again. It now cancels the prompt with an `OperationCanceledException`, as in every other
+> prompt. A caller that wants the old result can catch it and use an empty string.
+
 ---
 
 ## Custom presenters

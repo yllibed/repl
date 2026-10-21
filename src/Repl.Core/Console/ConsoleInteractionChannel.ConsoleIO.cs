@@ -116,7 +116,7 @@ internal sealed partial class ConsoleInteractionChannel
 				continue;
 			}
 
-			var result = HandleSecretKey(buffer, mask, echo, ct);
+			var result = HandleSecretKey(Console.ReadKey(intercept: true), buffer, mask, echo, ct);
 			if (result is not null)
 			{
 				return result;
@@ -126,10 +126,11 @@ internal sealed partial class ConsoleInteractionChannel
 		return null;
 	}
 
-	private async ValueTask<string?> ReadSecretWithCountdownAsync(
+	internal async ValueTask<string?> ReadSecretWithCountdownAsync(
 		TimeSpan timeout,
 		char? mask,
 		TextWriter echo,
+		LocalKeySource keys,
 		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -143,23 +144,18 @@ internal sealed partial class ConsoleInteractionChannel
 			},
 			state: timeoutCts, dueTime: timeout, period: Timeout.InfiniteTimeSpan);
 
-		try
-		{
-			return await Task.Run(
-					function: () => ReadSecretWithCountdownSync(timeout, mask, echo, timeoutCts.Token, cancellationToken),
-					cancellationToken: cancellationToken)
-				.ConfigureAwait(false);
-		}
-		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-		{
-			return null;
-		}
+		// A timeout ends the read loop with null; Esc throws and must propagate, even once the timer has fired.
+		return await Task.Run(
+				function: () => ReadSecretWithCountdownSync(timeout, mask, echo, keys, timeoutCts.Token, cancellationToken),
+				cancellationToken: cancellationToken)
+			.ConfigureAwait(false);
 	}
 
 	private static string? ReadSecretWithCountdownSync(
 		TimeSpan timeout,
 		char? mask,
 		TextWriter echo,
+		LocalKeySource keys,
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
@@ -168,7 +164,7 @@ internal sealed partial class ConsoleInteractionChannel
 #pragma warning restore MA0045
 		try
 		{
-			return ReadSecretWithCountdownCore(timeout, mask, echo, timeoutCt, externalCt);
+			return ReadSecretWithCountdownCore(timeout, mask, echo, keys, timeoutCt, externalCt);
 		}
 		finally
 		{
@@ -180,6 +176,7 @@ internal sealed partial class ConsoleInteractionChannel
 		TimeSpan timeout,
 		char? mask,
 		TextWriter echo,
+		LocalKeySource keys,
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
@@ -193,7 +190,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 		while (!externalCt.IsCancellationRequested && (!timeoutCt.IsCancellationRequested || userTyping))
 		{
-			if (Console.KeyAvailable)
+			if (keys.KeyAvailable())
 			{
 				if (!userTyping)
 				{
@@ -205,7 +202,7 @@ internal sealed partial class ConsoleInteractionChannel
 					}
 				}
 
-				var result = HandleSecretKey(buffer, mask, echo, externalCt);
+				var result = HandleSecretKey(keys.ReadKey(), buffer, mask, echo, externalCt);
 				if (result is not null)
 				{
 					return result;
@@ -235,12 +232,13 @@ internal sealed partial class ConsoleInteractionChannel
 	}
 
 	private static string? HandleSecretKey(
+		ConsoleKeyInfo key,
 		System.Text.StringBuilder buffer,
 		char? mask,
 		TextWriter echo,
 		CancellationToken ct)
 	{
-		var (outcome, text) = ApplySecretKey(Console.ReadKey(intercept: true), buffer, mask);
+		var (outcome, text) = ApplySecretKey(key, buffer, mask);
 		if (text.Length > 0)
 		{
 			Echo(echo, text);

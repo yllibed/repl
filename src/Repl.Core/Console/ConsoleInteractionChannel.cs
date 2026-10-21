@@ -493,7 +493,7 @@ internal sealed partial class ConsoleInteractionChannel(
 				else
 				{
 					line = await ReadSecretWithCountdownAsync(
-							options.Timeout.Value, options.Mask, echo, ct)
+							options.Timeout.Value, options.Mask, echo, LocalKeySource.SystemConsole, ct)
 						.ConfigureAwait(false);
 				}
 			}
