@@ -543,26 +543,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 
 		using var protocolPassthroughScope = ReplSessionIO.PushProtocolPassthrough();
-
-		if (ReplSessionIO.IsSessionActive)
-		{
-			var (sessionOutcome, _) = await ExecuteMatchedCommandAsync(
-					match,
-					globalOptions,
-					serviceProvider,
-					scopeTokens: null,
-					cancellationToken)
-				.ConfigureAwait(false);
-			return sessionOutcome;
-		}
-
-		using var protocolScope = ReplSessionIO.SetSession(
-			Console.Error,
-			Console.In,
-			ansiMode: AnsiMode.Never,
-			commandOutput: Console.Out,
-			error: Console.Error,
-			isHostedSession: false);
+		using var passthroughSession = OpenPassthroughSession();
 		var (outcome, _) = await ExecuteMatchedCommandAsync(
 				match,
 				globalOptions,
@@ -571,6 +552,30 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				cancellationToken)
 			.ConfigureAwait(false);
 		return outcome;
+	}
+
+	// The session a protocol-passthrough command runs in, which splits the protocol from everything else:
+	// - run from the console, the process's own streams, the payload alone on standard output;
+	// - in a session that is not hosted and has an error writer of its own, standing in for the process
+	//   as the signal harness does, the same split onto that session's writers;
+	// - in any other session, a hosted one or one with a single stream, the session as it is.
+	private static IDisposable? OpenPassthroughSession()
+	{
+		if (!ReplSessionIO.IsSessionActive)
+		{
+			return ReplSessionIO.SetProcessConsoleSession();
+		}
+
+		return !ReplSessionIO.IsHostedSession && !ReferenceEquals(ReplSessionIO.Error, ReplSessionIO.Output)
+			? ReplSessionIO.SetSession(
+				ReplSessionIO.Error,
+				ReplSessionIO.Input,
+				sessionId: ReplSessionIO.CurrentSessionId,
+				commandOutput: ReplSessionIO.CommandOutput,
+				error: ReplSessionIO.Error,
+				isHostedSession: false,
+				removeSessionOnDispose: false)
+			: null;
 	}
 
 	private async ValueTask<ExecutionOutcome> HandleEmptyInvocationAsync(

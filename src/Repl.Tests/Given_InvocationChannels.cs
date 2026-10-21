@@ -278,8 +278,11 @@ public sealed class Given_InvocationChannels
 		var code = await app.RunAsync(["--tenant=session"]);
 
 		code.Should().Be(0);
-		direct.Should().Equal(new string?[] { null });
-		injected.Should().Equal(new string?[] { null });
+		// A rendering failure is reported in the format the command asked for, so the transformer is tried
+		// once more before the report falls back to unformatted text; every attempt sees the native globals.
+		var renders = renderFails ? 2 : 1;
+		direct.Should().HaveCount(renders).And.OnlyContain(static tenant => tenant == null);
+		injected.Should().HaveCount(renders).And.OnlyContain(static tenant => tenant == null);
 		next.Should().Equal("session", "session");
 		writer.ToString().Should().Contain(renderFails ? "render failure" : "native rendered");
 	}

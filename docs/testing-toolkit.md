@@ -190,7 +190,9 @@ decision before it returns, so the framework decides synchronously and so does t
 
 Runs execute as **standalone invocations**, not hosted sessions — the same classification a
 process-owning `Main` gets. Commands gated to the CLI channel are therefore present, and handlers see
-`IReplIoContext.IsHostedSession == false`.
+`IReplIoContext.IsHostedSession == false`. A protocol-passthrough command splits its streams as in the
+process: `OutputText` holds what the handler writes to `IReplIoContext.Output` alone, while feedback,
+framework-rendered results and diagnostics go to `DiagnosticText`.
 
 `RunTimeout` is measured against the clock rather than against the run agreeing to stop, so a command
 that never observes its cancellation token still fails the test instead of hanging the suite. Such a

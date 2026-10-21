@@ -292,6 +292,43 @@ public sealed partial class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Regression guard: verifies a hosted protocol-passthrough command never emits terminal progress sequences into the session stream it shares with its protocol, even with colour and terminal progress forced on — while an ordinary command in the same session does.")]
+	[DataRow(true, false, DisplayName = "Protocol passthrough")]
+	[DataRow(false, true, DisplayName = "Ordinary command, control")]
+	public void When_AHostedCommandReportsProgress_Then_OnlyAPassthroughOneOmitsTerminalSequences(bool isPassthrough, bool expectSequence)
+	{
+		var sut = ReplApp.Create().Options(o =>
+		{
+			o.Output.AnsiMode = AnsiMode.Always;
+			o.Interaction.AdvancedProgressMode = AdvancedProgressMode.Always;
+		});
+		var command = sut.Map(
+			"transfer send",
+			async (IReplIoContext io, IReplInteractionChannel channel, CancellationToken ct) =>
+			{
+				await channel.WriteProgressAsync("Indexing", 50, ct).ConfigureAwait(false);
+				await io.Output.WriteLineAsync("zmodem-start").ConfigureAwait(false);
+				return Results.Exit(0);
+			});
+		if (isPassthrough)
+		{
+			command.AsProtocolPassthrough();
+		}
+
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = sut.Run(
+			["transfer", "send"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None, AnsiSupport = AnsiMode.Always });
+
+		exitCode.Should().Be(0);
+		output.ToString().Contains("\u001b]9;4;1;50\u0007", StringComparison.Ordinal).Should().Be(expectSequence);
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies hosted protocol passthrough reports IsHostedSession=true through IReplIoContext.")]
 	public void When_ProtocolPassthroughRunsInHostedSessionWithIoContext_Then_IsHostedSessionIsTrue()
 	{

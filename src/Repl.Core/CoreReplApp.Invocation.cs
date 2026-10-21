@@ -114,7 +114,7 @@ public sealed partial class CoreReplApp
 	}
 
 	internal async ValueTask<ProcessedInput> InvokeInvocationHooksAsync(ProcessedInput input,
-		IServiceProvider services, CancellationToken cancellationToken)
+		IServiceProvider services, CancellationToken cancellationToken, Action<ProcessedInput>? onProcessed = null)
 	{
 		if (input.IsHandled || input.Validation.State != InputValidationState.Valid) { return input; }
 		var request = input.Request ?? ReplInvocationRequest.FromArguments(input.Context.Arguments);
@@ -152,6 +152,7 @@ public sealed partial class CoreReplApp
 				{
 					Request = request, OriginalRequest = original, Channel = input.Channel, InheritSessionGlobals = input.InheritSessionGlobals,
 				};
+				onProcessed?.Invoke(input);
 			}
 		}
 		return _options.Input.InvocationHooks.Count != 0 || input.Request?.Command is not null ? ValidateInvocationRequest(input) : input;

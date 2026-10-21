@@ -146,7 +146,9 @@ hooks follows the format the invocation asks for at that point, as the command's
 A session uses its own error writer, and the process's redirection does not apply to it. Most hosts
 (WebSocket, Telnet, `Repl.Testing` sessions) give a session one stream, so their feedback does not move.
 A session with a separate error writer, such as the one `ReplProcessSignalHarness` opens, receives the
-feedback of a `--json` command in that writer (`DiagnosticText`) rather than in its output.
+feedback of a `--json` command in that writer (`DiagnosticText`) rather than in its output. When it is
+not hosted, it also gets the process's stream split for a protocol-passthrough command: feedback in
+that writer, the handler's payload alone in its output.
 
 Not covered: the echo of what a user types at a terminal prompt, masked secret input, and the prompts
 and menus of `RichPromptInteractionHandler` and Spectre still render on the output stream.
@@ -163,10 +165,11 @@ and menus of `RichPromptInteractionHandler` and Spectre still render on the outp
 
 A [protocol-passthrough](commands.md#protocol-passthrough-commands) command run from the console writes
 the feedback of its handler to standard error, uncoloured, whatever the format and `FeedbackStream`:
-standard output belongs to the protocol. Feedback written before the command is resolved, by
-preprocessors and hooks, follows the rules above: a server started by a client with standard output
-piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a hosted session, the feedback
-goes to the session's writers, which most transports share with the protocol.
+standard output belongs to the protocol. A progress line is rewritten in place only when standard error
+reaches a terminal, so a client logging it gets one line per update. Feedback written before the
+command is resolved, by preprocessors and hooks, follows the rules above: a server started by a client
+with standard output piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a hosted
+session, the feedback goes to the session's writers, which most transports share with the protocol.
 
 ## Advanced Terminal Progress
 
