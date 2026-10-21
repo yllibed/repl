@@ -26,11 +26,14 @@ internal static class RoutePrefixOwners
 	}
 
 	/// <summary>
-	/// How many of the leading tokens <paramref name="route"/> accepts, on the scale of
-	/// <see cref="Find"/>.
+	/// How many of the leading tokens <paramref name="route"/>, whose argument failed, addresses, on the scale
+	/// of <see cref="Find"/>. The word its parameter rejects counts as that parameter's, since it was typed
+	/// where the route expects one, so a sibling whose parameter accepts the word ties it rather than
+	/// outscoring it, while a literal word still does. The words after it are not weighed: they may be the
+	/// route's own options and arguments.
 	/// </summary>
-	public static long Score(RouteDefinition route, IReadOnlyList<string> tokens, ParsingOptions parsingOptions) =>
-		Score(route.Template, route, tokens, parsingOptions);
+	public static long ScoreFailedRoute(RouteDefinition route, IReadOnlyList<string> tokens, ParsingOptions parsingOptions) =>
+		Score(route.Template, route, tokens, parsingOptions, creditRejectedParameter: true);
 
 	/// <summary>The owners with the best non-zero score, each once, and that score; ties keep every owner.</summary>
 	public static (long Score, IReadOnlyList<int> ModuleIds) FindBest(IEnumerable<(long Score, int ModuleId)> candidates)
@@ -65,7 +68,8 @@ internal static class RoutePrefixOwners
 		RouteTemplate template,
 		RouteDefinition? route,
 		IReadOnlyList<string> tokens,
-		ParsingOptions parsingOptions)
+		ParsingOptions parsingOptions,
+		bool creditRejectedParameter = false)
 	{
 		var segments = template.Segments;
 		var literals = 0L;
@@ -80,6 +84,9 @@ internal static class RoutePrefixOwners
 				case DynamicRouteSegment dynamic when RouteConstraintEvaluator.IsMatch(dynamic, tokens[i], parsingOptions):
 					parameters++;
 					continue;
+				case DynamicRouteSegment when creditRejectedParameter:
+					parameters++;
+					break;
 			}
 
 			break;

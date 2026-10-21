@@ -745,18 +745,15 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, _options.Parsing);
 		if (contextMatch is null)
 		{
-			var failure = CreateRouteResolutionFailureResult(
-				tokens: globalOptions.RemainingTokens,
-				constraintFailure,
-				missingArgumentsFailure);
-			var refusal = await RefuseAsync(failure, globalOptions.OutputFormat, cancellationToken)
-				.ConfigureAwait(false);
-			return AttributeUnresolved(
-				refusal,
+			var unresolved = DecideUnresolvedRefusal(
 				activeGraph,
 				globalOptions.RemainingTokens,
+				scopeTokenCount: 0,
 				constraintFailure,
 				missingArgumentsFailure);
+			var refusal = await RefuseAsync(unresolved.Failure, globalOptions.OutputFormat, cancellationToken)
+				.ConfigureAwait(false);
+			return AttributeUnresolved(refusal, unresolved);
 		}
 
 		var contextValidation = await ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)

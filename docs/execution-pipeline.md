@@ -335,11 +335,22 @@ public sealed class TestRunnerModule : IReplModuleExitCodes
   not one module's command, and keep the application's codes; a `Results.Exit` code is never remapped.
 - An outcome belongs to the module of the command the invocation resolved to, a refused option
   included. An argument that fails a route constraint, or a missing argument, belongs to that route's
-  module as long as no other route, and no context, matches more of the words typed. An unknown
-  command belongs to the module whose routes share the most leading words with it (`tests bogus` is
-  refused as the `tests` module would refuse it). In both cases literal words count before parameters
-  that accept a word, so a route such as `{env} {region} deploy` does not take `tests` away from the
-  module that spells it out.
+  module, and is reported as that argument's error, as long as no other route, and no context, matches
+  more of the words typed; the word a parameter rejects counts, since it was typed where the route
+  expects one, so `user bob` against `user {id:int}` and `user {name} rename {newName}` is still an
+  invalid `id`. Inside an interactive context, a word of the scope is not on the line typed: a route
+  rejecting it does not take the line's refusal from the context that accepted it. When neither the
+  failed constraint nor the missing argument is addressed that way, the invocation is refused as an
+  unknown command among those words. An unknown command belongs to the
+  module whose routes share the most leading words with it (`tests bogus` is refused as the `tests`
+  module would refuse it). In both cases literal words count before parameters that accept a word, so a
+  route such as `{env} {region} deploy` does not take `tests` away from the module that spells it out.
+
+  > **Changed in 0.12.** Such an invocation used to be refused with the failed route's argument error
+  > even when another route or a context matched more of its words. It is now refused as an unknown
+  > command: under `--json`, an error result with the code `unknown_command` rather than a validation
+  > result. The exit code is a usage error either way.
+
 - An ambiguous abbreviation belongs to the modules of what it could expand to. Each expansion, its
   other abbreviations expanded too, is weighed as an unknown command is, and the expansions matching
   the most words decide: `t run`, between a module's `tests run` and `tools run`, is refused as that

@@ -639,7 +639,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return outcome;
 		}
 
-		return await HandleUnmatchedInteractiveInputAsync(activeGraph, resolution, globalOptions, cycle, cancellationToken)
+		return await HandleUnmatchedInteractiveInputAsync(activeGraph, resolution, committed.ScopeTokenCount, globalOptions, cycle, cancellationToken)
 			.ConfigureAwait(false);
 	}
 
@@ -650,6 +650,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 	private async ValueTask<ExecutionOutcome> HandleUnmatchedInteractiveInputAsync(
 		ActiveRoutingGraph activeGraph,
 		RouteResolver.RouteResolutionResult resolution,
+		int scopeTokenCount,
 		GlobalInvocationOptions globalOptions,
 		PromptCycleContext cycle,
 		CancellationToken cancellationToken)
@@ -682,22 +683,19 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return ExecutionOutcome.Success;
 		}
 
-		var failure = app.CreateRouteResolutionFailureResult(
-			tokens: globalOptions.RemainingTokens,
+		var unresolved = app.DecideUnresolvedRefusal(
+			activeGraph,
+			globalOptions.RemainingTokens,
+			scopeTokenCount,
 			resolution.ConstraintFailure,
 			resolution.MissingArgumentsFailure);
 		_ = await app.RenderOutputAsync(
-				failure,
+				unresolved.Failure,
 				globalOptions.OutputFormat,
 				cancellationToken,
 				isInteractive: true)
 			.ConfigureAwait(false);
-		return app.AttributeUnresolved(
-			ExecutionOutcome.UsageError(failure),
-			activeGraph,
-			globalOptions.RemainingTokens,
-			resolution.ConstraintFailure,
-			resolution.MissingArgumentsFailure);
+		return app.AttributeUnresolved(ExecutionOutcome.UsageError(unresolved.Failure), unresolved);
 	}
 
 	/// <summary>
