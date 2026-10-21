@@ -323,11 +323,9 @@ internal static partial class HelpTextBuilder
 		IServiceProvider serviceProvider,
 		Dictionary<Type, bool> serviceAvailability)
 	{
-		var parameters = route.Command.Handler.Method.GetParameters()
-			.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name))
-			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
+		var handlerParameters = route.Command.Handler.Method.GetParameters();
 		var groupProperties = new Dictionary<string, (PropertyInfo Property, object DefaultInstance)>(StringComparer.OrdinalIgnoreCase);
-		foreach (var methodParam in route.Command.Handler.Method.GetParameters())
+		foreach (var methodParam in handlerParameters)
 		{
 			if (!Attribute.IsDefined(methodParam.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
 			{
@@ -339,6 +337,20 @@ internal static partial class HelpTextBuilder
 				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
 			{
 				groupProperties[prop.Name] = (prop, defaultInstance);
+			}
+		}
+
+		// Option rows are looked up by schema name, and the schema also holds the group properties' names: a
+		// parameter sharing such a name, the options group itself, a service or a route value, is not that
+		// option. No option shares a group property's name, which mapping refuses.
+		var parameters = new Dictionary<string, ParameterInfo>(StringComparer.OrdinalIgnoreCase);
+		foreach (var parameter in handlerParameters)
+		{
+			if (parameter.Name is { } name
+				&& route.OptionSchema.Parameters.ContainsKey(name)
+				&& !groupProperties.ContainsKey(name))
+			{
+				parameters[name] = parameter;
 			}
 		}
 

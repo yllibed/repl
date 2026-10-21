@@ -228,6 +228,44 @@ public sealed class Given_OptionsGroupBinding
 	}
 
 	[TestMethod]
+	[Description("Verifies a handler parameter that is not an option but is named like one of a group's options, such as the options group itself, a service or a route value, does not take that option's help line: the line keeps the option's own type and description.")]
+	[DataRow("group", DisplayName = "The options-group parameter")]
+	[DataRow("service", DisplayName = "A service parameter")]
+	[DataRow("route", DisplayName = "A route parameter")]
+	public void When_AParameterIsNamedLikeAGroupOption_Then_TheOptionKeepsItsHelpLine(string parameter)
+	{
+		var sut = ReplApp.Create();
+		var command = parameter switch
+		{
+			"group" => "run",
+			"service" => "run",
+			"route" => "run {project:int}",
+			_ => throw new ArgumentOutOfRangeException(nameof(parameter), parameter, "Unknown test row."),
+		};
+		_ = parameter switch
+		{
+			"group" => sut.Map(command, (ProjectOptions project) => project.Project ?? "none"),
+			"service" => sut.Map(command, (ProjectOptions options, [FromServices] TimeProvider project) => options.Project ?? "none"),
+			_ => sut.Map(command, (int project, ProjectOptions options) => options.Project ?? "none"),
+		};
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		var line = output.Text.Split('\n').Single(candidate => candidate.Contains("--project"));
+		line.Should().Contain("<string>").And.Contain("The app's project file, or its folder.");
+		line.Should().NotContain("projectoptions").And.NotContain("timeprovider").And.NotContain("<int>");
+	}
+
+	[ReplOptionsGroup]
+	public class ProjectOptions
+	{
+		[ReplOption(Name = "project", Mode = ReplParameterMode.OptionOnly)]
+		[System.ComponentModel.Description("The app's project file, or its folder.")]
+		public string? Project { get; set; }
+	}
+
+	[TestMethod]
 	[Description("Verifies the default of a collection group property is rendered as its elements, in help and in the documentation model, and is absent when the collection is empty, never the collection's type name.")]
 	public void When_ACollectionGroupPropertyHasADefault_Then_ItsElementsAreShown()
 	{
