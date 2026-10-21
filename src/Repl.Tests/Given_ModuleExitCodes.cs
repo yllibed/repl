@@ -172,8 +172,8 @@ public sealed class Given_ModuleExitCodes
 	}
 
 	[TestMethod]
-	[Description("Verifies a framework failure names no route even when it ended a resolved module command: an input validator throws and reporting that fails too, which is the framework's failure, not the command's.")]
-	public void When_AResolvedCommandEndsInAFrameworkError_Then_NoRouteIsNamed()
+	[Description("Verifies an input validator of a resolved module command that throws is that command's handler failure even when its report degrades to unformatted text, the caller having still seen it: it names the command's route.")]
+	public void When_AResolvedCommandsValidatorThrowsAndItsReportDegrades_Then_ItIsTheCommandsHandlerFailure()
 	{
 		ReplExecutionOutcome? observed = null;
 		var sut = CreateApp(options =>
@@ -192,8 +192,8 @@ public sealed class Given_ModuleExitCodes
 		_ = Run(sut, ["tests", "run"]);
 
 		observed.Should().NotBeNull();
-		observed!.Kind.Should().Be(ReplExecutionOutcomeKind.FrameworkError);
-		observed.Route.Should().BeNull();
+		observed!.Kind.Should().Be(ReplExecutionOutcomeKind.HandlerException);
+		observed.Route.Should().Be("tests run");
 	}
 
 	[TestMethod]
