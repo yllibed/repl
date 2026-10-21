@@ -374,6 +374,33 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Live analysis keeps a line incomplete while a route accepting every word typed waits for more, even when an overload rejects one of those words on a line too short for it.")]
+	public async Task When_AnOverloadRejectsAWordAnotherRouteAccepts_Then_LiveAnalysisStaysIncomplete()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("deploy {version:int} {target}", (int version, string target) => target);
+		app.Map("deploy {name} {target}", (string name, string target) => target);
+
+		var analysis = await AnalyzeAsync(app, "deploy foo");
+
+		analysis.Validation.State.Should().Be(InputValidationState.Incomplete);
+	}
+
+	[TestMethod]
+	[Description("Live analysis reports a value an addressed route rejects even before the line is complete, as execution refuses it: no more words can make that value valid.")]
+	public async Task When_AnIncompleteLineHasARejectedValue_Then_LiveAnalysisReportsTheArgument()
+	{
+		var app = CoreReplApp.Create();
+		app.Map("x {id:int} {name}", (int id, string name) => name);
+
+		var analysis = await AnalyzeAsync(app, "x y");
+
+		analysis.Validation.State.Should().Be(InputValidationState.Invalid);
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().Contain("An argument does not satisfy its route constraint.");
+	}
+
+	[TestMethod]
 	[Description("Live analysis inside a context must not blame a route rejecting a word of the scope, which the context accepted and the line does not contain: the line is an unknown command there, as execution refuses it.")]
 	public async Task When_ARouteRejectsAScopeWord_Then_LiveAnalysisDoesNotBlameIt()
 	{

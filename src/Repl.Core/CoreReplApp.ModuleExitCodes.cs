@@ -29,9 +29,9 @@ public sealed partial class CoreReplApp
 	/// Decides the refusal of an invocation that resolved to no command and the module it belongs to: the
 	/// owners <see cref="RoutePrefixOwners.Find"/> finds, so <c>tests bogus</c> is refused as the
 	/// <c>tests</c> module would refuse it. A route whose argument failed keeps the refusal, its argument's
-	/// error, unless another route or a context matches more of the words typed: the failed constraint
-	/// first, then the missing argument. When no failure is addressed that way, the invocation is refused
-	/// as an unknown command among those words, so the message names what the exit code follows.
+	/// error, unless another route or a context matches more of the words typed. When no failure is
+	/// addressed that way, the invocation is refused as an unknown command among those words, so the
+	/// message names what the exit code follows.
 	/// </summary>
 	internal UnresolvedRefusal DecideUnresolvedRefusal(
 		ActiveRoutingGraph graph,
@@ -63,8 +63,7 @@ public sealed partial class CoreReplApp
 
 	// The failure the words typed address. Routing ranks failures on its own scale while ownership counts
 	// literal words first, so its pick may be outscored by another failed route: the routes that no owner
-	// outscores are resolved again on their own, their failed constraint first, then their missing argument.
-	// When routing saw no failure at all, no route failed.
+	// outscores are resolved again on their own. When routing saw no failure at all, no route failed.
 	private AddressedFailure FindAddressedFailure(ActiveRoutingGraph graph, IReadOnlyList<string> tokens,
 		int scopeTokenCount, long ownerScore, RouteResolver.RouteResolutionResult resolution)
 	{
@@ -90,10 +89,15 @@ public sealed partial class CoreReplApp
 			return default;
 		}
 
+		// A value rejected on a line the route fits, then a route only waiting for more words, then a value
+		// rejected on a line too short for its route.
 		var own = RouteResolver.ResolveWithDiagnostics(addressed, tokens, _options.Parsing);
-		return own.ConstraintFailure is { } constraint
-			? new(constraint, Missing: null)
-			: new(Constraint: null, own.MissingArgumentsFailure);
+		return own switch
+		{
+			{ ConstraintFailure: { IsIncompleteLine: false } constraint } => new(constraint, Missing: null),
+			{ MissingArgumentsFailure: { } missing } => new(Constraint: null, missing),
+			_ => new(own.ConstraintFailure, Missing: null),
+		};
 	}
 
 	private readonly record struct AddressedFailure(

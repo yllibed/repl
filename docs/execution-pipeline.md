@@ -339,9 +339,11 @@ public sealed class TestRunnerModule : IReplModuleExitCodes
   more of the words typed; the word a parameter rejects counts, since it was typed where the route
   expects one, so `user bob` against `user {id:int}` and `user {name} rename {newName}` is still an
   invalid `id`. Inside an interactive context, a word of the scope is not on the line typed: a route
-  rejecting it does not take the line's refusal from the context that accepted it. When neither the
-  failed constraint nor the missing argument is addressed that way, the invocation is refused as an
-  unknown command among those words. An unknown command belongs to the
+  rejecting it does not take the line's refusal from the context that accepted it. Among the routes
+  addressed that way, a value rejected on a line the route fits comes first, then a route only waiting
+  for more words, then a value rejected on a line too short for its route. When no failure is
+  addressed, the invocation is refused as an unknown command among those words. An unknown command
+  belongs to the
   module whose routes share the most leading words with it (`tests bogus` is refused as the `tests`
   module would refuse it). In both cases literal words count before parameters that accept a word, so a
   route such as `{env} {region} deploy` does not take `tests` away from the module that spells it out.
@@ -350,8 +352,9 @@ public sealed class TestRunnerModule : IReplModuleExitCodes
   > route routing ranked first, even when another route or a context matched more of its words. It is
   > now refused with the argument error of a failed route that no other route or context outscores,
   > which can name another route, parameter and module, or else as an unknown command: under `--json`,
-  > an error result with the code `unknown_command` rather than a validation result. The exit code is a
-  > usage error either way.
+  > an error result with the code `unknown_command` rather than a validation result. Conversely, a value
+  > a route rejects on a line too short for that route, which used to be refused as an unknown command,
+  > is now refused with that argument's error. The exit code is a usage error either way.
 
 - An ambiguous abbreviation belongs to the modules of what it could expand to. Each expansion, its
   other abbreviations expanded too, is weighed as an unknown command is, and the expansions matching

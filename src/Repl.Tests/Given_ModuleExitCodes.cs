@@ -513,6 +513,75 @@ public sealed class Given_ModuleExitCodes
 	}
 
 	[TestMethod]
+	[Description("Verifies a route the words address keeps its failed constraint even when the line is shorter than the route: a value it rejects is an argument error, not an unknown command.")]
+	[DataRow(false, DisplayName = "The route alone")]
+	[DataRow(true, DisplayName = "Beside a root route whose constraint fails too")]
+	public void When_AnAddressedRouteRejectsAValueOfAnIncompleteLine_Then_ThatArgumentErrorStands(bool withRootRoute)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		if (withRootRoute)
+		{
+			sut.Map("{root:int}", (int root) => root);
+		}
+
+		sut.MapModule(new RoutesModule(5, "x {id:int} {name}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["x", "y"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("x {id:int} {name}");
+		output.Should().Contain("Invalid value 'y' for parameter 'id'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route still waiting for words, which accepts every word typed, is refused for its missing argument rather than for a value an overload of it rejects on a line too short for that overload.")]
+	public void When_AnOverloadRejectsAValueOfAnIncompleteLine_Then_TheSiblingsMissingArgumentStands()
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, "deploy {version:int} {target}", "deploy {name} {target}"));
+
+		var (exitCode, output) = RunCapturing(sut, ["deploy", "foo"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("deploy {name} {target}");
+		output.Should().Contain("Missing value for parameter 'target'");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route whose arity fits the line keeps the refusal over one rejecting the same value on a line too short for it, whichever was mapped first.")]
+	[DataRow(false, DisplayName = "Shorter route mapped first")]
+	[DataRow(true, DisplayName = "Longer route mapped first")]
+	public void When_TwoRoutesRejectTheSameValue_Then_TheOneTheLineFitsKeepsTheRefusal(bool longerFirst)
+	{
+		ReplExecutionOutcome? observed = null;
+		var sut = CreateApp(options => options.ExitCodes.Resolver = outcome =>
+		{
+			observed = outcome;
+			return outcome.ExitCode;
+		});
+		sut.MapModule(new RoutesModule(5, longerFirst ? ["a {y:int} {z}", "a {x:int}"] : ["a {x:int}", "a {y:int} {z}"]));
+
+		var (exitCode, output) = RunCapturing(sut, ["a", "foo"]);
+
+		exitCode.Should().Be(5);
+		observed.Should().NotBeNull();
+		observed!.Route.Should().Be("a {x:int}");
+		output.Should().Contain("Invalid value 'foo' for parameter 'x'");
+	}
+
+	[TestMethod]
 	[Description("Verifies an addressed failed constraint comes before a missing argument, whichever failure routing ranked first: a route rejecting a word it has room for is a sharper refusal than another route waiting for more.")]
 	public void When_AnAddressedConstraintFailureAndAMissingArgumentCompete_Then_TheConstraintFailureStands()
 	{
