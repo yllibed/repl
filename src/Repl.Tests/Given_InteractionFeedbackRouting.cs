@@ -133,6 +133,106 @@ public sealed class Given_InteractionFeedbackRouting
 	}
 
 	[TestMethod]
+	[Description("Verifies the echo of what a user types at a prompt follows the prompt's label: when the feedback of a command whose output is for a program goes to the error writer, the typed answer is echoed there too, never into the payload.")]
+	public async Task When_APromptIsAnsweredWhileFeedbackGoesToTheErrorWriter_Then_TheEchoFollowsTheLabel()
+	{
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, error: error, isHostedSession: false);
+		using var machineReadable = ReplSessionIO.PushMachineReadableOutput(isMachineReadableOutput: true);
+		var outputOptions = new OutputOptions();
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), outputOptions);
+		try
+		{
+			ReplSessionIO.KeyReader = new FakeKeyReader(
+			[
+				new ConsoleKeyInfo('o', ConsoleKey.O, shift: false, alt: false, control: false),
+				new ConsoleKeyInfo('k', ConsoleKey.K, shift: false, alt: false, control: false),
+				new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+			]);
+
+			var answer = await channel.AskTextAsync("name", "Name");
+
+			answer.Should().Be("ok");
+			error.ToString().Should().Contain("Name: ").And.Contain("ok");
+			output.ToString().Should().BeEmpty();
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies the arrow-key menu steps aside when feedback goes to the error writer: it would draw into the payload a program reads, so the text prompt takes over, its label and echo on the error writer.")]
+	public async Task When_AChoiceIsAskedWhileFeedbackGoesToTheErrorWriter_Then_TheTextPromptTakesOver()
+	{
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, error: error, isHostedSession: false);
+		using var machineReadable = ReplSessionIO.PushMachineReadableOutput(isMachineReadableOutput: true);
+		var outputOptions = new OutputOptions();
+		var channel = new ConsoleInteractionChannel(
+			new InteractionOptions(), outputOptions, handlers: [new RichPromptInteractionHandler(outputOptions)]);
+		try
+		{
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.KeyReader = new FakeKeyReader(
+			[
+				new ConsoleKeyInfo('b', ConsoleKey.B, shift: false, alt: false, control: false),
+				new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+			]);
+
+			var index = await channel.AskChoiceAsync("pick", "Pick", ["a", "b"]);
+
+			index.Should().Be(1);
+			error.ToString().Should().Contain("Pick");
+			output.ToString().Should().BeEmpty();
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies the arrow-key menu stays in a hosted session whose transport has one stream: feedback for a program goes to that same stream, so the menu draws where the feedback goes and nothing is gained by stepping aside.")]
+	public async Task When_AChoiceIsAskedInASingleStreamSessionForAProgram_Then_TheMenuStays()
+	{
+		using var output = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		using var machineReadable = ReplSessionIO.PushMachineReadableOutput(isMachineReadableOutput: true);
+		var outputOptions = new OutputOptions();
+		var channel = new ConsoleInteractionChannel(
+			new InteractionOptions(), outputOptions, handlers: [new RichPromptInteractionHandler(outputOptions)]);
+		// The menu answers with an arrow and Enter; the text prompt would take the typed fallback too.
+		var keys = new FakeKeyReader(
+		[
+			new ConsoleKeyInfo('\0', ConsoleKey.DownArrow, shift: false, alt: false, control: false),
+			new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+			new ConsoleKeyInfo('b', ConsoleKey.B, shift: false, alt: false, control: false),
+			new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+		]);
+		try
+		{
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.KeyReader = keys;
+
+			var index = await channel.AskChoiceAsync("pick", "Pick", ["a", "b"]);
+
+			index.Should().Be(1);
+			keys.KeyAvailable.Should().BeTrue("the menu reads only the arrow and Enter");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies an explicit stream wins over every detection.")]
 	[DataRow(ReplFeedbackStream.Output, false)]
 	[DataRow(ReplFeedbackStream.Error, true)]

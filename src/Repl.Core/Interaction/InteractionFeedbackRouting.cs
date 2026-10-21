@@ -48,6 +48,14 @@ internal static class InteractionFeedbackRouting
 			IsStreamRedirected: writesToStandardError ? isErrorRedirected : isOutputRedirected);
 	}
 
+	/// <summary>
+	/// Whether an interactive prompt may draw on the session's output, as the arrow-key menus and the Spectre
+	/// prompts do: only where its feedback goes too, so a menu never lands in a payload a program reads.
+	/// Otherwise the text prompts take over, whose label and echo follow the feedback.
+	/// </summary>
+	public static bool PromptsMayDrawOnOutput(OutputOptions? outputOptions) =>
+		ReferenceEquals(Resolve(outputOptions).Writer, ReplSessionIO.Output);
+
 	private static bool SharesTheProtocol(TextWriter writer) =>
 		ReplSessionIO.IsProtocolPassthrough && ReferenceEquals(writer, ReplSessionIO.CommandOutput);
 

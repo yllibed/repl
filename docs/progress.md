@@ -150,18 +150,22 @@ feedback of a `--json` command in that writer (`DiagnosticText`) rather than in 
 not hosted, it also gets the process's stream split for a protocol-passthrough command: feedback in
 that writer, the handler's payload alone in its output.
 
-Not covered: the echo of what a user types at a terminal prompt, masked secret input, and the prompts
-and menus of `RichPromptInteractionHandler` and Spectre still render on the output stream.
+A text prompt follows its label: what the user types is echoed to the same stream, as are the mask of
+secret input and a prompt's countdown. When that stream is redirected away from the terminal, the user
+answers without seeing the prompt; prefill the answer with `--answer:<name>=<value>` instead. The
+arrow-key menus of `RichPromptInteractionHandler` and the Spectre prompts draw on the output stream, so
+while feedback goes elsewhere they step aside and the text prompts take over.
 
 > **Changed in 0.12.** Feedback used to stay on standard output in every case. A script that read status
 > or progress lines from a redirected standard output, or a test that captures `Console.Out` in a test
-> host that redirects it, now finds them on standard error. To restore the previous behaviour:
+> host that redirects it, now finds them on standard error, and prompts in that case render as text
+> prompts on standard error rather than as menus on standard output. To restore the previous behaviour:
 >
 > ```csharp
 > app.Options(o => o.Output.FeedbackStream = ReplFeedbackStream.Output);
 > ```
 
-`ReplFeedbackStream.Error` forces the error stream instead.
+`ReplFeedbackStream.Error` forces the error stream instead, and with it the text prompts.
 
 A [protocol-passthrough](commands.md#protocol-passthrough-commands) command run from the console writes
 the feedback of its handler to standard error, uncoloured, whatever the format and `FeedbackStream`:

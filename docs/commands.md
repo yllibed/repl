@@ -463,7 +463,7 @@ Use this when the data source can page efficiently. See [Result Flow And Paging]
 
 Handlers can use `IReplInteractionChannel` for guided prompts, progress reporting, and user-facing feedback. Extension methods add enum prompts, numeric input, validated text, notices, warnings, problem summaries, and more.
 
-When the terminal supports ANSI and key reads, choice and multi-choice prompts automatically upgrade to rich arrow-key menus with mnemonic shortcuts. Labels using the `_X` underscore convention get keyboard shortcuts (e.g. `"_Abort"` → press `A`).
+When the terminal supports ANSI and key reads, and the command's feedback stays on the output stream, choice and multi-choice prompts automatically upgrade to rich arrow-key menus with mnemonic shortcuts. Labels using the `_X` underscore convention get keyboard shortcuts (e.g. `"_Abort"` → press `A`).
 
 See the full guide: [interaction.md](interaction.md)
 

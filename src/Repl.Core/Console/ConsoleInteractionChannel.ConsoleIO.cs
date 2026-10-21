@@ -5,24 +5,29 @@ namespace Repl;
 /// </summary>
 internal sealed partial class ConsoleInteractionChannel
 {
-	private static async ValueTask<string?> ReadSecretLineAsync(char? mask, CancellationToken ct)
+	// What the user types at a prompt is echoed where the feedback routing sends the prompt's label, so an
+	// answer never lands in a payload a program reads. A custom or capturing presenter may put the label
+	// elsewhere.
+	private TextWriter ResolvePromptEcho() => InteractionFeedbackRouting.Resolve(_outputOptions).Writer;
+
+	private static async ValueTask<string?> ReadSecretLineAsync(char? mask, TextWriter echo, CancellationToken ct)
 	{
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
-			return await ReadLineWithEscAsync(ct).ConfigureAwait(false);
+			return await ReadLineWithEscAsync(echo, ct).ConfigureAwait(false);
 		}
 
-		return await Task.Run(() => ReadSecretSync(mask, ct), ct).ConfigureAwait(false);
+		return await Task.Run(() => ReadSecretSync(mask, echo, ct), ct).ConfigureAwait(false);
 	}
 
-	private static string? ReadSecretSync(char? mask, CancellationToken ct)
+	private static string? ReadSecretSync(char? mask, TextWriter echo, CancellationToken ct)
 	{
 #pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadSecretLineAsync
 		ConsoleInputGate.Gate.Wait(ct);
 #pragma warning restore MA0045
 		try
 		{
-			return ReadSecretCore(mask, ct);
+			return ReadSecretCore(mask, echo, ct);
 		}
 		finally
 		{
@@ -30,7 +35,7 @@ internal sealed partial class ConsoleInteractionChannel
 		}
 	}
 
-	private static string? ReadSecretCore(char? mask, CancellationToken ct)
+	private static string? ReadSecretCore(char? mask, TextWriter echo, CancellationToken ct)
 	{
 		var buffer = new System.Text.StringBuilder();
 		while (!ct.IsCancellationRequested)
@@ -43,7 +48,7 @@ internal sealed partial class ConsoleInteractionChannel
 				continue;
 			}
 
-			var result = HandleSecretKey(buffer, mask, ct);
+			var result = HandleSecretKey(buffer, mask, echo, ct);
 			if (result is not null)
 			{
 				return result;
@@ -56,6 +61,7 @@ internal sealed partial class ConsoleInteractionChannel
 	private async ValueTask<string?> ReadSecretWithCountdownAsync(
 		TimeSpan timeout,
 		char? mask,
+		TextWriter echo,
 		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -72,7 +78,7 @@ internal sealed partial class ConsoleInteractionChannel
 		try
 		{
 			return await Task.Run(
-					function: () => ReadSecretWithCountdownSync(timeout, mask, timeoutCts.Token, cancellationToken),
+					function: () => ReadSecretWithCountdownSync(timeout, mask, echo, timeoutCts.Token, cancellationToken),
 					cancellationToken: cancellationToken)
 				.ConfigureAwait(false);
 		}
@@ -85,6 +91,7 @@ internal sealed partial class ConsoleInteractionChannel
 	private static string? ReadSecretWithCountdownSync(
 		TimeSpan timeout,
 		char? mask,
+		TextWriter echo,
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
@@ -93,7 +100,7 @@ internal sealed partial class ConsoleInteractionChannel
 #pragma warning restore MA0045
 		try
 		{
-			return ReadSecretWithCountdownCore(timeout, mask, timeoutCt, externalCt);
+			return ReadSecretWithCountdownCore(timeout, mask, echo, timeoutCt, externalCt);
 		}
 		finally
 		{
@@ -104,6 +111,7 @@ internal sealed partial class ConsoleInteractionChannel
 	private static string? ReadSecretWithCountdownCore(
 		TimeSpan timeout,
 		char? mask,
+		TextWriter echo,
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
@@ -113,7 +121,7 @@ internal sealed partial class ConsoleInteractionChannel
 		var lastTickMs = Environment.TickCount64;
 		var userTyping = false;
 
-		Console.Write(lastSuffix);
+		Echo(echo, lastSuffix);
 
 		while (!externalCt.IsCancellationRequested && (!timeoutCt.IsCancellationRequested || userTyping))
 		{
@@ -124,12 +132,12 @@ internal sealed partial class ConsoleInteractionChannel
 					userTyping = true;
 					if (lastSuffix.Length > 0)
 					{
-						EraseInline(lastSuffix.Length);
+						EraseInline(echo, lastSuffix.Length);
 						lastSuffix = string.Empty;
 					}
 				}
 
-				var result = HandleSecretKey(buffer, mask, externalCt);
+				var result = HandleSecretKey(buffer, mask, echo, externalCt);
 				if (result is not null)
 				{
 					return result;
@@ -145,22 +153,23 @@ internal sealed partial class ConsoleInteractionChannel
 			if (!userTyping && remaining > 0)
 			{
 				(remaining, lastSuffix, lastTickMs) = TickCountdown(
-					remaining, defaultLabel: null, lastSuffix, lastTickMs);
+					remaining, defaultLabel: null, lastSuffix, lastTickMs, echo);
 			}
 		}
 
 		if (lastSuffix.Length > 0)
 		{
-			EraseInline(lastSuffix.Length);
+			EraseInline(echo, lastSuffix.Length);
 		}
 
-		Console.WriteLine();
+		EchoLine(echo);
 		return null;
 	}
 
 	private static string? HandleSecretKey(
 		System.Text.StringBuilder buffer,
 		char? mask,
+		TextWriter echo,
 		CancellationToken ct)
 	{
 		var key = Console.ReadKey(intercept: true);
@@ -169,7 +178,7 @@ internal sealed partial class ConsoleInteractionChannel
 		{
 			if (buffer.Length > 0 && mask is not null)
 			{
-				EraseInline(buffer.Length);
+				EraseInline(echo, buffer.Length);
 			}
 
 			throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
@@ -177,7 +186,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 		if (key.Key == ConsoleKey.Enter)
 		{
-			Console.WriteLine();
+			EchoLine(echo);
 			return buffer.ToString();
 		}
 
@@ -188,7 +197,7 @@ internal sealed partial class ConsoleInteractionChannel
 				buffer.Remove(buffer.Length - 1, 1);
 				if (mask is not null)
 				{
-					Console.Write("\b \b");
+					Echo(echo, "\b \b");
 				}
 			}
 
@@ -200,7 +209,7 @@ internal sealed partial class ConsoleInteractionChannel
 			buffer.Append(key.KeyChar);
 			if (mask is not null)
 			{
-				Console.Write(mask.Value);
+				Echo(echo, mask.Value);
 			}
 		}
 
@@ -219,24 +228,26 @@ internal sealed partial class ConsoleInteractionChannel
 				new ReplPromptEvent(name, prompt, kind),
 				cancellationToken)
 			.ConfigureAwait(false);
+		var echo = ResolvePromptEcho();
 
 		if (timeout is null || timeout.Value <= TimeSpan.Zero)
 		{
-			return await ReadLineWithEscAsync(cancellationToken).ConfigureAwait(false);
+			return await ReadLineWithEscAsync(echo, cancellationToken).ConfigureAwait(false);
 		}
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
-			return await ReadWithTimeoutRedirectedAsync(timeout.Value, cancellationToken)
+			return await ReadWithTimeoutRedirectedAsync(timeout.Value, echo, cancellationToken)
 				.ConfigureAwait(false);
 		}
 
-		return await ReadLineWithCountdownAsync(timeout.Value, defaultLabel, cancellationToken)
+		return await ReadLineWithCountdownAsync(timeout.Value, defaultLabel, echo, cancellationToken)
 			.ConfigureAwait(false);
 	}
 
 	private async ValueTask<string?> ReadWithTimeoutRedirectedAsync(
 		TimeSpan timeout,
+		TextWriter echo,
 		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -251,7 +262,7 @@ internal sealed partial class ConsoleInteractionChannel
 			timeoutCts, timeout, Timeout.InfiniteTimeSpan);
 		try
 		{
-			return await ReadLineWithEscAsync(timeoutCts.Token).ConfigureAwait(false);
+			return await ReadLineWithEscAsync(echo, timeoutCts.Token).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
 		{
@@ -262,6 +273,7 @@ internal sealed partial class ConsoleInteractionChannel
 	private async ValueTask<string?> ReadLineWithCountdownAsync(
 		TimeSpan timeout,
 		string? defaultLabel,
+		TextWriter echo,
 		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -276,7 +288,7 @@ internal sealed partial class ConsoleInteractionChannel
 			timeoutCts, timeout, Timeout.InfiniteTimeSpan);
 
 		var result = await Task.Run(
-				() => ReadLineWithCountdownSync(timeout, defaultLabel, timeoutCts.Token, cancellationToken),
+				() => ReadLineWithCountdownSync(timeout, defaultLabel, echo, timeoutCts.Token, cancellationToken),
 				cancellationToken)
 			.ConfigureAwait(false);
 
@@ -296,6 +308,7 @@ internal sealed partial class ConsoleInteractionChannel
 	private static ConsoleLineReader.ReadResult ReadLineWithCountdownSync(
 		TimeSpan timeout,
 		string? defaultLabel,
+		TextWriter echo,
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
@@ -304,7 +317,7 @@ internal sealed partial class ConsoleInteractionChannel
 #pragma warning restore MA0045
 		try
 		{
-			return ReadLineWithCountdownCore(timeout, defaultLabel, timeoutCt, externalCt);
+			return ReadLineWithCountdownCore(timeout, defaultLabel, echo, timeoutCt, externalCt);
 		}
 		finally
 		{
@@ -315,6 +328,7 @@ internal sealed partial class ConsoleInteractionChannel
 	private static ConsoleLineReader.ReadResult ReadLineWithCountdownCore(
 		TimeSpan timeout,
 		string? defaultLabel,
+		TextWriter echo,
 		CancellationToken timeoutCt,
 		CancellationToken externalCt)
 	{
@@ -324,7 +338,7 @@ internal sealed partial class ConsoleInteractionChannel
 		var lastTickMs = Environment.TickCount64;
 		var userTyping = false;
 
-		Console.Write(lastSuffix);
+		Echo(echo, lastSuffix);
 
 		while (!externalCt.IsCancellationRequested && (!timeoutCt.IsCancellationRequested || userTyping))
 		{
@@ -335,12 +349,12 @@ internal sealed partial class ConsoleInteractionChannel
 					userTyping = true;
 					if (lastSuffix.Length > 0)
 					{
-						EraseInline(lastSuffix.Length);
+						EraseInline(echo, lastSuffix.Length);
 						lastSuffix = string.Empty;
 					}
 				}
 
-				var result = HandleCountdownKey(buffer);
+				var result = HandleCountdownKey(buffer, echo);
 				if (result is not null)
 				{
 					return result.Value;
@@ -356,21 +370,22 @@ internal sealed partial class ConsoleInteractionChannel
 			if (!userTyping && remaining > 0)
 			{
 				(remaining, lastSuffix, lastTickMs) = TickCountdown(
-					remaining, defaultLabel, lastSuffix, lastTickMs);
+					remaining, defaultLabel, lastSuffix, lastTickMs, echo);
 			}
 		}
 
 		if (lastSuffix.Length > 0)
 		{
-			EraseInline(lastSuffix.Length);
+			EraseInline(echo, lastSuffix.Length);
 		}
 
-		Console.WriteLine();
+		EchoLine(echo);
 		return new ConsoleLineReader.ReadResult(Line: null, Escaped: false);
 	}
 
 	private static ConsoleLineReader.ReadResult? HandleCountdownKey(
-		System.Text.StringBuilder buffer)
+		System.Text.StringBuilder buffer,
+		TextWriter echo)
 	{
 		var key = Console.ReadKey(intercept: true);
 
@@ -378,7 +393,7 @@ internal sealed partial class ConsoleInteractionChannel
 		{
 			if (buffer.Length > 0)
 			{
-				EraseInline(buffer.Length);
+				EraseInline(echo, buffer.Length);
 			}
 
 			return new ConsoleLineReader.ReadResult(Line: null, Escaped: true);
@@ -386,7 +401,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 		if (key.Key == ConsoleKey.Enter)
 		{
-			Console.WriteLine();
+			EchoLine(echo);
 			return new ConsoleLineReader.ReadResult(buffer.ToString(), Escaped: false);
 		}
 
@@ -395,7 +410,7 @@ internal sealed partial class ConsoleInteractionChannel
 			if (buffer.Length > 0)
 			{
 				buffer.Remove(buffer.Length - 1, 1);
-				Console.Write("\b \b");
+				Echo(echo, "\b \b");
 			}
 
 			return null;
@@ -404,7 +419,7 @@ internal sealed partial class ConsoleInteractionChannel
 		if (key.KeyChar != '\0')
 		{
 			buffer.Append(key.KeyChar);
-			Console.Write(key.KeyChar);
+			Echo(echo, key.KeyChar);
 		}
 
 		return null;
@@ -414,7 +429,8 @@ internal sealed partial class ConsoleInteractionChannel
 		int remaining,
 		string? defaultLabel,
 		string lastSuffix,
-		long lastTickMs)
+		long lastTickMs,
+		TextWriter echo)
 	{
 		var now = Environment.TickCount64;
 		if (now - lastTickMs < 1000)
@@ -423,12 +439,12 @@ internal sealed partial class ConsoleInteractionChannel
 		}
 
 		remaining--;
-		EraseInline(lastSuffix.Length);
+		EraseInline(echo, lastSuffix.Length);
 
 		if (remaining > 0)
 		{
 			lastSuffix = FormatCountdownSuffix(remaining, defaultLabel);
-			Console.Write(lastSuffix);
+			Echo(echo, lastSuffix);
 		}
 		else
 		{
@@ -438,14 +454,23 @@ internal sealed partial class ConsoleInteractionChannel
 		return (remaining, lastSuffix, now);
 	}
 
-	private static void EraseInline(int length)
+	private static void EraseInline(TextWriter echo, int length)
 	{
-		Console.Write(new string('\b', length) + new string(' ', length) + new string('\b', length));
+		Echo(echo, new string('\b', length) + new string(' ', length) + new string('\b', length));
 	}
 
-	private static async ValueTask<string?> ReadLineWithEscAsync(CancellationToken ct)
+	// The key-by-key loops run synchronously on a worker (Task.Run), polling the console, so they cannot await.
+#pragma warning disable MA0045
+	private static void Echo(TextWriter echo, string text) => echo.Write(text);
+
+	private static void Echo(TextWriter echo, char character) => echo.Write(character);
+
+	private static void EchoLine(TextWriter echo) => echo.WriteLine();
+#pragma warning restore MA0045
+
+	private static async ValueTask<string?> ReadLineWithEscAsync(TextWriter echo, CancellationToken ct)
 	{
-		var result = await ConsoleLineReader.ReadLineAsync(ct).ConfigureAwait(false);
+		var result = await ConsoleLineReader.ReadLineAsync(ct, echo).ConfigureAwait(false);
 		if (result.Escaped)
 		{
 			throw new OperationCanceledException("Prompt cancelled via Esc.", ct);

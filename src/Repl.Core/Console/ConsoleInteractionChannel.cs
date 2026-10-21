@@ -8,6 +8,7 @@ internal sealed partial class ConsoleInteractionChannel(
 	TimeProvider? timeProvider = null) : IReplInteractionChannel, ICommandTokenReceiver
 {
 	private readonly InteractionOptions _options = options;
+	private readonly OutputOptions? _outputOptions = outputOptions;
 	private readonly IReplInteractionPresenter _presenter = presenter ?? new ConsoleReplInteractionPresenter(options, outputOptions);
 	private readonly IReadOnlyList<IReplInteractionHandler> _handlers = handlers ?? [];
 	private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
@@ -478,25 +479,26 @@ internal sealed partial class ConsoleInteractionChannel(
 					new ReplPromptEvent(name, prompt, "secret"),
 					ct)
 				.ConfigureAwait(false);
+			var echo = ResolvePromptEcho();
 
 			string? line;
 			if (options?.Timeout is not null && options.Timeout.Value > TimeSpan.Zero)
 			{
 				if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 				{
-					line = await ReadWithTimeoutRedirectedAsync(options.Timeout.Value, ct)
+					line = await ReadWithTimeoutRedirectedAsync(options.Timeout.Value, echo, ct)
 						.ConfigureAwait(false);
 				}
 				else
 				{
 					line = await ReadSecretWithCountdownAsync(
-							options.Timeout.Value, options.Mask, ct)
+							options.Timeout.Value, options.Mask, echo, ct)
 						.ConfigureAwait(false);
 				}
 			}
 			else
 			{
-				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', ct).ConfigureAwait(false);
+				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', echo, ct).ConfigureAwait(false);
 			}
 
 			if (string.IsNullOrEmpty(line))
