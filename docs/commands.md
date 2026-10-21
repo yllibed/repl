@@ -315,11 +315,15 @@ Options group behavior:
 - `[ReplOption]`, `[ReplArgument]`, `[ReplValueAlias]` attributes work on properties
 - the same group class can be reused across multiple commands
 - groups and regular parameters can be mixed in the same handler
+- a group parameter bound with `[FromServices]` or `[FromContext]` is resolved as a whole and contributes no options
 - group properties are `OptionOnly` by default; use explicit attributes to opt into positional binding
 - when a group property receives both named and positional values in one invocation, parsing fails with a validation error
 - parameter name collisions between group properties and regular parameters cause an `InvalidOperationException` at registration
 - positional group properties cannot be mixed with positional regular handler parameters in the same command
 - abstract, interface, or nested group types are rejected at registration
+
+> **Changed in 0.12.** The properties of a group bound with `[FromServices]` or `[FromContext]` used to appear as
+> options in help, exported documentation and MCP tool schemas, although they were never accepted.
 
 ## Temporal range types
 
@@ -601,24 +605,27 @@ Handler parameters are resolved in priority order:
 
 1. `CancellationToken` — injected from execution context
 2. Explicit attributes — `[FromServices]`, `[FromContext]`
-3. Options groups — `[ReplOptionsGroup]`
-4. Route values — captured from dynamic segments (`{name}`)
-5. Named options — from `--option value` syntax
-6. Context values / DI services — from context stack or service provider
-7. Positional arguments — remaining tokens consumed left-to-right
-8. Parameter defaults — C# default values
-9. Null — for nullable types without other source
+3. Parameters Repl supplies — progress reporters, the interaction channel and the other types listed below
+4. Typed global options — a `UseGlobalOptions<T>()` type, resolved from services
+5. Options groups — `[ReplOptionsGroup]`
+6. Route values — captured from dynamic segments (`{name}`)
+7. Named options — from `--option value` syntax
+8. Context values / DI services — from context stack or service provider
+9. Positional arguments — remaining tokens consumed left-to-right
+10. Parameter defaults — C# default values
+11. Null — for nullable types without other source
 
 Some parameters are supplied by Repl itself: `CancellationToken`, `IProgress<double>`, `IProgress<ReplProgressEvent>`,
 `IReplInteractionChannel`, `IReplIoContext`, `IReplKeyReader`, `IReplPagingContext`, `IReplSessionState`,
 `IGlobalOptionsAccessor`, `IServiceProvider`, `ICoreReplApp`, and the MCP client services. They are never options or
-arguments, on any surface, so `Map` refuses `[ReplOption]` or `[ReplArgument]` on them. It also refuses an option, such
-as an options-group property, named like one of them, since its value would be bound to that parameter, except for
-`CancellationToken` and a parameter bound with `[FromServices]` or `[FromContext]`, which binding resolves before any
-option value.
+arguments, on any surface, so `Map` refuses `[ReplOption]` or `[ReplArgument]` on them. Binding supplies them before
+matching any value by name, so an option named like one of them, such as an options-group property or a global option,
+keeps its own value. A route segment named like one is refused by `Map`, since its value would never reach the
+parameter.
 
 > **Changed in 0.12.** Option metadata on a parameter Repl supplies used to be ignored, except on a progress parameter,
 > which was an option. Remove the attribute, or a `.WithOption(...)` naming that parameter, which now fails as for any
-> unknown option.
+> unknown option. A route segment named like such a parameter used to be accepted, then failed when the command ran
+> or had its value ignored; `Map` now refuses it, so rename the segment or the parameter.
 
 See [`docs/route-system.md`](route-system.md) for details on constraint types and binding modes.

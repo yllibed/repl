@@ -291,6 +291,41 @@ public sealed class Given_OptionsGroupBinding
 	}
 
 	[TestMethod]
+	[Description("Verifies an options group bound explicitly, from services or from context, contributes no options: a direct option named like one of its properties keeps its own help line and is the only such option in the documentation model.")]
+	[DataRow(false, DisplayName = "[FromServices]")]
+	[DataRow(true, DisplayName = "[FromContext]")]
+	public void When_AnOptionsGroupIsBoundExplicitly_Then_ItsPropertiesAreNotOptions(bool fromContext)
+	{
+		var sut = ReplApp.Create();
+		_ = fromContext
+			? sut.Map(
+				"run",
+				([System.ComponentModel.Description("The direct option.")] string? project,
+					[FromContext] BoundProjectOptions bound) => project ?? "none")
+			: sut.Map(
+				"run",
+				([System.ComponentModel.Description("The direct option.")] string? project,
+					[FromServices] BoundProjectOptions bound) => project ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--help", "--no-logo"]));
+		var options = sut.CreateDocumentationModel().Commands
+			.Single(command => string.Equals(command.Path, "run", StringComparison.Ordinal)).Options;
+
+		output.ExitCode.Should().Be(0, output.Text);
+		var line = output.Text.Split('\n').Single(candidate => candidate.Contains("--project"));
+		line.Should().Contain("<string>").And.Contain("The direct option.").And.NotContain("BOUND PROPERTY");
+		options.Should().ContainSingle(option => string.Equals(option.Name, "project", StringComparison.Ordinal))
+			.Which.Description.Should().Be("The direct option.");
+	}
+
+	[ReplOptionsGroup]
+	public class BoundProjectOptions
+	{
+		[System.ComponentModel.Description("BOUND PROPERTY")]
+		public int Project { get; set; } = 123;
+	}
+
+	[TestMethod]
 	[Description("Verifies the default of a collection group property is rendered as its elements, in help and in the documentation model, and is absent when the collection is empty, never the collection's type name.")]
 	public void When_ACollectionGroupPropertyHasADefault_Then_ItsElementsAreShown()
 	{

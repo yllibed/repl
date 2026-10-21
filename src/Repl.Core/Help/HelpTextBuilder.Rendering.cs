@@ -325,35 +325,20 @@ internal static partial class HelpTextBuilder
 	{
 		var handlerParameters = route.Command.Handler.Method.GetParameters();
 		var groupProperties = new Dictionary<string, (PropertyInfo Property, object DefaultInstance)>(StringComparer.OrdinalIgnoreCase);
-		foreach (var methodParam in handlerParameters)
+		foreach (var groupType in route.OptionSchema.OptionsGroupTypes)
 		{
-			if (!Attribute.IsDefined(methodParam.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
-			{
-				continue;
-			}
-
-			var defaultInstance = CreateOptionsGroupDefault(methodParam.ParameterType);
-			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType)
+			var defaultInstance = CreateOptionsGroupDefault(groupType);
+			foreach (var prop in GetOptionsGroupProperties(groupType)
 				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
 			{
 				groupProperties[prop.Name] = (prop, defaultInstance);
 			}
 		}
 
-		// Option rows are looked up by schema name, and the schema also holds the group properties' names: a
-		// parameter sharing such a name, the options group itself, a service or a route value, is not that
-		// option. No option shares a group property's name, and no two parameters differ only by case: mapping
-		// refuses both.
-		var parameters = new Dictionary<string, ParameterInfo>(StringComparer.OrdinalIgnoreCase);
-		foreach (var parameter in handlerParameters)
-		{
-			if (parameter.Name is { } name
-				&& route.OptionSchema.Parameters.ContainsKey(name)
-				&& !groupProperties.ContainsKey(name))
-			{
-				parameters[name] = parameter;
-			}
-		}
+		// Mapping refuses two parameters whose names differ only by case, so each option parameter is keyed once.
+		var parameters = handlerParameters
+			.Where(route.OptionSchema.IsOptionParameter)
+			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
 
 		return route.OptionSchema.Parameters.Values
 			.Select(parameter => BuildOptionRow(

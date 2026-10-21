@@ -57,38 +57,55 @@ public sealed class Given_ParameterSchemaBinding
 	}
 
 	[TestMethod]
-	[Description("Verifies an options-group property cannot share its name with a parameter Repl supplies: values are matched to parameters by name, ignoring case, so the option's value would be bound to the supplied parameter.")]
-	public void When_AnOptionSharesItsNameWithAReplSuppliedParameter_Then_MapFailsWithConfigurationError()
+	[Description("Verifies a route segment cannot share its name with a parameter Repl supplies: that parameter never takes a value by name, so the segment's value would never reach it.")]
+	public void When_ARouteSegmentSharesItsNameWithAReplSuppliedParameter_Then_MapFailsWithConfigurationError()
 	{
 		var sut = ReplApp.Create();
 
-		var act = () => sut.Map("sync", (ProgressNamedOptions options, IProgress<double> progress) => options.Progress);
+		var act = () => sut.Map("sync {progress}", (IProgress<double> progress) => "ok");
 
 		act.Should().Throw<InvalidOperationException>()
-			.WithMessage("*'Progress'*parameter 'progress' that Repl supplies*");
+			.WithMessage("*'{progress}'*parameter 'progress' that Repl supplies*");
 	}
 
 	[TestMethod]
-	[Description("Verifies a parameter of a type Repl supplies that binding resolves before matching any value by name, bound explicitly from services or the cancellation token, may share its name with an option, and both receive their own value.")]
+	[Description("Verifies a parameter Repl supplies, whether implicitly, explicitly from services or as the cancellation token, is resolved before any value is matched by name, so it may share its name with an option and both receive their own value.")]
+	[DataRow("progress", DisplayName = "A progress reporter")]
 	[DataRow("services", DisplayName = "Bound explicitly from services")]
 	[DataRow("cancellation", DisplayName = "The cancellation token")]
-	public void When_AParameterResolvedBeforeNamesSharesItsNameWithAnOption_Then_BothBind(string parameter)
+	public void When_AReplSuppliedParameterSharesItsNameWithAnOption_Then_BothBind(string parameter)
 	{
 		var sut = ReplApp.Create();
 		_ = parameter switch
 		{
+			"progress" => sut.Map("sync", (ProgressNamedOptions options, IProgress<double> progress) =>
+				progress is not null && options.Progress ? "bound" : "unbound"),
 			"services" => sut.Map("sync", (ProgressNamedOptions options, [FromServices] IReplInteractionChannel progress) =>
 				progress is not null && options.Progress ? "bound" : "unbound"),
 			"cancellation" => sut.Map("sync", (CancelNamedOptions options, CancellationToken cancel) =>
 				options.Cancel && !cancel.IsCancellationRequested ? "bound" : "unbound"),
 			_ => throw new ArgumentOutOfRangeException(nameof(parameter), parameter, "Unknown test row."),
 		};
-		var option = string.Equals(parameter, "services", StringComparison.Ordinal) ? "--progress" : "--cancel";
+		var option = string.Equals(parameter, "cancellation", StringComparison.Ordinal) ? "--cancel" : "--progress";
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", option, "--no-logo"]));
 
 		output.ExitCode.Should().Be(0, output.Text);
 		output.Text.Should().Contain("bound").And.NotContain("unbound");
+	}
+
+	[TestMethod]
+	[Description("Verifies a custom global option named like a parameter Repl supplies, even one registered after the command, does not reach that parameter: the handler still receives the supplied value.")]
+	public void When_AGlobalOptionSharesItsNameWithAReplSuppliedParameter_Then_TheParameterIsStillSupplied()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("sync", (IProgress<double> progress) => progress is not null ? "supplied" : "missing");
+		sut.Options(options => options.Parsing.AddGlobalOption<string>("progress"));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--progress", "fast", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("supplied");
 	}
 
 	[ReplOptionsGroup]

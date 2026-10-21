@@ -10,10 +10,6 @@ internal sealed class ImplicitServiceParameterRegistry
 		_globalOptionsTypes.Add(optionsType);
 	}
 
-	public bool IsImplicitServiceParameter(Type parameterType) =>
-		IsFrameworkInjectedParameter(parameterType)
-		|| TryGetGlobalOptionsServiceType(parameterType, out _);
-
 	public bool TryGetGlobalOptionsServiceType(Type parameterType, out Type serviceType)
 	{
 		ArgumentNullException.ThrowIfNull(parameterType);
@@ -51,7 +47,7 @@ internal sealed class ImplicitServiceParameterRegistry
 		return true;
 	}
 
-	/// <summary>Whether Repl itself supplies a parameter of this type, which is therefore never an option.</summary>
+	/// <summary>Whether Repl itself supplies a parameter of this type.</summary>
 	public static bool IsFrameworkInjectedParameter(Type parameterType) =>
 		parameterType == typeof(CancellationToken)
 		|| InteractionProgressFactory.IsSupportedProgressType(parameterType)

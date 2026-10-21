@@ -1326,13 +1326,12 @@ internal sealed partial class AutocompleteEngine(CoreReplApp app)
 
 	// True when HandlerArgumentBinder.BindParameter would bind this parameter BEFORE consulting
 	// context.RouteValues, so the route value is never used for it and its type must not gate the
-	// candidate. Mirrors that method's pre-route precedence exactly: CancellationToken, an explicit
-	// binding direction ([FromContext]/[FromServices]), a typed global-options parameter
-	// (UseGlobalOptions<T>), and a [ReplOptionsGroup] parameter. Framework-injected services
-	// (IServiceProvider, ICoreReplApp, ...) are deliberately NOT here — the binder consults route
-	// values BEFORE them, so a segment homonym does bind (and fail) exactly as completion predicts.
+	// candidate. Mirrors that method's pre-route precedence exactly: an explicit binding direction
+	// ([FromContext]/[FromServices]), a parameter Repl supplies (CancellationToken, IProgress<T>,
+	// IServiceProvider, ...), a typed global-options parameter (UseGlobalOptions<T>), and a
+	// [ReplOptionsGroup] parameter.
 	private bool BindsBeforeRouteValues(System.Reflection.ParameterInfo parameter) =>
-		parameter.ParameterType == typeof(CancellationToken)
+		ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType)
 		|| parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0
 		|| app.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)

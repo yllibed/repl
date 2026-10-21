@@ -244,11 +244,7 @@ public sealed partial class CoreReplApp
 		if (FindUnavailableHookGlobal(hook, parsed.GlobalValues) is { } global) { return global; }
 		foreach (var parameter in hook.Method.GetParameters())
 		{
-			if (parameter.ParameterType == typeof(ReplInvocationContext) || parameter.ParameterType == typeof(ParsedInputContext)
-				|| parameter.ParameterType == typeof(CancellationToken)) { continue; }
-			if (parameter.IsDefined(typeof(FromServicesAttribute), inherit: true)
-				|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
-				|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)) { continue; }
+			if (IsResolvedWithoutCommandInput(parameter)) { continue; }
 			if (parameter.Name is { } name && parsed.Values.TryGetValue(name, out var value)
 				&& (value.State == InputValueState.Invalid || (value.State == InputValueState.Missing && !parameter.HasDefaultValue))) { return name; }
 			if (parameter.ParameterType.IsDefined(typeof(ReplOptionsGroupAttribute), inherit: true))
@@ -266,16 +262,21 @@ public sealed partial class CoreReplApp
 		return null;
 	}
 
+	// Binds before any command input is read, following HandlerArgumentBinder.BindParameter's order.
+	private bool IsResolvedWithoutCommandInput(System.Reflection.ParameterInfo parameter) =>
+		parameter.ParameterType == typeof(ReplInvocationContext)
+		|| parameter.ParameterType == typeof(ParsedInputContext)
+		|| ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType)
+		|| parameter.IsDefined(typeof(FromServicesAttribute), inherit: true)
+		|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
+		|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _);
+
 	[UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Options-group properties are preserved by the registered command handler and group binding contract.")]
 	private bool HookReadsCommandInput(Delegate hook, RouteMatch match)
 	{
 		foreach (var parameter in hook.Method.GetParameters())
 		{
-			if (parameter.ParameterType == typeof(ReplInvocationContext) || parameter.ParameterType == typeof(ParsedInputContext)
-				|| parameter.ParameterType == typeof(CancellationToken)
-				|| parameter.IsDefined(typeof(FromServicesAttribute), inherit: true)
-				|| parameter.IsDefined(typeof(FromContextAttribute), inherit: true)
-				|| _implicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)) { continue; }
+			if (IsResolvedWithoutCommandInput(parameter)) { continue; }
 			if (match.Values.ContainsKey(parameter.Name ?? string.Empty)
 				|| match.Route.OptionSchema.TryGetParameter(parameter.Name ?? string.Empty, out _)) { return true; }
 			if (parameter.ParameterType.IsDefined(typeof(ReplOptionsGroupAttribute), inherit: true)

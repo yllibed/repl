@@ -188,6 +188,27 @@ public sealed class Given_InvocationChannels
 	}
 
 	[TestMethod]
+	[Description("A hook parameter Repl supplies is never matched to a command option of the same name, so an invalid option does not refuse the hook, which still receives the supplied value.")]
+	public async Task When_AHookTakesASuppliedParameterNamedLikeAnInvalidOption_Then_TheHookStillRuns()
+	{
+		var app = CoreReplApp.Create();
+		var supplied = false;
+		app.Map("run", (ProgressCountGroup group) => Assert.Fail("Handled input must not execute."));
+		app.UseInvocationHook((IProgress<double> progress) =>
+		{
+			supplied = progress is not null;
+			return ReplInvocationResult.Handled();
+		});
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		await app.RunAsync(["run", "--progress=bad"]);
+
+		writer.ToString().Should().NotContain("Cannot bind invocation hook input");
+		supplied.Should().BeTrue(writer.ToString());
+	}
+
+	[TestMethod]
 	[Description("Group values, typed globals and keyed services must agree with the effective request and its service provider.")]
 	public async Task When_HookReceivesOptionsAndKeyedServices_Then_ItUsesTheCurrentInvocation()
 	{
@@ -400,6 +421,12 @@ public sealed class Given_InvocationChannels
 	{
 		[ReplOption(Arity = ReplArity.ExactlyOne)]
 		public int Count { get; set; }
+	}
+
+	[ReplOptionsGroup]
+	private sealed class ProgressCountGroup
+	{
+		public int Progress { get; set; }
 	}
 	[ReplOptionsGroup]
 	private sealed class RequiredCollectionGroup
