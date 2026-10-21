@@ -228,6 +228,35 @@ public sealed class Given_OptionsGroupBinding
 	}
 
 	[TestMethod]
+	[Description("Verifies the default of a collection group property is rendered as its elements, in help and in the documentation model, and is absent when the collection is empty, never the collection's type name.")]
+	public void When_ACollectionGroupPropertyHasADefault_Then_ItsElementsAreShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("list", (CollectionDefaultsOptions options) => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["list", "--help", "--no-logo"]));
+		var options = sut.CreateDocumentationModel().Commands
+			.Single(command => string.Equals(command.Path, "list", StringComparison.Ordinal)).Options;
+
+		output.ExitCode.Should().Be(0);
+		var lines = output.Text.Split('\n');
+		lines.Single(line => line.Contains("--uids")).Should().NotContain("[default:");
+		lines.Single(line => line.Contains("--tags")).Should().Contain("[default: a, b]");
+		options.Single(option => string.Equals(option.Name, "uids", StringComparison.Ordinal)).DefaultValue.Should().BeNull();
+		options.Single(option => string.Equals(option.Name, "tags", StringComparison.Ordinal)).DefaultValue.Should().Be("a, b");
+	}
+
+	[ReplOptionsGroup]
+	public class CollectionDefaultsOptions
+	{
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public string[] Uids { get; set; } = [];
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public string[] Tags { get; set; } = ["a", "b"];
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies a duplicate name between a group property and a regular parameter fails at registration with a duplicate-name diagnostic (not a token-collision one).")]
 	public void When_GroupPropertyCollidesWithParam_Then_MapFails()
 	{

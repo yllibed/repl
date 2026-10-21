@@ -118,6 +118,29 @@ public sealed class Given_CustomGlobalOptions
 		output.Text.Should().NotContain("[default:");
 	}
 
+	[TestMethod]
+	[Description("Verifies a global option holding a collection records no text default, whichever way it is registered: a collection cannot round-trip through one, so the accessor falls back to the caller's default instead of failing on a type name.")]
+	[DataRow(true, DisplayName = "Typed global options")]
+	[DataRow(false, DisplayName = "AddGlobalOption")]
+	public void When_AGlobalOptionHoldsACollection_Then_TheAccessorRecordsNoTextDefault(bool typed)
+	{
+		var sut = typed
+			? ReplApp.Create().UseGlobalOptions<TagGlobals>()
+			: ReplApp.Create().Options(options => options.Parsing.AddGlobalOption<string[]>("tags", defaultValue: ["a", "b"]));
+		sut.Map("status", (IGlobalOptionsAccessor globals) =>
+			string.Join('|', globals.GetValue<string[]>("tags") ?? ["none"]));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["status", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Trim().Should().Be("none");
+	}
+
+	private sealed class TagGlobals
+	{
+		public string[] Tags { get; set; } = ["a", "b"];
+	}
+
 	private sealed class DemoGlobals
 	{
 		[System.ComponentModel.Description("Tenant id used for all commands.")]

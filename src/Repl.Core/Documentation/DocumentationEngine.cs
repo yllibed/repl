@@ -633,10 +633,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		var enumValues = effectiveType.IsEnum
 			? Enum.GetNames(effectiveType)
 			: [];
-		var propDefault = property.GetValue(defaultInstance);
-		var defaultValue = propDefault is not null
-			? propDefault.ToString()
-			: null;
+		var defaultValue = ParsingOptions.FormatValue(property.GetValue(defaultInstance));
 		var option = new ReplDocOption(
 			Name: displayToken?.TrimStart('-') ?? property.Name,
 			Type: GetFriendlyTypeName(property.PropertyType),

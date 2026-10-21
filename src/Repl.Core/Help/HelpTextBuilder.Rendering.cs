@@ -242,8 +242,8 @@ internal static partial class HelpTextBuilder
 			parameterType = groupInfo.Property.PropertyType;
 			description = groupInfo.Property.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
 			var propDefault = groupInfo.Property.GetValue(groupInfo.DefaultInstance);
-			defaultValue = propDefault is not null && !ParsingOptions.IsDefaultForType(propDefault, parameterType)
-				? $" [default: {propDefault}]"
+			defaultValue = ParsingOptions.FormatDefaultValue(propDefault, parameterType) is { } text
+				? $" [default: {text}]"
 				: string.Empty;
 		}
 		else

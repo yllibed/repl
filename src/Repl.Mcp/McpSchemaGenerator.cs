@@ -45,9 +45,9 @@ internal static class McpSchemaGenerator
 				prop["enum"] = enumArray;
 			}
 
-			if (opt.DefaultValue is not null)
+			if (AdvertisedDefault(opt) is { } defaultValue)
 			{
-				prop["default"] = opt.DefaultValue;
+				prop["default"] = defaultValue;
 			}
 
 			properties[opt.Name] = prop;
@@ -76,6 +76,10 @@ internal static class McpSchemaGenerator
 
 		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
 	}
+
+	// The documented default is display text: for an array, an agent sending it back would bind one element.
+	private static string? AdvertisedDefault(ReplDocOption option) =>
+		IsCollectionType(option.Type) ? null : option.DefaultValue;
 
 	private static void AddResultFlowProperties(JsonObject properties)
 	{

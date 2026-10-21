@@ -3,6 +3,10 @@ namespace Repl.Documentation;
 /// <summary>
 /// Option metadata.
 /// </summary>
+/// <remarks>
+/// <c>DefaultValue</c> is display text: a collection's elements joined by <c>", "</c>, and <see langword="null"/>
+/// when there is no default or the collection is empty.
+/// </remarks>
 public sealed record ReplDocOption(
 	string Name,
 	string Type,
