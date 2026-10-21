@@ -136,9 +136,32 @@ public sealed class Given_CustomGlobalOptions
 		output.Text.Trim().Should().Be("none");
 	}
 
+	[TestMethod]
+	[Description("Verifies a global option declared as a collection of characters records no text default even though its default is a string: whether a default round-trips is judged from the declared type.")]
+	[DataRow(true, DisplayName = "Typed global options")]
+	[DataRow(false, DisplayName = "AddGlobalOption")]
+	public void When_AGlobalOptionIsACollectionOfCharacters_Then_ItsStringDefaultIsNotRecorded(bool typed)
+	{
+		var sut = typed
+			? ReplApp.Create().UseGlobalOptions<LetterGlobals>()
+			: ReplApp.Create().Options(options => options.Parsing.AddGlobalOption<IEnumerable<char>>("letters", defaultValue: "abc"));
+		sut.Map("status", (IGlobalOptionsAccessor globals) =>
+			globals.GetValue<IEnumerable<char>>("letters") is { } letters ? string.Concat(letters) : "none");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["status", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Trim().Should().Be("none");
+	}
+
 	private sealed class TagGlobals
 	{
 		public string[] Tags { get; set; } = ["a", "b"];
+	}
+
+	private sealed class LetterGlobals
+	{
+		public IEnumerable<char> Letters { get; set; } = "abc";
 	}
 
 	private sealed class DemoGlobals

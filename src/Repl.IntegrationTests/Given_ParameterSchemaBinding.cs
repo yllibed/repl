@@ -68,6 +68,35 @@ public sealed class Given_ParameterSchemaBinding
 			.WithMessage("*'Progress'*parameter 'progress' that Repl supplies*");
 	}
 
+	[TestMethod]
+	[Description("Verifies a parameter of a type Repl supplies that binding resolves before matching any value by name, bound explicitly from services or the cancellation token, may share its name with an option, and both receive their own value.")]
+	[DataRow("services", DisplayName = "Bound explicitly from services")]
+	[DataRow("cancellation", DisplayName = "The cancellation token")]
+	public void When_AParameterResolvedBeforeNamesSharesItsNameWithAnOption_Then_BothBind(string parameter)
+	{
+		var sut = ReplApp.Create();
+		_ = parameter switch
+		{
+			"services" => sut.Map("sync", (ProgressNamedOptions options, [FromServices] IReplInteractionChannel progress) =>
+				progress is not null && options.Progress ? "bound" : "unbound"),
+			"cancellation" => sut.Map("sync", (CancelNamedOptions options, CancellationToken cancel) =>
+				options.Cancel && !cancel.IsCancellationRequested ? "bound" : "unbound"),
+			_ => throw new ArgumentOutOfRangeException(nameof(parameter), parameter, "Unknown test row."),
+		};
+		var option = string.Equals(parameter, "services", StringComparison.Ordinal) ? "--progress" : "--cancel";
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", option, "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("bound").And.NotContain("unbound");
+	}
+
+	[ReplOptionsGroup]
+	public sealed class CancelNamedOptions
+	{
+		public bool Cancel { get; set; }
+	}
+
 	[ReplOptionsGroup]
 	public sealed class ProgressNamedOptions
 	{

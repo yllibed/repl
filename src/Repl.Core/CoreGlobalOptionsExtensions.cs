@@ -41,8 +41,9 @@ public static class CoreGlobalOptionsExtensions
 				// the metadata aligned (even when the value equals the CLR default) so
 				// IGlobalOptionsAccessor.GetValue resolves the same default as the injected T. A collection
 				// cannot round-trip through that single text value, so it records none.
-				var prototypeValue = property.GetValue(prototype);
-				var defaultValue = ParsingOptions.IsCollectionValue(prototypeValue) ? null : prototypeValue?.ToString();
+				var defaultValue = ParsingOptions.IsCollectionType(property.PropertyType)
+					? null
+					: property.GetValue(prototype)?.ToString();
 				var description = property.GetCustomAttribute<DescriptionAttribute>()?.Description;
 
 				options.Parsing.AddGlobalOptionCore(

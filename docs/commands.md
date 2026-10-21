@@ -610,8 +610,10 @@ Handler parameters are resolved in priority order:
 Some parameters are supplied by Repl itself: `CancellationToken`, `IProgress<double>`, `IProgress<ReplProgressEvent>`,
 `IReplInteractionChannel`, `IReplIoContext`, `IReplKeyReader`, `IReplPagingContext`, `IReplSessionState`,
 `IGlobalOptionsAccessor`, `IServiceProvider`, `ICoreReplApp`, and the MCP client services. They are never options or
-arguments, on any surface, so `Map` refuses `[ReplOption]` or `[ReplArgument]` on them, and refuses an option, such as
-an options-group property, named like one of them, since its value would be bound to that parameter.
+arguments, on any surface, so `Map` refuses `[ReplOption]` or `[ReplArgument]` on them. It also refuses an option, such
+as an options-group property, named like one of them, since its value would be bound to that parameter, except for
+`CancellationToken` and a parameter bound with `[FromServices]` or `[FromContext]`, which binding resolves before any
+option value.
 
 > **Changed in 0.12.** Option metadata on a parameter Repl supplies used to be ignored, except on a progress parameter,
 > which was an option. Remove the attribute, or a `.WithOption(...)` naming that parameter, which now fails as for any

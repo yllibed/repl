@@ -190,7 +190,7 @@ internal static class HandlerArgumentBinder
 			: $"{subject} requires exactly one value.");
 	}
 
-	private static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
+	internal static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
 		parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0;
 

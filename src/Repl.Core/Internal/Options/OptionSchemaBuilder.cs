@@ -31,8 +31,12 @@ internal static class OptionSchemaBuilder
 		{
 			if (ShouldSkipSchemaParameter(parameter, routeParameterNames, implicitServiceParameters))
 			{
+				// The cancellation token and explicitly bound parameters resolve before any value is matched by
+				// name, so they cannot collide.
 				if (parameter.Name is { } suppliedName
-					&& ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType))
+					&& parameter.ParameterType != typeof(CancellationToken)
+					&& ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType)
+					&& !HandlerArgumentBinder.HasExplicitBindingDirection(parameter))
 				{
 					(suppliedParameterNames ??= []).Add(suppliedName);
 				}
@@ -104,8 +108,7 @@ internal static class OptionSchemaBuilder
 		}
 
 		if (string.IsNullOrWhiteSpace(parameter.Name)
-			|| parameter.GetCustomAttribute<FromContextAttribute>() is not null
-			|| parameter.GetCustomAttribute<FromServicesAttribute>() is not null)
+			|| HandlerArgumentBinder.HasExplicitBindingDirection(parameter))
 		{
 			return true;
 		}
@@ -449,8 +452,8 @@ internal static class OptionSchemaBuilder
 		}
 	}
 
-	// Binding matches values to parameters by name, ignoring case, before it supplies a parameter, so an
-	// option named like a parameter Repl supplies would have its value bound to that parameter.
+	// Binding matches values to most parameters Repl supplies by name, ignoring case, before supplying them,
+	// so an option named like one would have its value bound to that parameter.
 	private static void ValidateSuppliedParameterNames(
 		Dictionary<string, OptionSchemaParameter> parameters,
 		List<string>? suppliedParameterNames)
