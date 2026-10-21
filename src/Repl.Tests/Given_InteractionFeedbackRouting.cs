@@ -109,6 +109,30 @@ public sealed class Given_InteractionFeedbackRouting
 	}
 
 	[TestMethod]
+	[Description("Verifies a hosted protocol-passthrough command's feedback never shares the protocol's writer: it goes to the session's own error writer when there is one, is not written when the protocol's is the only stream, and is left alone when the protocol has a writer of its own.")]
+	[DataRow("single", ReplFeedbackStream.Auto, DisplayName = "One stream: not written")]
+	[DataRow("error", ReplFeedbackStream.Auto, DisplayName = "A separate error writer: written there")]
+	[DataRow("error", ReplFeedbackStream.Output, DisplayName = "A separate error writer, output stream asked: written there")]
+	[DataRow("command", ReplFeedbackStream.Auto, DisplayName = "A separate protocol writer: the session output")]
+	public void When_AHostedPassthroughCommandWritesFeedback_Then_ItNeverSharesTheProtocolWriter(string writers, ReplFeedbackStream stream)
+	{
+		using var protocol = new StringWriter();
+		using var other = new StringWriter();
+		using var session = writers switch
+		{
+			"error" => ReplSessionIO.SetSession(protocol, TextReader.Null, error: other),
+			"command" => ReplSessionIO.SetSession(other, TextReader.Null, commandOutput: protocol),
+			_ => ReplSessionIO.SetSession(protocol, TextReader.Null),
+		};
+		using var passthrough = ReplSessionIO.PushProtocolPassthrough();
+
+		var target = InteractionFeedbackRouting.Resolve(
+			new OutputOptions { FeedbackStream = stream }, isOutputRedirected: false, isErrorRedirected: false);
+
+		target.Writer.Should().BeSameAs(string.Equals(writers, "single", StringComparison.Ordinal) ? TextWriter.Null : other);
+	}
+
+	[TestMethod]
 	[Description("Verifies an explicit stream wins over every detection.")]
 	[DataRow(ReplFeedbackStream.Output, false)]
 	[DataRow(ReplFeedbackStream.Error, true)]

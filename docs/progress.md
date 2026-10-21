@@ -168,8 +168,16 @@ the feedback of its handler to standard error, uncoloured, whatever the format a
 standard output belongs to the protocol. A progress line is rewritten in place only when standard error
 reaches a terminal, so a client logging it gets one line per update. Feedback written before the
 command is resolved, by preprocessors and hooks, follows the rules above: a server started by a client
-with standard output piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a hosted
-session, the feedback goes to the session's writers, which most transports share with the protocol.
+with standard output piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a session
+whose transport has a single stream, as every hosted host's has, that stream belongs to the protocol:
+the handler's feedback goes to the session's own error writer if it has one, and is not written at all
+otherwise, whatever `FeedbackStream` says. Feedback written before the command is resolved still
+reaches the session. A prompt's label is feedback too, and its answer would be read from the protocol's
+input: a protocol-passthrough handler should not prompt.
+
+> **Changed in 0.12.** A hosted protocol-passthrough handler's feedback used to be written into the
+> transport's stream, mixed with its protocol. To put text on that stream, write it to
+> `IReplIoContext.Output`.
 
 ## Advanced Terminal Progress
 

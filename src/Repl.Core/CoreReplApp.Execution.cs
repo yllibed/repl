@@ -558,7 +558,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	// - run from the console, the process's own streams, the payload alone on standard output;
 	// - in a session that is not hosted and has an error writer of its own, standing in for the process
 	//   as the signal harness does, the same split onto that session's writers;
-	// - in any other session, a hosted one or one with a single stream, the session as it is.
+	// - in any other session, a hosted one or one with a single stream, the session as it is, whose feedback
+	//   InteractionFeedbackRouting keeps off the protocol's writer.
 	private static IDisposable? OpenPassthroughSession()
 	{
 		if (!ReplSessionIO.IsSessionActive)
