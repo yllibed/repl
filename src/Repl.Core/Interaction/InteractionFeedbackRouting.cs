@@ -19,21 +19,25 @@ internal static class InteractionFeedbackRouting
 	/// </summary>
 	/// <remarks>
 	/// The redirection only counts outside a session. A session supplies its own writers — a transport,
-	/// a test harness, the protocol-passthrough split — and they are treated as terminals; their colour
-	/// keeps following standard output's redirection, which is what it has always followed.
+	/// a test harness — and they are treated as terminals; their colour keeps following standard output's
+	/// redirection, which is what it has always followed. The console session of a protocol-passthrough
+	/// command is the exception: both its writers are the process's standard error, so that stream's own
+	/// redirection applies.
 	/// </remarks>
 	public static FeedbackTarget Resolve(OutputOptions? outputOptions, bool isOutputRedirected, bool isErrorRedirected)
 	{
-		var isLocal = !ReplSessionIO.IsSessionActive;
+		var isProcessConsole = ReplSessionIO.IsProcessConsoleSession;
+		var isLocal = !ReplSessionIO.IsSessionActive || isProcessConsole;
 		var toError = WritesToError(
 			outputOptions?.FeedbackStream ?? ReplFeedbackStream.Auto,
 			ReplSessionIO.IsMachineReadableOutput,
 			isLocalOutputRedirected: isLocal && isOutputRedirected);
+		var writesToStandardError = isLocal && (toError || isProcessConsole);
 		return new FeedbackTarget(
 			toError ? ReplSessionIO.Error : ReplSessionIO.Output,
 			IsError: toError,
 			IsSessionWriter: !isLocal,
-			IsStreamRedirected: (isLocal && toError) ? isErrorRedirected : isOutputRedirected);
+			IsStreamRedirected: writesToStandardError ? isErrorRedirected : isOutputRedirected);
 	}
 
 	/// <summary>

@@ -61,6 +61,54 @@ public sealed class Given_InteractionFeedbackRouting
 	}
 
 	[TestMethod]
+	[Description("Verifies the console session a protocol-passthrough command runs in follows standard error's own redirection: its writers are the process's standard error, so progress is rewritten in place only on a terminal, never into a pipe a client is logging.")]
+	[DataRow(true, false, DisplayName = "Standard error piped")]
+	[DataRow(false, true, DisplayName = "Standard error on a terminal")]
+	public void When_TheSessionIsTheProcessConsole_Then_StandardErrorRedirectionDecides(bool isErrorRedirected, bool expectedTerminal)
+	{
+		using var session = ReplSessionIO.SetProcessConsoleSession();
+
+		var target = InteractionFeedbackRouting.Resolve(new OutputOptions(), isOutputRedirected: true, isErrorRedirected);
+
+		target.Writer.Should().BeSameAs(Console.Error);
+		target.IsTerminal.Should().Be(expectedTerminal);
+	}
+
+	[TestMethod]
+	[Description("Verifies a protocol-passthrough command run from the console runs in the process-console session, which is what lets its feedback follow standard error's redirection.")]
+	public void When_AProtocolPassthroughCommandRunsFromTheConsole_Then_ItRunsInTheProcessConsoleSession()
+	{
+		bool? observed = null;
+		var sut = CoreReplApp.Create();
+		sut.Map(
+				"serve",
+				() =>
+				{
+					observed = ReplSessionIO.IsProcessConsoleSession;
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+
+		sut.Run(["serve"]).Should().Be(0);
+
+		observed.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Verifies a session opened inside the protocol-passthrough console session brings its own writers, which are not the process's console.")]
+	public void When_ASessionOpensInsideTheProcessConsole_Then_ItsOwnWritersCount()
+	{
+		using var console = ReplSessionIO.SetProcessConsoleSession();
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, isHostedSession: false);
+
+		var target = InteractionFeedbackRouting.Resolve(new OutputOptions(), isOutputRedirected: true, isErrorRedirected: true);
+
+		target.Writer.Should().BeSameAs(output);
+		target.IsTerminal.Should().BeTrue();
+	}
+
+	[TestMethod]
 	[Description("Verifies an explicit stream wins over every detection.")]
 	[DataRow(ReplFeedbackStream.Output, false)]
 	[DataRow(ReplFeedbackStream.Error, true)]

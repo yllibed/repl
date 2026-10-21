@@ -9,6 +9,52 @@ namespace Repl.IntegrationTests;
 public sealed class Given_ProcessSignalHarness
 {
 	[TestMethod]
+	[Description("Verifies a protocol-passthrough command run under the harness splits its streams as the process does: the handler's payload alone on the run's output, its feedback on the run's error stream.")]
+	public async Task When_AProtocolPassthroughCommandRuns_Then_ItsStreamsAreSplitAsInTheProcess()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(() =>
+		{
+			var app = CreateApp(configure: null);
+			app.Map(
+					"serve",
+					async (IReplIoContext io, IReplInteractionChannel channel, CancellationToken ct) =>
+					{
+						await channel.WriteStatusAsync("Server starting", ct).ConfigureAwait(false);
+						await io.Output.WriteLineAsync("rpc-ready").ConfigureAwait(false);
+						return Results.Exit(0);
+					})
+				.AsProtocolPassthrough();
+			return app;
+		});
+
+		var run = await harness.StartRunAsync("serve");
+		var result = await run.Completion;
+
+		result.ExitCode.Should().Be(0);
+		result.OutputText.TrimEnd().Should().Be("rpc-ready");
+		result.DiagnosticText.Should().Contain("Server starting");
+	}
+
+	[TestMethod]
+	[Description("Verifies a value a protocol-passthrough command returns under the harness is rendered on the run's error stream, as the process renders it on standard error, never on the output the protocol owns.")]
+	public async Task When_AProtocolPassthroughCommandReturnsAValue_Then_ItIsRenderedOnTheErrorStream()
+	{
+		await using var harness = ReplProcessSignalHarness.Create(() =>
+		{
+			var app = CreateApp(configure: null);
+			app.Map("info", () => "server-version-1.0").AsProtocolPassthrough();
+			return app;
+		});
+
+		var run = await harness.StartRunAsync("info");
+		var result = await run.Completion;
+
+		result.ExitCode.Should().Be(0);
+		result.OutputText.Should().NotContain("server-version-1.0");
+		result.DiagnosticText.Should().Contain("server-version-1.0");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies the first signal cancels a run in flight cooperatively, reports Interrupted, resolves the conventional 130, and lets the command's cleanup finish. Delivered from outside the run, which is what the harness exists for.")]
 	public async Task When_TheFirstSignalArrives_Then_TheRunIsCancelledCooperatively()
 	{
