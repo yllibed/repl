@@ -66,14 +66,29 @@ public sealed class Given_ProcessSignalHarness
 	[Description("Regression guard: verifies a second signal reports that the operating system would take over and leaves the first claim's exit code intact, so escalating cannot relabel what the run is exiting with. Escalates with a different signal kind than it claimed with, which is why it declares the platform that wires SIGTERM up.")]
 	public async Task When_ASecondSignalArrives_Then_ItWouldTerminateAndTheFirstClaimStands()
 	{
+		// Held so the cancelled run cannot finish between the signals: once it drains, the epoch closes and
+		// the next signal is a first one again, which is not what this test is about. The hold is in the
+		// command's cleanup, so the signals wait for the command to be running.
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		using var holdRunInCleanup = new SemaphoreSlim(initialCount: 0, maxCount: 1);
 		await using var harness = ReplProcessSignalHarness.Create(
-			() => CreateBlockingApp(),
+			() => CreateBlockingApp(started, cleanupGate: holdRunInCleanup),
 			options => options.Platform = ReplPlatformProfile.Unix);
 		var run = await harness.StartRunAsync("work");
+		await started.Task;
 
-		var first = harness.SendSignal(ReplProcessSignal.Interrupt);
-		var second = harness.SendSignal(ReplProcessSignal.Terminate);
-		var third = harness.SendSignal(ReplProcessSignal.Terminate);
+		ReplSignalDelivery first, second, third;
+		try
+		{
+			first = harness.SendSignal(ReplProcessSignal.Interrupt);
+			second = harness.SendSignal(ReplProcessSignal.Terminate);
+			third = harness.SendSignal(ReplProcessSignal.Terminate);
+		}
+		finally
+		{
+			holdRunInCleanup.Release();
+		}
+
 		var result = await run.Completion;
 
 		first.Should().Be(ReplSignalDelivery.CancellationRequested);
@@ -98,11 +113,18 @@ public sealed class Given_ProcessSignalHarness
 			() => CreateBlockingApp(started, cleanupGate: holdFirstRunInCleanup));
 		var first = await harness.StartRunAsync("work");
 		await started.Task;
-		harness.SendSignal(ReplProcessSignal.Interrupt);
 
-		var lateJoiner = await harness.StartRunAsync("work");
-		var lateResult = await lateJoiner.Completion;
-		holdFirstRunInCleanup.Release();
+		ReplSignalRunResult lateResult;
+		try
+		{
+			harness.SendSignal(ReplProcessSignal.Interrupt);
+			var lateJoiner = await harness.StartRunAsync("work");
+			lateResult = await lateJoiner.Completion;
+		}
+		finally
+		{
+			holdFirstRunInCleanup.Release();
+		}
 
 		lateResult.OutcomeKind.Should().Be(ReplExecutionOutcomeKind.Interrupted);
 		lateResult.ExitCode.Should().Be(130, because: "the late joiner inherits the claimed signal's code");
