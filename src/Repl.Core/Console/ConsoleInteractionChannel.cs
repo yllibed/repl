@@ -486,7 +486,8 @@ internal sealed partial class ConsoleInteractionChannel(
 			{
 				if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 				{
-					line = await ReadWithTimeoutRedirectedAsync(options.Timeout.Value, echo, ct)
+					line = await ReadWithTimeoutRedirectedAsync(
+							options.Timeout.Value, token => ReadSecretLineAsync(options.Mask, echo, token), ct)
 						.ConfigureAwait(false);
 				}
 				else

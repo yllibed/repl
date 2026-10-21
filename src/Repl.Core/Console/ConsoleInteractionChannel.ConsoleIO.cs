@@ -12,12 +12,80 @@ internal sealed partial class ConsoleInteractionChannel
 
 	private static async ValueTask<string?> ReadSecretLineAsync(char? mask, TextWriter echo, CancellationToken ct)
 	{
+		if (ReplSessionIO.KeyReader is { } keyReader)
+		{
+			return await ReadSecretRemoteAsync(keyReader, mask, echo, ct).ConfigureAwait(false);
+		}
+
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
 			return await ReadLineWithEscAsync(echo, ct).ConfigureAwait(false);
 		}
 
 		return await Task.Run(() => ReadSecretSync(mask, echo, ct), ct).ConfigureAwait(false);
+	}
+
+	// A hosted terminal's keys, under the same rule as the console's (ApplySecretKey).
+	private static async ValueTask<string?> ReadSecretRemoteAsync(
+		IReplKeyReader keyReader, char? mask, TextWriter echo, CancellationToken ct)
+	{
+		var buffer = new System.Text.StringBuilder();
+		while (true)
+		{
+			var (outcome, text) = ApplySecretKey(await keyReader.ReadKeyAsync(ct).ConfigureAwait(false), buffer, mask);
+			// A remote terminal needs a carriage return to go back to column 1, as the line editor writes it.
+			var output = outcome == SecretKeyOutcome.Submit ? "\r\n" : text;
+			if (output.Length > 0)
+			{
+				await echo.WriteAsync(output).ConfigureAwait(false);
+				await echo.FlushAsync(ct).ConfigureAwait(false);
+			}
+
+			switch (outcome)
+			{
+				case SecretKeyOutcome.Cancel:
+					throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+				case SecretKeyOutcome.Submit:
+					return buffer.ToString();
+			}
+		}
+	}
+
+	private enum SecretKeyOutcome
+	{
+		Continue,
+		Submit,
+		Cancel,
+	}
+
+	// The one rule for a key at a secret prompt, at the console and in a hosted terminal alike: the buffer takes
+	// what is typed, and the text returned for the caller to echo only ever shows or erases the mask.
+	private static (SecretKeyOutcome Outcome, string Echo) ApplySecretKey(
+		ConsoleKeyInfo key, System.Text.StringBuilder buffer, char? mask)
+	{
+		switch (key.Key)
+		{
+			case ConsoleKey.Escape:
+				return (SecretKeyOutcome.Cancel, buffer.Length > 0 && mask is not null ? EraseSequence(buffer.Length) : string.Empty);
+			case ConsoleKey.Enter:
+				return (SecretKeyOutcome.Submit, string.Empty);
+			case ConsoleKey.Backspace:
+				if (buffer.Length == 0)
+				{
+					return (SecretKeyOutcome.Continue, string.Empty);
+				}
+
+				buffer.Remove(buffer.Length - 1, 1);
+				return (SecretKeyOutcome.Continue, mask is null ? string.Empty : "\b \b");
+			default:
+				if (key.KeyChar == '\0')
+				{
+					return (SecretKeyOutcome.Continue, string.Empty);
+				}
+
+				buffer.Append(key.KeyChar);
+				return (SecretKeyOutcome.Continue, mask is { } shown ? shown.ToString() : string.Empty);
+		}
 	}
 
 	private static string? ReadSecretSync(char? mask, TextWriter echo, CancellationToken ct)
@@ -172,48 +240,22 @@ internal sealed partial class ConsoleInteractionChannel
 		TextWriter echo,
 		CancellationToken ct)
 	{
-		var key = Console.ReadKey(intercept: true);
-
-		if (key.Key == ConsoleKey.Escape)
+		var (outcome, text) = ApplySecretKey(Console.ReadKey(intercept: true), buffer, mask);
+		if (text.Length > 0)
 		{
-			if (buffer.Length > 0 && mask is not null)
-			{
-				EraseInline(echo, buffer.Length);
-			}
-
-			throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+			Echo(echo, text);
 		}
 
-		if (key.Key == ConsoleKey.Enter)
+		switch (outcome)
 		{
-			EchoLine(echo);
-			return buffer.ToString();
+			case SecretKeyOutcome.Cancel:
+				throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+			case SecretKeyOutcome.Submit:
+				EchoLine(echo);
+				return buffer.ToString();
+			default:
+				return null;
 		}
-
-		if (key.Key == ConsoleKey.Backspace)
-		{
-			if (buffer.Length > 0)
-			{
-				buffer.Remove(buffer.Length - 1, 1);
-				if (mask is not null)
-				{
-					Echo(echo, "\b \b");
-				}
-			}
-
-			return null;
-		}
-
-		if (key.KeyChar != '\0')
-		{
-			buffer.Append(key.KeyChar);
-			if (mask is not null)
-			{
-				Echo(echo, mask.Value);
-			}
-		}
-
-		return null;
 	}
 
 	private async ValueTask<string?> ReadPromptLineAsync(
@@ -237,7 +279,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
-			return await ReadWithTimeoutRedirectedAsync(timeout.Value, echo, cancellationToken)
+			return await ReadWithTimeoutRedirectedAsync(timeout.Value, token => ReadLineWithEscAsync(echo, token), cancellationToken)
 				.ConfigureAwait(false);
 		}
 
@@ -247,7 +289,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 	private async ValueTask<string?> ReadWithTimeoutRedirectedAsync(
 		TimeSpan timeout,
-		TextWriter echo,
+		Func<CancellationToken, ValueTask<string?>> read,
 		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -262,9 +304,10 @@ internal sealed partial class ConsoleInteractionChannel
 			timeoutCts, timeout, Timeout.InfiniteTimeSpan);
 		try
 		{
-			return await ReadLineWithEscAsync(echo, timeoutCts.Token).ConfigureAwait(false);
+			return await read(timeoutCts.Token).ConfigureAwait(false);
 		}
-		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		// Only the timer's own cancellation is a timeout: Esc, or a transport that ended, still fails the prompt.
+		catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
 		{
 			return null;
 		}
@@ -456,8 +499,11 @@ internal sealed partial class ConsoleInteractionChannel
 
 	private static void EraseInline(TextWriter echo, int length)
 	{
-		Echo(echo, new string('\b', length) + new string(' ', length) + new string('\b', length));
+		Echo(echo, EraseSequence(length));
 	}
+
+	private static string EraseSequence(int length) =>
+		new string('\b', length) + new string(' ', length) + new string('\b', length);
 
 	// The key-by-key loops run synchronously on a worker (Task.Run), polling the console, so they cannot await.
 #pragma warning disable MA0045

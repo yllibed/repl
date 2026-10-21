@@ -79,6 +79,9 @@ public interface IReplInteractionChannel
 	/// <param name="prompt">Prompt text displayed to the user.</param>
 	/// <param name="options">Optional secret-specific options (mask character, allow empty, cancellation, timeout).</param>
 	/// <returns>The captured secret text.</returns>
+	/// <exception cref="OperationCanceledException">
+	/// The prompt was cancelled: by Esc, by the caller, or because a hosted terminal disconnected.
+	/// </exception>
 	ValueTask<string> AskSecretAsync(
 		string name,
 		string prompt,
