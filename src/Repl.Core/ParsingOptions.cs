@@ -500,16 +500,18 @@ public sealed class ParsingOptions
 
 	/// <summary>
 	/// The text a default value is shown as: a collection's elements rather than its type name, and nothing
-	/// for an empty collection.
+	/// for an empty collection. A sequence that is not a materialized <see cref="System.Collections.ICollection"/>
+	/// shows nothing: describing it must not run an iterator that may be unbounded, costly or failing.
 	/// </summary>
 	internal static string? FormatValue(object? value) =>
 		value switch
 		{
 			null => null,
 			string text => text,
-			System.Collections.IEnumerable items => string.Join(", ", items.Cast<object?>()) is { Length: > 0 } joined
+			System.Collections.ICollection items => string.Join(", ", items.Cast<object?>()) is { Length: > 0 } joined
 				? joined
 				: null,
+			System.Collections.IEnumerable => null,
 			_ => value.ToString(),
 		};
 

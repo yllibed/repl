@@ -5,7 +5,9 @@ namespace Repl.Documentation;
 /// </summary>
 /// <remarks>
 /// <c>DefaultValue</c> is display text: a collection's elements joined by <c>", "</c>, and <see langword="null"/>
-/// when there is no default or the collection is empty.
+/// when there is no default, the collection is empty, or the default does not implement the non-generic
+/// <see cref="System.Collections.ICollection"/>, such as an iterator or a <see cref="HashSet{T}"/>: such a sequence is
+/// not enumerated.
 /// </remarks>
 public sealed record ReplDocOption(
 	string Name,

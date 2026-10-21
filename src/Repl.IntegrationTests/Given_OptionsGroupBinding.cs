@@ -280,8 +280,45 @@ public sealed class Given_OptionsGroupBinding
 		var lines = output.Text.Split('\n');
 		lines.Single(line => line.Contains("--uids")).Should().NotContain("[default:");
 		lines.Single(line => line.Contains("--tags")).Should().Contain("[default: a, b]");
+		lines.Single(line => line.Contains("--labels")).Should().Contain("[default: x, y]");
+		lines.Single(line => line.Contains("--names")).Should().Contain("[default: m, n]");
 		options.Single(option => string.Equals(option.Name, "uids", StringComparison.Ordinal)).DefaultValue.Should().BeNull();
 		options.Single(option => string.Equals(option.Name, "tags", StringComparison.Ordinal)).DefaultValue.Should().Be("a, b");
+		options.Single(option => string.Equals(option.Name, "labels", StringComparison.Ordinal)).DefaultValue.Should().Be("x, y");
+		options.Single(option => string.Equals(option.Name, "names", StringComparison.Ordinal)).DefaultValue.Should().Be("m, n");
+	}
+
+	[TestMethod]
+	[Description("Verifies a lazy sequence default is never enumerated to describe it: help and the documentation model show no default rather than run an iterator that may be unbounded, costly or failing.")]
+	public void When_AGroupPropertyDefaultIsALazySequence_Then_ItIsNotEnumerated()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("list", (LazyDefaultOptions options) => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["list", "--help", "--no-logo"]));
+		var items = sut.CreateDocumentationModel().Commands
+			.Single(command => string.Equals(command.Path, "list", StringComparison.Ordinal)).Options
+			.Single(option => string.Equals(option.Name, "items", StringComparison.Ordinal));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Split('\n').Single(line => line.Contains("--items")).Should().NotContain("[default:");
+		items.DefaultValue.Should().BeNull();
+	}
+
+	[ReplOptionsGroup]
+	public class LazyDefaultOptions
+	{
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public IEnumerable<string> Items { get; set; } = new FailsIfEnumerated();
+	}
+
+	// Throws from GetEnumerator, so even previewing a single element fails the test.
+	private sealed class FailsIfEnumerated : IEnumerable<string>
+	{
+		public IEnumerator<string> GetEnumerator() =>
+			throw new InvalidOperationException("A lazy default must not be enumerated to describe it.");
+
+		System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 	}
 
 	[ReplOptionsGroup]
@@ -292,6 +329,12 @@ public sealed class Given_OptionsGroupBinding
 
 		[ReplOption(Arity = ReplArity.ZeroOrMore)]
 		public string[] Tags { get; set; } = ["a", "b"];
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public IReadOnlyList<string> Labels { get; set; } = ["x", "y"];
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public IEnumerable<string> Names { get; set; } = ["m", "n"];
 	}
 
 	[TestMethod]
