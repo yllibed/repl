@@ -178,6 +178,42 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[DataRow(false, false, DisplayName = "One-shot, arguments")]
+	[DataRow(false, true, DisplayName = "One-shot, native command")]
+	[DataRow(true, false, DisplayName = "Interactive, arguments")]
+	[DataRow(true, true, DisplayName = "Interactive, native command")]
+	[Description("Verifies the format of an invocation hook's failure report follows the request as far as the hooks replaced it: an earlier hook asked for JSON, through arguments or a native global, before a later one threw.")]
+	public async Task When_AnEarlierHookReplacedTheRequestWithJsonAndALaterOneThrows_Then_TheFailureIsReportedAsJson(bool interactive, bool command)
+	{
+		var app = CoreReplApp.Create();
+		ReplExecutionOutcomeKind? kind = null;
+		app.Options(options => options.ExitCodes.Resolver = outcome => { kind = outcome.Kind; return outcome.ExitCode; });
+		app.Map("old", () => "ok");
+		var replacement = command
+			? ReplInvocationRequest.ForCommand("old", globalValues: new Dictionary<string, object?>(StringComparer.Ordinal) { ["output"] = "json" })
+			: ReplInvocationRequest.FromArguments(["old", "--json"]);
+		app.UseInvocationHook((ReplInvocationContext context) => context.Request.Arguments is ["old"]
+			? ReplInvocationResult.Replace(replacement)
+			: ReplInvocationResult.Continue());
+		app.UseInvocationHook((ReplInvocationContext context) => context.Request.Command is "old" || context.Request.Arguments is ["old", "--json"]
+			? throw new InvalidOperationException("hook failed")
+			: ReplInvocationResult.Continue());
+
+		using var writer = new StringWriter();
+		using var reader = new StringReader(interactive ? "old\nexit\n" : string.Empty);
+		using var io = ReplSessionIO.SetSession(writer, reader);
+
+		var exitCode = await app.RunAsync(interactive ? [] : ["old"]);
+
+		writer.ToString().Should().Contain("\"code\": \"input_callback_error\"");
+		if (!interactive)
+		{
+			exitCode.Should().Be(1);
+			kind.Should().Be(ReplExecutionOutcomeKind.HandlerException);
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies an input callback failure whose report degrades to unformatted text, the requested transformer failing too, is still the application's failure the caller saw: a handler exception, as any degraded report is.")]
 	public async Task When_AnInputCallbackFailureReportDegrades_Then_ItIsAHandlerException()
 	{

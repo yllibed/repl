@@ -269,7 +269,8 @@ Handling an interactive invocation keeps the session open; `Results.Exit(code)`
 explicitly closes it. Application callback failures are application errors, not
 invalid user input: they are reported as `input_callback_error` in the format the
 invocation asks for, as far as its input was processed (`--json` added by an earlier
-adapter included), and exit as a `HandlerException`, unless that format is unknown,
+adapter or by a request an earlier hook replaced included), and exit as a
+`HandlerException`, unless that format is unknown,
 which is the caller's usage error. Caller cancellation follows the existing
 cancellation policy.
 

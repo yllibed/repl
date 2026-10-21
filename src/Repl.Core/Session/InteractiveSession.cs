@@ -307,7 +307,8 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			{
 				input = await app.PreprocessInputAsync(inputTokens, cycle.ScopeTokens, InputProcessingMode.Execution,
 					line, line.Length, commandCts.Token, isInteractive: true, onProcessed: reached => processed = reached).ConfigureAwait(false);
-				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
+				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token,
+					onProcessed: reached => processed = reached).ConfigureAwait(false);
 				processed = input;
 				processedInputScope = app.PushProcessedInput(input);
 				var globals = GlobalOptionParser.Parse([.. input.Context.ScopeTokens, .. input.Context.Arguments], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);

@@ -145,7 +145,7 @@ public sealed partial class CoreReplApp
 				: await PreprocessInputAsync(args, [], InputProcessingMode.Execution, text: null, cursor: null, cancellationToken,
 					onProcessed: reached => processed = reached).ConfigureAwait(false));
 			input = input with { Request = effectiveRequest?.Command is not null ? effectiveRequest.Copy() : null, OriginalRequest = submitted?.Copy(), Channel = channel, InheritSessionGlobals = isSubInvocation };
-			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
+			input = await InvokeInvocationHooksAsync(input, serviceProvider, cancellationToken, onProcessed: reached => processed = reached).ConfigureAwait(false);
 			processed = input;
 			_currentInput.Value = input;
 			using var feedbackScope = PushMachineReadableOutputFor(input.Context);
