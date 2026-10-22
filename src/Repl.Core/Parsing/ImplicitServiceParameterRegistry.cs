@@ -15,6 +15,13 @@ internal sealed class ImplicitServiceParameterRegistry
 		ArgumentNullException.ThrowIfNull(parameterType);
 
 		serviceType = typeof(void);
+		// HandlerArgumentBinder.BindParameter supplies a parameter Repl provides before any typed globals, even when a
+		// registered globals type implements its type.
+		if (IsFrameworkInjectedParameter(parameterType))
+		{
+			return false;
+		}
+
 		if (_globalOptionsTypes.Contains(parameterType))
 		{
 			serviceType = parameterType;

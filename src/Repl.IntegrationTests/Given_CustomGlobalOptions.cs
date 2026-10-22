@@ -164,6 +164,55 @@ public sealed class Given_CustomGlobalOptions
 		public IEnumerable<char> Letters { get; set; } = "abc";
 	}
 
+	[TestMethod]
+	[Description("Verifies a parameter of a type Repl supplies stays supplied when registered typed global options implement that type: two such registrations raise no ambiguity, the handler receives Repl's value, and a parameter of the globals type itself still receives the global options.")]
+	public void When_TypedGlobalOptionsImplementASuppliedType_Then_ItStaysSuppliedAndUnambiguous()
+	{
+		var sut = ReplApp.Create()
+			.UseGlobalOptions<FirstProgressGlobals>()
+			.UseGlobalOptions<SecondProgressGlobals>();
+		sut.Map("sync", (IProgress<double> progress, FirstProgressGlobals globals) => progress switch
+		{
+			null => "unbound",
+			FirstProgressGlobals or SecondProgressGlobals => "globals",
+			_ => $"supplied:{globals.Region}",
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--region", "west", "sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("supplied:west").And.NotContain("globals").And.NotContain("unbound");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route segment named like a parameter of a type Repl supplies is refused even when one registered typed global options type implements that type, since the segment's value would never reach the parameter.")]
+	public void When_TypedGlobalOptionsImplementASuppliedType_Then_ARouteSegmentNamedLikeItIsRefused()
+	{
+		var sut = ReplApp.Create().UseGlobalOptions<FirstProgressGlobals>();
+
+		var act = () => sut.Map("check {progress}", (IProgress<double> progress) => "ok");
+
+		act.Should().Throw<InvalidOperationException>().WithMessage("*'{progress}'*Repl supplies*");
+	}
+
+	private sealed class FirstProgressGlobals : IProgress<double>
+	{
+		public string? Region { get; set; }
+
+		public void Report(double value)
+		{
+		}
+	}
+
+	private sealed class SecondProgressGlobals : IProgress<double>
+	{
+		public string? Zone { get; set; }
+
+		public void Report(double value)
+		{
+		}
+	}
+
 	private sealed class DemoGlobals
 	{
 		[System.ComponentModel.Description("Tenant id used for all commands.")]

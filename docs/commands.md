@@ -626,6 +626,8 @@ parameter.
 > **Changed in 0.12.** Option metadata on a parameter Repl supplies used to be ignored, except on a progress parameter,
 > which was an option. Remove the attribute, or a `.WithOption(...)` naming that parameter, which now fails as for any
 > unknown option. A route segment named like such a parameter used to be accepted, then failed when the command ran
-> or had its value ignored; `Map` now refuses it, so rename the segment or the parameter.
+> or had its value ignored; `Map` now refuses it, so rename the segment or the parameter. A parameter of such a type,
+> such as `IProgress<double>`, used to receive a `UseGlobalOptions<T>()` instance implementing it; it now receives
+> Repl's value, so declare the global options type itself to read them.
 
 See [`docs/route-system.md`](route-system.md) for details on constraint types and binding modes.
