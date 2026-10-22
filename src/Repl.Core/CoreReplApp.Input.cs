@@ -153,14 +153,11 @@ public sealed partial class CoreReplApp
 			{
 				return finished;
 			}
-			if (input.Context.Purpose == InputPurpose.Help && _options.Input.Validators.Count != 0)
+			if (input.Context.Purpose == InputPurpose.Help && _options.Input.Validators.Count != 0
+				&& await ValidateCurrentInputAsync(ParseInputGlobals(input).OutputFormat, serviceProvider, cancellationToken)
+					.ConfigureAwait(false) is { } helpRefused)
 			{
-				var help = await AnalyzeInputAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
-				if (help.ApplicationValidation.State != InputValidationState.Valid)
-				{
-					var globals = ParseInputGlobals(input);
-					return await RefuseInputAsync(help.ApplicationValidation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
-				}
+				return helpRefused;
 			}
 			return await ExecuteUnprocessedCoreOutcomeAsync(input.Context.Arguments, serviceProvider,
 				isSubInvocation, cancellationToken, presenceServiceProvider).ConfigureAwait(false);
@@ -243,6 +240,25 @@ public sealed partial class CoreReplApp
 	private ValueTask<ExecutionOutcome> RefuseInputAsync(InputValidationResult validation, string? requestedFormat, CancellationToken cancellationToken) =>
 		RefuseAsync(Results.Validation(validation.Diagnostics.Count != 0 ? validation.Diagnostics[0].Message : "Input validation failed."),
 			requestedFormat, cancellationToken);
+
+	// Runs the application's input validators on the input being run when no route takes it, such as help or a
+	// submission naming a context: the refusal or callback failure to report, or null to proceed.
+	internal async ValueTask<ExecutionOutcome?> ValidateCurrentInputAsync(
+		string? requestedFormat, IServiceProvider services, CancellationToken cancellationToken)
+	{
+		if (_options.Input.Validators.Count == 0 || _currentInput.Value is not { IsHandled: false } input) { return null; }
+		try
+		{
+			var analysis = await AnalyzeInputAsync(input, services, cancellationToken).ConfigureAwait(false);
+			return analysis.ApplicationValidation.State == InputValidationState.Valid
+				? null
+				: await RefuseInputAsync(analysis.ApplicationValidation, requestedFormat, cancellationToken).ConfigureAwait(false);
+		}
+		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken))
+		{
+			return await ReportInputCallbackFailureAsync(exception, requestedFormat, cancellationToken).ConfigureAwait(false);
+		}
+	}
 
 	internal async ValueTask<ParsedInputContext> AnalyzeInputAsync(
 		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken)

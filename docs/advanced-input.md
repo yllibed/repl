@@ -324,6 +324,16 @@ ambient commands, also pass through application validators before dispatch. A
 refused `exit` leaves the session open. Ambient commands have no resolved route
 or command values; inspect `input.Input.Arguments` to identify them.
 
+Input naming a context, at the prompt or on the command line, passes through
+application validators before the context validators run: a refusal leaves an
+interactive session in its current scope, and a command line never enters the
+context. Such input has no resolved `Command` either, so a validator that
+refuses every input without one also refuses navigation. To recognise it,
+combine `input.Input.ScopeTokens` with `input.Input.Arguments`: at the prompt,
+navigation is relative to the current scope, and routing also accepts unique
+prefixes and other letter cases. Guard access to a context with its own
+validation rather than by matching these words.
+
 The snapshot exposes command values through `Values` and globals through
 `GlobalValues`. Each value is `Available`, `Missing` or `Invalid`; typed values
 are converted using Repl's existing conversion rules. A partial command may not
