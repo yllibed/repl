@@ -22,10 +22,15 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		}
 		try
 		{
-			var tokens = InputTokenizer.Tokenize(line);
-			if (tokens.Count == 0) { return []; }
-			var start = tokens[0].Start + tokens[0].Length;
-			while (start < line.Length && char.IsWhiteSpace(line[start])) { start++; }
+			if (!TryFindArgumentRegion(line, out var executableEnd, out var start)) { return []; }
+			// A cursor on the executable, its end included as plain completion counts it, is outside the arguments input
+			// adaptation sees; past it, even in the separating spaces, the arguments are adapted from their start.
+			if (cursor <= executableEnd)
+			{
+				return await ResolveCanonicalShellCompletionCandidatesAsync(line, cursor, shell, serviceProvider, cancellationToken)
+					.ConfigureAwait(false);
+			}
+
 			var inputText = line[start..];
 			var arguments = InputTokenizer.Tokenize(inputText).Select(static token => token.Value).ToArray();
 			var analyzed = await InvokeWithDeadlineAsync(async token =>
@@ -55,7 +60,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			}
 			var globals = GlobalOptionParser.Parse(input.Context.Arguments, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
 			using var globalsScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
-			var executable = line[..(tokens[0].Start + tokens[0].Length)] + " ";
+			var executable = line[..executableEnd] + " ";
 			return await ResolveCanonicalShellCompletionCandidatesAsync(executable + normalized, executable.Length + mappedCursor,
 				shell, serviceProvider, cancellationToken).ConfigureAwait(false);
 		}
@@ -65,6 +70,22 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			await WriteInputFailureAsync(exception).ConfigureAwait(false);
 			return [];
 		}
+	}
+
+	// The executable is the first token; the argument region starts after it and the whitespace that follows.
+	private static bool TryFindArgumentRegion(string line, out int executableEnd, out int argumentStart)
+	{
+		var tokens = InputTokenizer.Tokenize(line);
+		if (tokens.Count == 0)
+		{
+			executableEnd = argumentStart = 0;
+			return false;
+		}
+
+		executableEnd = tokens[0].Start + tokens[0].Length;
+		argumentStart = executableEnd;
+		while (argumentStart < line.Length && char.IsWhiteSpace(line[argumentStart])) { argumentStart++; }
+		return true;
 	}
 
 	private static bool HasUnsafeOriginalShellContext(string line, int cursor)

@@ -395,6 +395,9 @@ remains reserved for completion candidates. Caller cancellation propagates witho
 an error diagnostic. Overdue callbacks are canceled and abandoned, but application
 code must still cooperate with cancellation to stop its work.
 
+A cursor on the executable itself is outside the arguments that adapters and
+validators see: the bridge answers it as plain completion, without running them.
+
 ## Scope
 
 This input pipeline covers CLI, local and hosted interactive input, programmatic
