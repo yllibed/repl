@@ -33,6 +33,14 @@ app.Map("sync", async (IProgress<double> progress, CancellationToken ct) =>
 
 `IProgress<double>` is connected to `IReplInteractionChannel.WriteProgressAsync(...)`. Reporting `42` is equivalent to sending a normal progress event with the configured default label and `Percent = 42`.
 
+Like `CancellationToken`, a progress parameter is supplied by Repl: it is never an option in help, completion,
+exported documentation or an MCP tool's input schema, and declaring `[ReplOption]` or `[ReplArgument]` on it fails when
+the command is mapped (see [Parameter binding precedence](commands.md#parameter-binding-precedence)).
+
+> **Changed in 0.12.** A progress parameter used to be listed as an option (`--progress`) and as an MCP tool argument;
+> `[ReplOption(AutomationHidden = true)]` or `.WithOption("progress", ...)` was the way to hide it. Remove either: both
+> now fail when the command is mapped.
+
 ## Structured Progress
 
 Use `IProgress<ReplProgressEvent>` when the progress update needs a label, computed percentage, state, unit, or details.

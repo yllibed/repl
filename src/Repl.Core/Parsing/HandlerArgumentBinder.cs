@@ -33,10 +33,6 @@ internal static class HandlerArgumentBinder
 		InvocationBindingContext context,
 		ref int positionalIndex)
 	{
-		var parameterName = parameter.Name ?? string.Empty;
-		var bindingMode = ResolveBindingMode(parameter, context.OptionSchema);
-		var enumIgnoreCase = ResolveEnumIgnoreCase(parameterName, context);
-
 		if (parameter.ParameterType == typeof(CancellationToken))
 		{
 			return context.CancellationToken;
@@ -52,6 +48,19 @@ internal static class HandlerArgumentBinder
 			throw new InvalidOperationException(
 				$"Unable to bind parameter '{parameter.Name}' ({parameter.ParameterType.Name}).");
 		}
+
+		// A parameter Repl supplies is never an option or a route value, so it resolves before any value is matched
+		// by name: an option sharing its name, even a global one registered later, keeps its own value.
+		if (ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType))
+		{
+			return ResolveImplicitFromContextOrServices(parameter, context, skipContext: false, out var supplied)
+				? supplied
+				: BindUnresolved(parameter);
+		}
+
+		var parameterName = parameter.Name ?? string.Empty;
+		var bindingMode = ResolveBindingMode(parameter, context.OptionSchema);
+		var enumIgnoreCase = ResolveEnumIgnoreCase(parameterName, context);
 
 		if (context.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out var globalOptionsServiceType))
 		{
@@ -136,6 +145,11 @@ internal static class HandlerArgumentBinder
 		// the parameter would have consumed positionally.
 		ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, parameterName);
 
+		return BindUnresolved(parameter);
+	}
+
+	private static object? BindUnresolved(System.Reflection.ParameterInfo parameter)
+	{
 		if (parameter.HasDefaultValue)
 		{
 			return parameter.DefaultValue;
@@ -190,7 +204,7 @@ internal static class HandlerArgumentBinder
 			: $"{subject} requires exactly one value.");
 	}
 
-	private static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
+	internal static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
 		parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0;
 

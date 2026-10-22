@@ -29,7 +29,9 @@ These flags are parsed before route execution:
 Global parsing notes:
 
 - unknown command options are validation errors by default (`options.Parsing.AllowUnknownOptions = false`)
-- option name matching is case-sensitive by default (`options.Parsing.OptionCaseSensitivity = CaseSensitive`)
+- option name matching is case-sensitive by default (`options.Parsing.OptionCaseSensitivity = CaseSensitive`); this
+  applies to option tokens only: handler parameter names are matched without regard to case, so two parameters whose
+  names differ only by case (or repeat, as two `_` discards do) cause an `InvalidOperationException` at registration
 - option value syntaxes accepted by command parsing: `--name value`, `--name=value`, `--name:value`
 - use `--` to stop option parsing and force remaining tokens to positional arguments
 - response files are supported with `@file.rsp` (enabled by default); nested `@` expansion is not supported
@@ -134,7 +136,7 @@ Hidden options are omitted from help, interactive and shell completion (includin
 
 Over MCP the omission is stricter. The advertised tool schema and the list of accepted arguments are built from the same option list, so a `tools/call` that supplies a hidden option is **rejected** — exactly like a call to a hidden command. A hidden option is therefore reachable from a human-driven CLI or REPL session, but not from an agent.
 
-A hidden option must be omittable for the provider that builds a discovery surface, because that client otherwise has no valid invocation path. Repl checks the same fallbacks and precedence as the handler binder: a CLR default or nullable shape, synthetic `IProgress<double>`/`IProgress<ReplProgressEvent>` from an available `IReplInteractionChannel`, then direct `IServiceProvider.GetService` before explicit `ExactlyOne`/`OneOrMore` lower bounds are enforced. Direct handler parameters are validated when aggregate documentation or MCP discovery is built, not by `Map` or `.Hidden()`, because `Run` and MCP may receive an external provider only after mapping. If the active provider cannot supply the value, discovery fails with the required-hidden diagnostic rather than advertising an impossible command. Required options-group properties still fail immediately during mapping because that binding path never consults DI.
+A hidden option must be omittable for the provider that builds a discovery surface, because that client otherwise has no valid invocation path. Repl checks the same fallbacks and precedence as the handler binder: a CLR default or nullable shape, then direct `IServiceProvider.GetService` before explicit `ExactlyOne`/`OneOrMore` lower bounds are enforced. Direct handler parameters are validated when aggregate documentation or MCP discovery is built, not by `Map` or `.Hidden()`, because `Run` and MCP may receive an external provider only after mapping. If the active provider cannot supply the value, discovery fails with the required-hidden diagnostic rather than advertising an impossible command. Required options-group properties still fail immediately during mapping because that binding path never consults DI.
 
 A fluent `.Hidden(isHidden: false)` overrides `ReplOptionAttribute.Hidden`. For direct handler parameters this can restore visibility before provider-aware discovery. A required hidden options-group property is rejected while the command is mapped, before a fluent override can run, so fix that attribute instead.
 
@@ -313,11 +315,15 @@ Options group behavior:
 - `[ReplOption]`, `[ReplArgument]`, `[ReplValueAlias]` attributes work on properties
 - the same group class can be reused across multiple commands
 - groups and regular parameters can be mixed in the same handler
+- a group parameter bound with `[FromServices]` or `[FromContext]` is resolved as a whole and contributes no options
 - group properties are `OptionOnly` by default; use explicit attributes to opt into positional binding
 - when a group property receives both named and positional values in one invocation, parsing fails with a validation error
 - parameter name collisions between group properties and regular parameters cause an `InvalidOperationException` at registration
 - positional group properties cannot be mixed with positional regular handler parameters in the same command
 - abstract, interface, or nested group types are rejected at registration
+
+> **Changed in 0.12.** The properties of a group bound with `[FromServices]` or `[FromContext]` used to appear as
+> options in help, exported documentation and MCP tool schemas, although they were never accepted.
 
 ## Temporal range types
 
@@ -599,12 +605,29 @@ Handler parameters are resolved in priority order:
 
 1. `CancellationToken` — injected from execution context
 2. Explicit attributes — `[FromServices]`, `[FromContext]`
-3. Options groups — `[ReplOptionsGroup]`
-4. Route values — captured from dynamic segments (`{name}`)
-5. Named options — from `--option value` syntax
-6. Context values / DI services — from context stack or service provider
-7. Positional arguments — remaining tokens consumed left-to-right
-8. Parameter defaults — C# default values
-9. Null — for nullable types without other source
+3. Parameters Repl supplies — progress reporters, the interaction channel and the other types listed below
+4. Typed global options — a `UseGlobalOptions<T>()` type, resolved from services
+5. Options groups — `[ReplOptionsGroup]`
+6. Route values — captured from dynamic segments (`{name}`)
+7. Named options — from `--option value` syntax
+8. Context values / DI services — from context stack or service provider
+9. Positional arguments — remaining tokens consumed left-to-right
+10. Parameter defaults — C# default values
+11. Null — for nullable types without other source
+
+Some parameters are supplied by Repl itself: `CancellationToken`, `IProgress<double>`, `IProgress<ReplProgressEvent>`,
+`IReplInteractionChannel`, `IReplIoContext`, `IReplKeyReader`, `IReplPagingContext`, `IReplSessionState`,
+`IGlobalOptionsAccessor`, `IServiceProvider`, `ICoreReplApp`, and the MCP client services. They are never options or
+arguments, on any surface, so `Map` refuses `[ReplOption]` or `[ReplArgument]` on them. Binding supplies them before
+matching any value by name, so an option named like one of them, such as an options-group property or a global option,
+keeps its own value. A route segment named like one is refused by `Map`, since its value would never reach the
+parameter.
+
+> **Changed in 0.12.** Option metadata on a parameter Repl supplies used to be ignored, except on a progress parameter,
+> which was an option. Remove the attribute, or a `.WithOption(...)` naming that parameter, which now fails as for any
+> unknown option. A route segment named like such a parameter used to be accepted, then failed when the command ran
+> or had its value ignored; `Map` now refuses it, so rename the segment or the parameter. A parameter of such a type,
+> such as `IProgress<double>`, used to receive a `UseGlobalOptions<T>()` instance implementing it; it now receives
+> Repl's value, so declare the global options type itself to read them.
 
 See [`docs/route-system.md`](route-system.md) for details on constraint types and binding modes.

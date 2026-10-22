@@ -169,13 +169,15 @@ precedence:
 
 1. `CancellationToken` — injected from the execution context
 2. Explicit attributes — `[FromServices]`, `[FromContext]`
-3. Options groups — `[ReplOptionsGroup]` for multi-property binding
-4. Route values — values extracted during route resolution
-5. Named options — values from command option parsing
-6. Context/services — resolved from the DI container or execution context
-7. Positional arguments — remaining unmatched tokens, in order
-8. Default values — parameter defaults from the method signature
-9. Null — for nullable types without other source
+3. Parameters Repl supplies — progress reporters, the interaction channel and other framework services
+4. Typed global options — a `UseGlobalOptions<T>()` type, resolved from services
+5. Options groups — `[ReplOptionsGroup]` for multi-property binding
+6. Route values — values extracted during route resolution
+7. Named options — values from command option parsing
+8. Context/services — resolved from the DI container or execution context
+9. Positional arguments — remaining unmatched tokens, in order
+10. Default values — parameter defaults from the method signature
+11. Null — for nullable types without other source
 
 See [parameter-system.md](parameter-system.md) for full parameter binding details.
 
