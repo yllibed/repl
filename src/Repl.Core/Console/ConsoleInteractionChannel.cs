@@ -486,19 +486,22 @@ internal sealed partial class ConsoleInteractionChannel(
 			{
 				if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 				{
-					line = await ReadWithTimeoutRedirectedAsync(options.Timeout.Value, echo, ct)
+					line = await ReadWithTimeoutRedirectedAsync(
+							options.Timeout.Value,
+							(deadline, outer) => ReadSecretLineAsync(options.Mask, echo, deadline, outer),
+							ct)
 						.ConfigureAwait(false);
 				}
 				else
 				{
 					line = await ReadSecretWithCountdownAsync(
-							options.Timeout.Value, options.Mask, echo, ct)
+							options.Timeout.Value, options.Mask, echo, LocalKeySource.SystemConsole, ct)
 						.ConfigureAwait(false);
 				}
 			}
 			else
 			{
-				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', echo, ct).ConfigureAwait(false);
+				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', echo, ct, ct).ConfigureAwait(false);
 			}
 
 			if (string.IsNullOrEmpty(line))
