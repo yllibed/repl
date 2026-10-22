@@ -21,8 +21,24 @@ internal static class InMemoryWebSocketPair
 		return (server, client);
 	}
 
-	// Reads until the other end closes the connection, answers its close, and reports the status it closed with.
-	public static async Task<WebSocketCloseStatus?> AnswerTheCloseAsync(WebSocket socket)
+	// Reads until the other end closes the connection, optionally sends one more message, answers the close, and
+	// reports the status it closed with.
+	public static async Task<WebSocketCloseStatus?> AnswerTheCloseAsync(WebSocket socket, string? sendFirst = null)
+	{
+		var status = await ReceiveTheCloseAsync(socket).ConfigureAwait(false);
+		if (sendFirst is not null)
+		{
+			await socket.SendAsync(System.Text.Encoding.UTF8.GetBytes(sendFirst), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None)
+				.ConfigureAwait(false);
+		}
+
+		await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+			.ConfigureAwait(false);
+		return status;
+	}
+
+	// Reads until the other end's close arrives, and reports its status.
+	public static async Task<WebSocketCloseStatus?> ReceiveTheCloseAsync(WebSocket socket)
 	{
 		var buffer = new byte[4096];
 		while (true)
@@ -30,8 +46,6 @@ internal static class InMemoryWebSocketPair
 			var result = await socket.ReceiveAsync(buffer, CancellationToken.None).ConfigureAwait(false);
 			if (result.MessageType == WebSocketMessageType.Close)
 			{
-				await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
-					.ConfigureAwait(false);
 				return result.CloseStatus;
 			}
 		}

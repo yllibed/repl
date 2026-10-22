@@ -296,6 +296,11 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 > the stream asynchronously closes it too, and a failed connection surfaces as an `IOException` rather than a
 > `WebSocketException`.
 >
+> **Changed in 0.12.** `ReplWebSocketSession.RunAsync` used to abort its WebSocket when the session ended, so the peer
+> saw the connection closed without a close handshake. It now closes it normally, waiting up to a second for the peer
+> to answer and aborting the connection if it does not, so `RunAsync` can return up to a second later. A session ended
+> by cancelling its token still aborts the connection at once.
+>
 > **Changed in 0.12.** A cancellation of a hosted session's token while it detected the terminal (VT probe, Telnet
 > NAWS wait) used to propagate even with `ExitCodes.Cancelled` or a resolver set; it now goes through them too.
 
