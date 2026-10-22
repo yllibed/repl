@@ -209,6 +209,35 @@ public sealed class Given_WebSocketStream
 		}
 	}
 
+	[TestMethod]
+	[DataRow(true, DisplayName = "Peer answers the close")]
+	[DataRow(false, DisplayName = "Peer never answers the close")]
+	[Description("Verifies disposing a WebSocket stream finishes the close handshake even when its pending read gets data instead of the peer's answer: a peer that answers ends up closed, one that does not is aborted.")]
+	public async Task When_APendingReadGetsDataDuringDisposal_Then_TheCloseStillFinishes(bool peerAnswers)
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var stream = new TelnetWebSocketStream(server);
+			var read = stream.ReadAsync(new byte[16]).AsTask();
+			var disposal = stream.DisposeAsync().AsTask();
+			await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false);
+			await client.SendAsync(new byte[] { 1 }, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None)
+				.ConfigureAwait(false);
+			if (peerAnswers)
+			{
+				await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+					.ConfigureAwait(false);
+			}
+
+			(await read.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(1);
+			await disposal.WaitAsync(Patience).ConfigureAwait(false);
+
+			server.State.Should().Be(peerAnswers ? WebSocketState.Closed : WebSocketState.Aborted);
+		}
+	}
+
 	// A WebSocket whose receive ignores its cancellation until the test releases it.
 	private sealed class StuckReceiveWebSocket(WebSocket inner) : DelegatingWebSocket(inner)
 	{

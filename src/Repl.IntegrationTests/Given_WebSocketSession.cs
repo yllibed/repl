@@ -127,6 +127,49 @@ public sealed class Given_WebSocketSession
 		}
 	}
 
+	[TestMethod]
+	[Description("Verifies a WebSocket session whose receive failed still closes the connection normally before the failure surfaces.")]
+	public async Task When_TheReceiveFails_Then_TheConnectionIsStillClosedNormally()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(Encoding.UTF8.GetBytes("@@repl:resize {\"cols\":100,\"rows\":30}"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None)
+				.ConfigureAwait(false);
+
+			var act = () => ReplWebSocketSession.RunAsync(
+					CreateApp(), server, s_options, onControlMessage: _ => throw new InvalidOperationException("The observer failed."), CancellationToken.None)
+				.AsTask()
+				.WaitAsync(Patience);
+
+			await act.Should().ThrowAsync<InvalidOperationException>().ConfigureAwait(false);
+			var stateWhenTheFailureSurfaced = server.State;
+
+			stateWhenTheFailureSurfaced.Should().Be(WebSocketState.Closed);
+			(await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure);
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies a WebSocket session whose token is cancelled before it starts propagates the cancellation and aborts the connection rather than leaving it open.")]
+	public async Task When_TheSessionIsCancelledBeforeItStarts_Then_TheConnectionIsAborted()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		using (var caller = new CancellationTokenSource())
+		{
+			await caller.CancelAsync().ConfigureAwait(false);
+
+			var act = () => ReplWebSocketSession.RunAsync(CreateApp(), server, s_options, caller.Token).AsTask().WaitAsync(Patience);
+
+			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+			server.State.Should().Be(WebSocketState.Aborted);
+		}
+	}
+
 	private static ReplApp CreateApp()
 	{
 		var app = ReplApp.Create();

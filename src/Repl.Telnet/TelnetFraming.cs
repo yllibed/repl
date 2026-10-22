@@ -168,6 +168,7 @@ public sealed class TelnetFraming : IAsyncDisposable
 			return;
 		}
 
+		NoteDrainProgress();
 		await SendLoopAsync(ct).ConfigureAwait(false);
 	}
 
@@ -238,6 +239,18 @@ public sealed class TelnetFraming : IAsyncDisposable
 		}
 	}
 
+	// A completed write is progress: while draining, the remaining output gets a fresh allowance.
+	private void NoteDrainProgress()
+	{
+		lock (_gate)
+		{
+			if (_draining)
+			{
+				_sendingStop?.CancelAfter(DrainIdleTimeout);
+			}
+		}
+	}
+
 	private async Task SendLoopAsync(CancellationToken ct)
 	{
 		try
@@ -245,14 +258,7 @@ public sealed class TelnetFraming : IAsyncDisposable
 			await foreach (var data in _outChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
 			{
 				await _pipe.Output.WriteAsync(data, ct).ConfigureAwait(false);
-				lock (_gate)
-				{
-					if (_draining)
-					{
-						// Progress: the remaining output gets a fresh allowance.
-						_sendingStop?.CancelAfter(DrainIdleTimeout);
-					}
-				}
+				NoteDrainProgress();
 			}
 		}
 		catch (OperationCanceledException) { }

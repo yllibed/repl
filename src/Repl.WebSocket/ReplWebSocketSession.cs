@@ -79,11 +79,25 @@ public static class ReplWebSocketSession
 			}
 			finally
 			{
-				// A WebSocket aborts a receive that is cancelled, so the session ends the pending one by closing the
-				// connection, or by answering the peer's own close; one deadline covers sending the close and
-				// receiving the answer, and only a peer that misses it is aborted.
-				receiveCts.CancelAfter(CloseTimeout);
-				await SendCloseAsync(socket, receiveCts.Token).ConfigureAwait(false);
+				if (cancellationToken.IsCancellationRequested)
+				{
+					// A cancelled session aborts the connection, whether or not its receive ever started.
+					socket.Abort();
+				}
+				else
+				{
+					// A WebSocket aborts a receive that is cancelled, so a pending receive is ended by closing the
+					// connection, or by answering the peer's own close; one deadline covers the whole handshake.
+					receiveCts.CancelAfter(CloseTimeout);
+					if (!receiveTask.IsCompleted)
+					{
+						await SendCloseAsync(socket, receiveCts.Token).ConfigureAwait(false);
+					}
+				}
+
+				await receiveTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+				await FinishCloseAsync(socket, receiveCts.Token).ConfigureAwait(false);
+				// A failed receive surfaces only once the connection is settled.
 				await receiveTask.ConfigureAwait(false);
 			}
 
@@ -96,10 +110,10 @@ public static class ReplWebSocketSession
 		}
 	}
 
-	// Sends the session's close, or answers the peer's; a pending receive gets the peer's answer to the session's.
+	// Sends the session's close; the receive still pending gets the peer's answer.
 	private static async Task SendCloseAsync(System.Net.WebSockets.WebSocket socket, CancellationToken deadline)
 	{
-		if (socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived) || deadline.IsCancellationRequested)
+		if (socket.State is not WebSocketState.Open)
 		{
 			return;
 		}
@@ -109,13 +123,42 @@ public static class ReplWebSocketSession
 			await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, deadline)
 				.ConfigureAwait(false);
 		}
-		catch (OperationCanceledException)
+		catch (Exception ex) when (ex is OperationCanceledException or System.Net.WebSockets.WebSocketException or InvalidOperationException)
 		{
-			// The close could not be sent in time: cancelling it aborted the connection.
+			// The close could not be sent: the receive ends with the deadline, and finishing the close aborts what is left.
 		}
-		catch (System.Net.WebSockets.WebSocketException)
+	}
+
+	// Finishes the close handshake within the close's deadline, whatever state the receive left the connection in, and
+	// aborts a connection that is still not closed once the deadline passes. Repl.Telnet's WebSocketStream keeps a copy
+	// of this in step: the two assemblies share no internal code.
+	private static async Task FinishCloseAsync(System.Net.WebSockets.WebSocket socket, CancellationToken deadline)
+	{
+		try
 		{
-			// The connection failed already; the receive ends with it.
+			var discarded = new byte[256];
+			while (socket.State is WebSocketState.CloseSent)
+			{
+				var result = await socket.ReceiveAsync(discarded.AsMemory(), deadline).ConfigureAwait(false);
+				if (result.MessageType == WebSocketMessageType.Close)
+				{
+					break;
+				}
+			}
+
+			if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+			{
+				await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, deadline).ConfigureAwait(false);
+			}
+		}
+		catch (Exception ex) when (ex is OperationCanceledException or System.Net.WebSockets.WebSocketException or InvalidOperationException)
+		{
+			// The deadline passed or the connection failed: it is aborted below.
+		}
+
+		if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted))
+		{
+			socket.Abort();
 		}
 	}
 

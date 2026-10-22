@@ -138,7 +138,8 @@ public sealed class WebSocketStream : Stream
 	/// <remarks>
 	/// Closes the WebSocket normally, unless it is already closed: it waits for the close a cancelled read began, or
 	/// closes it now, and aborts the connection if the peer does not answer in time, as for a cancelled read. It also
-	/// waits for a pending read to end, which the peer's answer or that abort brings about.
+	/// waits for a pending read to end; when that read gets data rather than the peer's answer, what the peer still
+	/// sends until its answer is read and discarded.
 	/// </remarks>
 	public override async ValueTask DisposeAsync()
 	{
@@ -160,6 +161,31 @@ public sealed class WebSocketStream : Stream
 			if (receivesEnded is not null)
 			{
 				await receivesEnded.ConfigureAwait(false);
+			}
+
+			// A synchronous disposal already aborted what was under way, and its token source is gone. Otherwise the
+			// handshake's receive is counted as one, so a synchronous disposal meanwhile aborts it rather than dropping
+			// its deadline.
+			CancellationToken? deadline = null;
+			lock (_gate)
+			{
+				if (!_disposed)
+				{
+					deadline = _lifetime.Token;
+					_receives++;
+				}
+			}
+
+			if (deadline is { } closeDeadline)
+			{
+				try
+				{
+					await FinishCloseAsync(_socket, closeDeadline).ConfigureAwait(false);
+				}
+				finally
+				{
+					EndReceive();
+				}
 			}
 		}
 		finally
@@ -216,6 +242,39 @@ public sealed class WebSocketStream : Stream
 			}
 
 			return _closing ?? Task.CompletedTask;
+		}
+	}
+
+	// Finishes the close handshake within the close's deadline: a receive that ended with data rather than the peer's
+	// answer leaves that answer to read, and a connection that is still not closed once the deadline passes is aborted.
+	// ReplWebSocketSession keeps a copy of this in step: the two assemblies share no internal code.
+	private static async Task FinishCloseAsync(WebSocket socket, CancellationToken deadline)
+	{
+		try
+		{
+			var discarded = new byte[256];
+			while (socket.State is WebSocketState.CloseSent)
+			{
+				var result = await socket.ReceiveAsync(discarded.AsMemory(), deadline).ConfigureAwait(false);
+				if (result.MessageType == WebSocketMessageType.Close)
+				{
+					break;
+				}
+			}
+
+			if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+			{
+				await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, deadline).ConfigureAwait(false);
+			}
+		}
+		catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or InvalidOperationException)
+		{
+			// The deadline passed or the connection failed: it is aborted below.
+		}
+
+		if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted))
+		{
+			socket.Abort();
 		}
 	}
 

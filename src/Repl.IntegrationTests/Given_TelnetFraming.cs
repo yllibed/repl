@@ -134,6 +134,73 @@ public sealed class Given_TelnetFraming
 		received.Should().BeGreaterThanOrEqualTo(1024);
 	}
 
+	[TestMethod]
+	[Description("Verifies a disposal that starts while the negotiation is held counts the negotiation's completion as progress, so a peer that keeps up, if slowly, still receives all the output.")]
+	public async Task When_DisposalStartsDuringASlowNegotiation_Then_AllTheOutputIsStillSent()
+	{
+		var toPeer = new Pipe();
+		using var output = new SteppedPipeWriter(toPeer.Writer);
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, output));
+		var run = framing.RunAsync(CancellationToken.None);
+		await output.Waiting.WaitAsync(Patience).ConfigureAwait(false);
+		await framing.Output.WriteAsync("DATA").ConfigureAwait(false);
+		await framing.Output.WriteAsync("TAIL").ConfigureAwait(false);
+
+		// The negotiation goes through 1.4 s into the disposal and the data 1 s later: past the two seconds the disposal
+		// started with, but within two seconds of the negotiation's progress.
+		var disposal = framing.DisposeAsync().AsTask();
+		await Task.Delay(TimeSpan.FromMilliseconds(1400)).ConfigureAwait(false);
+		output.Step();
+		await Task.Delay(TimeSpan.FromMilliseconds(1000)).ConfigureAwait(false);
+		output.Open();
+		await disposal.WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		toPeer.Reader.TryRead(out var sent).Should().BeTrue();
+		System.Text.Encoding.ASCII.GetString(System.Buffers.BuffersExtensions.ToArray(sent.Buffer)).Should().EndWith("DATATAIL");
+	}
+
+	// A pipe writer whose flushes wait for the test to let them through, one at a time or all at once.
+	private sealed class SteppedPipeWriter(PipeWriter inner) : PipeWriter, IDisposable
+	{
+		private readonly SemaphoreSlim _steps = new(0);
+		private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		private volatile bool _open;
+
+		public Task Waiting => _waiting.Task;
+
+		public void Step() => _steps.Release();
+
+		public void Open()
+		{
+			_open = true;
+			_steps.Release();
+		}
+
+		public override void Advance(int bytes) => inner.Advance(bytes);
+
+		public override Memory<byte> GetMemory(int sizeHint = 0) => inner.GetMemory(sizeHint);
+
+		public override Span<byte> GetSpan(int sizeHint = 0) => inner.GetSpan(sizeHint);
+
+		public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
+		public override void Complete(Exception? exception = null) => inner.Complete(exception);
+
+		public override async ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+		{
+			_waiting.TrySetResult();
+			if (!_open)
+			{
+				await _steps.WaitAsync(cancellationToken).ConfigureAwait(false);
+			}
+
+			return await inner.FlushAsync(cancellationToken).ConfigureAwait(false);
+		}
+
+		public void Dispose() => _steps.Dispose();
+	}
+
 	private sealed record DuplexPipe(PipeReader Input, PipeWriter Output) : IDuplexPipe;
 
 	// Waits until the framing has written something, without consuming it.
