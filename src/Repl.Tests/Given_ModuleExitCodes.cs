@@ -751,6 +751,19 @@ public sealed class Given_ModuleExitCodes
 	}
 
 	[TestMethod]
+	[Description("Verifies an input validator refusing a command line that names a context reports the refusal with the codes of the module that mapped the context, as a failed context validation does.")]
+	public void When_InputValidationRefusesAContext_Then_TheContextModuleDecides()
+	{
+		var sut = CreateApp();
+		sut.UseInputValidator((ParsedInputContext input) => input.Input.Arguments.SequenceEqual(["empty"], StringComparer.Ordinal)
+			? InputValidationResult.Invalid("The empty context is closed.")
+			: InputValidationResult.Valid());
+		sut.MapModule(new GuardedModule());
+
+		Run(sut, ["empty"]).Should().Be(5, "the module mapped the context");
+	}
+
+	[TestMethod]
 	[Description("Verifies a context's failed validation belongs to the module that mapped the context, unless the invocation resolved to a command, whose module then decides.")]
 	public void When_AContextValidationFails_Then_TheContextOrTheCommandModuleDecides()
 	{

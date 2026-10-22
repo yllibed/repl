@@ -659,6 +659,13 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, app.OptionsSnapshot.Parsing);
 		if (contextMatch is not null)
 		{
+			// Input validation decides a submission before it moves the scope, as it does before a command runs.
+			if (await app.ValidateCurrentInputAsync(globalOptions.OutputFormat, serviceProvider, cancellationToken)
+				.ConfigureAwait(false) is { } refused)
+			{
+				return app.AttributeToContext(refused, contextMatch.Context);
+			}
+
 			var contextValidation = await app.ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
 				.ConfigureAwait(false);
 			if (!contextValidation.IsValid)

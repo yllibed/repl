@@ -754,6 +754,13 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			return AttributeUnresolved(refusal, unresolved);
 		}
 
+		// Input validation decides a command line before it enters a context, as it does before a command runs.
+		if (await ValidateCurrentInputAsync(globalOptions.OutputFormat, serviceProvider, cancellationToken)
+			.ConfigureAwait(false) is { } inputRefusal)
+		{
+			return AttributeToContext(inputRefusal, contextMatch.Context);
+		}
+
 		var contextValidation = await ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
 			.ConfigureAwait(false);
 		// Matched rather than null-forgiven: ContextValidationOutcome's only producers are Success, which

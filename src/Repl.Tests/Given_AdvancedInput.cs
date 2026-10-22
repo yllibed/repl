@@ -589,6 +589,85 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[DataRow("invalid", "Tools are locked.", DisplayName = "Invalid")]
+	[DataRow("incomplete", "Tools need a reason.", DisplayName = "Incomplete")]
+	[DataRow("throws", "tools validator failure", DisplayName = "Validator throws")]
+	[DataRow("valid", null, DisplayName = "Valid")]
+	[Description("Verifies an interactive submission naming a context is checked by the application's input validators, once, before the scope changes: a refusal or a validator failure is reported, leaves the session at the root and skips the context validator, while a valid result runs the context validator and enters the context.")]
+	public async Task When_ASubmissionNamesAContext_Then_InputValidationDecidesTheNavigation(string verdict, string? reported)
+	{
+		var app = CoreReplApp.Create();
+		var navigationChecks = 0;
+		app.UseInputValidator((ParsedInputContext input) => CheckToolsNavigation(input, verdict, ref navigationChecks));
+		var contextChecks = 0;
+		string? ran = null;
+		app.Map("where", () => { ran = "root"; });
+		app.Context("tools", scope => scope.Map("where", () => { ran = "tools"; }), validation: () => ++contextChecks > 0);
+		using var writer = new StringWriter();
+		using var reader = new StringReader("tools\nwhere\nexit\n");
+		using var io = ReplSessionIO.SetSession(writer, reader);
+
+		await app.RunAsync([]);
+
+		var valid = string.Equals(verdict, "valid", StringComparison.Ordinal);
+		navigationChecks.Should().Be(1, writer.ToString());
+		// A valid navigation runs the context validator, which then guards each command in the context as well.
+		if (valid)
+		{
+			contextChecks.Should().BePositive(writer.ToString());
+		}
+		else
+		{
+			contextChecks.Should().Be(0, writer.ToString());
+		}
+
+		ran.Should().Be(valid ? "tools" : "root", writer.ToString());
+		if (reported is not null)
+		{
+			writer.ToString().Should().Contain(reported);
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies a command line naming a context is checked by the application's input validators before the context is entered: an invalid result is reported and the context validator never runs.")]
+	public async Task When_ACommandLineNamesAContextTheValidatorsRefuse_Then_TheContextIsNotEntered()
+	{
+		var app = CoreReplApp.Create();
+		var navigationChecks = 0;
+		app.UseInputValidator((ParsedInputContext input) => CheckToolsNavigation(input, "invalid", ref navigationChecks));
+		var contextChecks = 0;
+		app.Context("tools", scope => scope.Map("where", () => "tools"), validation: () => ++contextChecks > 0);
+		using var writer = new StringWriter();
+		using var io = ReplSessionIO.SetSession(writer, TextReader.Null);
+
+		var exitCode = await app.RunAsync(["tools"]);
+
+		exitCode.Should().NotBe(0, writer.ToString());
+		navigationChecks.Should().Be(1);
+		contextChecks.Should().Be(0);
+		writer.ToString().Should().Contain("Tools are locked.");
+	}
+
+	// Counts the execution-time checks of a submission naming the tools context, answering them with the verdict.
+	private static InputValidationResult CheckToolsNavigation(ParsedInputContext input, string verdict, ref int checks)
+	{
+		if (input.Input.Mode != InputProcessingMode.Execution
+			|| !input.Input.Arguments.SequenceEqual(["tools"], StringComparer.Ordinal))
+		{
+			return InputValidationResult.Valid();
+		}
+
+		checks++;
+		return verdict switch
+		{
+			"invalid" => InputValidationResult.Invalid("Tools are locked."),
+			"incomplete" => InputValidationResult.Incomplete("Tools need a reason."),
+			"throws" => throw new InvalidOperationException("tools validator failure"),
+			_ => InputValidationResult.Valid(),
+		};
+	}
+
+	[TestMethod]
 	[Description("Shell callbacks must analyze user input in completion mode rather than the protocol envelope.")]
 	public async Task When_ShellCompletionUsesLegacySyntax_Then_AdaptersSeeTheTransportedLine()
 	{
