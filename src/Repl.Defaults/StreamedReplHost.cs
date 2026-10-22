@@ -176,7 +176,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// <param name="options">Optional run options.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
-	/// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled: always while the session detects the terminal, then, for example while it waits for input, only when neither <see cref="ExitCodeOptions.Cancelled"/> nor <see cref="ExitCodeOptions.Resolver"/> is set to map the cancellation to an exit code. A client that closes the session ends it normally instead.</exception>
+	/// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled, for example while the session waited for input, and neither <see cref="ExitCodeOptions.Cancelled"/> nor <see cref="ExitCodeOptions.Resolver"/> is set to map the cancellation to an exit code. A client that closes the session ends it normally instead.</exception>
 	public async ValueTask<int> RunSessionAsync(
 		ReplApp app,
 		ReplRunOptions? options = null,
@@ -189,8 +189,16 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 		var ansiMode = runOptions.AnsiSupport;
 		var (provider, dttermProvider) = ResolveProvider();
 
-		await DetectSizeAndAnsiAsync(provider, dttermProvider, runOptions, ansiMode, cancellationToken)
-			.ConfigureAwait(false);
+		try
+		{
+			await DetectSizeAndAnsiAsync(provider, dttermProvider, runOptions, ansiMode, cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			// The run below reports the caller's cancellation as soon as it starts, under the configured cancellation
+			// policy, as it does for a cancellation at any later point.
+		}
 
 		provider.SizeChanged += OnSizeChanged;
 		SetupKeyReader(dttermProvider);

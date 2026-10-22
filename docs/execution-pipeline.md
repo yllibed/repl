@@ -287,6 +287,9 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 >
 > **Changed in 0.12.** `ReplTelnetSession.RunAsync` used to keep waiting for input once the peer had closed its side
 > of the connection, until its token was cancelled; it now ends the session, with exit code `0`.
+>
+> **Changed in 0.12.** A cancellation of a hosted session's token while it detected the terminal (VT probe, Telnet
+> NAWS wait) used to propagate even with `ExitCodes.Cancelled` or a resolver set; it now goes through them too.
 
 A hosted-service failure is resolved once, after the whole lifecycle, and the outcome carries the
 exception. A shutdown that fails outranks everything the run had produced — including any exception
