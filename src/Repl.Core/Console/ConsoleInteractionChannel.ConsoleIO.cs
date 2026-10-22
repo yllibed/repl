@@ -59,25 +59,21 @@ internal sealed partial class ConsoleInteractionChannel
 		}
 	}
 
-	// Attributes a key reader's cancellation, whichever reader it is: ct's own, even seen through a token the reader
-	// linked to it, stays ct's, so a deadline remains a timeout; a reader that stops with no cancelled token, or while
-	// ct was not cancelled, has lost its input.
+	// Whichever reader it is: ct's cancellation, however the reader observed it, is reported as ct's
+	// (PromptCancellation); a reader that stops otherwise has lost its input.
 	private static async ValueTask<ConsoleKeyInfo> ReadRemoteKeyAsync(IReplKeyReader keyReader, CancellationToken ct)
 	{
 		try
 		{
 			return await keyReader.ReadKeyAsync(ct).ConfigureAwait(false);
 		}
-		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException && ex.CancellationToken != ct)
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
+			&& PromptCancellation.IsThroughAnotherToken(ex, ct))
 		{
-			if (ct.IsCancellationRequested && ex.CancellationToken.IsCancellationRequested)
-			{
-				throw new OperationCanceledException(ex.Message, ex, ct);
-			}
-
-			throw new PromptAbandonedException("The terminal input ended.", ct, ex);
+			throw PromptCancellation.AsCancellationOf(ex, ct);
 		}
-		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException && !ct.IsCancellationRequested)
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
+			&& (ex.CancellationToken != ct || !ct.IsCancellationRequested))
 		{
 			throw new PromptAbandonedException("The terminal input ended.", ct, ex);
 		}
@@ -339,8 +335,9 @@ internal sealed partial class ConsoleInteractionChannel
 			return await read(timeoutCts.Token, cancellationToken).ConfigureAwait(false);
 		}
 		// Only a cancellation carrying the deadline's own token is a timeout: the timer's state alone cannot say what
-		// cancelled. Esc, a secret input that ended, and a transport cancelling its own write therefore fail the prompt
-		// even when the timer has fired since.
+		// cancelled. Esc, a secret input that ended, and a transport cancelling its own write (which is never handed the
+		// deadline) therefore fail the prompt even when the timer has fired since. Operations handed the deadline, a key
+		// read or an echo flush, report a cancellation while it is cancelled as its own (PromptCancellation).
 		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
 			&& ex.CancellationToken == timeoutCts.Token
 			&& timeoutCts.IsCancellationRequested

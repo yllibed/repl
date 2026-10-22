@@ -346,6 +346,56 @@ public sealed class Given_RemoteSecretPrompt
 		}
 	}
 
+	[TestMethod]
+	[Description("Verifies a hosted terminal's output cancelled on its own while a typed character is echoed fails a timed text prompt, even when the deadline expires during that write: the write is never handed the deadline.")]
+	public async Task When_TheWriteOfATypedCharacterIsCancelled_Then_ThePromptFails()
+	{
+		var time = new FakeTimeProvider();
+		using var output = new OutputCancelledAtDeadlineWriter(time, marker: "q");
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions(), timeProvider: time);
+		try
+		{
+			ReplSessionIO.KeyReader = new FakeKeyReader([Key(ConsoleKey.Q, 'q')]);
+
+			var act = () => AskTimedAsync(channel, secret: false);
+
+			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+			output.Fired.Should().BeTrue("the output must be cancelled during the echo for the case to be exercised");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies a timed text prompt in a hosted terminal still times out to its default when the deadline is observed through a token the output writer linked to its own lifetime while flushing an echo.")]
+	public async Task When_AWriterObservesTheDeadlineThroughALinkedFlushToken_Then_ThePromptTimesOut()
+	{
+		var time = new FakeTimeProvider();
+		using var output = new LinkedFlushWriter(time, marker: "q");
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions(), timeProvider: time);
+		try
+		{
+			ReplSessionIO.KeyReader = new FakeKeyReader([Key(ConsoleKey.Q, 'q')]);
+
+			var answer = await channel.AskTextAsync(
+					"name", "Name", "fallback", new AskOptions(Timeout: TimeSpan.FromSeconds(5)))
+				.ConfigureAwait(false);
+
+			answer.Should().Be("fallback");
+			output.Fired.Should().BeTrue("the deadline must expire during the linked flush for the case to be exercised");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
 	private static async Task<string> AskTimedAsync(ConsoleInteractionChannel channel, bool secret) =>
 		secret
 			? await channel.AskSecretAsync(
@@ -513,6 +563,38 @@ public sealed class Given_RemoteSecretPrompt
 			time.Advance(TimeSpan.FromSeconds(10));
 			return ValueTask.FromException<ConsoleKeyInfo>(
 				new OperationCanceledException("transport disconnected", CancellationToken.None));
+		}
+	}
+
+	// A transport writer that flushes on a token linked to its own lifetime, and lets the deadline expire while it waits
+	// to flush an echo containing the marker.
+	private sealed class LinkedFlushWriter(FakeTimeProvider time, string marker) : StringWriter
+	{
+		private readonly CancellationTokenSource _lifetime = new();
+
+		public bool Fired { get; private set; }
+
+		public override async Task FlushAsync(CancellationToken cancellationToken)
+		{
+			if (Fired || !ToString().Contains(marker, StringComparison.Ordinal))
+			{
+				return;
+			}
+
+			Fired = true;
+			using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+			time.Advance(TimeSpan.FromSeconds(10));
+			await Task.Delay(Timeout.Infinite, linked.Token).ConfigureAwait(false);
+		}
+
+		protected override void Dispose(bool disposing)
+		{
+			if (disposing)
+			{
+				_lifetime.Dispose();
+			}
+
+			base.Dispose(disposing);
 		}
 	}
 

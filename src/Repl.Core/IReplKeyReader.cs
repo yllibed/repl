@@ -17,8 +17,8 @@ public interface IReplKeyReader
 	/// <returns>The key info of the pressed key.</returns>
 	/// <exception cref="OperationCanceledException">
 	/// <paramref name="ct"/> was cancelled: the exception carries <paramref name="ct"/> or a token linked to it, so a timed
-	/// prompt can tell its deadline apart. Or the input ended: the exception carries no cancelled token, and a prompt
-	/// fails instead of timing out.
+	/// prompt can tell its deadline apart. Or the input ended: the exception carries no cancelled token, and a secret
+	/// prompt fails instead of timing out.
 	/// </exception>
 	ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct);
 

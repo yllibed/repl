@@ -322,6 +322,10 @@ internal static partial class ConsoleLineReader
 		{
 			// The caller sees the key's outcome rather than the cancellation.
 		}
+		catch (OperationCanceledException ex) when (PromptCancellation.IsThroughAnotherToken(ex, ct))
+		{
+			throw PromptCancellation.AsCancellationOf(ex, ct);
+		}
 	}
 
 	// ---------- Console sync path ----------
