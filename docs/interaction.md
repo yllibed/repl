@@ -277,13 +277,15 @@ The host displays a countdown and selects the default when time expires.
 
 ### Cancellation
 
-- **Esc** during a prompt cancels the prompt
+- **Esc** during a prompt cancels the prompt, even when its timeout expires at the same moment
 - **Ctrl+C** during a command cancels the per-command `CancellationToken`
 - A second **Ctrl+C** exits the session
+- A hosted terminal that disconnects during a secret prompt cancels it rather than answering it
+- A secret prompt's timeout stops counting once the user starts typing, in a hosted terminal as on a local console
 
-> **Changed in 0.12.** Esc in a secret prompt with a timeout, on a local console, used to return an empty
-> answer or ask again. It now cancels the prompt with an `OperationCanceledException`, as in every other
-> prompt. A caller that wants the old result can catch it and use an empty string.
+> **Changed in 0.12.** Esc in a secret prompt with a timeout used to return an empty answer or ask again, and so
+> did a hosted terminal disconnecting during one. Both now cancel the prompt with an `OperationCanceledException`, as
+> in every other prompt. A caller that wants the old result can catch it and use an empty string.
 
 ---
 

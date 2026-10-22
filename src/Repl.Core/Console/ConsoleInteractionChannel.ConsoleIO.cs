@@ -10,16 +10,18 @@ internal sealed partial class ConsoleInteractionChannel
 	// elsewhere.
 	private TextWriter ResolvePromptEcho() => InteractionFeedbackRouting.Resolve(_outputOptions).Writer;
 
-	private static async ValueTask<string?> ReadSecretLineAsync(char? mask, TextWriter echo, CancellationToken ct)
+	// untilFirstKey is ct, or a timed prompt's deadline, which only applies until typing starts in a hosted terminal.
+	private static async ValueTask<string?> ReadSecretLineAsync(
+		char? mask, TextWriter echo, CancellationToken untilFirstKey, CancellationToken ct)
 	{
 		if (ReplSessionIO.KeyReader is { } keyReader)
 		{
-			return await ReadSecretRemoteAsync(keyReader, mask, echo, ct).ConfigureAwait(false);
+			return await ReadSecretRemoteAsync(keyReader, mask, echo, untilFirstKey, ct).ConfigureAwait(false);
 		}
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
-			return await ReadLineWithEscAsync(echo, ct).ConfigureAwait(false);
+			return await ReadLineWithEscAsync(echo, untilFirstKey).ConfigureAwait(false);
 		}
 
 		return await Task.Run(() => ReadSecretSync(mask, echo, ct), ct).ConfigureAwait(false);
@@ -27,27 +29,46 @@ internal sealed partial class ConsoleInteractionChannel
 
 	// A hosted terminal's keys, under the same rule as the console's (ApplySecretKey).
 	private static async ValueTask<string?> ReadSecretRemoteAsync(
-		IReplKeyReader keyReader, char? mask, TextWriter echo, CancellationToken ct)
+		IReplKeyReader keyReader, char? mask, TextWriter echo, CancellationToken untilFirstKey, CancellationToken ct)
 	{
 		var buffer = new System.Text.StringBuilder();
+		var token = untilFirstKey;
 		while (true)
 		{
-			var (outcome, text) = ApplySecretKey(await keyReader.ReadKeyAsync(ct).ConfigureAwait(false), buffer, mask);
+			var key = await ReadRemoteKeyAsync(keyReader, token).ConfigureAwait(false);
+			// Once typing starts the deadline no longer applies, as at the console: cancelling mid-entry would leave
+			// the rest of the secret for the next reader, which echoes in clear. A terminal report, such as a resize,
+			// carries no character and is not typing.
+			if (key.KeyChar != '\0' || key.Key is ConsoleKey.Escape or ConsoleKey.Enter or ConsoleKey.Backspace)
+			{
+				token = ct;
+			}
+			var (outcome, text) = ApplySecretKey(key, buffer, mask);
 			// A remote terminal needs a carriage return to go back to column 1, as the line editor writes it.
 			var output = outcome == SecretKeyOutcome.Submit ? "\r\n" : text;
-			if (output.Length > 0)
-			{
-				await echo.WriteAsync(output).ConfigureAwait(false);
-				await echo.FlushAsync(ct).ConfigureAwait(false);
-			}
+			await ConsoleLineReader.WriteEchoAsync(echo, output, settled: outcome != SecretKeyOutcome.Continue, token)
+				.ConfigureAwait(false);
 
 			switch (outcome)
 			{
 				case SecretKeyOutcome.Cancel:
-					throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+					throw new PromptAbandonedException("Prompt cancelled via Esc.", token);
 				case SecretKeyOutcome.Submit:
 					return buffer.ToString();
 			}
+		}
+	}
+
+	// A key reader that stops although its token was not cancelled has lost its input, whichever reader it is.
+	private static async ValueTask<ConsoleKeyInfo> ReadRemoteKeyAsync(IReplKeyReader keyReader, CancellationToken ct)
+	{
+		try
+		{
+			return await keyReader.ReadKeyAsync(ct).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException && !ct.IsCancellationRequested)
+		{
+			throw new PromptAbandonedException("The terminal input ended.", ct, ex);
 		}
 	}
 
@@ -247,7 +268,7 @@ internal sealed partial class ConsoleInteractionChannel
 		switch (outcome)
 		{
 			case SecretKeyOutcome.Cancel:
-				throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+				throw new PromptAbandonedException("Prompt cancelled via Esc.", ct);
 			case SecretKeyOutcome.Submit:
 				EchoLine(echo);
 				return buffer.ToString();
@@ -277,7 +298,8 @@ internal sealed partial class ConsoleInteractionChannel
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 		{
-			return await ReadWithTimeoutRedirectedAsync(timeout.Value, token => ReadLineWithEscAsync(echo, token), cancellationToken)
+			return await ReadWithTimeoutRedirectedAsync(
+					timeout.Value, (deadline, _) => ReadLineWithEscAsync(echo, deadline), cancellationToken)
 				.ConfigureAwait(false);
 		}
 
@@ -285,9 +307,10 @@ internal sealed partial class ConsoleInteractionChannel
 			.ConfigureAwait(false);
 	}
 
+	// read receives the deadline, cancelled by the timer or the caller, and the caller's own token.
 	private async ValueTask<string?> ReadWithTimeoutRedirectedAsync(
 		TimeSpan timeout,
-		Func<CancellationToken, ValueTask<string?>> read,
+		Func<CancellationToken, CancellationToken, ValueTask<string?>> read,
 		CancellationToken cancellationToken)
 	{
 		using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -302,10 +325,13 @@ internal sealed partial class ConsoleInteractionChannel
 			timeoutCts, timeout, Timeout.InfiniteTimeSpan);
 		try
 		{
-			return await read(timeoutCts.Token).ConfigureAwait(false);
+			return await read(timeoutCts.Token, cancellationToken).ConfigureAwait(false);
 		}
-		// Only the timer's own cancellation is a timeout: Esc, or a transport that ended, still fails the prompt.
-		catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+		// Only the timer's own cancellation is a timeout. Esc, or a secret prompt's terminal stream that ended, still
+		// fails the prompt even if the timer has fired since, so it is told apart by its type, not the timer's state.
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
+			&& timeoutCts.IsCancellationRequested
+			&& !cancellationToken.IsCancellationRequested)
 		{
 			return null;
 		}
@@ -335,7 +361,7 @@ internal sealed partial class ConsoleInteractionChannel
 
 		if (result.Escaped)
 		{
-			throw new OperationCanceledException("Prompt cancelled via Esc.", cancellationToken);
+			throw new PromptAbandonedException("Prompt cancelled via Esc.", cancellationToken);
 		}
 
 		return result.Line;
@@ -517,7 +543,7 @@ internal sealed partial class ConsoleInteractionChannel
 		var result = await ConsoleLineReader.ReadLineAsync(ct, echo).ConfigureAwait(false);
 		if (result.Escaped)
 		{
-			throw new OperationCanceledException("Prompt cancelled via Esc.", ct);
+			throw new PromptAbandonedException("Prompt cancelled via Esc.", ct);
 		}
 
 		return result.Line;

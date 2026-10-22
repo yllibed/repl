@@ -487,7 +487,9 @@ internal sealed partial class ConsoleInteractionChannel(
 				if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
 				{
 					line = await ReadWithTimeoutRedirectedAsync(
-							options.Timeout.Value, token => ReadSecretLineAsync(options.Mask, echo, token), ct)
+							options.Timeout.Value,
+							(deadline, outer) => ReadSecretLineAsync(options.Mask, echo, deadline, outer),
+							ct)
 						.ConfigureAwait(false);
 				}
 				else
@@ -499,7 +501,7 @@ internal sealed partial class ConsoleInteractionChannel(
 			}
 			else
 			{
-				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', echo, ct).ConfigureAwait(false);
+				line = await ReadSecretLineAsync(options is not null ? options.Mask : '*', echo, ct, ct).ConfigureAwait(false);
 			}
 
 			if (string.IsNullOrEmpty(line))

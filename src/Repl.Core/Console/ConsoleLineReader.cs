@@ -279,13 +279,7 @@ internal static partial class ConsoleLineReader
 					await RefreshAssistAfterEditingAsync(editor, buffer, cursor, echo, ct).ConfigureAwait(false);
 				}
 
-				if (echo.Length > 0)
-				{
-					await output.WriteAsync(echo.ToString()).ConfigureAwait(false);
-					await output.FlushAsync(ct).ConfigureAwait(false);
-					echo.Clear();
-				}
-
+				await WriteEchoAsync(output, echo, settled: result is not null, ct).ConfigureAwait(false);
 				if (result is not null)
 				{
 					return result.Value;
@@ -294,12 +288,39 @@ internal static partial class ConsoleLineReader
 				continue;
 			}
 
-			if (echo.Length > 0)
-			{
-				await output.WriteAsync(echo.ToString()).ConfigureAwait(false);
-				await output.FlushAsync(ct).ConfigureAwait(false);
-				echo.Clear();
-			}
+			await WriteEchoAsync(output, echo, settled: false, ct).ConfigureAwait(false);
+		}
+	}
+
+	private static async ValueTask WriteEchoAsync(TextWriter output, StringBuilder echo, bool settled, CancellationToken ct)
+	{
+		if (echo.Length == 0)
+		{
+			return;
+		}
+
+		var text = echo.ToString();
+		echo.Clear();
+		await WriteEchoAsync(output, text, settled, ct).ConfigureAwait(false);
+	}
+
+	// Writes the echo of a key in a hosted terminal. Once Enter or Esc has settled the prompt, a cancellation that
+	// arrives while its echo is flushed, such as the prompt's deadline, does not undo the key.
+	internal static async ValueTask WriteEchoAsync(TextWriter output, string text, bool settled, CancellationToken ct)
+	{
+		if (text.Length == 0)
+		{
+			return;
+		}
+
+		await output.WriteAsync(text).ConfigureAwait(false);
+		try
+		{
+			await output.FlushAsync(ct).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (settled)
+		{
+			// The key stands; the caller sees its outcome rather than the cancellation.
 		}
 	}
 
