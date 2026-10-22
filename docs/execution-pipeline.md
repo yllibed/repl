@@ -273,15 +273,16 @@ interactive session instead treats a **command-scoped** `OperationCanceledExcept
 Ctrl+C and a self-cancelling handler alike: it prints `Cancelled.`, decorates the mark with the
 `Cancelled` code, and does not render the exception.
 
-Two interactive cases are not `Cancelled` at all, and neither carries a code: an abandoned prompt
+Two interactive cases are not `Cancelled` cycles, and neither puts a code on its mark: an abandoned prompt
 (empty line, Escape, end of input), and a cancellation of the session's own token — host shutdown —
-which closes the cycle with an aborted mark and then propagates out of the loop.
+which closes the cycle with an aborted mark and then propagates out of the loop, ending the run as a cancellation.
 
 > **Changed in 0.12.** A cancellation of the session's own token while the line editor waited for a key, in a
 > hosted session (`StreamedReplHost.RunSessionAsync`, `ReplWebSocketSession.RunAsync`, `ReplTelnetSession.RunAsync`) or
 > with advanced input, used to end the session as if its input had ended, with exit code `0`; a prompt waiting there
-> answered its default. It now propagates, or maps to `ExitCodes.Cancelled` or the resolver, as everywhere else. A
-> session whose client closes it still ends normally; a host that passes a request-abort token should catch the
+> answered its default. The cycle's mark still carries no code, but the run now ends as a cancellation, as everywhere
+> else: the `OperationCanceledException` propagates, or `ExitCodes.Cancelled` or the resolver maps it to an exit code.
+> A session whose client closes it still ends normally; a host that passes a request-abort token should catch the
 > `OperationCanceledException` raised when that token is cancelled.
 
 A hosted-service failure is resolved once, after the whole lifecycle, and the outcome carries the

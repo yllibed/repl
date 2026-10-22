@@ -238,8 +238,9 @@ internal static partial class ConsoleLineReader
 
 	// ---------- Remote async path (IReplKeyReader + TextWriter) ----------
 
-	// The next key, or null when the reader stopped on its own at the end of its input. A cancelled ct is the caller's
-	// decision and propagates, so the run reports a cancellation rather than a successful end of input.
+	// The next key, or null when the reader stopped on its own at the end of its input. A cancelled ct, whether the
+	// caller's or a timed prompt's deadline, propagates as ct's own however the reader observed it (PromptCancellation),
+	// so the run reports a cancellation and a timed prompt recognises its deadline, rather than a successful end of input.
 	private static async ValueTask<ConsoleKeyInfo?> ReadNextKeyAsync(
 		IReplKeyReader keyReader,
 		LineEditorState? editor,
@@ -251,6 +252,11 @@ internal static partial class ConsoleLineReader
 		try
 		{
 			return await ReadKeyWithPreviewAsync(keyReader, editor, buffer, cursor, echo, ct).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
+			&& PromptCancellation.IsThroughAnotherToken(ex, ct))
+		{
+			throw PromptCancellation.AsCancellationOf(ex, ct);
 		}
 		catch (OperationCanceledException) when (!ct.IsCancellationRequested)
 		{

@@ -1,37 +1,45 @@
+using Microsoft.Extensions.Time.Testing;
+
 namespace Repl.Tests;
 
 [TestClass]
 public sealed class Given_InteractiveCallerCancellation
 {
 	[TestMethod]
-	[Description("Verifies the caller cancelling while the line editor waits for a key propagates the caller's cancellation by default, instead of being read as the end of input and a success.")]
-	public async Task When_TheCallerCancelsWhileTheLineEditorWaitsForAKey_Then_TheCancellationPropagates()
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Verifies the caller cancelling while the line editor waits for a key propagates the caller's cancellation by default, instead of being read as the end of input and a success, whether the reader observes the caller's token directly or through a token linked to it.")]
+	public async Task When_TheCallerCancelsWhileTheLineEditorWaitsForAKey_Then_TheCancellationPropagates(bool throughALinkedToken)
 	{
 		var app = CreateApp();
 		using var caller = new CancellationTokenSource();
 
-		var act = () => CancelWhileWaitingForAKeyAsync(app, caller);
+		var act = () => CancelWhileWaitingForAKeyAsync(app, caller, throughALinkedToken);
 
 		(await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false))
 			.Which.CancellationToken.Should().Be(caller.Token);
 	}
 
 	[TestMethod]
-	[Description("Verifies the caller cancelling while the line editor waits for a key returns the configured cancellation exit code, not the success code of an ended input.")]
-	public async Task When_TheCallerCancelsWhileTheLineEditorWaitsForAKey_Then_TheConfiguredCancellationCodeIsReturned()
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Verifies the caller cancelling while the line editor waits for a key returns the configured cancellation exit code, not the success code of an ended input, whether the reader observes the caller's token directly or through a token linked to it.")]
+	public async Task When_TheCallerCancelsWhileTheLineEditorWaitsForAKey_Then_TheConfiguredCancellationCodeIsReturned(bool throughALinkedToken)
 	{
 		var app = CreateApp();
 		app.Options(options => options.ExitCodes.Cancelled = 73);
 		using var caller = new CancellationTokenSource();
 
-		var exitCode = await CancelWhileWaitingForAKeyAsync(app, caller).ConfigureAwait(false);
+		var exitCode = await CancelWhileWaitingForAKeyAsync(app, caller, throughALinkedToken).ConfigureAwait(false);
 
 		exitCode.Should().Be(73);
 	}
 
 	[TestMethod]
-	[Description("Verifies the caller cancelling while the line editor waits for a key reaches the exit code resolver as a cancellation, not as a success.")]
-	public async Task When_TheCallerCancelsWhileTheLineEditorWaitsForAKey_Then_TheResolverSeesACancellation()
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Verifies the caller cancelling while the line editor waits for a key reaches the exit code resolver as a cancellation, not as a success, whether the reader observes the caller's token directly or through a token linked to it.")]
+	public async Task When_TheCallerCancelsWhileTheLineEditorWaitsForAKey_Then_TheResolverSeesACancellation(bool throughALinkedToken)
 	{
 		var app = CreateApp();
 		ReplExecutionOutcomeKind? resolved = null;
@@ -42,7 +50,7 @@ public sealed class Given_InteractiveCallerCancellation
 		});
 		using var caller = new CancellationTokenSource();
 
-		var exitCode = await CancelWhileWaitingForAKeyAsync(app, caller).ConfigureAwait(false);
+		var exitCode = await CancelWhileWaitingForAKeyAsync(app, caller, throughALinkedToken).ConfigureAwait(false);
 
 		exitCode.Should().Be(130);
 		resolved.Should().Be(ReplExecutionOutcomeKind.Cancelled);
@@ -71,15 +79,17 @@ public sealed class Given_InteractiveCallerCancellation
 	}
 
 	[TestMethod]
-	[Description("Verifies a prompt with a timeout in a hosted session still answers its default when the deadline expires while it waits for a key.")]
-	public async Task When_AHostedPromptTimesOut_Then_ItAnswersItsDefault()
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Verifies a prompt with a timeout in a hosted session still answers its default when the deadline expires while it waits for a key, whether the reader observes the deadline directly or through a token linked to it.")]
+	public async Task When_AHostedPromptTimesOut_Then_ItAnswersItsDefault(bool throughALinkedToken)
 	{
-		var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
+		var time = new FakeTimeProvider();
 		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions(), timeProvider: time);
 		using var output = new StringWriter();
 		var previousReader = ReplSessionIO.KeyReader;
 		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
-		var keys = new WaitingKeyReader();
+		var keys = new WaitingKeyReader(throughALinkedToken);
 		try
 		{
 			ReplSessionIO.KeyReader = keys;
@@ -97,14 +107,16 @@ public sealed class Given_InteractiveCallerCancellation
 	}
 
 	[TestMethod]
-	[Description("Verifies the caller cancelling a prompt in a hosted session while it waits for a key cancels it, instead of answering its default as if the input had ended.")]
-	public async Task When_AHostedPromptIsCancelledByTheCaller_Then_TheCancellationPropagates()
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Verifies the caller cancelling a prompt in a hosted session while it waits for a key cancels it, instead of answering its default as if the input had ended or abandoning it as if the terminal had gone, whether the reader observes the caller's token directly or through a token linked to it.")]
+	public async Task When_AHostedPromptIsCancelledByTheCaller_Then_TheCancellationPropagates(bool throughALinkedToken)
 	{
 		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions());
 		using var output = new StringWriter();
 		var previousReader = ReplSessionIO.KeyReader;
 		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
-		var keys = new WaitingKeyReader();
+		var keys = new WaitingKeyReader(throughALinkedToken);
 		using var caller = new CancellationTokenSource();
 		try
 		{
@@ -115,7 +127,8 @@ public sealed class Given_InteractiveCallerCancellation
 			await caller.CancelAsync().ConfigureAwait(false);
 
 			var act = () => ask.WaitAsync(TimeSpan.FromSeconds(10));
-			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+			(await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false))
+				.Which.Should().NotBeOfType<PromptAbandonedException>();
 		}
 		finally
 		{
@@ -131,12 +144,12 @@ public sealed class Given_InteractiveCallerCancellation
 	}
 
 	// Runs an interactive session whose line editor waits for a key, then cancels the caller once it waits.
-	private static async Task<int> CancelWhileWaitingForAKeyAsync(CoreReplApp app, CancellationTokenSource caller)
+	private static async Task<int> CancelWhileWaitingForAKeyAsync(CoreReplApp app, CancellationTokenSource caller, bool throughALinkedToken)
 	{
 		using var output = new StringWriter();
 		var previousReader = ReplSessionIO.KeyReader;
 		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
-		var keys = new WaitingKeyReader();
+		var keys = new WaitingKeyReader(throughALinkedToken);
 		try
 		{
 			ReplSessionIO.KeyReader = keys;
@@ -163,8 +176,9 @@ public sealed class Given_InteractiveCallerCancellation
 		}
 	}
 
-	// Waits for a key that never comes, signalling once it waits, until its token is cancelled.
-	private sealed class WaitingKeyReader : IReplKeyReader
+	// Waits for a key that never comes, signalling once it waits, until its token is cancelled. Through a linked token,
+	// its cancellation carries that token rather than the one it was handed, as IReplKeyReader allows.
+	private sealed class WaitingKeyReader(bool throughALinkedToken) : IReplKeyReader
 	{
 		private readonly TaskCompletionSource _waiting = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -175,7 +189,14 @@ public sealed class Given_InteractiveCallerCancellation
 		public async ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct)
 		{
 			_waiting.TrySetResult();
-			await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+			if (!throughALinkedToken)
+			{
+				await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(false);
+				return default;
+			}
+
+			using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			await Task.Delay(Timeout.Infinite, linked.Token).ConfigureAwait(false);
 			return default;
 		}
 	}
