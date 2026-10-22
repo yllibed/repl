@@ -284,6 +284,9 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 > else: the `OperationCanceledException` propagates, or `ExitCodes.Cancelled` or the resolver maps it to an exit code.
 > A session whose client closes it still ends normally; a host that passes a request-abort token should catch the
 > `OperationCanceledException` raised when that token is cancelled.
+>
+> **Changed in 0.12.** `ReplTelnetSession.RunAsync` used to keep waiting for input once the peer had closed its side
+> of the connection, until its token was cancelled; it now ends the session, with exit code `0`.
 
 A hosted-service failure is resolved once, after the whole lifecycle, and the outcome carries the
 exception. A shutdown that fails outranks everything the run had produced — including any exception

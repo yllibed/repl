@@ -201,7 +201,8 @@ public static class ReplTelnetSession
 			}
 			finally
 			{
-				host.Complete();
+				// Ends the input and drops the session's registration, which would otherwise outlive the connection.
+				await host.DisposeAsync().ConfigureAwait(false);
 			}
 
 			return exitCode;
@@ -216,6 +217,8 @@ public static class ReplTelnetSession
 		}
 	}
 
+	// Once the peer's input ends, no more can arrive: completing the host lets the session see the end of its input
+	// rather than wait for it. A cancellation is left to the session, which reports it as one.
 	private static async Task PipeInputAsync(
 		ChannelTextReader framingInput,
 		StreamedReplHost host,
@@ -227,7 +230,17 @@ public static class ReplTelnetSession
 			while (!ct.IsCancellationRequested)
 			{
 				var read = await framingInput.ReadAsync(buffer, ct).ConfigureAwait(false);
-				if (read == 0) break;
+				if (read == 0)
+				{
+					// The framing also ends its input when cancelled; that cancellation is not the peer leaving.
+					if (!ct.IsCancellationRequested)
+					{
+						host.Complete();
+					}
+
+					return;
+				}
+
 				host.EnqueueInput(new string(buffer, 0, read));
 			}
 		}
