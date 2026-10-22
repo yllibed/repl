@@ -5,6 +5,8 @@ using Repl.Telnet;
 
 namespace Repl.IntegrationTests;
 
+using WebSocket = System.Net.WebSockets.WebSocket;
+
 [TestClass]
 [DoNotParallelize]
 public sealed class Given_TelnetSession
@@ -21,6 +23,20 @@ public sealed class Given_TelnetSession
 		var exitCode = await peer.RunAsync(CreateApp(), CancellationToken.None).WaitAsync(Patience).ConfigureAwait(false);
 
 		exitCode.Should().Be(0);
+	}
+
+	[TestMethod]
+	[Description("Verifies a peer that sends a command and then closes its side of the connection still receives the reply, the session's output staying open after the peer's input ends.")]
+	public async Task When_ThePeerHalfClosesAfterACommand_Then_ItStillReceivesTheReply()
+	{
+		var peer = new TelnetPeer();
+		await peer.SendAsync("ping\r").ConfigureAwait(false);
+		await peer.CloseInputAsync().ConfigureAwait(false);
+
+		var exitCode = await peer.RunAsync(CreateApp(), CancellationToken.None).WaitAsync(Patience).ConfigureAwait(false);
+
+		exitCode.Should().Be(0);
+		await peer.WaitForOutputAsync("pong").WaitAsync(Patience).ConfigureAwait(false);
 	}
 
 	[TestMethod]
@@ -115,6 +131,30 @@ public sealed class Given_TelnetSession
 	}
 
 	[TestMethod]
+	[Description("Verifies a peer that sends a command over a WebSocket and then closes its side still receives the reply before the session answers its close.")]
+	public async Task When_AWebSocketPeerClosesAfterACommand_Then_ItStillReceivesTheReply()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			await client.SendAsync(Encoding.ASCII.GetBytes("ping\r"), WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None)
+				.ConfigureAwait(false);
+			await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+				.ConfigureAwait(false);
+			var reply = ReceiveUntilCloseAsync(client);
+
+			var exitCode = await ReplTelnetSession.RunAsync(CreateApp(), server, TelnetPeer.Options)
+				.AsTask()
+				.WaitAsync(Patience)
+				.ConfigureAwait(false);
+
+			exitCode.Should().Be(0);
+			(await reply.WaitAsync(Patience).ConfigureAwait(false)).Should().Contain("pong");
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies a Telnet session over a WebSocket still ends once the user exits when the peer never answers the close.")]
 	public async Task When_ThePeerNeverAnswersTheClose_Then_TheSessionStillEnds()
 	{
@@ -194,6 +234,23 @@ public sealed class Given_TelnetSession
 					Assert.Fail($"The session ended its output before writing '{text}': {seen}");
 				}
 			}
+		}
+	}
+
+	// Receives what the session sends until its close arrives.
+	private static async Task<string> ReceiveUntilCloseAsync(WebSocket socket)
+	{
+		var buffer = new byte[4096];
+		var seen = new StringBuilder();
+		while (true)
+		{
+			var result = await socket.ReceiveAsync(buffer, CancellationToken.None).ConfigureAwait(false);
+			if (result.MessageType == WebSocketMessageType.Close)
+			{
+				return seen.ToString();
+			}
+
+			seen.Append(Encoding.Latin1.GetString(buffer, 0, result.Count));
 		}
 	}
 

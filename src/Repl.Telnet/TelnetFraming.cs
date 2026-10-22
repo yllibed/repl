@@ -17,6 +17,9 @@ public sealed class TelnetFraming : IAsyncDisposable
 	private readonly IDuplexPipe _pipe;
 	private readonly ChannelTextReader _vtInput = new();
 	private readonly TelnetTextWriter _vtOutput;
+	// The most the send loop writes at once, so a long output a slow peer keeps reading counts as progress as it goes.
+	private const int MaxWriteSlice = 4096;
+
 	// How long the output may go without progress, once the session has ended, before it is given up; the remarks on
 	// DisposeAsync and the change note in docs/execution-pipeline.md state it too.
 	private static readonly TimeSpan DrainIdleTimeout = TimeSpan.FromSeconds(2);
@@ -60,8 +63,9 @@ public sealed class TelnetFraming : IAsyncDisposable
 	public event EventHandler<TerminalTypeEventArgs>? TerminalTypeChanged;
 
 	/// <summary>
-	/// Sends the initial Telnet negotiation and runs the receive/send loops
-	/// until the transport closes, cancellation is requested, or the framing is disposed.
+	/// Sends the initial Telnet negotiation and runs the receive/send loops. It returns once the peer's input ends,
+	/// cancellation is requested, or the framing is disposed; the output stays open until the framing is disposed, so
+	/// the reply to a command the peer sent before closing its side still goes out.
 	/// </summary>
 	public async Task RunAsync(CancellationToken ct)
 	{
@@ -78,7 +82,7 @@ public sealed class TelnetFraming : IAsyncDisposable
 			// Started under the gate, so a disposal racing this start still waits for the negotiation.
 			sendingStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			_sendingStop = sendingStop;
-			_sending = SendAsync(sendingStop.Token);
+			_sending = SendAsync(sendingStop);
 		}
 
 		try
@@ -87,12 +91,8 @@ public sealed class TelnetFraming : IAsyncDisposable
 		}
 		finally
 		{
-			await EndOutputAsync().ConfigureAwait(false);
-			lock (_gate)
-			{
-				_sendingStop = null;
-				sendingStop.Dispose();
-			}
+			// The session sees the end of the peer's input; its output stays open for what it still has to send.
+			_vtInput.Complete();
 		}
 	}
 
@@ -102,7 +102,8 @@ public sealed class TelnetFraming : IAsyncDisposable
 	/// the pipe, if any, so that it returns; the pipe is not completed. It also waits for an opening negotiation still
 	/// being written. Output the peer leaves unread for two seconds is given up, so a peer that stopped reading cannot
 	/// hold disposal. How a cancelled read ends depends on the transport: <see cref="WebSocketStream"/> closes its
-	/// WebSocket.
+	/// WebSocket. Disposal is what ends the output once <see cref="RunAsync"/> has returned, so a framing must be
+	/// disposed, and before its pipe is completed.
 	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
@@ -148,28 +149,42 @@ public sealed class TelnetFraming : IAsyncDisposable
 		}
 	}
 
-	private async Task SendAsync(CancellationToken ct)
+	// Owns its stop source, which outlives RunAsync when the peer's input ends first.
+	private async Task SendAsync(CancellationTokenSource stop)
 	{
-		// Leaves the gate RunAsync started this under before any write, which may wait for the peer.
-		await Task.Yield();
+		var ct = stop.Token;
 		try
 		{
-			await SendNegotiationAsync(ct).ConfigureAwait(false);
-		}
-		catch (IOException)
-		{
-			// The peer left before the negotiation could be sent: the session has no one to serve.
-			_vtInput.Complete();
-			StopReading();
-			return;
-		}
-		catch (OperationCanceledException)
-		{
-			return;
-		}
+			// Leaves the gate RunAsync started this under before any write, which may wait for the peer.
+			await Task.Yield();
+			try
+			{
+				await SendNegotiationAsync(ct).ConfigureAwait(false);
+			}
+			catch (IOException)
+			{
+				// The peer left before the negotiation could be sent: the session has no one to serve.
+				_vtInput.Complete();
+				StopReading();
+				return;
+			}
+			catch (OperationCanceledException)
+			{
+				return;
+			}
 
-		NoteDrainProgress();
-		await SendLoopAsync(ct).ConfigureAwait(false);
+			NoteDrainProgress();
+			await SendLoopAsync(ct).ConfigureAwait(false);
+		}
+		finally
+		{
+			lock (_gate)
+			{
+				_sendingStop = null;
+			}
+
+			stop.Dispose();
+		}
 	}
 
 	private async Task SendNegotiationAsync(CancellationToken ct)
@@ -257,8 +272,12 @@ public sealed class TelnetFraming : IAsyncDisposable
 		{
 			await foreach (var data in _outChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
 			{
-				await _pipe.Output.WriteAsync(data, ct).ConfigureAwait(false);
-				NoteDrainProgress();
+				for (var offset = 0; offset < data.Length; offset += MaxWriteSlice)
+				{
+					var slice = data.AsMemory(offset, Math.Min(MaxWriteSlice, data.Length - offset));
+					await _pipe.Output.WriteAsync(slice, ct).ConfigureAwait(false);
+					NoteDrainProgress();
+				}
 			}
 		}
 		catch (OperationCanceledException) { }

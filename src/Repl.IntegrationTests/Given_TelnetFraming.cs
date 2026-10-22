@@ -201,6 +201,28 @@ public sealed class Given_TelnetFraming
 		public void Dispose() => _steps.Dispose();
 	}
 
+	[TestMethod]
+	[Description("Verifies disposing a framing sends all of one large output to a peer that reads it slowly but steadily, the give-up applying to output that makes no progress rather than to a long write.")]
+	public async Task When_ThePeerReadsALargeOutputSlowlyButSteadily_Then_DisposalSendsAllOfIt()
+	{
+		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 1024, resumeWriterThreshold: 512));
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, toPeer.Writer));
+		var run = framing.RunAsync(CancellationToken.None);
+		await framing.Output.WriteAsync(new string('x', 16 * 1024)).ConfigureAwait(false);
+		await framing.Output.WriteAsync("TAIL").ConfigureAwait(false);
+		const int Negotiation = 21;
+		var everything = Negotiation + (16 * 1024) + "TAIL".Length;
+
+		var disposal = framing.DisposeAsync().AsTask();
+		var reading = ReadAtLeastAsync(toPeer.Reader, everything, pause: TimeSpan.FromMilliseconds(250), take: 1024);
+		await disposal.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		// Disposal gave up on the output if it ended before everything was written: the tail never arrives, and the
+		// read times out.
+		await reading.WaitAsync(Patience).ConfigureAwait(false);
+	}
+
 	private sealed record DuplexPipe(PipeReader Input, PipeWriter Output) : IDuplexPipe;
 
 	// Waits until the framing has written something, without consuming it.
@@ -210,9 +232,10 @@ public sealed class Given_TelnetFraming
 		reader.AdvanceTo(result.Buffer.Start);
 	}
 
-	// Reads what the framing sent until at least the given number of bytes arrived, pausing before each read if asked
-	// to, and reports how many did.
-	private static async Task<long> ReadAtLeastAsync(PipeReader reader, long count, TimeSpan pause = default)
+	// Reads what the framing sent until at least the given number of bytes arrived, and reports how many did. A slow
+	// peer pauses before each read and takes at most a few bytes each time.
+	private static async Task<long> ReadAtLeastAsync(
+		PipeReader reader, long count, TimeSpan pause = default, long take = long.MaxValue)
 	{
 		long received = 0;
 		while (received < count)
@@ -223,9 +246,11 @@ public sealed class Given_TelnetFraming
 			}
 
 			var result = await reader.ReadAsync().ConfigureAwait(false);
-			received += result.Buffer.Length;
-			reader.AdvanceTo(result.Buffer.End);
-			if (result.IsCompleted)
+			var taken = Math.Min(result.Buffer.Length, take);
+			received += taken;
+			var consumed = result.Buffer.GetPosition(taken);
+			reader.AdvanceTo(consumed, consumed);
+			if (result.IsCompleted && taken == result.Buffer.Length)
 			{
 				break;
 			}

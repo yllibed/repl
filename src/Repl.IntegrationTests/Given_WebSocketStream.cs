@@ -238,6 +238,26 @@ public sealed class Given_WebSocketStream
 		}
 	}
 
+	[TestMethod]
+	[Description("Verifies a WebSocket stream refuses a read once it was disposed, rather than starting a receive nothing will end.")]
+	public async Task When_AStreamWasDisposed_Then_ReadingFails()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var stream = new TelnetWebSocketStream(server);
+#pragma warning disable MA0042, VSTHRD103 // The synchronous disposal is what this test exercises.
+			stream.Dispose();
+#pragma warning restore MA0042, VSTHRD103
+
+			var act = async () => await stream.ReadAsync(new byte[16]).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+			(await act.Should().ThrowAsync<ObjectDisposedException>().ConfigureAwait(false))
+				.Which.ObjectName.Should().Be(typeof(TelnetWebSocketStream).FullName, "the stream refuses the read, before it reaches its disposed parts");
+		}
+	}
+
 	// A WebSocket whose receive ignores its cancellation until the test releases it.
 	private sealed class StuckReceiveWebSocket(WebSocket inner) : DelegatingWebSocket(inner)
 	{

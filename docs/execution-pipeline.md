@@ -290,9 +290,10 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 > it also returns without waiting for the peer to close its side: it sends its remaining output, giving up on output
 > the peer leaves unread for two seconds, then stops reading, and over a WebSocket it closes the connection normally. A
 > peer gone before the opening negotiation could be sent ends the session instead of leaving it waiting for input. The
-> building blocks change with it: `TelnetFraming.DisposeAsync` waits for the negotiation and the output to be sent, then
-> stops the read `RunAsync` has pending, and `RunAsync` no longer fails with an `IOException` when the negotiation
-> cannot be sent; cancelling a `WebSocketStream` read closes the WebSocket normally instead of aborting it, disposing
+> building blocks change with it: `TelnetFraming.RunAsync` returns once the peer's input ends while the output stays
+> open, so the framing must now be disposed, before its pipe is completed; `TelnetFraming.DisposeAsync` waits for the
+> negotiation and the output to be sent, then stops the read `RunAsync` has pending, and `RunAsync` no longer fails
+> with an `IOException` when the negotiation cannot be sent; cancelling a `WebSocketStream` read closes the WebSocket normally instead of aborting it, disposing
 > the stream asynchronously closes it too, and a failed connection surfaces as an `IOException` rather than a
 > `WebSocketException`.
 >

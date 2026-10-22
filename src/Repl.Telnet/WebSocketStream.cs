@@ -64,21 +64,26 @@ public sealed class WebSocketStream : Stream
 	/// <see cref="OperationCanceledException"/> once the connection is aborted because the peer did not answer within a
 	/// second. The stream's own token still aborts the connection at once. A read still pending when the stream is
 	/// disposed asynchronously ends the same way, as that disposal closes the WebSocket; disposing it synchronously
-	/// aborts the read instead. A failed connection is reported as an <see cref="IOException"/>.
+	/// aborts the read instead. A failed connection is reported as an <see cref="IOException"/>, and a read once the
+	/// stream was disposed as an <see cref="ObjectDisposedException"/>.
 	/// </remarks>
 	public override async ValueTask<int> ReadAsync(
 		Memory<byte> buffer,
 		CancellationToken cancellationToken = default)
 	{
+		// Checked with the count under the gate Dispose takes, so no receive starts that disposal would not end.
+		CancellationToken lifetime;
 		lock (_gate)
 		{
+			ObjectDisposedException.ThrowIf(_disposed, this);
 			_receives++;
+			lifetime = _lifetime.Token;
 		}
 
 		try
 		{
 			using var closing = cancellationToken.Register(static state => _ = ((WebSocketStream)state!).CloseOnceAsync(), this);
-			var result = await _socket.ReceiveAsync(buffer, _lifetime.Token).ConfigureAwait(false);
+			var result = await _socket.ReceiveAsync(buffer, lifetime).ConfigureAwait(false);
 			return result.MessageType == WebSocketMessageType.Close ? 0 : result.Count;
 		}
 		catch (WebSocketException ex)
@@ -98,7 +103,8 @@ public sealed class WebSocketStream : Stream
 		CancellationToken cancellationToken = default)
 	{
 		using var cts = CancellationTokenSource.CreateLinkedTokenSource(_ct, cancellationToken);
-		if (_socket.State is WebSocketState.Open)
+		// A peer that closed its side may still read the reply to what it sent before closing.
+		if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
 		{
 			try
 			{
