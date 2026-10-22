@@ -15,6 +15,7 @@ public static class ReplWebSocketSession
 	/// <param name="socket">Connected WebSocket.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static ValueTask<int> RunAsync(
 		ReplApp app,
 		System.Net.WebSockets.WebSocket socket,
@@ -29,6 +30,7 @@ public static class ReplWebSocketSession
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static ValueTask<int> RunAsync(
 		ReplApp app,
 		System.Net.WebSockets.WebSocket socket,
@@ -46,6 +48,7 @@ public static class ReplWebSocketSession
 	/// <param name="onControlMessage">Optional observer for parsed terminal control messages.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		System.Net.WebSockets.WebSocket socket,

@@ -14,6 +14,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed bidirectional pipe.
 	/// This is the primary overload — all other overloads adapt to <see cref="IDuplexPipe"/>.
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		IDuplexPipe pipe,
@@ -31,6 +32,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed bidirectional pipe and exposes
 	/// Telnet negotiation metadata callbacks (NAWS and TERMINAL-TYPE).
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		IDuplexPipe pipe,
@@ -52,6 +54,7 @@ public static class ReplTelnetSession
 	/// (TCP <see cref="System.Net.Sockets.NetworkStream"/>, named pipe, etc.).
 	/// The stream is adapted to an <see cref="IDuplexPipe"/> internally.
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		Stream stream,
@@ -69,6 +72,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed bidirectional stream and exposes
 	/// Telnet negotiation metadata callbacks (NAWS and TERMINAL-TYPE).
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		Stream stream,
@@ -102,6 +106,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed WebSocket connection.
 	/// The WebSocket is adapted to an <see cref="IDuplexPipe"/> internally.
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		WebSocket socket,
@@ -119,6 +124,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed WebSocket connection and exposes
 	/// Telnet negotiation metadata callbacks (NAWS and TERMINAL-TYPE).
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		WebSocket socket,

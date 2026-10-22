@@ -178,6 +178,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// <param name="options">Optional run options.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
+	/// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled, for example while the session waited for input; a client that closes the session ends it normally instead.</exception>
 	public async ValueTask<int> RunSessionAsync(
 		ReplApp app,
 		ReplRunOptions? options = null,

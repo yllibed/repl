@@ -256,7 +256,7 @@ mapped to an integer by `ReplOptions.ExitCodes` (`ExitCodeOptions`), then handed
 | `HandlerError` | handler returned `Results.Error` / `Validation` / `NotFound` / `Cancelled`, or any `IReplResult` whose kind the framework does not recognize as success-like | `1` |
 | `HandlerExitCode` | handler returned an `IExitResult` — its code is used verbatim, the table is bypassed | `IExitResult.ExitCode` |
 | `HandlerException` | the handler, a middleware, or user code running after binding threw — including a handler that raised `OperationCanceledException` without the caller having asked for cancellation, and an output transformer that failed. The outcome carries the exception and the refusal the framework reported for it — reported, not necessarily rendered: when the transformer itself is what failed, the message is written unformatted to stderr instead, and the run keeps this kind because the caller still saw it | `1` |
-| `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
+| `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, while an interactive session waits for input, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
 | `Interrupted` | a process signal (SIGINT, Ctrl+Break, SIGTERM) the framework claimed, for a standalone run that opted in through `ReplRunOptions.ProcessSignalHandling`. Only a clean or cancelled run is reclassified: one that already produced a refusal or failure keeps reporting it | `ExitCodes.Interrupted`, else the `128 + signal` code the handler supplies, else `130` |
 | `FrameworkError` | incompatible programmatic adapter, unsupported hosting capability, hosted-service start or stop failure | `1` |
 | `CompletedWithFailures` | handler returned `Results.CompletedWithFailures` — the command ran to completion and its report contains failures (tests that failed). Not success-like: it does not enter interactive mode, even with `--interactive`, and a process signal does not reclassify it. It keeps its outcome when a cancellation lands while its payload renders, whatever code it maps to | `1` |
@@ -276,6 +276,13 @@ Ctrl+C and a self-cancelling handler alike: it prints `Cancelled.`, decorates th
 Two interactive cases are not `Cancelled` at all, and neither carries a code: an abandoned prompt
 (empty line, Escape, end of input), and a cancellation of the session's own token — host shutdown —
 which closes the cycle with an aborted mark and then propagates out of the loop.
+
+> **Changed in 0.12.** A cancellation of the session's own token while the line editor waited for a key, in a
+> hosted session (`StreamedReplHost.RunSessionAsync`, `ReplWebSocketSession.RunAsync`, `ReplTelnetSession.RunAsync`) or
+> with advanced input, used to end the session as if its input had ended, with exit code `0`; a prompt waiting there
+> answered its default. It now propagates, or maps to `ExitCodes.Cancelled` or the resolver, as everywhere else. A
+> session whose client closes it still ends normally; a host that passes a request-abort token should catch the
+> `OperationCanceledException` raised when that token is cancelled.
 
 A hosted-service failure is resolved once, after the whole lifecycle, and the outcome carries the
 exception. A shutdown that fails outranks everything the run had produced — including any exception
