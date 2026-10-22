@@ -280,13 +280,17 @@ The host displays a countdown and selects the default when time expires.
 - **Esc** during a prompt cancels the prompt, even when its timeout expires at the same moment
 - **Ctrl+C** during a command cancels the per-command `CancellationToken`
 - A second **Ctrl+C** exits the session
-- A hosted terminal with a key reader (WebSocket or Telnet hosting) that disconnects during a secret prompt cancels it
-  rather than answering it
+- A hosted terminal (WebSocket, Telnet or `StreamedReplHost` hosting) that disconnects during a prompt cancels it
+  rather than answering it, so a default is never chosen for a user who is gone; redirected input that ends still
+  leaves the prompt to its `PromptFallback`
 - A secret prompt's timeout stops counting once the user starts typing, in a hosted terminal as on a local console
 
 > **Changed in 0.12.** Esc in a secret prompt with a timeout used to return an empty answer or ask again, and so
 > did a hosted terminal disconnecting during one. Both now cancel the prompt with an `OperationCanceledException`, as
-> Esc does in every other prompt. A caller that wants the old result can catch it and use an empty string.
+> Esc does in every other prompt. A caller that wants the old result can catch it and use an empty string. A hosted
+> terminal disconnecting during any other prompt used to settle it as unanswered, through `PromptFallback`: its
+> default, or an `InvalidOperationException` under `PromptFallback.Fail`. It now cancels the prompt the same way; a
+> caller that wants the default can catch the exception and use it.
 
 ---
 

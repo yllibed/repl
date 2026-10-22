@@ -8,4 +8,8 @@ namespace Repl;
 /// Repl.Defaults constructs it (<c>VtKeyReader</c>), so its name, namespace and constructor are friend-assembly ABI.
 /// </remarks>
 internal sealed class PromptAbandonedException(string message, CancellationToken token, Exception? innerException = null)
-	: OperationCanceledException(message, innerException, token);
+	: OperationCanceledException(message, innerException, token)
+{
+	/// <summary>The message of a prompt whose terminal input ended.</summary>
+	internal const string InputEndedMessage = "The terminal input ended.";
+}

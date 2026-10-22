@@ -75,7 +75,7 @@ internal sealed partial class ConsoleInteractionChannel
 		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
 			&& (ex.CancellationToken != ct || !ct.IsCancellationRequested))
 		{
-			throw new PromptAbandonedException("The terminal input ended.", ct, ex);
+			throw new PromptAbandonedException(PromptAbandonedException.InputEndedMessage, ct, ex);
 		}
 	}
 
@@ -548,12 +548,19 @@ internal sealed partial class ConsoleInteractionChannel
 	private static void EchoLine(TextWriter echo) => echo.WriteLine();
 #pragma warning restore MA0045
 
+	// Redirected input that ends leaves the prompt unanswered, which its fallback settles, as scripted input relies on.
+	// A hosted terminal whose input ends has lost its user, so the prompt fails rather than answer on their behalf.
 	private static async ValueTask<string?> ReadLineWithEscAsync(TextWriter echo, CancellationToken ct)
 	{
 		var result = await ConsoleLineReader.ReadLineAsync(ct, echo).ConfigureAwait(false);
 		if (result.Escaped)
 		{
 			throw new PromptAbandonedException("Prompt cancelled via Esc.", ct);
+		}
+
+		if (result.Line is null && ReplSessionIO.KeyReader is not null)
+		{
+			throw new PromptAbandonedException(PromptAbandonedException.InputEndedMessage, ct);
 		}
 
 		return result.Line;
