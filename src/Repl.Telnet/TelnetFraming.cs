@@ -17,11 +17,18 @@ public sealed class TelnetFraming : IAsyncDisposable
 	private readonly IDuplexPipe _pipe;
 	private readonly ChannelTextReader _vtInput = new();
 	private readonly TelnetTextWriter _vtOutput;
+	// How long the output may go without progress, once the session has ended, before it is given up; the remarks on
+	// DisposeAsync and the change note in docs/execution-pipeline.md state it too.
+	private static readonly TimeSpan DrainIdleTimeout = TimeSpan.FromSeconds(2);
+
 	private readonly Channel<byte[]> _outChannel = Channel.CreateUnbounded<byte[]>();
-	private readonly Lock _readGate = new();
+	// Guards what RunAsync starts against disposal: the sending, the read, and whether the framing has stopped.
+	private readonly Lock _gate = new();
 	private Task _sending = Task.CompletedTask;
+	private CancellationTokenSource? _sendingStop;
+	private bool _draining;
 	private bool _reading;
-	private bool _disposed;
+	private bool _stopped;
 
 	private ParserState _state = ParserState.Normal;
 	private byte _negotiationCommand;
@@ -58,36 +65,44 @@ public sealed class TelnetFraming : IAsyncDisposable
 	/// </summary>
 	public async Task RunAsync(CancellationToken ct)
 	{
-		lock (_readGate)
+		CancellationTokenSource sendingStop;
+		lock (_gate)
 		{
-			if (_disposed)
+			// Disposal marks the output as draining before it looks for the sending to wait for, so a run that starts
+			// once disposal began would write what disposal no longer waits for.
+			if (_stopped || _draining)
 			{
 				return;
 			}
+
+			// Started under the gate, so a disposal racing this start still waits for the negotiation.
+			sendingStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			_sendingStop = sendingStop;
+			_sending = SendAsync(sendingStop.Token);
 		}
 
 		try
 		{
-			await SendNegotiationAsync(ct).ConfigureAwait(false);
-			_sending = SendLoopAsync(ct);
 			await ReceiveLoopAsync(ct).ConfigureAwait(false);
-		}
-		catch (IOException)
-		{
-			// The peer left before the negotiation could be sent: ending the input below ends the session too.
 		}
 		finally
 		{
 			await EndOutputAsync().ConfigureAwait(false);
+			lock (_gate)
+			{
+				_sendingStop = null;
+				sendingStop.Dispose();
+			}
 		}
 	}
 
 	/// <inheritdoc />
 	/// <remarks>
 	/// Waits for the output already written to be sent, then cancels the read <see cref="RunAsync"/> has pending on
-	/// the pipe, if any, so that it returns; the pipe is not completed. Sending waits for the peer to read: cancelling
-	/// the token given to <see cref="RunAsync"/> stops a peer that never does from holding disposal. How a cancelled
-	/// read ends depends on the transport: <see cref="WebSocketStream"/> closes its WebSocket.
+	/// the pipe, if any, so that it returns; the pipe is not completed. It also waits for an opening negotiation still
+	/// being written. Output the peer leaves unread for two seconds is given up, so a peer that stopped reading cannot
+	/// hold disposal. How a cancelled read ends depends on the transport: <see cref="WebSocketStream"/> closes its
+	/// WebSocket.
 	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
@@ -98,25 +113,62 @@ public sealed class TelnetFraming : IAsyncDisposable
 		}
 		finally
 		{
-			lock (_readGate)
-			{
-				_disposed = true;
-				if (_reading)
-				{
-					_pipe.Input.CancelPendingRead();
-				}
-			}
+			StopReading();
 		}
 	}
 
-	// Ends the output and the VT input, then waits for the send loop to send what was already written.
+	// Ends the output and the VT input, then waits for what was already written to be sent.
 	private async Task EndOutputAsync()
 	{
 		_outChannel.Writer.TryComplete();
 		_vtInput.Complete();
-#pragma warning disable VSTHRD003 // The send loop RunAsync started is what ending the output waits to drain.
-		await _sending.ConfigureAwait(false);
+		Task sending;
+		lock (_gate)
+		{
+			_draining = true;
+			_sendingStop?.CancelAfter(DrainIdleTimeout);
+			sending = _sending;
+		}
+
+#pragma warning disable VSTHRD003 // The sending RunAsync started is what ending the output waits to drain.
+		await sending.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
+	}
+
+	// Stops reading the peer: a later read will not start, and the one RunAsync has pending returns.
+	private void StopReading()
+	{
+		lock (_gate)
+		{
+			_stopped = true;
+			if (_reading)
+			{
+				_pipe.Input.CancelPendingRead();
+			}
+		}
+	}
+
+	private async Task SendAsync(CancellationToken ct)
+	{
+		// Leaves the gate RunAsync started this under before any write, which may wait for the peer.
+		await Task.Yield();
+		try
+		{
+			await SendNegotiationAsync(ct).ConfigureAwait(false);
+		}
+		catch (IOException)
+		{
+			// The peer left before the negotiation could be sent: the session has no one to serve.
+			_vtInput.Complete();
+			StopReading();
+			return;
+		}
+		catch (OperationCanceledException)
+		{
+			return;
+		}
+
+		await SendLoopAsync(ct).ConfigureAwait(false);
 	}
 
 	private async Task SendNegotiationAsync(CancellationToken ct)
@@ -142,9 +194,9 @@ public sealed class TelnetFraming : IAsyncDisposable
 	{
 		// Disposal cancels a read only while this loop runs, so a caller's later read on its pipe is not cancelled,
 		// short of a disposal that lands as the loop ends.
-		lock (_readGate)
+		lock (_gate)
 		{
-			if (_disposed)
+			if (_stopped)
 			{
 				return;
 			}
@@ -179,7 +231,7 @@ public sealed class TelnetFraming : IAsyncDisposable
 		catch (IOException) { }
 		finally
 		{
-			lock (_readGate)
+			lock (_gate)
 			{
 				_reading = false;
 			}
@@ -193,6 +245,14 @@ public sealed class TelnetFraming : IAsyncDisposable
 			await foreach (var data in _outChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
 			{
 				await _pipe.Output.WriteAsync(data, ct).ConfigureAwait(false);
+				lock (_gate)
+				{
+					if (_draining)
+					{
+						// Progress: the remaining output gets a fresh allowance.
+						_sendingStop?.CancelAfter(DrainIdleTimeout);
+					}
+				}
 			}
 		}
 		catch (OperationCanceledException) { }

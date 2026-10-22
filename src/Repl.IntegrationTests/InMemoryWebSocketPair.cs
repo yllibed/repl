@@ -3,6 +3,8 @@ using System.Net.WebSockets;
 
 namespace Repl.IntegrationTests;
 
+using WebSocket = System.Net.WebSockets.WebSocket;
+
 // Two WebSockets connected to each other in memory: a session's end and its peer's.
 internal static class InMemoryWebSocketPair
 {

@@ -82,14 +82,79 @@ public sealed class Given_TelnetFraming
 		(await read.WaitAsync(Patience).ConfigureAwait(false)).IsCanceled.Should().BeFalse();
 	}
 
+	[TestMethod]
+	[Description("Verifies disposing a framing while its opening negotiation is still being written waits for that write, rather than returning while the framing still writes to the caller's pipe.")]
+	public async Task When_AFramingIsDisposedDuringItsNegotiation_Then_DisposalWaitsForIt()
+	{
+		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 1, resumeWriterThreshold: 1));
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, toPeer.Writer));
+		var run = framing.RunAsync(CancellationToken.None);
+		await WaitUntilWrittenAsync(toPeer.Reader).WaitAsync(Patience).ConfigureAwait(false);
+
+		var disposal = framing.DisposeAsync().AsTask();
+		var disposedDuringTheNegotiation = await Task.WhenAny(disposal, Task.Delay(TimeSpan.FromMilliseconds(200))).ConfigureAwait(false) == disposal;
+		toPeer.Reader.TryRead(out var written).Should().BeTrue();
+		toPeer.Reader.AdvanceTo(written.Buffer.End);
+		await disposal.WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		disposedDuringTheNegotiation.Should().BeFalse("disposal must wait for the negotiation it interrupts");
+	}
+
+	[TestMethod]
+	[Description("Verifies disposing a framing whose peer stopped reading still ends, once its output has made no progress for a while, instead of waiting forever to send it.")]
+	public async Task When_ThePeerStopsReading_Then_DisposalStillEnds()
+	{
+		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 64, resumeWriterThreshold: 32));
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, toPeer.Writer));
+		var run = framing.RunAsync(CancellationToken.None);
+		await framing.Output.WriteAsync(new string('x', 1024)).ConfigureAwait(false);
+
+		await framing.DisposeAsync().AsTask().WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+	}
+
+	[TestMethod]
+	[Description("Verifies disposing a framing whose peer reads slowly but steadily sends all the output, the give-up applying only to output that makes no progress.")]
+	public async Task When_ThePeerReadsSlowlyButSteadily_Then_DisposalSendsAllTheOutput()
+	{
+		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 64, resumeWriterThreshold: 32));
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, toPeer.Writer));
+		var run = framing.RunAsync(CancellationToken.None);
+		for (var i = 0; i < 16; i++)
+		{
+			await framing.Output.WriteAsync(new string('x', 64)).ConfigureAwait(false);
+		}
+
+		var disposal = framing.DisposeAsync().AsTask();
+		var received = await ReadAtLeastAsync(toPeer.Reader, 1024, pause: TimeSpan.FromMilliseconds(250)).WaitAsync(Patience).ConfigureAwait(false);
+		await disposal.WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		received.Should().BeGreaterThanOrEqualTo(1024);
+	}
+
 	private sealed record DuplexPipe(PipeReader Input, PipeWriter Output) : IDuplexPipe;
 
-	// Reads what the framing sent until at least the given number of bytes arrived, and reports how many did.
-	private static async Task<long> ReadAtLeastAsync(PipeReader reader, long count)
+	// Waits until the framing has written something, without consuming it.
+	private static async Task WaitUntilWrittenAsync(PipeReader reader)
+	{
+		var result = await reader.ReadAsync().ConfigureAwait(false);
+		reader.AdvanceTo(result.Buffer.Start);
+	}
+
+	// Reads what the framing sent until at least the given number of bytes arrived, pausing before each read if asked
+	// to, and reports how many did.
+	private static async Task<long> ReadAtLeastAsync(PipeReader reader, long count, TimeSpan pause = default)
 	{
 		long received = 0;
 		while (received < count)
 		{
+			if (pause > TimeSpan.Zero)
+			{
+				await Task.Delay(pause).ConfigureAwait(false);
+			}
+
 			var result = await reader.ReadAsync().ConfigureAwait(false);
 			received += result.Buffer.Length;
 			reader.AdvanceTo(result.Buffer.End);

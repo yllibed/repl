@@ -9,15 +9,20 @@ namespace Repl.Telnet;
 /// </summary>
 public sealed class WebSocketStream : Stream
 {
-	// How long a peer has to answer the stream's close before its connection is aborted.
+	// How long a peer has to answer the stream's close before its connection is aborted; the remarks on ReadAsync
+	// state it too.
 	private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(1);
 
 	private readonly WebSocket _socket;
 	private readonly CancellationToken _ct;
 	// The stream's token, which a close the peer does not answer in time cancels too, aborting the connection.
 	private readonly CancellationTokenSource _lifetime;
-	private int _closingStarted;
-	private Task _closing = Task.CompletedTask;
+	// Guards the close, published once, and the count of receives still pending.
+	private readonly Lock _gate = new();
+	private Task? _closing;
+	private int _receives;
+	private TaskCompletionSource? _receivesEnded;
+	private bool _disposed;
 
 	/// <summary>
 	/// Wraps the specified WebSocket as a stream.
@@ -57,23 +62,32 @@ public sealed class WebSocketStream : Stream
 	/// <paramref name="cancellationToken"/> therefore closes the WebSocket instead: the read returns <c>0</c> once the
 	/// peer answers the close (or what the peer sent before answering it), and throws an
 	/// <see cref="OperationCanceledException"/> once the connection is aborted because the peer did not answer within a
-	/// second. The stream's own token still aborts the connection at once. A failed connection is reported as an
-	/// <see cref="IOException"/>.
+	/// second. The stream's own token still aborts the connection at once. A read still pending when the stream is
+	/// disposed asynchronously ends the same way, as that disposal closes the WebSocket; disposing it synchronously
+	/// aborts the read instead. A failed connection is reported as an <see cref="IOException"/>.
 	/// </remarks>
 	public override async ValueTask<int> ReadAsync(
 		Memory<byte> buffer,
 		CancellationToken cancellationToken = default)
 	{
-		using var closing = cancellationToken.Register(
-			static state => ((WebSocketStream)state!).BeginClosing(awaitAnswer: false), this);
+		lock (_gate)
+		{
+			_receives++;
+		}
+
 		try
 		{
+			using var closing = cancellationToken.Register(static state => _ = ((WebSocketStream)state!).CloseOnceAsync(), this);
 			var result = await _socket.ReceiveAsync(buffer, _lifetime.Token).ConfigureAwait(false);
 			return result.MessageType == WebSocketMessageType.Close ? 0 : result.Count;
 		}
 		catch (WebSocketException ex)
 		{
 			throw new IOException(ex.Message, ex);
+		}
+		finally
+		{
+			EndReceive();
 		}
 	}
 
@@ -123,17 +137,30 @@ public sealed class WebSocketStream : Stream
 	/// <inheritdoc />
 	/// <remarks>
 	/// Closes the WebSocket normally, unless it is already closed: it waits for the close a cancelled read began, or
-	/// closes it now, and aborts the connection if the peer does not answer in time, as for a cancelled read.
+	/// closes it now, and aborts the connection if the peer does not answer in time, as for a cancelled read. It also
+	/// waits for a pending read to end, which the peer's answer or that abort brings about.
 	/// </remarks>
 	public override async ValueTask DisposeAsync()
 	{
-		// No read is cancelled to receive the peer's answer here, so the close waits for that answer itself.
-		BeginClosing(awaitAnswer: true);
 		try
 		{
-#pragma warning disable VSTHRD003 // The close is this stream's own, started here or by a cancelled read.
-			await _closing.ConfigureAwait(false);
-#pragma warning restore VSTHRD003
+			await CloseOnceAsync().ConfigureAwait(false);
+			// The close's grace period stays armed until every pending receive has ended, so one the peer never
+			// answers is still aborted rather than left pending.
+			Task? receivesEnded = null;
+			lock (_gate)
+			{
+				if (_receives > 0)
+				{
+					_receivesEnded ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+					receivesEnded = _receivesEnded.Task;
+				}
+			}
+
+			if (receivesEnded is not null)
+			{
+				await receivesEnded.ConfigureAwait(false);
+			}
 		}
 		finally
 		{
@@ -142,31 +169,74 @@ public sealed class WebSocketStream : Stream
 	}
 
 	/// <inheritdoc />
+	/// <remarks>
+	/// Disposing synchronously cannot wait for the peer: it aborts the connection if a read or the close is still under
+	/// way, rather than leaving it without the deadline that would end it.
+	/// </remarks>
 	protected override void Dispose(bool disposing)
 	{
 		if (disposing)
 		{
+			bool abort;
+			lock (_gate)
+			{
+				if (_disposed)
+				{
+					base.Dispose(disposing);
+					return;
+				}
+
+				// A read cancelled from now on no longer starts a close on a token about to be disposed.
+				_disposed = true;
+				abort = _receives > 0 || _closing is { IsCompleted: false };
+			}
+
+			if (abort)
+			{
+				_lifetime.Cancel();
+			}
+
 			_lifetime.Dispose();
 		}
 
 		base.Dispose(disposing);
 	}
 
-	// Closes the WebSocket once, aborting it if the peer does not answer in time. A read in progress receives the
-	// peer's answer, so only the close is sent then; otherwise the close waits for the answer itself.
-	private void BeginClosing(bool awaitAnswer)
+	// Closes the WebSocket once, aborting it if the peer does not answer in time, and returns that close. A pending
+	// receive gets the peer's answer, so only the close is sent then; otherwise the close waits for the answer itself.
+	// The close is started under the gate, so a concurrent disposal always finds it and waits for it.
+	private Task CloseOnceAsync()
 	{
-		if (Interlocked.Exchange(ref _closingStarted, 1) != 0)
+		lock (_gate)
 		{
-			return;
+			if (_closing is null && !_disposed)
+			{
+				_lifetime.CancelAfter(CloseTimeout);
+				_closing = CloseAsync(awaitAnswer: _receives == 0, _lifetime.Token);
+			}
+
+			return _closing ?? Task.CompletedTask;
+		}
+	}
+
+	private void EndReceive()
+	{
+		TaskCompletionSource? ended = null;
+		lock (_gate)
+		{
+			if (--_receives == 0)
+			{
+				ended = _receivesEnded;
+			}
 		}
 
-		_lifetime.CancelAfter(CloseTimeout);
-		_closing = CloseAsync(awaitAnswer, _lifetime.Token);
+		ended?.TrySetResult();
 	}
 
 	private async Task CloseAsync(bool awaitAnswer, CancellationToken timeout)
 	{
+		// Leaves the gate CloseOnceAsync started this under before the close, which may wait for the peer.
+		await Task.Yield();
 		try
 		{
 			if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -177,18 +247,10 @@ public sealed class WebSocketStream : Stream
 				await closing.ConfigureAwait(false);
 			}
 		}
-		catch (OperationCanceledException)
+		catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or InvalidOperationException)
 		{
-			// The peer did not answer in time, or the stream's own token was cancelled before the close began.
-			_socket.Abort();
-		}
-		catch (WebSocketException)
-		{
-			_socket.Abort();
-		}
-		catch (InvalidOperationException)
-		{
-			// A read the owner still had pending: the close cannot wait for the answer, so the connection is aborted.
+			// The peer did not answer in time, the stream's own token was cancelled before the close began, the
+			// connection failed, or the close could not wait for the answer beside the owner's pending read.
 			_socket.Abort();
 		}
 	}
