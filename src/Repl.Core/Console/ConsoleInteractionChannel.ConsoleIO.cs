@@ -59,12 +59,23 @@ internal sealed partial class ConsoleInteractionChannel
 		}
 	}
 
-	// A key reader that stops although its token was not cancelled has lost its input, whichever reader it is.
+	// Attributes a key reader's cancellation, whichever reader it is: ct's own, even seen through a token the reader
+	// linked to it, stays ct's, so a deadline remains a timeout; a reader that stops with no cancelled token, or while
+	// ct was not cancelled, has lost its input.
 	private static async ValueTask<ConsoleKeyInfo> ReadRemoteKeyAsync(IReplKeyReader keyReader, CancellationToken ct)
 	{
 		try
 		{
 			return await keyReader.ReadKeyAsync(ct).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException && ex.CancellationToken != ct)
+		{
+			if (ct.IsCancellationRequested && ex.CancellationToken.IsCancellationRequested)
+			{
+				throw new OperationCanceledException(ex.Message, ex, ct);
+			}
+
+			throw new PromptAbandonedException("The terminal input ended.", ct, ex);
 		}
 		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException && !ct.IsCancellationRequested)
 		{
@@ -327,9 +338,11 @@ internal sealed partial class ConsoleInteractionChannel
 		{
 			return await read(timeoutCts.Token, cancellationToken).ConfigureAwait(false);
 		}
-		// Only the timer's own cancellation is a timeout. Esc, or a secret prompt's terminal stream that ended, still
-		// fails the prompt even if the timer has fired since, so it is told apart by its type, not the timer's state.
+		// Only a cancellation carrying the deadline's own token is a timeout: the timer's state alone cannot say what
+		// cancelled. Esc, a secret input that ended, and a transport cancelling its own write therefore fail the prompt
+		// even when the timer has fired since.
 		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
+			&& ex.CancellationToken == timeoutCts.Token
 			&& timeoutCts.IsCancellationRequested
 			&& !cancellationToken.IsCancellationRequested)
 		{

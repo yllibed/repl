@@ -304,8 +304,8 @@ internal static partial class ConsoleLineReader
 		await WriteEchoAsync(output, text, settled, ct).ConfigureAwait(false);
 	}
 
-	// Writes the echo of a key in a hosted terminal. Once Enter or Esc has settled the prompt, a cancellation that
-	// arrives while its echo is flushed, such as the prompt's deadline, does not undo the key.
+	// Writes the echo of a key in a hosted terminal. Once Enter or Esc has settled the prompt, a cancelled flush of its
+	// echo, whatever cancelled it, does not undo the key.
 	internal static async ValueTask WriteEchoAsync(TextWriter output, string text, bool settled, CancellationToken ct)
 	{
 		if (text.Length == 0)
@@ -320,7 +320,7 @@ internal static partial class ConsoleLineReader
 		}
 		catch (OperationCanceledException) when (settled)
 		{
-			// The key stands; the caller sees its outcome rather than the cancellation.
+			// The caller sees the key's outcome rather than the cancellation.
 		}
 	}
 

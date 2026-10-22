@@ -266,6 +266,86 @@ public sealed class Given_RemoteSecretPrompt
 		}
 	}
 
+	[TestMethod]
+	[Description("Verifies a hosted terminal's output cancelled on its own while a settled key is echoed fails a timed prompt, even when the deadline expires during that write: only the deadline's own cancellation is a timeout.")]
+	[DataRow(true, ConsoleKey.Escape, DisplayName = "Secret prompt, Esc")]
+	[DataRow(true, ConsoleKey.Enter, DisplayName = "Secret prompt, Enter")]
+	[DataRow(false, ConsoleKey.Escape, DisplayName = "Text prompt, Esc")]
+	[DataRow(false, ConsoleKey.Enter, DisplayName = "Text prompt, Enter")]
+	public async Task When_TheOutputIsCancelledAsTheDeadlineExpires_Then_ThePromptFails(bool secret, ConsoleKey settling)
+	{
+		var time = new FakeTimeProvider();
+		using var output = new OutputCancelledAtDeadlineWriter(time, marker: settling == ConsoleKey.Enter ? "\r\n" : "\b");
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions(), timeProvider: time);
+		try
+		{
+			var settlingKey = settling == ConsoleKey.Enter ? Key(ConsoleKey.Enter, '\r') : Key(ConsoleKey.Escape, '\u001b');
+			ReplSessionIO.KeyReader = new FakeKeyReader([Key(ConsoleKey.Q, 'q'), settlingKey]);
+
+			var act = () => AskTimedAsync(channel, secret);
+
+			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+			output.Fired.Should().BeTrue("the output must be cancelled during the settled echo for the case to be exercised");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies a third-party key reader that reports a disconnect with a cancellation of its own, after the deadline expired but before anything was typed, fails the timed secret prompt instead of returning an empty answer.")]
+	public async Task When_AThirdPartyReaderDisconnectsAfterTheDeadlineBeforeTyping_Then_ThePromptFails()
+	{
+		var time = new FakeTimeProvider();
+		using var output = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions(), timeProvider: time);
+		try
+		{
+			ReplSessionIO.KeyReader = new DisconnectsAtDeadlineKeyReader(time);
+
+			var act = async () => await channel.AskSecretAsync(
+					"pin", "Pin", new AskSecretOptions(Timeout: TimeSpan.FromSeconds(5), AllowEmpty: true))
+				.ConfigureAwait(false);
+
+			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies a timed secret prompt still times out when a third-party key reader observes the deadline through a token linked to its own lifetime, as long as nothing was typed.")]
+	public async Task When_AReaderObservesTheDeadlineThroughALinkedToken_Then_ThePromptTimesOut()
+	{
+		var time = new FakeTimeProvider();
+		using var output = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), new OutputOptions(), timeProvider: time);
+		using var reader = new LinkedTokenKeyReader(time);
+		try
+		{
+			ReplSessionIO.KeyReader = reader;
+
+			var secret = await channel.AskSecretAsync(
+					"pin", "Pin", new AskSecretOptions(Timeout: TimeSpan.FromSeconds(5), AllowEmpty: true))
+				.ConfigureAwait(false);
+
+			secret.Should().BeEmpty();
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
 	private static async Task<string> AskTimedAsync(ConsoleInteractionChannel channel, bool secret) =>
 		secret
 			? await channel.AskSecretAsync(
@@ -403,6 +483,55 @@ public sealed class Given_RemoteSecretPrompt
 			_sent = true;
 			return ValueTask.FromResult(key);
 		}
+	}
+
+	// A transport writer whose own lifetime ends while it sends an echo containing the marker, as the deadline expires.
+	private sealed class OutputCancelledAtDeadlineWriter(FakeTimeProvider time, string marker) : StringWriter
+	{
+		public bool Fired { get; private set; }
+
+		public override Task WriteAsync(string? value)
+		{
+			if (Fired || value is null || !value.Contains(marker, StringComparison.Ordinal))
+			{
+				return base.WriteAsync(value);
+			}
+
+			Fired = true;
+			time.Advance(TimeSpan.FromSeconds(10));
+			return Task.FromCanceled(new CancellationToken(canceled: true));
+		}
+	}
+
+	// A third-party key reader that lets the deadline expire, then reports a disconnect with no token of its own.
+	private sealed class DisconnectsAtDeadlineKeyReader(FakeTimeProvider time) : IReplKeyReader
+	{
+		public bool KeyAvailable => false;
+
+		public ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct)
+		{
+			time.Advance(TimeSpan.FromSeconds(10));
+			return ValueTask.FromException<ConsoleKeyInfo>(
+				new OperationCanceledException("transport disconnected", CancellationToken.None));
+		}
+	}
+
+	// A third-party key reader that waits on its token linked to its own lifetime, then lets the deadline expire.
+	private sealed class LinkedTokenKeyReader(FakeTimeProvider time) : IReplKeyReader, IDisposable
+	{
+		private readonly CancellationTokenSource _lifetime = new();
+
+		public bool KeyAvailable => false;
+
+		public async ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct)
+		{
+			using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _lifetime.Token);
+			time.Advance(TimeSpan.FromSeconds(10));
+			await Task.Delay(Timeout.Infinite, linked.Token).ConfigureAwait(false);
+			return default;
+		}
+
+		public void Dispose() => _lifetime.Dispose();
 	}
 
 	// A third-party key reader whose stream ended: a plain cancellation the caller did not request.
