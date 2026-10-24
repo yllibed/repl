@@ -287,9 +287,13 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 >
 > **Changed in 0.12.** `ReplTelnetSession.RunAsync` used to keep waiting for input once the peer had closed its side
 > of the connection, until its token was cancelled; it now ends the session, with exit code `0`. Once the session ends,
-> it also returns without waiting for the peer to close its side: it sends its remaining output, giving up on output
-> the peer leaves unread for two seconds, then stops reading, and over a WebSocket it closes the connection normally. A
-> peer gone before the opening negotiation could be sent ends the session instead of leaving it waiting for input. The
+> it also returns without waiting for the peer to close its side: it sends its remaining output, then stops reading,
+> and over a WebSocket it closes the connection normally. That output goes out in writes of at most 4 KB, each given
+> two seconds or the time it takes at 256 bytes a second, whichever is longer, and the rest is given up when one is not
+> done by then: a peer that stopped reading holds the session about sixteen seconds at most, while one that keeps that
+> pace receives all the output however long it takes, unless the session's token is cancelled. Over an `IDuplexPipe`
+> that buffers, a write is done only once the peer has read what the pipe holds past its resume threshold, so the
+> peer must keep a faster pace. A peer gone before the opening negotiation could be sent ends the session instead of leaving it waiting for input. The
 > building blocks change with it: `TelnetFraming.RunAsync` returns once the peer's input ends while the output stays
 > open, so the framing must now be disposed, before its pipe is completed; `TelnetFraming.DisposeAsync` waits for the
 > negotiation and the output to be sent, then stops the read `RunAsync` has pending, and `RunAsync` no longer fails

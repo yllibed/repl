@@ -102,7 +102,7 @@ public sealed class Given_TelnetFraming
 	}
 
 	[TestMethod]
-	[Description("Verifies disposing a framing whose peer stopped reading still ends, once its output has made no progress for a while, instead of waiting forever to send it.")]
+	[Description("Verifies disposing a framing whose peer stopped reading still ends, once the write it is held on has had its allowance, instead of waiting forever to send it.")]
 	public async Task When_ThePeerStopsReading_Then_DisposalStillEnds()
 	{
 		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 64, resumeWriterThreshold: 32));
@@ -115,7 +115,7 @@ public sealed class Given_TelnetFraming
 	}
 
 	[TestMethod]
-	[Description("Verifies disposing a framing whose peer reads slowly but steadily sends all the output, the give-up applying only to output that makes no progress.")]
+	[Description("Verifies disposing a framing whose peer reads slowly but steadily sends all the output, each write being given its own allowance as it starts.")]
 	public async Task When_ThePeerReadsSlowlyButSteadily_Then_DisposalSendsAllTheOutput()
 	{
 		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 64, resumeWriterThreshold: 32));
@@ -135,7 +135,7 @@ public sealed class Given_TelnetFraming
 	}
 
 	[TestMethod]
-	[Description("Verifies a disposal that starts while the negotiation is held counts the negotiation's completion as progress, so a peer that keeps up, if slowly, still receives all the output.")]
+	[Description("Verifies a disposal that starts while the negotiation is held still gives each later write its own allowance, so a peer that keeps up, if slowly, receives all the output.")]
 	public async Task When_DisposalStartsDuringASlowNegotiation_Then_AllTheOutputIsStillSent()
 	{
 		var toPeer = new Pipe();
@@ -147,7 +147,7 @@ public sealed class Given_TelnetFraming
 		await framing.Output.WriteAsync("TAIL").ConfigureAwait(false);
 
 		// The negotiation goes through 1.4 s into the disposal and the data 1 s later: past the two seconds the disposal
-		// started with, but within two seconds of the negotiation's progress.
+		// started with, but within the two seconds the data's write is given as it starts.
 		var disposal = framing.DisposeAsync().AsTask();
 		await Task.Delay(TimeSpan.FromMilliseconds(1400)).ConfigureAwait(false);
 		output.Step();
@@ -202,8 +202,10 @@ public sealed class Given_TelnetFraming
 	}
 
 	[TestMethod]
-	[Description("Verifies disposing a framing sends all of one large output to a peer that reads it slowly but steadily, the give-up applying to output that makes no progress rather than to a long write.")]
-	public async Task When_ThePeerReadsALargeOutputSlowlyButSteadily_Then_DisposalSendsAllOfIt()
+	[DataRow(1024, 250)]
+	[DataRow(512, 300)]
+	[Description("Verifies disposing a framing sends all of one large output to a peer that reads it slowly but steadily, above the minimum pace, even one that takes much less than a write slice at a time.")]
+	public async Task When_ThePeerReadsALargeOutputSlowlyButSteadily_Then_DisposalSendsAllOfIt(int take, int pauseMilliseconds)
 	{
 		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 1024, resumeWriterThreshold: 512));
 		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, toPeer.Writer));
@@ -214,7 +216,8 @@ public sealed class Given_TelnetFraming
 		var everything = Negotiation + (16 * 1024) + "TAIL".Length;
 
 		var disposal = framing.DisposeAsync().AsTask();
-		var reading = ReadAtLeastAsync(toPeer.Reader, everything, pause: TimeSpan.FromMilliseconds(250), take: 1024);
+		var reading = ReadAtLeastAsync(
+			toPeer.Reader, everything, pause: TimeSpan.FromMilliseconds(pauseMilliseconds), take: take);
 		await disposal.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
 		await run.WaitAsync(Patience).ConfigureAwait(false);
 
@@ -223,13 +226,46 @@ public sealed class Given_TelnetFraming
 		await reading.WaitAsync(Patience).ConfigureAwait(false);
 	}
 
+	[TestMethod]
+	[Description("Verifies a full write slice already held when disposal begins is given the time it takes at the minimum pace, well past two seconds, so the output after it still goes out.")]
+	public async Task When_AFullSliceIsHeldAsDisposalBegins_Then_ItIsGivenTheTimeItTakesAtTheMinimumPace()
+	{
+		var toPeer = new Pipe(new PipeOptions(pauseWriterThreshold: 1024, resumeWriterThreshold: 512));
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, toPeer.Writer));
+		var run = framing.RunAsync(CancellationToken.None);
+		await framing.Output.WriteAsync(new string('x', 4096)).ConfigureAwait(false);
+		await framing.Output.WriteAsync("TAIL").ConfigureAwait(false);
+		const int Negotiation = 21;
+		var slice = Negotiation + 4096;
+		await WaitUntilWrittenAsync(toPeer.Reader, slice).WaitAsync(Patience).ConfigureAwait(false);
+
+		// The slice waits on the unread pipe as disposal begins. It is given 16 s at 256 bytes a second; six seconds is
+		// past the two a short write gets, and past what a pace above about 680 bytes a second would give it.
+		var disposal = framing.DisposeAsync().AsTask();
+		await Task.Delay(TimeSpan.FromSeconds(6)).ConfigureAwait(false);
+		var received = await ReadAtLeastAsync(toPeer.Reader, slice + "TAIL".Length).WaitAsync(Patience).ConfigureAwait(false);
+		await disposal.WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		received.Should().Be(slice + "TAIL".Length);
+	}
+
 	private sealed record DuplexPipe(PipeReader Input, PipeWriter Output) : IDuplexPipe;
 
-	// Waits until the framing has written something, without consuming it.
-	private static async Task WaitUntilWrittenAsync(PipeReader reader)
+	// Waits until the framing has written at least the given number of bytes, without consuming them.
+	private static async Task WaitUntilWrittenAsync(PipeReader reader, long count = 1)
 	{
-		var result = await reader.ReadAsync().ConfigureAwait(false);
-		reader.AdvanceTo(result.Buffer.Start);
+		while (true)
+		{
+			var result = await reader.ReadAsync().ConfigureAwait(false);
+			if (result.Buffer.Length >= count || result.IsCompleted)
+			{
+				reader.AdvanceTo(result.Buffer.Start);
+				return;
+			}
+
+			reader.AdvanceTo(result.Buffer.Start, result.Buffer.End);
+		}
 	}
 
 	// Reads what the framing sent until at least the given number of bytes arrived, and reports how many did. A slow
