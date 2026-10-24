@@ -258,6 +258,118 @@ public sealed class Given_WebSocketStream
 		}
 	}
 
+	[TestMethod]
+	[Description("Verifies a WebSocket stream refuses a read that starts while it is being disposed, leaving the close it is finishing to end normally.")]
+	public async Task When_AReadStartsDuringDisposal_Then_ItIsRefusedAndTheCloseStillFinishes()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var stream = new TelnetWebSocketStream(server);
+			var disposal = stream.DisposeAsync().AsTask();
+			await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false);
+
+			var act = async () => await stream.ReadAsync(new byte[16]).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+			await act.Should().ThrowAsync<ObjectDisposedException>().ConfigureAwait(false);
+			await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+				.ConfigureAwait(false);
+			await disposal.WaitAsync(Patience).ConfigureAwait(false);
+			server.State.Should().Be(WebSocketState.Closed);
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies a cancelled read that gets data instead of the peer's answer still ends with the connection closed in time: a peer that never answers is aborted, even with no read pending and the stream not yet disposed.")]
+	public async Task When_ACancelledReadGetsDataAndThePeerNeverAnswers_Then_TheConnectionIsAbortedInTime()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		using (var reader = new CancellationTokenSource())
+		{
+			var stream = new TelnetWebSocketStream(server);
+			await using (stream.ConfigureAwait(false))
+			{
+				var read = stream.ReadAsync(new byte[16], reader.Token).AsTask();
+				await reader.CancelAsync().ConfigureAwait(false);
+				await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false);
+				await client.SendAsync(new byte[] { 1 }, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None)
+					.ConfigureAwait(false);
+				(await read.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(1);
+
+				// The close's deadline is a second; three leave room for a slow machine without hiding a lost deadline.
+				await WaitForStateAsync(server, WebSocketState.Aborted, TimeSpan.FromSeconds(3)).ConfigureAwait(false);
+
+				server.State.Should().Be(WebSocketState.Aborted);
+			}
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies disposing a WebSocket stream without waiting, after a cancelled read got data instead of the peer's answer, aborts the connection rather than leaving its close unfinished.")]
+	public async Task When_AStreamIsDisposedAfterACancelledReadGotData_Then_TheConnectionIsAborted()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		using (var reader = new CancellationTokenSource())
+		{
+			var stream = new TelnetWebSocketStream(server);
+			var read = stream.ReadAsync(new byte[16], reader.Token).AsTask();
+			await reader.CancelAsync().ConfigureAwait(false);
+			await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false);
+			await client.SendAsync(new byte[] { 1 }, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None)
+				.ConfigureAwait(false);
+			(await read.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(1);
+
+#pragma warning disable MA0042, VSTHRD103 // The synchronous disposal is what this test exercises.
+			stream.Dispose();
+#pragma warning restore MA0042, VSTHRD103
+
+			server.State.Should().Be(WebSocketState.Aborted);
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies two concurrent asynchronous disposals of a WebSocket stream finish its close once, so a peer that answers still sees a normal closure.")]
+	public async Task When_AStreamIsDisposedTwiceAtOnce_Then_TheCloseFinishesNormally()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		using (var reader = new CancellationTokenSource())
+		{
+			// A cancelled read that gets data leaves the close sent but unanswered, for the disposals to finish.
+			var stream = new TelnetWebSocketStream(server);
+			var read = stream.ReadAsync(new byte[16], reader.Token).AsTask();
+			await reader.CancelAsync().ConfigureAwait(false);
+			await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false);
+			await client.SendAsync(new byte[] { 1 }, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None)
+				.ConfigureAwait(false);
+			(await read.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(1);
+
+			var first = stream.DisposeAsync().AsTask();
+			var second = stream.DisposeAsync().AsTask();
+			await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+				.ConfigureAwait(false);
+			await Task.WhenAll(first, second).WaitAsync(Patience).ConfigureAwait(false);
+
+			server.State.Should().Be(WebSocketState.Closed);
+		}
+	}
+
+	// Waits until the socket reaches the state, or the time is up.
+	private static async Task WaitForStateAsync(WebSocket socket, WebSocketState state, TimeSpan within)
+	{
+		var elapsed = System.Diagnostics.Stopwatch.StartNew();
+		while (socket.State != state && elapsed.Elapsed < within)
+		{
+			await Task.Delay(50).ConfigureAwait(false);
+		}
+	}
+
 	// A WebSocket whose receive ignores its cancellation until the test releases it.
 	private sealed class StuckReceiveWebSocket(WebSocket inner) : DelegatingWebSocket(inner)
 	{

@@ -293,9 +293,10 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 > building blocks change with it: `TelnetFraming.RunAsync` returns once the peer's input ends while the output stays
 > open, so the framing must now be disposed, before its pipe is completed; `TelnetFraming.DisposeAsync` waits for the
 > negotiation and the output to be sent, then stops the read `RunAsync` has pending, and `RunAsync` no longer fails
-> with an `IOException` when the negotiation cannot be sent; cancelling a `WebSocketStream` read closes the WebSocket normally instead of aborting it, disposing
-> the stream asynchronously closes it too, and a failed connection surfaces as an `IOException` rather than a
-> `WebSocketException`.
+> with an `IOException` when the negotiation cannot be sent; cancelling a `WebSocketStream` read closes the WebSocket
+> normally instead of aborting it, aborting it a second later if the peer has not answered, disposing the stream
+> asynchronously closes it too, a read once that disposal began is refused with an `ObjectDisposedException`, and a
+> failed connection surfaces as an `IOException` rather than a `WebSocketException`.
 >
 > **Changed in 0.12.** `ReplWebSocketSession.RunAsync` used to abort its WebSocket when the session ended, so the peer
 > saw the connection closed without a close handshake. It now closes it normally, waiting up to a second for the peer

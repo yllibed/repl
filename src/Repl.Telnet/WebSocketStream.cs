@@ -23,6 +23,10 @@ public sealed class WebSocketStream : Stream
 	private int _receives;
 	private TaskCompletionSource? _receivesEnded;
 	private bool _disposed;
+	// Set as asynchronous disposal begins, so no read starts beside the receive that finishes the close.
+	private bool _disposing;
+	// The receive that finishes the close, started once however many disposals run.
+	private Task? _finishing;
 
 	/// <summary>
 	/// Wraps the specified WebSocket as a stream.
@@ -65,7 +69,9 @@ public sealed class WebSocketStream : Stream
 	/// second. The stream's own token still aborts the connection at once. A read still pending when the stream is
 	/// disposed asynchronously ends the same way, as that disposal closes the WebSocket; disposing it synchronously
 	/// aborts the read instead. A failed connection is reported as an <see cref="IOException"/>, and a read once the
-	/// stream was disposed as an <see cref="ObjectDisposedException"/>.
+	/// stream's disposal began as an <see cref="ObjectDisposedException"/>. A cancelled read that returns data instead
+	/// leaves the close under way: the connection is still aborted once the second has passed if the peer has not
+	/// answered by then.
 	/// </remarks>
 	public override async ValueTask<int> ReadAsync(
 		Memory<byte> buffer,
@@ -75,7 +81,7 @@ public sealed class WebSocketStream : Stream
 		CancellationToken lifetime;
 		lock (_gate)
 		{
-			ObjectDisposedException.ThrowIf(_disposed, this);
+			ObjectDisposedException.ThrowIf(_disposed || _disposing, this);
 			_receives++;
 			lifetime = _lifetime.Token;
 		}
@@ -149,11 +155,16 @@ public sealed class WebSocketStream : Stream
 	/// </remarks>
 	public override async ValueTask DisposeAsync()
 	{
+		lock (_gate)
+		{
+			_disposing = true;
+		}
+
 		try
 		{
 			await CloseOnceAsync().ConfigureAwait(false);
-			// The close's grace period stays armed until every pending receive has ended, so one the peer never
-			// answers is still aborted rather than left pending.
+			// The handshake is finished only once every pending receive has ended, so its own receive never runs beside
+			// one; the close's deadline ends a receive the peer never answers.
 			Task? receivesEnded = null;
 			lock (_gate)
 			{
@@ -171,27 +182,25 @@ public sealed class WebSocketStream : Stream
 
 			// A synchronous disposal already aborted what was under way, and its token source is gone. Otherwise the
 			// handshake's receive is counted as one, so a synchronous disposal meanwhile aborts it rather than dropping
-			// its deadline.
-			CancellationToken? deadline = null;
+			// its deadline, and it is started once, so concurrent disposals never receive side by side.
+			Task? finishing = null;
 			lock (_gate)
 			{
 				if (!_disposed)
 				{
-					deadline = _lifetime.Token;
-					_receives++;
+					if (_finishing is null)
+					{
+						_receives++;
+						_finishing = FinishCloseCountedAsync(_lifetime.Token);
+					}
+
+					finishing = _finishing;
 				}
 			}
 
-			if (deadline is { } closeDeadline)
+			if (finishing is not null)
 			{
-				try
-				{
-					await FinishCloseAsync(_socket, closeDeadline).ConfigureAwait(false);
-				}
-				finally
-				{
-					EndReceive();
-				}
+				await finishing.ConfigureAwait(false);
 			}
 		}
 		finally
@@ -218,9 +227,10 @@ public sealed class WebSocketStream : Stream
 					return;
 				}
 
-				// A read cancelled from now on no longer starts a close on a token about to be disposed.
+				// A read cancelled from now on no longer starts a close on a token about to be disposed. A started close
+				// left unfinished, even one whose sending is done, is aborted with the deadline it would lose.
 				_disposed = true;
-				abort = _receives > 0 || _closing is { IsCompleted: false };
+				abort = _receives > 0 || _closing is not null;
 			}
 
 			if (abort)
@@ -243,6 +253,8 @@ public sealed class WebSocketStream : Stream
 		{
 			if (_closing is null && !_disposed)
 			{
+				// The deadline aborts a connection still not closed by then, whether or not a read is left to notice.
+				_lifetime.Token.Register(static state => ((WebSocketStream)state!).AbortUnlessClosed(), this);
 				_lifetime.CancelAfter(CloseTimeout);
 				_closing = CloseAsync(awaitAnswer: _receives == 0, _lifetime.Token);
 			}
@@ -281,6 +293,28 @@ public sealed class WebSocketStream : Stream
 		if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted))
 		{
 			socket.Abort();
+		}
+	}
+
+	private async Task FinishCloseCountedAsync(CancellationToken deadline)
+	{
+		// Leaves the gate DisposeAsync started this under before any receive.
+		await Task.Yield();
+		try
+		{
+			await FinishCloseAsync(_socket, deadline).ConfigureAwait(false);
+		}
+		finally
+		{
+			EndReceive();
+		}
+	}
+
+	private void AbortUnlessClosed()
+	{
+		if (_socket.State is not (WebSocketState.Closed or WebSocketState.Aborted))
+		{
+			_socket.Abort();
 		}
 	}
 
