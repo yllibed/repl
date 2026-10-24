@@ -162,7 +162,7 @@ public sealed class VtKeyReader : IReplKeyReader
 		var read = await _reader.ReadAsync(_charBuf.AsMemory(), ct).ConfigureAwait(false);
 		if (read == 0)
 		{
-			throw new PromptAbandonedException("The terminal input ended.", ct);
+			throw new PromptAbandonedException(PromptAbandonedException.InputEndedMessage, ct);
 		}
 
 		return _charBuf[0];

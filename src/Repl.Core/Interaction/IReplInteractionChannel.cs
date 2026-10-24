@@ -36,6 +36,9 @@ public interface IReplInteractionChannel
 	/// <param name="defaultIndex">Index of the default choice returned on empty input, or null to use the first choice.</param>
 	/// <param name="options">Optional ask options (cancellation, timeout). When null or token is default, uses the ambient per-command token.</param>
 	/// <returns>The zero-based index of the selected choice.</returns>
+	/// <exception cref="OperationCanceledException">
+	/// The prompt was cancelled: by Esc, by the caller, or because a hosted terminal disconnected.
+	/// </exception>
 	ValueTask<int> AskChoiceAsync(
 		string name,
 		string prompt,
@@ -52,6 +55,9 @@ public interface IReplInteractionChannel
 	/// <param name="defaultValue">Default choice.</param>
 	/// <param name="options">Optional ask options (cancellation, timeout). When null or token is default, uses the ambient per-command token.</param>
 	/// <returns>True when confirmed.</returns>
+	/// <exception cref="OperationCanceledException">
+	/// The prompt was cancelled: by Esc, by the caller, or because a hosted terminal disconnected.
+	/// </exception>
 	ValueTask<bool> AskConfirmationAsync(
 		string name,
 		string prompt,
@@ -66,6 +72,9 @@ public interface IReplInteractionChannel
 	/// <param name="defaultValue">Optional default value.</param>
 	/// <param name="options">Optional ask options (cancellation, timeout). When null or token is default, uses the ambient per-command token.</param>
 	/// <returns>The captured text.</returns>
+	/// <exception cref="OperationCanceledException">
+	/// The prompt was cancelled: by Esc, by the caller, or because a hosted terminal disconnected.
+	/// </exception>
 	ValueTask<string> AskTextAsync(
 		string name,
 		string prompt,
@@ -96,6 +105,9 @@ public interface IReplInteractionChannel
 	/// <param name="defaultIndices">Indices of pre-selected choices, or <c>null</c> for none.</param>
 	/// <param name="options">Optional multi-choice options (min/max selections, cancellation, timeout).</param>
 	/// <returns>The zero-based indices of the selected choices.</returns>
+	/// <exception cref="OperationCanceledException">
+	/// The prompt was cancelled: by Esc, by the caller, or because a hosted terminal disconnected.
+	/// </exception>
 	ValueTask<IReadOnlyList<int>> AskMultiChoiceAsync(
 		string name,
 		string prompt,
