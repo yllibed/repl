@@ -250,6 +250,88 @@ public sealed class Given_TelnetFraming
 		received.Should().Be(slice + "TAIL".Length);
 	}
 
+	[TestMethod]
+	[DataRow(4095, "é", 4095)]
+	[DataRow(4094, "€", 4094)]
+	[DataRow(4095, "€", 4095)]
+	[DataRow(4093, "\U0001F600", 4093)]
+	[DataRow(4094, "\U0001F600", 4094)]
+	[DataRow(4095, "\U0001F600", 4095)]
+	[DataRow(4096, "é", 4096)]
+	[Description("Verifies the output is cut into writes on character boundaries, so a consumer that decodes each write on its own, such as one reading WebSocket messages, never sees a character split in two, whatever its width and wherever the slice size falls in it.")]
+	public async Task When_ACharacterStraddlesAWriteSlice_Then_EachWriteHoldsWholeCharacters(
+		int prefix, string character, int firstWrite)
+	{
+		var toPeer = new Pipe();
+		var output = new FlushRecordingPipeWriter(toPeer.Writer);
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, output));
+		var run = framing.RunAsync(CancellationToken.None);
+		var text = new string('a', prefix) + character + "TAIL";
+		await framing.Output.WriteAsync(text).ConfigureAwait(false);
+		await framing.DisposeAsync().AsTask().WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		toPeer.Reader.TryRead(out var sent).Should().BeTrue();
+		var bytes = System.Buffers.BuffersExtensions.ToArray(sent.Buffer);
+		var strict = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+		var decoded = new System.Text.StringBuilder();
+		// The first write is the negotiation, which is not text.
+		var offset = (int)output.Flushes[0];
+		foreach (var length in output.Flushes.Skip(1))
+		{
+			var write = () => strict.GetString(bytes, offset, (int)length);
+			decoded.Append(write.Should().NotThrow("a write must not end inside a character").Subject);
+			offset += (int)length;
+		}
+
+		decoded.ToString().Should().Be(text);
+		output.Flushes.Skip(1).Should().HaveCount(2).And.AllSatisfy(length => length.Should().BeLessThanOrEqualTo(4096));
+		output.Flushes[1].Should().Be(firstWrite, "the first write ends just before the character the slice size falls in");
+	}
+
+	// A pipe writer that records how many bytes each flush sends.
+	private sealed class FlushRecordingPipeWriter(PipeWriter inner) : PipeWriter
+	{
+		private readonly List<long> _flushes = [];
+		private long _pending;
+
+		public IReadOnlyList<long> Flushes
+		{
+			get
+			{
+				lock (_flushes)
+				{
+					return [.. _flushes];
+				}
+			}
+		}
+
+		public override void Advance(int bytes)
+		{
+			_pending += bytes;
+			inner.Advance(bytes);
+		}
+
+		public override Memory<byte> GetMemory(int sizeHint = 0) => inner.GetMemory(sizeHint);
+
+		public override Span<byte> GetSpan(int sizeHint = 0) => inner.GetSpan(sizeHint);
+
+		public override void CancelPendingFlush() => inner.CancelPendingFlush();
+
+		public override void Complete(Exception? exception = null) => inner.Complete(exception);
+
+		public override ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken = default)
+		{
+			lock (_flushes)
+			{
+				_flushes.Add(_pending);
+			}
+
+			_pending = 0;
+			return inner.FlushAsync(cancellationToken);
+		}
+	}
+
 	private sealed record DuplexPipe(PipeReader Input, PipeWriter Output) : IDuplexPipe;
 
 	// Waits until the framing has written at least the given number of bytes, without consuming them.

@@ -21,6 +21,9 @@ public sealed class TelnetFraming : IAsyncDisposable
 	// reading holds disposal no longer than one write's allowance.
 	private const int MaxWriteSlice = 4096;
 
+	// The most continuation bytes a UTF-8 character has, which bounds how far a slice backs off to end between two.
+	private const int MaxUtf8ContinuationBytes = 3;
+
 	// Once the session has ended, a write is given up when the peer has not taken it in the time it needs at this pace,
 	// in bytes a second, or in MinWriteAllowance for a short one; the remarks on DisposeAsync and the change note in
 	// docs/execution-pipeline.md state it too. A transport reports no progress inside a write, so the allowance is
@@ -290,6 +293,31 @@ public sealed class TelnetFraming : IAsyncDisposable
 		}
 	}
 
+	// Ends a slice on a character boundary, so a consumer that decodes each write on its own, such as one reading
+	// WebSocket messages, never sees a character split in two. The output is UTF-8, which never holds the 0xFF that IAC
+	// escaping doubles, so a cut between characters never splits an escape either.
+	private static int SliceLength(byte[] data, int offset)
+	{
+		var end = offset + MaxWriteSlice;
+		if (end >= data.Length)
+		{
+			return data.Length - offset;
+		}
+
+		// Bytes that are not UTF-8 are cut at the slice size.
+		for (var cut = end; cut > end - MaxUtf8ContinuationBytes - 1; cut--)
+		{
+			if (!IsUtf8Continuation(data[cut]))
+			{
+				return cut - offset;
+			}
+		}
+
+		return MaxWriteSlice;
+	}
+
+	private static bool IsUtf8Continuation(byte value) => (value & 0xC0) == 0x80;
+
 	private static TimeSpan WriteAllowance(int length)
 	{
 		var atMinDrainRate = TimeSpan.FromSeconds((double)length / MinDrainRate);
@@ -302,10 +330,11 @@ public sealed class TelnetFraming : IAsyncDisposable
 		{
 			await foreach (var data in _outChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
 			{
-				for (var offset = 0; offset < data.Length; offset += MaxWriteSlice)
+				for (var offset = 0; offset < data.Length;)
 				{
-					await WriteAsync(data.AsMemory(offset, Math.Min(MaxWriteSlice, data.Length - offset)), ct)
-						.ConfigureAwait(false);
+					var length = SliceLength(data, offset);
+					await WriteAsync(data.AsMemory(offset, length), ct).ConfigureAwait(false);
+					offset += length;
 				}
 			}
 		}
