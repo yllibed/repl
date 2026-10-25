@@ -706,6 +706,54 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
+	[Description("The compatibility-shim transition is connection-local — each session claims its own intro — so its tools/list_changed must reach that session alone. It used to clear a handler-wide collection whose SDK fan-out notifies every attached session, sending a spurious list_changed to sessions whose catalog had not changed. A ping on the other session after the first session's own notification arrives is the ordering barrier: the SDK starts every session's send synchronously inside that one clear, so any notification bound for the other session is already queued ahead of the ping's response.")]
+	public async Task When_OneLegacySessionConsumesItsShimIntro_Then_NoOtherSessionIsNotified()
+	{
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("alpha", () => "a");
+		var handler = CreateHandler(app, DynamicToolCompatibilityMode.DiscoverAndCallShim);
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+		var legacy = new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions };
+		var sessionA = await StartSessionAsync(handler, legacy, cts.Token).ConfigureAwait(false);
+		await using var scopeA = sessionA.ConfigureAwait(false);
+		var sessionB = await StartSessionAsync(handler, legacy, cts.Token).ConfigureAwait(false);
+		await using var scopeB = sessionB.ConfigureAwait(false);
+
+		var notifiedA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var registrationA = sessionA.Client.RegisterNotificationHandler(
+			NotificationMethods.ToolListChangedNotification,
+			(_, _) =>
+			{
+				notifiedA.TrySetResult();
+				return ValueTask.CompletedTask;
+			}).ConfigureAwait(false);
+		var notificationsToB = 0;
+		var notifiedB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		await using var registrationB = sessionB.Client.RegisterNotificationHandler(
+			NotificationMethods.ToolListChangedNotification,
+			(_, _) =>
+			{
+				Interlocked.Increment(ref notificationsToB);
+				notifiedB.TrySetResult();
+				return ValueTask.CompletedTask;
+			}).ConfigureAwait(false);
+
+		(await sessionA.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
+			.Select(static tool => tool.Name).Should().BeEquivalentTo(["discover_tools", "call_tool"]);
+		await notifiedA.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+		await sessionB.Client.PingAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		Volatile.Read(ref notificationsToB).Should().Be(0, "session A's transition changed nothing session B can see");
+
+		// Positive control: B's own transition does reach B, so the handler above can observe one.
+		await sessionB.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		await notifiedB.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+		Volatile.Read(ref notificationsToB).Should().Be(1);
+	}
+
+	[TestMethod]
 	[Description("Regression guard: the compatibility bootstrap must not run on 2026-07-28. Serving discover_tools/call_tool on the first tools/list and the real catalog on the next is a connection-local change caused by another request on that connection — the second half of the MUST NOT, and observable with a single connection. A modern client gets the real catalog immediately, and twice in a row it gets the same one.")]
 	public async Task When_ShimEnabledAndAModernSessionLists_Then_TheCatalogIsTheSameEveryTime()
 	{
