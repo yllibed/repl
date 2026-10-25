@@ -9,7 +9,7 @@ namespace Repl;
 /// <summary>
 /// Provides interactive autocomplete resolution for the Repl routing graph.
 /// </summary>
-internal sealed class AutocompleteEngine(CoreReplApp app)
+internal sealed partial class AutocompleteEngine(CoreReplApp app)
 {
 	internal const string AutocompleteModeSessionStateKey = "__repl.autocomplete.mode";
 
@@ -80,7 +80,7 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 			HintLabelStyle: palette.AutocompleteHintLabelStyle);
 	}
 
-	internal async ValueTask<ConsoleLineReader.AutocompleteResult?> ResolveAutocompleteAsync(
+	private async ValueTask<ConsoleLineReader.AutocompleteResult?> ResolveCanonicalAutocompleteAsync(
 		ConsoleLineReader.AutocompleteRequest request,
 		IReadOnlyList<string> scopeTokens,
 		IServiceProvider serviceProvider,
@@ -1326,13 +1326,12 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 
 	// True when HandlerArgumentBinder.BindParameter would bind this parameter BEFORE consulting
 	// context.RouteValues, so the route value is never used for it and its type must not gate the
-	// candidate. Mirrors that method's pre-route precedence exactly: CancellationToken, an explicit
-	// binding direction ([FromContext]/[FromServices]), a typed global-options parameter
-	// (UseGlobalOptions<T>), and a [ReplOptionsGroup] parameter. Framework-injected services
-	// (IServiceProvider, ICoreReplApp, ...) are deliberately NOT here — the binder consults route
-	// values BEFORE them, so a segment homonym does bind (and fail) exactly as completion predicts.
+	// candidate. Mirrors that method's pre-route precedence exactly: an explicit binding direction
+	// ([FromContext]/[FromServices]), a parameter Repl supplies (CancellationToken, IProgress<T>,
+	// IServiceProvider, ...), a typed global-options parameter (UseGlobalOptions<T>), and a
+	// [ReplOptionsGroup] parameter.
 	private bool BindsBeforeRouteValues(System.Reflection.ParameterInfo parameter) =>
-		parameter.ParameterType == typeof(CancellationToken)
+		ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType)
 		|| parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0
 		|| app.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out _)
@@ -2154,61 +2153,8 @@ internal sealed class AutocompleteEngine(CoreReplApp app)
 		return true;
 	}
 
-	internal static List<TokenSpan> TokenizeInputSpans(string input)
-	{
-		var tokens = new List<TokenSpan>();
-		var index = 0;
-		while (index < input.Length)
-		{
-			while (index < input.Length && char.IsWhiteSpace(input[index]))
-			{
-				index++;
-			}
-
-			if (index >= input.Length)
-			{
-				break;
-			}
-
-			var start = index;
-			var value = new System.Text.StringBuilder();
-			char? quote = null;
-
-			if (input[index] is '"' or '\'')
-			{
-				quote = input[index];
-				index++; // skip opening quote
-			}
-
-			while (index < input.Length)
-			{
-				if (quote is not null && input[index] == quote.Value)
-				{
-					index++; // skip closing quote
-					break;
-				}
-
-				if (quote is null && char.IsWhiteSpace(input[index]))
-				{
-					break;
-				}
-
-				if (quote is null && input[index] is '"' or '\'')
-				{
-					quote = input[index];
-					index++; // skip opening quote mid-token
-					continue;
-				}
-
-				value.Append(input[index]);
-				index++;
-			}
-
-			tokens.Add(new TokenSpan(value.ToString(), start, index));
-		}
-
-		return tokens;
-	}
+	internal static List<TokenSpan> TokenizeInputSpans(string input) =>
+		InputTokenizer.Tokenize(input).Select(static token => new TokenSpan(token.Value, token.Start, token.Start + token.Length)).ToList();
 
 	private static AutocompleteInputState AnalyzeAutocompleteInput(string input, int cursor)
 	{

@@ -1,0 +1,313 @@
+using Repl.Tests.TerminalSupport;
+
+namespace Repl.Tests;
+
+[TestClass]
+public sealed class Given_InteractionFeedbackRouting
+{
+	[TestMethod]
+	[Description("Verifies built-in transformers declare whether their output is meant for programs.")]
+	public void When_BuiltInTransformersAreRegistered_Then_OnlyStructuredFormatsAreMachineReadable()
+	{
+		var options = new OutputOptions();
+
+		options.Transformers["json"].IsMachineReadable.Should().BeTrue();
+		options.Transformers["xml"].IsMachineReadable.Should().BeTrue();
+		options.Transformers["yaml"].IsMachineReadable.Should().BeTrue();
+		options.Transformers["markdown"].IsMachineReadable.Should().BeFalse();
+		options.Transformers["human"].IsMachineReadable.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Verifies a custom transformer is treated as human output unless it opts in.")]
+	public void When_CustomTransformerDoesNotDeclareIt_Then_ItIsNotMachineReadable()
+	{
+		IOutputTransformer transformer = new StubTransformer();
+
+		transformer.IsMachineReadable.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("Verifies feedback stays on standard output by default only when it cannot reach a program.")]
+	[DataRow(false, false, false, DisplayName = "Human output on a terminal")]
+	[DataRow(true, false, true, DisplayName = "Machine output on a terminal")]
+	[DataRow(false, true, true, DisplayName = "Human output, local standard output redirected")]
+	[DataRow(true, true, true, DisplayName = "Machine output, local standard output redirected")]
+	public void When_StreamIsAuto_Then_FeedbackMovesToErrorForPrograms(
+		bool isMachineReadableOutput,
+		bool isLocalOutputRedirected,
+		bool expectedToError)
+	{
+		var toError = InteractionFeedbackRouting.WritesToError(
+			ReplFeedbackStream.Auto,
+			isMachineReadableOutput,
+			isLocalOutputRedirected);
+
+		toError.Should().Be(expectedToError);
+	}
+
+	[TestMethod]
+	[Description("Verifies the process's redirected standard output does not move a session's feedback: the session's writers are not the process's.")]
+	public void When_ASessionIsActive_Then_TheProcessRedirectionIsIgnored()
+	{
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, error: error, isHostedSession: false);
+
+		var target = InteractionFeedbackRouting.Resolve(new OutputOptions(), isOutputRedirected: true, isErrorRedirected: true);
+
+		target.Writer.Should().BeSameAs(output);
+		target.IsTerminal.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Verifies the console session a protocol-passthrough command runs in follows standard error's own redirection: its writers are the process's standard error, so progress is rewritten in place only on a terminal, never into a pipe a client is logging.")]
+	[DataRow(true, false, DisplayName = "Standard error piped")]
+	[DataRow(false, true, DisplayName = "Standard error on a terminal")]
+	public void When_TheSessionIsTheProcessConsole_Then_StandardErrorRedirectionDecides(bool isErrorRedirected, bool expectedTerminal)
+	{
+		using var session = ReplSessionIO.SetProcessConsoleSession();
+
+		var target = InteractionFeedbackRouting.Resolve(new OutputOptions(), isOutputRedirected: true, isErrorRedirected);
+
+		target.Writer.Should().BeSameAs(Console.Error);
+		target.IsTerminal.Should().Be(expectedTerminal);
+	}
+
+	[TestMethod]
+	[Description("Verifies a protocol-passthrough command run from the console runs in the process-console session, which is what lets its feedback follow standard error's redirection.")]
+	public void When_AProtocolPassthroughCommandRunsFromTheConsole_Then_ItRunsInTheProcessConsoleSession()
+	{
+		bool? observed = null;
+		var sut = CoreReplApp.Create();
+		sut.Map(
+				"serve",
+				() =>
+				{
+					observed = ReplSessionIO.IsProcessConsoleSession;
+					return Results.Exit(0);
+				})
+			.AsProtocolPassthrough();
+
+		sut.Run(["serve"]).Should().Be(0);
+
+		observed.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Verifies a session opened inside the protocol-passthrough console session brings its own writers, which are not the process's console.")]
+	public void When_ASessionOpensInsideTheProcessConsole_Then_ItsOwnWritersCount()
+	{
+		using var console = ReplSessionIO.SetProcessConsoleSession();
+		using var output = new StringWriter();
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, isHostedSession: false);
+
+		var target = InteractionFeedbackRouting.Resolve(new OutputOptions(), isOutputRedirected: true, isErrorRedirected: true);
+
+		target.Writer.Should().BeSameAs(output);
+		target.IsTerminal.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Verifies a hosted protocol-passthrough command's feedback never shares the protocol's writer: it goes to the session's own error writer when there is one, is not written when the protocol's is the only stream, and is left alone when the protocol has a writer of its own.")]
+	[DataRow("single", ReplFeedbackStream.Auto, DisplayName = "One stream: not written")]
+	[DataRow("error", ReplFeedbackStream.Auto, DisplayName = "A separate error writer: written there")]
+	[DataRow("error", ReplFeedbackStream.Output, DisplayName = "A separate error writer, output stream asked: written there")]
+	[DataRow("command", ReplFeedbackStream.Auto, DisplayName = "A separate protocol writer: the session output")]
+	public void When_AHostedPassthroughCommandWritesFeedback_Then_ItNeverSharesTheProtocolWriter(string writers, ReplFeedbackStream stream)
+	{
+		using var protocol = new StringWriter();
+		using var other = new StringWriter();
+		using var session = writers switch
+		{
+			"error" => ReplSessionIO.SetSession(protocol, TextReader.Null, error: other),
+			"command" => ReplSessionIO.SetSession(other, TextReader.Null, commandOutput: protocol),
+			_ => ReplSessionIO.SetSession(protocol, TextReader.Null),
+		};
+		using var passthrough = ReplSessionIO.PushProtocolPassthrough();
+
+		var target = InteractionFeedbackRouting.Resolve(
+			new OutputOptions { FeedbackStream = stream }, isOutputRedirected: false, isErrorRedirected: false);
+
+		target.Writer.Should().BeSameAs(string.Equals(writers, "single", StringComparison.Ordinal) ? TextWriter.Null : other);
+	}
+
+	[TestMethod]
+	[Description("Verifies the echo of what a user types at a prompt follows the prompt's label: when the feedback of a command whose output is for a program goes to the error writer, the typed answer is echoed there too, never into the payload.")]
+	public async Task When_APromptIsAnsweredWhileFeedbackGoesToTheErrorWriter_Then_TheEchoFollowsTheLabel()
+	{
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, error: error, isHostedSession: false);
+		using var machineReadable = ReplSessionIO.PushMachineReadableOutput(isMachineReadableOutput: true);
+		var outputOptions = new OutputOptions();
+		var channel = new ConsoleInteractionChannel(new InteractionOptions(), outputOptions);
+		try
+		{
+			ReplSessionIO.KeyReader = new FakeKeyReader(
+			[
+				new ConsoleKeyInfo('o', ConsoleKey.O, shift: false, alt: false, control: false),
+				new ConsoleKeyInfo('k', ConsoleKey.K, shift: false, alt: false, control: false),
+				new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+			]);
+
+			var answer = await channel.AskTextAsync("name", "Name");
+
+			answer.Should().Be("ok");
+			error.ToString().Should().Contain("Name: ").And.Contain("ok");
+			output.ToString().Should().BeEmpty();
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies the arrow-key menu steps aside when feedback goes to the error writer: it would draw into the payload a program reads, so the text prompt takes over, its label and echo on the error writer.")]
+	public async Task When_AChoiceIsAskedWhileFeedbackGoesToTheErrorWriter_Then_TheTextPromptTakesOver()
+	{
+		using var output = new StringWriter();
+		using var error = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null, error: error, isHostedSession: false);
+		using var machineReadable = ReplSessionIO.PushMachineReadableOutput(isMachineReadableOutput: true);
+		var outputOptions = new OutputOptions();
+		var channel = new ConsoleInteractionChannel(
+			new InteractionOptions(), outputOptions, handlers: [new RichPromptInteractionHandler(outputOptions)]);
+		try
+		{
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.KeyReader = new FakeKeyReader(
+			[
+				new ConsoleKeyInfo('b', ConsoleKey.B, shift: false, alt: false, control: false),
+				new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+			]);
+
+			var index = await channel.AskChoiceAsync("pick", "Pick", ["a", "b"]);
+
+			index.Should().Be(1);
+			error.ToString().Should().Contain("Pick");
+			output.ToString().Should().BeEmpty();
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies the arrow-key menu stays in a hosted session whose transport has one stream: feedback for a program goes to that same stream, so the menu draws where the feedback goes and nothing is gained by stepping aside.")]
+	public async Task When_AChoiceIsAskedInASingleStreamSessionForAProgram_Then_TheMenuStays()
+	{
+		using var output = new StringWriter();
+		var previousReader = ReplSessionIO.KeyReader;
+		using var session = ReplSessionIO.SetSession(output, TextReader.Null);
+		using var machineReadable = ReplSessionIO.PushMachineReadableOutput(isMachineReadableOutput: true);
+		var outputOptions = new OutputOptions();
+		var channel = new ConsoleInteractionChannel(
+			new InteractionOptions(), outputOptions, handlers: [new RichPromptInteractionHandler(outputOptions)]);
+		// The menu answers with an arrow and Enter; the text prompt would take the typed fallback too.
+		var keys = new FakeKeyReader(
+		[
+			new ConsoleKeyInfo('\0', ConsoleKey.DownArrow, shift: false, alt: false, control: false),
+			new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+			new ConsoleKeyInfo('b', ConsoleKey.B, shift: false, alt: false, control: false),
+			new ConsoleKeyInfo('\r', ConsoleKey.Enter, shift: false, alt: false, control: false),
+		]);
+		try
+		{
+			ReplSessionIO.AnsiSupport = true;
+			ReplSessionIO.KeyReader = keys;
+
+			var index = await channel.AskChoiceAsync("pick", "Pick", ["a", "b"]);
+
+			index.Should().Be(1);
+			keys.KeyAvailable.Should().BeTrue("the menu reads only the arrow and Enter");
+		}
+		finally
+		{
+			ReplSessionIO.KeyReader = previousReader;
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies an explicit stream wins over every detection.")]
+	[DataRow(ReplFeedbackStream.Output, false)]
+	[DataRow(ReplFeedbackStream.Error, true)]
+	public void When_StreamIsExplicit_Then_DetectionIsIgnored(ReplFeedbackStream stream, bool expectedToError)
+	{
+		foreach (var isMachineReadableOutput in new[] { false, true })
+		{
+			foreach (var isLocalOutputRedirected in new[] { false, true })
+			{
+				InteractionFeedbackRouting.WritesToError(stream, isMachineReadableOutput, isLocalOutputRedirected)
+					.Should().Be(expectedToError);
+			}
+		}
+	}
+
+	[TestMethod]
+	[Description("Verifies the routing reads the stream it actually writes to: feedback moved to a redirected standard error is not a terminal even when standard output is one.")]
+	[DataRow(ReplFeedbackStream.Auto, true, false, true, true, DisplayName = "Redirected stdout, terminal stderr: error stream, a terminal")]
+	[DataRow(ReplFeedbackStream.Error, false, true, true, false, DisplayName = "Terminal stdout, redirected stderr: error stream, not a terminal")]
+	[DataRow(ReplFeedbackStream.Output, false, true, false, true, DisplayName = "Forced output on a terminal stdout")]
+	[DataRow(ReplFeedbackStream.Output, true, false, false, false, DisplayName = "Forced output on a redirected stdout")]
+	public void When_ResolvingOutsideASession_Then_TheTargetReflectsItsOwnStream(
+		ReplFeedbackStream stream,
+		bool isOutputRedirected,
+		bool isErrorRedirected,
+		bool expectedIsError,
+		bool expectedIsTerminal)
+	{
+		var target = InteractionFeedbackRouting.Resolve(
+			new OutputOptions { FeedbackStream = stream },
+			isOutputRedirected,
+			isErrorRedirected);
+
+		target.IsError.Should().Be(expectedIsError);
+		target.IsTerminal.Should().Be(expectedIsTerminal);
+		target.Writer.Should().BeSameAs(expectedIsError ? Console.Error : Console.Out);
+	}
+
+	[TestMethod]
+	[Description("Verifies the target carries the redirection of the stream feedback is written to, not standard output's, for the colour and terminal-sequence rules to read.")]
+	[DataRow(ReplFeedbackStream.Auto, true, false, false, DisplayName = "Piped stdout, terminal stderr: stderr receives it, not redirected")]
+	[DataRow(ReplFeedbackStream.Error, false, true, true, DisplayName = "Terminal stdout, redirected stderr: stderr receives it, redirected")]
+	[DataRow(ReplFeedbackStream.Output, true, false, true, DisplayName = "Forced stdout, piped: redirected")]
+	public void When_ResolvingOutsideASession_Then_TheTargetCarriesItsOwnStreamRedirection(
+		ReplFeedbackStream stream,
+		bool isOutputRedirected,
+		bool isErrorRedirected,
+		bool expectedStreamRedirected)
+	{
+		var target = InteractionFeedbackRouting.Resolve(
+			new OutputOptions { FeedbackStream = stream },
+			isOutputRedirected,
+			isErrorRedirected);
+
+		target.IsStreamRedirected.Should().Be(expectedStreamRedirected);
+	}
+
+	[TestMethod]
+	[Description("Verifies the colour rule of the output stream applies to whichever stream it is given: a terminal one is coloured, a redirected one is not.")]
+	public void When_AskingForColourOnAGivenStream_Then_ItsRedirectionDecides()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var options = new OutputOptions { AnsiMode = AnsiMode.Auto };
+
+		options.IsAnsiEnabled(isStreamRedirected: false).Should().BeTrue();
+		options.IsAnsiEnabled(isStreamRedirected: true).Should().BeFalse();
+		new OutputOptions { AnsiMode = AnsiMode.Always }.IsAnsiEnabled(isStreamRedirected: true)
+			.Should().BeTrue("forced colour applies to a redirected stream too, as it does to standard output");
+	}
+
+	private sealed class StubTransformer : IOutputTransformer
+	{
+		public string Name => "stub";
+
+		public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default) =>
+			ValueTask.FromResult(value?.ToString() ?? string.Empty);
+	}
+}

@@ -93,6 +93,11 @@ await channel.WriteProblemAsync(
     cancellationToken: cancellationToken);
 ```
 
+On the console host, this feedback, progress and the label of a text prompt move to standard error when
+the output is for a program (`--json`, or a redirected standard output), so they stay out of the payload.
+See [Progress](progress.md#which-stream-receives-progress) for what is not covered, and
+`OutputOptions.FeedbackStream`.
+
 ---
 
 ## Extension methods
@@ -272,9 +277,20 @@ The host displays a countdown and selects the default when time expires.
 
 ### Cancellation
 
-- **Esc** during a prompt cancels the prompt
+- **Esc** during a prompt cancels the prompt, even when its timeout expires at the same moment
 - **Ctrl+C** during a command cancels the per-command `CancellationToken`
 - A second **Ctrl+C** exits the session
+- A hosted terminal (WebSocket, Telnet or `StreamedReplHost` hosting) that disconnects during a prompt cancels it
+  rather than answering it, so a default is never chosen for a user who is gone; redirected input that ends still
+  leaves the prompt to its `PromptFallback`
+- A secret prompt's timeout stops counting once the user starts typing, in a hosted terminal as on a local console
+
+> **Changed in 0.12.** Esc in a secret prompt with a timeout used to return an empty answer or ask again, and so
+> did a hosted terminal disconnecting during one. Both now cancel the prompt with an `OperationCanceledException`, as
+> Esc does in every other prompt. A caller that wants the old result can catch it and use an empty string. A hosted
+> terminal disconnecting during any other prompt used to settle it as unanswered, through `PromptFallback`: its
+> default, or an `InvalidOperationException` under `PromptFallback.Fail`. It now cancels the prompt the same way; a
+> caller that wants the default can catch the exception and use it.
 
 ---
 
@@ -448,7 +464,7 @@ The interaction pipeline evaluates handlers in this order:
 3. **Built-in rich handler** (`RichPromptInteractionHandler`) — renders arrow-key menus when ANSI + key reader are available.
 4. **Text fallback** — numbered list with typed input; works in all environments (redirected stdin, hosted sessions, no ANSI).
 
-If the terminal cannot support rich prompts (e.g. ANSI disabled, stdin redirected, or hosted session), the framework falls back to the text-based prompt automatically.
+If the terminal cannot support rich prompts (e.g. ANSI disabled, stdin redirected, or hosted session), or while the command's feedback goes to the error stream because its output is for a program (see [Which Stream Receives Progress](progress.md#which-stream-receives-progress)), the framework falls back to the text-based prompt automatically.
 
 ---
 

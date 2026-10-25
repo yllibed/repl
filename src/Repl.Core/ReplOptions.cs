@@ -5,6 +5,9 @@ namespace Repl;
 /// </summary>
 public sealed class ReplOptions
 {
+	/// <summary>Gets advanced input adaptation and validation options.</summary>
+	public InputOptions Input { get; } = new();
+
 	/// <summary>
 	/// Initializes a new instance of the <see cref="ReplOptions"/> class.
 	/// </summary>

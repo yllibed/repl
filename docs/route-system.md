@@ -82,13 +82,15 @@ Handler parameters are resolved in this order:
 
 1. `CancellationToken` — injected from execution context
 2. Explicit attributes — `[FromServices]` or `[FromContext]`
-3. Options group — `[ReplOptionsGroup]` for multi-property binding
-4. Route values — captured from dynamic segments (`{name}`)
-5. Named options — from `--option value` syntax
-6. Context values / DI services — resolved from context stack or service provider
-7. Positional arguments — remaining tokens consumed left-to-right
-8. Parameter defaults — C# default values
-9. Null — for nullable types without other source
+3. Parameters Repl supplies — progress reporters, the interaction channel and other framework services
+4. Typed global options — a `UseGlobalOptions<T>()` type, resolved from services
+5. Options group — `[ReplOptionsGroup]` for multi-property binding
+6. Route values — captured from dynamic segments (`{name}`)
+7. Named options — from `--option value` syntax
+8. Context values / DI services — resolved from context stack or service provider
+9. Positional arguments — remaining tokens consumed left-to-right
+10. Parameter defaults — C# default values
+11. Null — for nullable types without other source
 
 Binding mode can be controlled per parameter:
 

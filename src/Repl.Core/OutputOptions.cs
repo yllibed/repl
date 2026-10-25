@@ -62,6 +62,13 @@ public sealed class OutputOptions
 	public IAnsiPaletteProvider PaletteProvider { get; set; } = new DefaultAnsiPaletteProvider();
 
 	/// <summary>
+	/// Gets or sets the stream that receives interaction feedback; see <see cref="ReplFeedbackStream"/>.
+	/// The default, <see cref="ReplFeedbackStream.Auto"/>, keeps standard output for the payload alone
+	/// when a program reads it.
+	/// </summary>
+	public ReplFeedbackStream FeedbackStream { get; set; } = ReplFeedbackStream.Auto;
+
+	/// <summary>
 	/// Gets or sets a value indicating whether banner output is enabled.
 	/// </summary>
 	public bool BannerEnabled { get; set; } = true;
@@ -200,7 +207,13 @@ public sealed class OutputOptions
 			UseAnsi: IsAnsiEnabled(),
 			Palette: ResolvePalette());
 
-	internal bool IsAnsiEnabled()
+	internal bool IsAnsiEnabled() => IsAnsiEnabled(Console.IsOutputRedirected);
+
+	/// <summary>
+	/// The colour rule applied to a stream whose redirection is <paramref name="isStreamRedirected"/>, for
+	/// output written somewhere other than standard output.
+	/// </summary>
+	internal bool IsAnsiEnabled(bool isStreamRedirected)
 	{
 		if (ReplSessionIO.IsSessionActive && ReplSessionIO.AnsiSupport is { } sessionAnsi)
 		{
@@ -232,12 +245,7 @@ public sealed class OutputOptions
 			return true;
 		}
 
-		if (Console.IsOutputRedirected)
-		{
-			return false;
-		}
-
-		return true;
+		return !isStreamRedirected;
 	}
 
 	internal AnsiPalette ResolvePalette()

@@ -29,6 +29,44 @@ internal static class PagerPayloadParser
 		return new ParsedPagerPayload(resolvedHeader, content);
 	}
 
+	/// <summary>
+	/// Parses a payload whose transformer declared its layout: its header and footer are exactly the lines the
+	/// layout names, so nothing is inferred from styling and no line is dropped for reading like a header or a
+	/// footer. The first payload's header is pinned. A later payload's header is dropped when it names the columns
+	/// the previous payload showed, and kept when it names others, or its rows would sit under headings that are
+	/// not theirs.
+	/// </summary>
+	/// <param name="payload">The rendered payload.</param>
+	/// <param name="header">The pinned header, or <see langword="null"/> for the first payload.</param>
+	/// <param name="previousLayout">The previous payload's layout, or <see langword="null"/> for the first payload.</param>
+	/// <param name="layout">The layout the payload's transformer declared.</param>
+	public static ParsedPagerPayload ParseDeclared(
+		string payload,
+		PagerHeader? header,
+		RenderedLayout? previousLayout,
+		RenderedLayout layout)
+	{
+		var lines = SplitLines(payload);
+		var headerLineCount = Math.Min(layout.HeaderLineCount, lines.Count);
+		var contentEnd = Math.Max(headerLineCount, lines.Count - layout.FooterLineCount);
+		var content = new List<string>(contentEnd);
+		if (header is null)
+		{
+			content.AddRange(lines.Take(headerLineCount..contentEnd));
+			return new ParsedPagerPayload(DeclaredHeader(lines, headerLineCount), content);
+		}
+
+		var repeatsPreviousColumns = previousLayout is not null && layout.NamesSameColumns(previousLayout);
+		content.AddRange(lines.Take((repeatsPreviousColumns ? headerLineCount : 0)..contentEnd));
+		return new ParsedPagerPayload(header, content);
+	}
+
+	// Only the detected path compares lines with the header, so a declared one needs no normalized forms.
+	private static PagerHeader DeclaredHeader(List<string> lines, int headerLineCount) =>
+		headerLineCount == 0
+			? PagerHeader.Empty
+			: new PagerHeader([.. lines.Take(headerLineCount)], PagerHeader.Empty.NormalizedLines);
+
 	private static PagerHeader DetectHeader(List<string> lines)
 	{
 		if (lines.Count == 0)

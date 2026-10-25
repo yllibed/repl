@@ -1,5 +1,5 @@
 ﻿using System.Text.Json;
-using System.Text.RegularExpressions;
+using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -11,14 +11,17 @@ namespace Repl.Mcp;
 
 /// <summary>
 /// Dispatches MCP tool calls through the Repl pipeline.
-/// Each call creates CLI tokens from the route template + JSON arguments,
-/// then executes through standard Repl routing, binding, and middleware.
+/// Native JSON arguments execute through standard Repl routing, binding, and middleware.
 /// </summary>
 internal sealed partial class McpToolAdapter
 {
-	private const int ProgrammaticInvocationContractVersion = 1;
+	private const int ProgrammaticInvocationContractVersion = 2;
 	internal const string ForcedOutputFormat = "json";
 	private const string TextPlainMimeType = "text/plain";
+
+	// A _meta key under a prefix this project owns: MCP reserves the modelcontextprotocol and mcp labels.
+	private const string OutcomeMetaKey = "io.github.yllibed.repl/outcome";
+	private const string CompletedWithFailuresOutcome = "completedWithFailures";
 
 	private readonly ICoreReplApp _app;
 	private readonly ReplMcpServerOptions _options;
@@ -143,18 +146,20 @@ internal sealed partial class McpToolAdapter
 			return ErrorResult($"Unknown tool: {toolName}");
 		}
 
-		var (tokens, prefills) = PrepareExecution(command, arguments);
-		var invocation = await ExecuteThroughPipelineAsync(tokens, prefills, server, progressToken, ct)
+		var (request, transport, prefills) = PrepareStructuredExecution(command, arguments);
+		var invocation = await ExecuteThroughPipelineAsync(request, transport, prefills, server, progressToken, ct)
 			.ConfigureAwait(false);
-		var output = invocation.ExitCode == 0 ? invocation.Output : DescribeFailure(invocation);
+		var output = invocation.Completed ? invocation.Output : DescribeFailure(invocation);
 		if (string.IsNullOrWhiteSpace(output))
 		{
-			// Only a success reaches here: DescribeFailure names the exit code when it has nothing else.
-			output = "OK";
+			// Only a completed run reaches here: DescribeFailure names the exit code when it has nothing else.
+			// A client may hide _meta from the model, so the text alone must not read as a success.
+			output = invocation.Kind == ReplExecutionOutcomeKind.CompletedWithFailures
+				? "Completed with failures."
+				: "OK";
 		}
 
-		return BuildToolResult(
-			output, invocation.ExitCode, _options.PagedResultTextMode, invocation.UndeliveredMessages);
+		return BuildToolResult(output, invocation, _options.PagedResultTextMode);
 	}
 
 	internal async Task<McpResourceReadInvocation> InvokeResourceAsync(
@@ -169,9 +174,10 @@ internal sealed partial class McpToolAdapter
 			return new McpResourceReadInvocation($"Unknown resource: {resourceName}", TextPlainMimeType, IsError: true);
 		}
 
-		var (tokens, prefills) = PrepareExecution(command, arguments);
+		var (request, transport, prefills) = PrepareStructuredExecution(command, arguments);
 		var invocation = await ExecuteThroughPipelineAsync(
-			tokens,
+			request,
+			transport,
 			prefills,
 			server,
 			progressToken,
@@ -179,7 +185,7 @@ internal sealed partial class McpToolAdapter
 			captureCommandOutput: false)
 			.ConfigureAwait(false);
 
-		if (invocation.ExitCode != 0)
+		if (!invocation.Completed)
 		{
 			// A failed read has no body to carry what the command reported — the success path's body has
 			// to match the advertised MIME type — so the surfaced error is the only place left for it.
@@ -200,7 +206,8 @@ internal sealed partial class McpToolAdapter
 	}
 
 	private async Task<McpPipelineInvocation> ExecuteThroughPipelineAsync(
-		List<string> tokens,
+		ReplInvocationRequest request,
+		List<string> transport,
 		Dictionary<string, string> prefills,
 		McpServer? server,
 		ProgressToken? progressToken,
@@ -228,10 +235,9 @@ internal sealed partial class McpToolAdapter
 		using var undeliveredScope = feedbackService?.PushUndeliveredMessages();
 
 		// Force JSON output — agents consume structured data, not human tables/banners.
-		var effectiveTokens = new List<string>(tokens.Count + 1) { $"--output:{ForcedOutputFormat}" };
-		effectiveTokens.AddRange(tokens);
+		transport.Add($"--output:{ForcedOutputFormat}");
 
-		var completed = await RunSubInvocationAsync(invocableApp, effectiveTokens, mcpServices, capture, ct)
+		var completed = await RunSubInvocationAsync(invocableApp, request, transport, mcpServices, capture, ct)
 			.ConfigureAwait(false);
 
 		var output = capture.Output.ToString().Trim();
@@ -244,7 +250,8 @@ internal sealed partial class McpToolAdapter
 	/// <summary>Runs the command with the captured I/O and throwaway session registration of one call.</summary>
 	private async Task<SubInvocationOutcome> RunSubInvocationAsync(
 		ISubInvocableReplApp invocableApp,
-		List<string> effectiveTokens,
+		ReplInvocationRequest request,
+		List<string> transport,
 		IServiceProvider mcpServices,
 		CommandOutputCapture capture,
 		CancellationToken ct)
@@ -276,7 +283,7 @@ internal sealed partial class McpToolAdapter
 					McpDiscoveryCapabilities.CreateSessionScopedOverrides(_options.InteractivityMode))
 				: null;
 			return await invocableApp.RunSubInvocationWithOutcomeAsync(
-				effectiveTokens.ToArray(), mcpServices, presenceServices, ct).ConfigureAwait(false);
+				request, transport.ToArray(), mcpServices, presenceServices, ct).ConfigureAwait(false);
 		}
 	}
 
@@ -288,7 +295,14 @@ internal sealed partial class McpToolAdapter
 		int ExitCode,
 		ReplExecutionOutcomeKind Kind,
 		Exception? Failure,
-		IReadOnlyList<string> UndeliveredMessages);
+		IReadOnlyList<string> UndeliveredMessages)
+	{
+		/// <summary>
+		/// Whether the command ran to completion, so its output is the result rather than a failure to
+		/// describe. A run that completed with failures exits non-zero yet produced its own report.
+		/// </summary>
+		public bool Completed => ExitCode == 0 || Kind == ReplExecutionOutcomeKind.CompletedWithFailures;
+	}
 
 	/// <summary>
 	/// The two writers one pipeline run captures, and whether they are the same one. Bundled instead of
@@ -354,26 +368,32 @@ internal sealed partial class McpToolAdapter
 
 	private static CallToolResult BuildToolResult(
 		string output,
-		int exitCode,
-		McpPagedResultTextMode pagedTextMode,
-		IReadOnlyList<string> undeliveredMessages)
+		in McpPipelineInvocation invocation,
+		McpPagedResultTextMode pagedTextMode)
 	{
-		if (exitCode == 0 && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
+		// A run that completed with failures is not a tool error: the agent reads the report, and the
+		// marker tells it the report contains failures without parsing the payload.
+		var meta = invocation.Kind == ReplExecutionOutcomeKind.CompletedWithFailures
+			? new JsonObject { [OutcomeMetaKey] = CompletedWithFailuresOutcome }
+			: null;
+		if (invocation.Completed && TryCreatePagedStructuredResult(output, out var structuredContent, out var summary))
 		{
 			return new CallToolResult
 			{
 				Content = WithMessages(
 					new TextContentBlock { Text = BuildPagedTextContent(output, summary, pagedTextMode) },
-					undeliveredMessages),
+					invocation.UndeliveredMessages),
 				StructuredContent = structuredContent,
 				IsError = false,
+				Meta = meta,
 			};
 		}
 
 		return new CallToolResult
 		{
-			Content = WithMessages(new TextContentBlock { Text = output }, undeliveredMessages),
-			IsError = exitCode != 0,
+			Content = WithMessages(new TextContentBlock { Text = output }, invocation.UndeliveredMessages),
+			IsError = !invocation.Completed,
+			Meta = meta,
 		};
 	}
 
@@ -520,80 +540,66 @@ internal sealed partial class McpToolAdapter
 		return summary;
 	}
 
-	internal static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
-		ReplDocCommand command,
-		IDictionary<string, JsonElement> arguments)
+	internal static (ReplInvocationRequest Request, List<string> Transport, Dictionary<string, string> Prefills) PrepareStructuredExecution(
+		ReplDocCommand command, IDictionary<string, JsonElement> arguments)
 	{
-		var allowedArgumentNames = BuildAllowedArgumentNames(command);
-		var optionTokens = command.Options.ToDictionary(
-			static option => option.Name,
-			static option => option.Aliases.Count > 0 ? option.Aliases[0] : $"--{option.Name}",
-			StringComparer.Ordinal);
-		// A bool-flag option's value token is only ever consumed on a best-effort basis: when it
-		// looks like a fresh option token, ApplyBoolFlagValue declines it WITHOUT a diagnostic
-		// (that decline is required so legitimate flag-chaining like "--verbose --other" keeps
-		// working), leaving it to be re-lexed as its own token on the parser's next iteration —
-		// which can bind a Hidden() option's alias. Every other option kind either has no value to
-		// smuggle or fails the whole call with a diagnostic when its value looks option-like, so
-		// only bool options need the inline "--name=value" form that makes re-lexing impossible.
-		var boolOptionNames = command.Options
-			.Where(static option => IsBooleanTypeName(option.Type))
-			.Select(static option => option.Name)
-			.ToHashSet(StringComparer.Ordinal);
-		return PrepareExecution(command.Path, arguments, allowedArgumentNames, optionTokens, boolOptionNames);
-	}
-
-	private static (List<string> Tokens, Dictionary<string, string> Prefills) PrepareExecution(
-		string routePath,
-		IDictionary<string, JsonElement> arguments,
-		AllowedArgumentNames? allowedArgumentNames,
-		IReadOnlyDictionary<string, string> optionTokens,
-		IReadOnlySet<string>? boolOptionNames = null)
-	{
-		var stringArgs = new Dictionary<string, object?>(StringComparer.Ordinal);
+		var allowed = BuildAllowedArgumentNames(command);
+		var values = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
 		var prefills = new Dictionary<string, string>(StringComparer.Ordinal);
-		var resultFlowTokens = new List<string>();
-		var suppliedSchemaFields = new HashSet<string>(StringComparer.Ordinal);
-
-		foreach (var (requestedKey, value) in arguments)
+		var transport = new List<string>();
+		var supplied = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var pair in arguments)
 		{
-			var field = allowedArgumentNames?.Resolve(requestedKey)
-				?? new AllowedArgumentField(requestedKey, McpArgumentFieldKind.Command);
-			var key = field.Name;
-			if (!suppliedSchemaFields.Add(key))
-			{
-				throw new InvalidOperationException(
-					$"The MCP argument '{requestedKey}' duplicates the schema field '{key}'.");
-			}
-			var strValue = value.ValueKind == JsonValueKind.String
-				? value.GetString() ?? ""
-				: value.GetRawText();
-
+			var field = allowed.Resolve(pair.Key);
+			if (!supplied.Add(field.Name)) { throw new InvalidOperationException($"The MCP argument '{pair.Key}' duplicates the schema field '{field.Name}'."); }
+			var value = pair.Value;
 			switch (field.Kind)
 			{
 				case McpArgumentFieldKind.Answer:
-					prefills.Add(key["answer.".Length..], strValue);
+					prefills.Add(field.Name["answer.".Length..], ReadArgumentText(value));
 					break;
 				case McpArgumentFieldKind.Cursor:
-					ValidateResultCursor(strValue);
-					resultFlowTokens.Add(ReplResultFlowOptionNames.Cursor);
-					resultFlowTokens.Add(strValue);
+					var cursor = ReadArgumentText(value);
+					ValidateResultCursor(cursor);
+					transport.AddRange([ReplResultFlowOptionNames.Cursor, cursor]);
 					break;
 				case McpArgumentFieldKind.PageSize:
-					ValidateResultPageSize(strValue);
-					resultFlowTokens.Add(ReplResultFlowOptionNames.PageSize);
-					resultFlowTokens.Add(strValue);
+					var pageSize = ReadArgumentText(value);
+					ValidateResultPageSize(pageSize);
+					transport.AddRange([ReplResultFlowOptionNames.PageSize, pageSize]);
 					break;
 				default:
-					ValidateCommandArgumentValue(strValue);
-					stringArgs.Add(key, strValue);
+					var option = command.Options.FirstOrDefault(option => string.Equals(option.Name, field.Name, StringComparison.Ordinal));
+					var parameterName = option is null ? field.Name : DocumentationEngine.ResolveInvocationParameterName(option);
+					var collection = option is not null && McpSchemaGenerator.IsCollectionType(option.Type);
+					if (collection && value.ValueKind == JsonValueKind.Array)
+					{
+						ValidateCollectionValues(field.Name, value);
+						// Empty MCP arrays historically mean no occurrence, preserving option defaults.
+						if (value.GetArrayLength() != 0)
+						{
+							values.Add(parameterName, value.EnumerateArray().Select(static item => (object?)item.Clone()).ToArray());
+						}
+					}
+					else { values.Add(parameterName, value.ValueKind is JsonValueKind.Array or JsonValueKind.Object or JsonValueKind.Null ? ReadArgumentText(value) : value.Clone()); }
 					break;
 			}
 		}
+		return (ReplInvocationRequest.ForCommand(command.Path, values), transport, prefills);
+	}
 
-		var tokens = ReconstructTokens(routePath, stringArgs, optionTokens, boolOptionNames);
-		tokens.InsertRange(0, resultFlowTokens);
-		return (tokens, prefills);
+	private static string ReadArgumentText(JsonElement value) =>
+		value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : value.GetRawText();
+
+	private static void ValidateCollectionValues(string name, JsonElement array)
+	{
+		foreach (var item in array.EnumerateArray())
+		{
+			if (item.ValueKind is not (JsonValueKind.String or JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False))
+			{
+				throw new McpException($"The MCP collection argument '{name}' must contain only non-null scalar values.");
+			}
+		}
 	}
 
 	private static void ValidateResultCursor(string cursor)
@@ -615,14 +621,6 @@ internal sealed partial class McpToolAdapter
 			|| value <= 0)
 		{
 			throw new InvalidOperationException("The MCP result page size must fit in a positive 32-bit integer.");
-		}
-	}
-
-	private static void ValidateCommandArgumentValue(string value)
-	{
-		if (value.StartsWith("--", StringComparison.Ordinal))
-		{
-			throw new InvalidOperationException("The MCP argument value cannot start like a CLI option.");
 		}
 	}
 
@@ -708,133 +706,10 @@ internal sealed partial class McpToolAdapter
 		}
 	}
 
-	/// <summary>
-	/// Reconstructs CLI tokens from a route template and MCP arguments.
-	/// </summary>
-	internal static List<string> ReconstructTokens(
-		string routePath,
-		IDictionary<string, object?> arguments) =>
-		ReconstructTokens(routePath, arguments, optionTokens: null, boolOptionNames: null);
-
-	private static List<string> ReconstructTokens(
-		string routePath,
-		IDictionary<string, object?> arguments,
-		IReadOnlyDictionary<string, string>? optionTokens,
-		IReadOnlySet<string>? boolOptionNames)
-	{
-		var tokens = new List<string>();
-		var consumedArgs = new HashSet<string>(
-			optionTokens is null ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-
-		foreach (var part in routePath.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-		{
-			var match = DynamicSegmentPattern().Match(part);
-			if (match.Success)
-			{
-				var argName = match.Groups["name"].Value;
-				consumedArgs.Add(argName);
-				if (arguments.TryGetValue(argName, out var value) && value is not null)
-				{
-					var strValue = value.ToString() ?? "";
-					if (strValue.Length > 0)
-					{
-						ValidatePositionalArgumentValue(strValue);
-						tokens.Add(strValue);
-					}
-
-					// Omit token entirely for missing optional segments.
-				}
-			}
-			else
-			{
-				tokens.Add(part);
-			}
-		}
-
-		// Remaining arguments become named options.
-		// Note: answer: prefixes are separated by PrepareExecution upstream
-		// and never reach this method.
-		foreach (var (key, value) in arguments)
-		{
-			if (!consumedArgs.Contains(key))
-			{
-				var token = ResolveOptionToken(key, optionTokens);
-				var strValue = value?.ToString() ?? "";
-				if (boolOptionNames?.Contains(key) == true)
-				{
-					// Single inline token: TrySplitOptionToken (InvocationOptionParser) splits on
-					// the first '=' only, so the value survives intact even when it starts with
-					// '-' or contains '=' itself, and it can never be left dangling by
-					// ApplyBoolFlagValue to be re-lexed as a fresh option on the next iteration.
-					tokens.Add($"{token}={strValue}");
-				}
-				else
-				{
-					tokens.Add(token);
-					tokens.Add(strValue);
-				}
-			}
-		}
-
-		return tokens;
-	}
-
-	// Guards the ONE place an MCP-supplied value becomes a bare CLI token: a positional route
-	// segment. It has no separator that can escape the value the way an inline "--token=value"
-	// pair does for a bool option, so a value that would itself be lexed as an option token (and
-	// could then resolve to a route/global option — including a Hidden() one, since parsing still
-	// accepts those — via the general-purpose parser) must be rejected here instead.
-	private static void ValidatePositionalArgumentValue(string value)
-	{
-		if (InvocationOptionParser.LooksLikeOptionToken(value) && !InvocationOptionParser.IsSignedNumericLiteral(value))
-		{
-			throw new InvalidOperationException(
-				"The MCP argument value cannot start like a CLI option because it fills a positional route segment, which has no way to escape it.");
-		}
-	}
-
-	private static bool IsBooleanTypeName(string typeName) =>
-		string.Equals(typeName, "bool", StringComparison.Ordinal)
-		|| string.Equals(typeName, "bool?", StringComparison.Ordinal);
-
-	private static string ResolveOptionToken(string key, IReadOnlyDictionary<string, string>? optionTokens)
-	{
-		if (optionTokens is null)
-		{
-			return $"--{key}";
-		}
-
-		if (optionTokens.TryGetValue(key, out var exactToken))
-		{
-			return exactToken;
-		}
-
-		string? matchedToken = null;
-		foreach (var (optionName, token) in optionTokens)
-		{
-			if (!string.Equals(optionName, key, StringComparison.OrdinalIgnoreCase))
-			{
-				continue;
-			}
-
-			if (matchedToken is not null)
-			{
-				throw new InvalidOperationException(
-					$"The MCP argument '{key}' is ambiguous because option names differ only by casing.");
-			}
-
-			matchedToken = token;
-		}
-
-		return matchedToken ?? $"--{key}";
-	}
-
 	private static CallToolResult ErrorResult(string message) => new()
 	{
 		Content = [new TextContentBlock { Text = message }],
 		IsError = true,
 	};
 
-	[GeneratedRegex(@"^\{(?<name>[^:{}?]+)(?:\?)?(?::[^{}:]+)?\}$", RegexOptions.ExplicitCapture, matchTimeoutMilliseconds: 1000)]
-	private static partial Regex DynamicSegmentPattern();
 }

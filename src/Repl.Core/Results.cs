@@ -95,6 +95,16 @@ public static class Results
 		new ExitResult(code, payload);
 
 	/// <summary>
+	/// Creates a result for a command that ran to completion but reports failures (for example, tests
+	/// that failed). Unlike an error result, the command itself succeeded: the payload renders as its
+	/// result, and the run exits with <see cref="ExitCodeOptions.CompletedWithFailures"/>.
+	/// </summary>
+	/// <param name="payload">Optional payload rendered through the configured output format.</param>
+	/// <returns>A completed-with-failures result.</returns>
+	public static ICompletedWithFailuresResult CompletedWithFailures(object? payload = null) =>
+		new CompletedWithFailuresResult(payload);
+
+	/// <summary>
 	/// Signals that the process should enter interactive REPL mode after command completion.
 	/// When returned from a CLI one-shot command, the process renders the optional payload
 	/// and then enters the interactive REPL loop instead of exiting.

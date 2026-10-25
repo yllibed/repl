@@ -26,21 +26,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	/// <param name="args">Command-line arguments.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Process exit code.</returns>
-	public ValueTask<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
+	public async ValueTask<int> RunAsync(string[] args, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(args);
 		_ = _description;
 		_ = _commands.Count;
 		_ = _middleware.Count;
 		_ = _options;
-		return ExecuteCoreAsync(args, _services, cancellationToken: cancellationToken);
+		return ResolveProcessExitCode(await RunOutcomeWithServicesAsync(args, _services, cancellationToken).ConfigureAwait(false));
 	}
 
-	internal ValueTask<int> RunWithServicesAsync(
+	internal async ValueTask<int> RunWithServicesAsync(
 		string[] args,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
-		ExecuteCoreAsync(args, serviceProvider, cancellationToken: cancellationToken);
+		ResolveProcessExitCode(await RunOutcomeWithServicesAsync(args, serviceProvider, cancellationToken).ConfigureAwait(false));
 
 	/// <summary>
 	/// Executes a nested command invocation that preserves the session baseline.
@@ -98,7 +98,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		string[] args,
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken = default) =>
-		RunUnderCancellationPolicyAsync(args, serviceProvider, isSubInvocation: false, cancellationToken);
+		RunStartupOutcomeAsync(args, serviceProvider, beforeDispatch: null, cancellationToken);
+
+	internal ValueTask<ExecutionOutcome> RunOutcomeWithServicesAsync(string[] args, IServiceProvider services,
+		Func<CancellationToken, ValueTask> beforeDispatch, CancellationToken cancellationToken) =>
+		RunStartupOutcomeAsync(args, services, beforeDispatch, cancellationToken);
 
 	/// <summary>
 	/// Converts an already-cancelled caller token into a <see cref="ReplExecutionOutcomeKind.Cancelled"/>
@@ -199,7 +203,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	internal bool ConvertsCancellationToExitCode =>
 		_options.ExitCodes.Cancelled is not null || _options.ExitCodes.Resolver is not null;
 
-	private async ValueTask<ExecutionOutcome> ExecuteCoreOutcomeAsync(
+	private async ValueTask<ExecutionOutcome> ExecuteUnprocessedCoreOutcomeAsync(
 		IReadOnlyList<string> args,
 		IServiceProvider serviceProvider,
 		bool isSubInvocation,
@@ -265,7 +269,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private int ResolveConfiguredExitCode(ExecutionOutcome outcome, ReplExitCodeScope scope)
 	{
-		var exitCode = _options.ExitCodes.Map(outcome.Kind, outcome.ExplicitExitCode);
+		var exitCode = outcome.ModuleExitCodes?.For(outcome.Kind) ?? _options.ExitCodes.Map(outcome.Kind, outcome.ExplicitExitCode);
 		if (_options.ExitCodes.Resolver is { } resolver)
 		{
 			exitCode = InvokeResolver(resolver, outcome, exitCode, scope);
@@ -282,7 +286,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	[SuppressMessage(
 		"Design",
 		"CA1031:Do not catch general exception types",
-		Justification = "A faulty exit-code resolver must not replace the run's own outcome; it degrades to the table-mapped code.")]
+		Justification = "A faulty exit-code resolver must not replace the run's own outcome; it degrades to the code mapped before it ran.")]
 	private static int InvokeResolver(
 		Func<ReplExecutionOutcome, int> resolver,
 		ExecutionOutcome outcome,
@@ -292,7 +296,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		try
 		{
 			return resolver(
-				new ReplExecutionOutcome(outcome.Kind, mappedExitCode, outcome.Result, outcome.Exception) { Scope = scope });
+				new ReplExecutionOutcome(outcome.Kind, mappedExitCode, outcome.Result, outcome.Exception)
+				{
+					Scope = scope,
+					Route = outcome.Route,
+				});
 		}
 		catch (Exception ex)
 		{
@@ -329,19 +337,17 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken,
 		IServiceProvider? presenceServiceProvider = null)
 	{
-			_globalOptionsSnapshot.Update(globalOptions.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation); // volatile ref swap — safe under concurrent sub-invocations
-			if (!isSubInvocation)
-			{
-				_globalOptionsSnapshot.SetSessionBaseline();
-			}
+			using var invocationGlobals = PushExecutionGlobals(globalOptions, isSubInvocation);
 			using var runtimeStateScope = PushRuntimeState(
 				serviceProvider,
 				isInteractiveSession: false,
 				presenceServiceProvider);
-			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens);
+			var prefixGraph = ResolveActiveRoutingGraph();
+			var prefixResolution = ResolveUniquePrefixes(globalOptions.RemainingTokens, prefixGraph);
 			var resolvedGlobalOptions = globalOptions with { RemainingTokens = prefixResolution.Tokens };
 			var ambiguousOutcome = await TryHandleAmbiguousPrefixAsync(
 						prefixResolution,
+						prefixGraph,
 						globalOptions,
 						resolvedGlobalOptions,
 						serviceProvider,
@@ -352,7 +358,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				return ambiguousOutcome.Value;
 			}
 
-			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions);
+			var preResolvedRouteResolution = TryPreResolveRouteForBanner(resolvedGlobalOptions, prefixGraph);
 			if (!ShouldSuppressGlobalBanner(resolvedGlobalOptions, preResolvedRouteResolution?.Match))
 			{
 				await TryRenderBannerAsync(resolvedGlobalOptions, serviceProvider, cancellationToken).ConfigureAwait(false);
@@ -368,17 +374,18 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				return preExecutionOutcome.Value;
 			}
 
+			// One snapshot, even if a banner invalidated routing: a refusal is owned by the routes that refused it.
 			var resolution = preResolvedRouteResolution
-				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens);
+				?? ResolveWithDiagnostics(resolvedGlobalOptions.RemainingTokens, prefixGraph.Routes);
 			var match = resolution.Match;
 			if (match is null)
 			{
 				return await TryHandleContextDeeplinkAsync(
 							resolvedGlobalOptions,
+							prefixGraph,
 							serviceProvider,
-							cancellationToken,
-							constraintFailure: resolution.ConstraintFailure,
-							missingArgumentsFailure: resolution.MissingArgumentsFailure)
+							resolution,
+							cancellationToken)
 						.ConfigureAwait(false);
 			}
 
@@ -390,8 +397,16 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				.ConfigureAwait(false);
 	}
 
+	private IDisposable PushExecutionGlobals(GlobalInvocationOptions options, bool isSubInvocation)
+	{
+		_globalOptionsSnapshot.Update(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation);
+		if (!isSubInvocation) { _globalOptionsSnapshot.SetSessionBaseline(); }
+		return _globalOptionsSnapshot.PushInputValues(options.CustomGlobalNamedOptions, preserveSessionExplicitKeys: isSubInvocation, inheritSessionBaseline: isSubInvocation);
+	}
+
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbiguousPrefixAsync(
 		PrefixResolutionResult prefixResolution,
+		ActiveRoutingGraph prefixGraph,
 		GlobalInvocationOptions globalOptions,
 		GlobalInvocationOptions resolvedGlobalOptions,
 		IServiceProvider serviceProvider,
@@ -408,8 +423,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 
 		var ambiguous = CreateAmbiguousPrefixResult(prefixResolution);
-		return await RefuseAsync(ambiguous, globalOptions.OutputFormat, cancellationToken)
+		var refusal = await RefuseAsync(ambiguous, globalOptions.OutputFormat, cancellationToken)
 			.ConfigureAwait(false);
+		return AttributeAmbiguous(refusal, prefixGraph, prefixResolution);
 	}
 
 	private static bool ShouldSuppressGlobalBanner(
@@ -424,14 +440,16 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return preResolvedMatch?.Route.Command.IsProtocolPassthrough == true;
 	}
 
-	private RouteResolver.RouteResolutionResult? TryPreResolveRouteForBanner(GlobalInvocationOptions globalOptions)
+	private RouteResolver.RouteResolutionResult? TryPreResolveRouteForBanner(
+		GlobalInvocationOptions globalOptions,
+		ActiveRoutingGraph graph)
 	{
 		if (globalOptions.HelpRequested || globalOptions.RemainingTokens.Count == 0)
 		{
 			return null;
 		}
 
-		return ResolveWithDiagnostics(globalOptions.RemainingTokens);
+		return ResolveWithDiagnostics(globalOptions.RemainingTokens, graph.Routes);
 	}
 
 	private async ValueTask<ExecutionOutcome?> TryHandlePreExecutionAsync(
@@ -513,35 +531,18 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				$"Command '{match.Route.Template.Template}' is protocol passthrough and requires a handler parameter of type IReplIoContext in hosted sessions.");
 			// An unknown --output format outranks the refusal: a diagnostic the caller never saw cannot
 			// stand as the run's outcome, and here the format is the caller's own mistake. A degraded report
-			// still reached the caller, so that stays a hosting defect.
+			// still reached the caller, so that stays a hosting defect, which is the application's: it keeps
+			// the application's code and names no route. The format refusal is the resolved command's, as it
+			// is for any other command, so its module decides it.
 			var report = await ReportFailureAsync(refusal, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
 			return report == FailureReport.FormatUnknown
-				? ExecutionOutcome.UsageError(refusal)
+				? AttributeTo(ExecutionOutcome.UsageError(refusal), match.Route.ModuleId, match.Route.Template.Template)
 				: ExecutionOutcome.FrameworkError(refusal);
 		}
 
 		using var protocolPassthroughScope = ReplSessionIO.PushProtocolPassthrough();
-
-		if (ReplSessionIO.IsSessionActive)
-		{
-			var (sessionOutcome, _) = await ExecuteMatchedCommandAsync(
-					match,
-					globalOptions,
-					serviceProvider,
-					scopeTokens: null,
-					cancellationToken)
-				.ConfigureAwait(false);
-			return sessionOutcome;
-		}
-
-		using var protocolScope = ReplSessionIO.SetSession(
-			Console.Error,
-			Console.In,
-			ansiMode: AnsiMode.Never,
-			commandOutput: Console.Out,
-			error: Console.Error,
-			isHostedSession: false);
+		using var passthroughSession = OpenPassthroughSession();
 		var (outcome, _) = await ExecuteMatchedCommandAsync(
 				match,
 				globalOptions,
@@ -550,6 +551,31 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				cancellationToken)
 			.ConfigureAwait(false);
 		return outcome;
+	}
+
+	// The session a protocol-passthrough command runs in, which splits the protocol from everything else:
+	// - run from the console, the process's own streams, the payload alone on standard output;
+	// - in a session that is not hosted and has an error writer of its own, standing in for the process
+	//   as the signal harness does, the same split onto that session's writers;
+	// - in any other session, a hosted one or one with a single stream, the session as it is, whose feedback
+	//   InteractionFeedbackRouting keeps off the protocol's writer.
+	private static IDisposable? OpenPassthroughSession()
+	{
+		if (!ReplSessionIO.IsSessionActive)
+		{
+			return ReplSessionIO.SetProcessConsoleSession();
+		}
+
+		return !ReplSessionIO.IsHostedSession && !ReferenceEquals(ReplSessionIO.Error, ReplSessionIO.Output)
+			? ReplSessionIO.SetSession(
+				ReplSessionIO.Error,
+				ReplSessionIO.Input,
+				sessionId: ReplSessionIO.CurrentSessionId,
+				commandOutput: ReplSessionIO.CommandOutput,
+				error: ReplSessionIO.Error,
+				isHostedSession: false,
+				removeSessionOnDispose: false)
+			: null;
 	}
 
 	private async ValueTask<ExecutionOutcome> HandleEmptyInvocationAsync(
@@ -594,6 +620,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	private string ResolveOutputFormat(string? requestedFormat) =>
 		string.IsNullOrWhiteSpace(requestedFormat) ? _options.Output.DefaultFormat : requestedFormat;
 
+	// An unknown format is refused only when the result renders, after the handler ran, so the handler's
+	// feedback is routed as for human output.
+	private bool IsMachineReadableFormat(string? requestedFormat) =>
+		_options.Output.Transformers.TryGetValue(ResolveOutputFormat(requestedFormat), out var transformer)
+		&& transformer.IsMachineReadable;
+
+	// Preprocessors, hooks, validators and a hook's own answer run before a command is resolved, so the format
+	// is read from the input as it stands at that point, rewrites included; the matched command then refines
+	// it with the format it resolved.
+	private IDisposable PushMachineReadableOutputFor(ArgumentPreprocessingContext input) =>
+		ReplSessionIO.PushMachineReadableOutput(IsMachineReadableInput(input));
+
+	private bool IsMachineReadableInput(ArgumentPreprocessingContext input) =>
+		IsMachineReadableFormat(ParseInputGlobals(input).OutputFormat);
+
 	// A framework refusal, not command output: it goes to Error so a headless run's stdout keeps
 	// carrying only the payload a parent process parses. Reported rather than swallowed, because this
 	// refusal is what makes the run a UsageError.
@@ -605,8 +646,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		IServiceProvider serviceProvider,
 		CancellationToken cancellationToken)
 	{
-		if (options.RemainingTokens.Count == 0
-			|| !string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase))
+		if (!IsAmbientCompletion(options))
 		{
 			return null;
 		}
@@ -619,6 +659,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			.ConfigureAwait(false);
 		return completed ? ExecutionOutcome.Success : ExecutionOutcome.UsageError();
 	}
+
+	private static bool IsAmbientCompletion(GlobalInvocationOptions options) => options.RemainingTokens.Count != 0
+		&& string.Equals(options.RemainingTokens[0], InteractiveSession.CompleteAmbientToken, StringComparison.OrdinalIgnoreCase);
 
 	private async ValueTask<ExecutionOutcome?> TryHandleAmbientInNonInteractiveAsync(
 		GlobalInvocationOptions options,
@@ -693,21 +736,29 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private async ValueTask<ExecutionOutcome> TryHandleContextDeeplinkAsync(
 		GlobalInvocationOptions globalOptions,
+		ActiveRoutingGraph activeGraph,
 		IServiceProvider serviceProvider,
-		CancellationToken cancellationToken,
-		RouteResolver.RouteConstraintFailure? constraintFailure = null,
-		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure = null)
+		RouteResolver.RouteResolutionResult resolution,
+		CancellationToken cancellationToken)
 	{
-		var activeGraph = ResolveActiveRoutingGraph();
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, _options.Parsing);
 		if (contextMatch is null)
 		{
-			var failure = CreateRouteResolutionFailureResult(
-				tokens: globalOptions.RemainingTokens,
-				constraintFailure,
-				missingArgumentsFailure);
-			return await RefuseAsync(failure, globalOptions.OutputFormat, cancellationToken)
+			var unresolved = DecideUnresolvedRefusal(
+				activeGraph,
+				globalOptions.RemainingTokens,
+				scopeTokenCount: 0,
+				resolution);
+			var refusal = await RefuseAsync(unresolved.Failure, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
+			return AttributeUnresolved(refusal, unresolved);
+		}
+
+		// Input validation decides a command line before it enters a context, as it does before a command runs.
+		if (await ValidateCurrentInputAsync(globalOptions.OutputFormat, serviceProvider, cancellationToken)
+			.ConfigureAwait(false) is { } inputRefusal)
+		{
+			return AttributeToContext(inputRefusal, contextMatch.Context);
 		}
 
 		var contextValidation = await ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
@@ -716,8 +767,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		// is valid, and FromFailure, which requires a failure — so an invalid outcome always carries one.
 		if (contextValidation is { IsValid: false, Failure: { } contextValidationFailure })
 		{
-			return await RefuseAsync(contextValidationFailure, globalOptions.OutputFormat, cancellationToken)
+			var refusal = await RefuseAsync(contextValidationFailure, globalOptions.OutputFormat, cancellationToken)
 				.ConfigureAwait(false);
+			return AttributeToContext(refusal, contextMatch.Context);
 		}
 
 		if (!ShouldEnterInteractive(globalOptions, allowAuto: true))
@@ -736,10 +788,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			.ConfigureAwait(false);
 	}
 
-	[SuppressMessage(
-		"Maintainability",
-		"MA0051:Method is too long",
-		Justification = "Execution path intentionally keeps validation, binding, middleware and rendering in one place.")]
+	/// <summary>
+	/// Runs a resolved command and attributes its outcome to the command's route and module, whose
+	/// declared exit codes then apply. A framework failure is the run's, not the command's: it keeps the
+	/// application's codes and names no route.
+	/// </summary>
 	internal async ValueTask<(ExecutionOutcome Outcome, bool EnterInteractive)> ExecuteMatchedCommandAsync(
 		RouteMatch match,
 		GlobalInvocationOptions globalOptions,
@@ -747,6 +800,32 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		List<string>? scopeTokens,
 		CancellationToken cancellationToken)
 	{
+		var (outcome, enterInteractive) = await ExecuteMatchedCommandCoreAsync(
+				match,
+				globalOptions,
+				serviceProvider,
+				scopeTokens,
+				cancellationToken)
+			.ConfigureAwait(false);
+		return (
+			outcome.Kind == ReplExecutionOutcomeKind.FrameworkError
+				? outcome
+				: AttributeTo(outcome, match.Route.ModuleId, match.Route.Template.Template),
+			enterInteractive);
+	}
+
+	[SuppressMessage(
+		"Maintainability",
+		"MA0051:Method is too long",
+		Justification = "Execution path intentionally keeps validation, binding, middleware and rendering in one place.")]
+	private async ValueTask<(ExecutionOutcome Outcome, bool EnterInteractive)> ExecuteMatchedCommandCoreAsync(
+		RouteMatch match,
+		GlobalInvocationOptions globalOptions,
+		IServiceProvider serviceProvider,
+		List<string>? scopeTokens,
+		CancellationToken cancellationToken)
+	{
+		using var feedbackScope = ReplSessionIO.PushMachineReadableOutput(IsMachineReadableFormat(globalOptions.OutputFormat));
 		var activeGraph = ResolveActiveRoutingGraph();
 		_options.Interaction.SetPrefilledAnswers(globalOptions.PromptAnswers);
 		var commandParsingOptions = BuildEffectiveCommandParsingOptions(globalOptions.GlobalOptionConfiguration.CaseSensitivity);
@@ -762,11 +841,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				false);
 		}
 
-		var parsedOptions = InvocationOptionParser.Parse(
-			match.RemainingTokens,
-			match.Route.OptionSchema,
-			commandParsingOptions,
-			globalOptions.CustomGlobalTokenOwnership);
+		var parsedOptions = ParseInvocationOptions(match, commandParsingOptions, globalOptions);
 		if (parsedOptions.HasErrors)
 		{
 			var firstError = parsedOptions.Diagnostics
@@ -778,6 +853,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 		var matchedPathLength = globalOptions.RemainingTokens.Count - match.RemainingTokens.Count;
 		var matchedPathTokens = globalOptions.RemainingTokens.Take(matchedPathLength).ToArray();
+		if (_currentInput.Value?.Request?.Command is not null)
+		{
+			matchedPathTokens = match.Route.Template.Segments
+				.Where(segment => segment is not DynamicRouteSegment dynamic || match.Values.ContainsKey(dynamic.Name))
+				.Select(segment => segment is DynamicRouteSegment dynamic ? match.Values[dynamic.Name] : segment.RawText).ToArray();
+		}
 		var bindingContext = CreateInvocationBindingContext(
 			match,
 			parsedOptions,
@@ -793,6 +874,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		var bound = false;
 		try
 		{
+			if (await ValidateInputForExecutionAsync(match, globalOptions, parsedOptions, serviceProvider, bindingContext, cancellationToken)
+				.ConfigureAwait(false) is { } inputFailure)
+			{
+				await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
+				return (inputFailure, false);
+			}
 			var arguments = HandlerArgumentBinder.Bind(match.Route.Command.Handler, bindingContext);
 			bound = true;
 			var contextFailure = await ValidateContextsForMatchAsync(
@@ -873,7 +960,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 						.ConfigureAwait(false);
 				}
 				catch (OperationCanceledException ex)
-					when (PreservesExplicitExitCode(classified, ex, cancellationToken))
+					when (PreservesHandlerVerdict(classified, ex, cancellationToken))
 				{
 					// The handler had already chosen its exit code; only showing its payload was
 					// interrupted. The code stays authoritative, which is what IExitResult promises and
@@ -1005,26 +1092,33 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
 
 	/// <summary>
-	/// Whether an exception raised while rendering a result should leave that result's explicit exit
-	/// code in force. Three conditions, and each excludes a way of getting this wrong.
+	/// Whether an exception raised while rendering a result should leave the verdict the handler already
+	/// reached in force. Three conditions, and each excludes a way of getting this wrong.
 	/// <list type="bullet">
-	/// <item>An <see cref="IExitResult"/>, because only that carries a code of the handler's choosing.</item>
-	/// <item>A <em>non-zero</em> one. A zero code reports nothing, so preserving it would let a cancelled
-	/// run exit successfully — swallowing the cancellation instead of propagating it or applying
-	/// <see cref="ExitCodeOptions.Cancelled"/>. <c>IsSuccessLike</c> is what draws that line, the same
-	/// one a process signal uses when it decides whether to reclassify a run as interrupted.</item>
+	/// <item>A verdict of the handler's own: an <see cref="IExitResult"/>, the only result with a code of
+	/// the handler's choosing, or an <see cref="ICompletedWithFailuresResult"/>, whose verdict is its kind
+	/// whatever code a policy later maps it to.</item>
+	/// <item>For an <see cref="IExitResult"/>, a <em>non-zero</em> code. A zero code reports nothing, so
+	/// preserving it would let a cancelled run exit successfully — swallowing the cancellation instead of
+	/// propagating it or applying <see cref="ExitCodeOptions.Cancelled"/>. <c>IsSuccessLike</c> is what
+	/// draws that line, the same one a process signal uses when it decides whether to reclassify a run as
+	/// interrupted.</item>
 	/// <item>A cancellation the run itself owns. A transformer raising
 	/// <see cref="OperationCanceledException"/> on its own account is a broken renderer, not an
 	/// intentional exit, and stays a failure like any other transformer fault.</item>
 	/// </list>
 	/// </summary>
-	private static bool PreservesExplicitExitCode(
+	private static bool PreservesHandlerVerdict(
 		ExecutionOutcome classified,
 		Exception exception,
 		CancellationToken cancellationToken) =>
-		classified.Kind == ReplExecutionOutcomeKind.HandlerExitCode
-		&& !classified.IsSuccessLike
-		&& IsCallerCancellation(exception, cancellationToken);
+		IsCallerCancellation(exception, cancellationToken)
+		&& classified.Kind switch
+		{
+			ReplExecutionOutcomeKind.HandlerExitCode => !classified.IsSuccessLike,
+			ReplExecutionOutcomeKind.CompletedWithFailures => true,
+			_ => false,
+		};
 
 	/// <summary>
 	/// Turns a reported failure into an outcome. Pure by design: every fallible step happened in
@@ -1155,7 +1249,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				.ConfigureAwait(false);
 		}
 		catch (OperationCanceledException ex)
-			when (PreservesExplicitExitCode(classified, ex, cancellationToken))
+			when (PreservesHandlerVerdict(classified, ex, cancellationToken))
 		{
 			await TryClearProgressAsync(serviceProvider).ConfigureAwait(false);
 			return classified;
@@ -1227,14 +1321,21 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	}
 
 	/// <summary>
-	/// Classifies a rendered handler result. Anything that is not an <see cref="IReplResult"/> — including a
-	/// bare <see cref="int"/> — is data and therefore a success; only <see cref="IExitResult"/> carries a code.
+	/// Classifies a rendered handler result. Two results carry an outcome of their own:
+	/// <see cref="IExitResult"/>, the only one with a code, and <see cref="ICompletedWithFailuresResult"/>.
+	/// Anything else that is not an <see cref="IReplResult"/> — including a bare <see cref="int"/> — is data
+	/// and therefore a success.
 	/// </summary>
 	private static ExecutionOutcome ClassifyResult(object? result)
 	{
 		if (result is IExitResult exitResult)
 		{
 			return ExecutionOutcome.HandlerExitCode(exitResult);
+		}
+
+		if (result is ICompletedWithFailuresResult completedWithFailures)
+		{
+			return ExecutionOutcome.CompletedWithFailures(completedWithFailures);
 		}
 
 		if (result is not IReplResult replResult)
@@ -1251,6 +1352,24 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			: ExecutionOutcome.HandlerError(replResult);
 	}
 
+	// The results that carry an outcome of their own render only their payload, and nothing without one.
+	// Repl.Testing's CommandExecution.TryGetResult reads through the same results.
+	private static bool TryUnwrapPayload(object? result, out object? payload)
+	{
+		switch (result)
+		{
+			case IExitResult exitResult:
+				payload = exitResult.Payload;
+				return true;
+			case ICompletedWithFailuresResult completedWithFailures:
+				payload = completedWithFailures.Payload;
+				return true;
+			default:
+				payload = null;
+				return false;
+		}
+	}
+
 	internal async ValueTask<bool> RenderOutputAsync(
 		object? result,
 		string? requestedFormat,
@@ -1258,14 +1377,14 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		bool isInteractive = false,
 		ResultFlowInvocationOptions? resultFlow = null)
 	{
-		if (result is IExitResult exitResult)
+		if (TryUnwrapPayload(result, out var unwrapped))
 		{
-			if (exitResult.Payload is null)
+			if (unwrapped is null)
 			{
 				return true;
 			}
 
-			result = exitResult.Payload;
+			result = unwrapped;
 		}
 
 		var format = ResolveOutputFormat(requestedFormat);
@@ -1286,11 +1405,11 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 				.ConfigureAwait(false);
 		}
 
-		var payload = await transformer.TransformAsync(result, cancellationToken).ConfigureAwait(false);
-		payload = TryColorizeStructuredPayload(payload, format, isInteractive);
+		var (rendered, layout) = await RenderPayloadAsync(transformer, result, cancellationToken).ConfigureAwait(false);
+		var payload = TryColorizeStructuredPayload(rendered, format, isInteractive);
 		if (!string.IsNullOrEmpty(payload))
 		{
-			await WritePayloadAsync(payload, transformer, resultFlow, cancellationToken).ConfigureAwait(false);
+			await WritePayloadAsync(payload, layout, transformer, resultFlow, cancellationToken).ConfigureAwait(false);
 		}
 
 		return true;
@@ -1305,11 +1424,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 	{
 		var request = CreatePageSourceRequest(resultFlow);
 		var page = await FetchPageSourceAsync(source, request, cancellationToken).ConfigureAwait(false);
-		var payload = await transformer.TransformAsync(page, cancellationToken).ConfigureAwait(false);
-		payload = TryColorizeStructuredPayload(payload, transformer.Name, isInteractive);
+		var (rendered, layout) = await RenderPayloadAsync(transformer, page, cancellationToken).ConfigureAwait(false);
+		var payload = TryColorizeStructuredPayload(rendered, transformer.Name, isInteractive);
 
 		if (!TryCreatePager(
 				payload,
+				layout,
 				transformer,
 				resultFlow,
 				page.PageInfo.HasMore,
@@ -1358,9 +1478,13 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		CancellationToken cancellationToken)
 	{
 		var nextCursor = page.PageInfo.NextCursor;
-		var pagerPayload = await TransformPagerPageAsync(transformer, page, ResultFlowPageRenderMode.Initial, cancellationToken)
+		var (initialPayload, initialLayout) = await RenderPagerPageAsync(
+				transformer,
+				page,
+				ResultFlowPageRenderMode.Initial,
+				cancellationToken)
 			.ConfigureAwait(false);
-		pagerPayload = TryColorizeStructuredPayload(pagerPayload, transformer.Name, isInteractive);
+		var pagerPayload = TryColorizeStructuredPayload(initialPayload, transformer.Name, isInteractive);
 		await ResultFlowPager.WriteAsync(
 				pagerPayload,
 				ReplSessionIO.Output,
@@ -1372,6 +1496,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 					PagerMode = pagerMode,
 					AnsiEnabled = ansiEnabled,
 					HasMorePayload = page.PageInfo.HasMore,
+					PayloadLayout = initialLayout,
 					FetchNextPayload = FetchNextPayloadAsync,
 					PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
 					MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
@@ -1390,13 +1515,17 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			var nextRequest = request with { Cursor = nextCursor };
 			var nextPage = await FetchPageSourceAsync(source, nextRequest, token).ConfigureAwait(false);
 			nextCursor = nextPage.PageInfo.NextCursor;
-			var nextPayload = await TransformPagerPageAsync(transformer, nextPage, ResultFlowPageRenderMode.Continuation, token)
+			var (nextPayload, nextLayout) = await RenderPagerPageAsync(
+					transformer,
+					nextPage,
+					ResultFlowPageRenderMode.Continuation,
+					token)
 				.ConfigureAwait(false);
-			nextPayload = TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive);
 			return new ResultFlowPagerPage(
-				nextPayload,
+				TryColorizeStructuredPayload(nextPayload, transformer.Name, isInteractive),
 				nextPage.PageInfo.HasMore,
-				ContainsPresentationChrome: false);
+				ContainsPresentationChrome: false,
+				nextLayout);
 		}
 	}
 
@@ -1412,26 +1541,53 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		return await RefuseGlobalOptionErrorsAsync(globalOptions, cancellationToken).ConfigureAwait(false);
 	}
 
-	private static ValueTask<string> TransformPagerPageAsync(
+	// A transformer that declares its layout says where its header and footer are; for any other, the pager
+	// detects them from the text.
+	private static async ValueTask<(string Payload, RenderedLayout? Layout)> RenderPayloadAsync(
+		IOutputTransformer transformer,
+		object? value,
+		CancellationToken cancellationToken)
+	{
+		if (transformer is ILayoutDeclaringOutputTransformer declaring)
+		{
+			var rendered = await declaring.RenderAsync(value, cancellationToken).ConfigureAwait(false);
+			return (rendered.Text, rendered.Layout);
+		}
+
+		return (await transformer.TransformAsync(value, cancellationToken).ConfigureAwait(false), null);
+	}
+
+	// A transformer built against 0.11 still gets the render mode that asks it to leave a continuation's header
+	// out, which the pager then detects on the first page only.
+	private static async ValueTask<(string Payload, RenderedLayout? Layout)> RenderPagerPageAsync(
 		IOutputTransformer transformer,
 		IReplPage page,
 		ResultFlowPageRenderMode mode,
 		CancellationToken cancellationToken)
 	{
 		var displayPage = CreatePagerDisplayPage(page);
-		return transformer is IResultFlowOutputTransformer resultFlowTransformer
-			? resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken)
-			: transformer.TransformAsync(displayPage, cancellationToken);
+		if (transformer is ILayoutDeclaringOutputTransformer declaring)
+		{
+			var rendered = await declaring.RenderPageAsync(displayPage, cancellationToken).ConfigureAwait(false);
+			return (rendered.Text, rendered.Layout);
+		}
+
+		var text = transformer is IResultFlowOutputTransformer resultFlowTransformer
+			? await resultFlowTransformer.TransformPageAsync(displayPage, mode, cancellationToken).ConfigureAwait(false)
+			: await transformer.TransformAsync(displayPage, cancellationToken).ConfigureAwait(false);
+		return (text, null);
 	}
 
 	private async ValueTask WritePayloadAsync(
 		string payload,
+		RenderedLayout? layout,
 		IOutputTransformer transformer,
 		ResultFlowInvocationOptions? resultFlow,
 		CancellationToken cancellationToken)
 	{
 		if (TryCreatePager(
 				payload,
+				layout?.WithFooter(0),
 				transformer,
 				resultFlow,
 				out var keyReader,
@@ -1448,6 +1604,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 						VisibleRows = visibleRows,
 						PagerMode = pagerMode,
 						AnsiEnabled = ansiEnabled,
+						// This pager cannot fetch more, so a footer asking to rerun for the next page is the only way
+						// to continue, and stays in view instead of being stripped.
+						PayloadLayout = layout?.WithFooter(0),
 						PagerRenderers = _options.Output.ResultFlow.PagerRenderers,
 						MaxBufferedLines = _options.Output.ResultFlow.MaxBufferedLines,
 					},
@@ -1461,6 +1620,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private bool TryCreatePager(
 		string payload,
+		RenderedLayout? layout,
 		IOutputTransformer transformer,
 		ResultFlowInvocationOptions? resultFlow,
 		[NotNullWhen(true)] out IReplKeyReader? keyReader,
@@ -1469,6 +1629,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		out bool ansiEnabled)
 		=> TryCreatePager(
 			payload,
+			layout,
 			transformer,
 			resultFlow,
 			hasMorePayload: false,
@@ -1479,6 +1640,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 	private bool TryCreatePager(
 		string payload,
+		RenderedLayout? layout,
 		IOutputTransformer transformer,
 		ResultFlowInvocationOptions? resultFlow,
 		bool hasMorePayload,
@@ -1501,7 +1663,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 
 		if (!TryResolvePagerVisibleRows(out visibleRows)
-			|| (!hasMorePayload && ResultFlowPager.CountLines(payload) <= visibleRows)
+			|| (!hasMorePayload && ResultFlowPager.CountLines(payload, layout) <= visibleRows)
 			|| !TryResolvePagerKeyReader(out keyReader))
 		{
 			return false;
@@ -1764,7 +1926,12 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			serviceProvider,
 			_options.Interaction,
 			_implicitServiceParameters,
-			cancellationToken);
+			cancellationToken)
+		{
+			InputServiceFallbacks = _currentInput.Value?.InputServiceFallbacks,
+			NativeValues = _currentInput.Value?.Request is { Command: not null } request
+				? request.Values : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase),
+		};
 	}
 
 	private ReplPagingContext CreatePagingContext(GlobalInvocationOptions globalOptions)

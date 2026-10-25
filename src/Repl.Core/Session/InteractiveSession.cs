@@ -170,7 +170,8 @@ internal sealed class InteractiveSession(CoreReplApp app)
 				app.OptionsSnapshot.Interactive.Autocomplete.ColorizeInputLine,
 				app.OptionsSnapshot.Interactive.Autocomplete.ColorizeHintAndMenu,
 				colorStyles,
-				cancellationToken)
+				cancellationToken,
+				backgroundInputAnalysis: app.OptionsSnapshot.Input.IsEnabled)
 			.ConfigureAwait(false);
 	}
 
@@ -225,7 +226,9 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			var ambiguous = RoutingEngine.CreateAmbiguousPrefixResult(resolution.Prefix);
 			_ = await app.RenderOutputAsync(ambiguous, resolution.Options.OutputFormat, cancellationToken, isInteractive: true)
 				.ConfigureAwait(false);
-			return (AmbientCommandOutcome.Handled, ExecutionOutcome.UsageError(ambiguous));
+			return (
+				AmbientCommandOutcome.Handled,
+				app.AttributeAmbiguous(ExecutionOutcome.UsageError(ambiguous), resolution.Graph, resolution.Prefix));
 		}
 
 		// Help or Routed: both flow through the command-cancellation scope so Ctrl-C and
@@ -280,8 +283,105 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		IReadOnlyList<string> inputTokens,
 		CancellationToken cancellationToken)
 	{
+		if (!app.OptionsSnapshot.Input.IsEnabled)
+		{
+			return await ExecuteNormalizedCommittedInputAsync(cycle, line, inputTokens, cancellationToken).ConfigureAwait(false);
+		}
+		ProcessedInput input;
+		var outputStarted = false;
+		async ValueTask OpenOutputAsync()
+		{
+			if (outputStarted) { return; }
+			await cycle.Marks.WriteCommandLineAsync(line).ConfigureAwait(false);
+			await cycle.Marks.WriteOutputStartAsync().ConfigureAwait(false);
+			outputStarted = true;
+		}
+		using (var commandCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+		{
+			cycle.CancelHandler.SetCommandCts(commandCts);
+			SetCommandTokenOnChannel(cycle.ServiceProvider, commandCts.Token);
+			IDisposable? processedInputScope = null;
+			IDisposable? globalsScope = null;
+			ProcessedInput? processed = null;
+			try
+			{
+				input = await app.PreprocessInputAsync(inputTokens, cycle.ScopeTokens, InputProcessingMode.Execution,
+					line, line.Length, commandCts.Token, isInteractive: true, onProcessed: reached => processed = reached).ConfigureAwait(false);
+				input = await app.InvokeInvocationHooksAsync(input, cycle.ServiceProvider, commandCts.Token,
+					onProcessed: reached => processed = reached).ConfigureAwait(false);
+				processed = input;
+				processedInputScope = app.PushProcessedInput(input);
+				var globals = GlobalOptionParser.Parse([.. input.Context.ScopeTokens, .. input.Context.Arguments], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+				globalsScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions, inheritSessionBaseline: input.InheritSessionGlobals);
+				input = await ValidateAmbientInputAsync(input, cycle.ServiceProvider, commandCts.Token).ConfigureAwait(false);
+				if (input.IsHandled || input.Validation.State != InputValidationState.Valid)
+				{
+					await OpenOutputAsync().ConfigureAwait(false);
+					return await FinishCommittedInputAsync(input, cycle.Marks, commandCts.Token).ConfigureAwait(false);
+				}
+			}
+			catch (OperationCanceledException) when (commandCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+			{
+				await OpenOutputAsync().ConfigureAwait(false);
+				await ReplSessionIO.Output.WriteLineAsync("Cancelled.").ConfigureAwait(false);
+				await TryWriteCommandEndAsync(cycle.Marks, ExitCodeOptions.ConventionalInterruptedExitCode).ConfigureAwait(false);
+				return AmbientCommandOutcome.Handled;
+			}
+			catch (Exception exception) when (exception is not OperationCanceledException || !commandCts.IsCancellationRequested)
+			{
+				await OpenOutputAsync().ConfigureAwait(false);
+				return await ReportInputCallbackFailureAsync(exception, processed, cycle, inputTokens, cancellationToken).ConfigureAwait(false);
+			}
+			finally
+			{
+				globalsScope?.Dispose();
+				processedInputScope?.Dispose();
+				cycle.CancelHandler.SetCommandCts(cts: null);
+				SetCommandTokenOnChannel(cycle.ServiceProvider, default);
+			}
+		}
+		using var inputScope = app.PushProcessedInput(input);
+		return await ExecuteNormalizedCommittedInputAsync(cycle, line, input.Context.Arguments, cancellationToken).ConfigureAwait(false);
+	}
+
+	// Reported in the format the command asks for, as far as its input was processed, as a one-shot run does.
+	private async ValueTask<AmbientCommandOutcome> ReportInputCallbackFailureAsync(Exception exception,
+		ProcessedInput? processed, PromptCycleContext cycle, IReadOnlyList<string> inputTokens, CancellationToken cancellationToken)
+	{
+		var requestedFormat = app.RequestedOutputFormat(processed, [.. cycle.ScopeTokens, .. inputTokens]);
+		var failure = await app.ReportInputCallbackFailureAsync(exception, requestedFormat, cancellationToken).ConfigureAwait(false);
+		await TryWriteResolvedCommandEndAsync(cycle.Marks, failure).ConfigureAwait(false);
+		return AmbientCommandOutcome.Handled;
+	}
+
+	private async ValueTask<AmbientCommandOutcome> FinishCommittedInputAsync(
+		ProcessedInput input, ShellIntegrationMarkEmitter marks, CancellationToken cancellationToken)
+	{
+		var handled = await app.TryFinishProcessedInputAsync(input, cancellationToken).ConfigureAwait(false);
+		await TryWriteResolvedCommandEndAsync(marks, handled ?? ExecutionOutcome.Success).ConfigureAwait(false);
+		return handled?.Kind == ReplExecutionOutcomeKind.HandlerExitCode
+			? AmbientCommandOutcome.Exit : AmbientCommandOutcome.Handled;
+	}
+
+	private async ValueTask<ProcessedInput> ValidateAmbientInputAsync(
+		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken)
+	{
+		if (input.IsHandled || input.Validation.State != InputValidationState.Valid || app.OptionsSnapshot.Input.Validators.Count == 0
+			|| (input.Context.Purpose != InputPurpose.Help && !IsAmbientCommandInvocation(input.Context.Arguments))) { return input; }
+		var analysis = await app.AnalyzeInputAsync(input, services, cancellationToken).ConfigureAwait(false);
+		return input with { Validation = analysis.ApplicationValidation };
+	}
+
+	private async ValueTask<AmbientCommandOutcome> ExecuteNormalizedCommittedInputAsync(
+		PromptCycleContext cycle,
+		string line,
+		IReadOnlyList<string> inputTokens,
+		CancellationToken cancellationToken)
+	{
 		var marks = cycle.Marks;
-		var resolution = CommittedResolver.Resolve(inputTokens, cycle.ScopeTokens);
+		var globals = GlobalOptionParser.Parse([.. (app.CurrentInputScopeTokens ?? cycle.ScopeTokens), .. inputTokens], app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+		using var invocationGlobals = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
+		var resolution = CommittedResolver.Resolve(inputTokens, app.CurrentInputScopeTokens ?? cycle.ScopeTokens);
 
 		// A protocol-passthrough command turns the output stream into a protocol
 		// channel: no mark may precede or trail its payload. A/B were already
@@ -467,7 +567,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 	/// both <see cref="CommittedInputResolver"/> (via the injected predicate) and
 	/// <see cref="TryHandleAmbientCommandAsync"/> — both walk the same table.
 	/// </summary>
-	private bool IsAmbientCommandInvocation(IReadOnlyList<string> inputTokens)
+	internal bool IsAmbientCommandInvocation(IReadOnlyList<string> inputTokens)
 	{
 		if (inputTokens.Count == 0)
 		{
@@ -539,7 +639,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return outcome;
 		}
 
-		return await HandleUnmatchedInteractiveInputAsync(activeGraph, resolution, globalOptions, cycle, cancellationToken)
+		return await HandleUnmatchedInteractiveInputAsync(activeGraph, resolution, committed.ScopeTokenCount, globalOptions, cycle, cancellationToken)
 			.ConfigureAwait(false);
 	}
 
@@ -550,6 +650,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 	private async ValueTask<ExecutionOutcome> HandleUnmatchedInteractiveInputAsync(
 		ActiveRoutingGraph activeGraph,
 		RouteResolver.RouteResolutionResult resolution,
+		int scopeTokenCount,
 		GlobalInvocationOptions globalOptions,
 		PromptCycleContext cycle,
 		CancellationToken cancellationToken)
@@ -558,6 +659,13 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, app.OptionsSnapshot.Parsing);
 		if (contextMatch is not null)
 		{
+			// Input validation decides a submission before it moves the scope, as it does before a command runs.
+			if (await app.ValidateCurrentInputAsync(globalOptions.OutputFormat, serviceProvider, cancellationToken)
+				.ConfigureAwait(false) is { } refused)
+			{
+				return app.AttributeToContext(refused, contextMatch.Context);
+			}
+
 			var contextValidation = await app.ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
 				.ConfigureAwait(false);
 			if (!contextValidation.IsValid)
@@ -568,7 +676,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 						cancellationToken,
 						isInteractive: true)
 					.ConfigureAwait(false);
-				return ExecutionOutcome.UsageError(contextValidation.Failure);
+				return app.AttributeToContext(ExecutionOutcome.UsageError(contextValidation.Failure), contextMatch.Context);
 			}
 
 			cycle.ScopeTokens.Clear();
@@ -582,17 +690,18 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return ExecutionOutcome.Success;
 		}
 
-		var failure = app.CreateRouteResolutionFailureResult(
-			tokens: globalOptions.RemainingTokens,
-			resolution.ConstraintFailure,
-			resolution.MissingArgumentsFailure);
+		var unresolved = app.DecideUnresolvedRefusal(
+			activeGraph,
+			globalOptions.RemainingTokens,
+			scopeTokenCount,
+			resolution);
 		_ = await app.RenderOutputAsync(
-				failure,
+				unresolved.Failure,
 				globalOptions.OutputFormat,
 				cancellationToken,
 				isInteractive: true)
 			.ConfigureAwait(false);
-		return ExecutionOutcome.UsageError(failure);
+		return app.AttributeUnresolved(ExecutionOutcome.UsageError(unresolved.Failure), unresolved);
 	}
 
 	/// <summary>
@@ -915,47 +1024,6 @@ internal sealed class InteractiveSession(CoreReplApp app)
 
 	internal static List<string> TokenizeInteractiveInput(string input)
 	{
-		if (string.IsNullOrWhiteSpace(input))
-		{
-			return [];
-		}
-
-		var tokens = new List<string>();
-		var current = new System.Text.StringBuilder();
-		char? quote = null;
-		foreach (var ch in input)
-		{
-			if (quote is null && (ch == '"' || ch == '\''))
-			{
-				quote = ch;
-				continue;
-			}
-
-			if (quote is not null && ch == quote.Value)
-			{
-				quote = null;
-				continue;
-			}
-
-			if (quote is null && char.IsWhiteSpace(ch))
-			{
-				if (current.Length > 0)
-				{
-					tokens.Add(current.ToString());
-					current.Clear();
-				}
-
-				continue;
-			}
-
-			current.Append(ch);
-		}
-
-		if (current.Length > 0)
-		{
-			tokens.Add(current.ToString());
-		}
-
-		return tokens;
+		return InputTokenizer.Tokenize(input).Select(static token => token.Value).ToList();
 	}
 }

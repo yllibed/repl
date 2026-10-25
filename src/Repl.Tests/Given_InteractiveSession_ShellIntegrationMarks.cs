@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Repl.Tests.TerminalSupport;
 
 namespace Repl.Tests;
@@ -6,6 +7,34 @@ namespace Repl.Tests;
 [DoNotParallelize]
 public sealed class Given_InteractiveSession_ShellIntegrationMarks
 {
+	[TestMethod]
+	[DataRow(false)]
+	[DataRow(true)]
+	[Description("Preprocessing application failures, including unrelated cancellation exceptions, must open output before the diagnostic and report failure rather than interruption.")]
+	public void When_InputCallbackFails_Then_TheDiagnosticHasACompleteShellLifecycle(bool cancelled)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.UseArgumentPreprocessor((input, _) =>
+		{
+			if (input.Mode == InputProcessingMode.Execution && input.Arguments is ["boom"])
+			{
+				throw cancelled ? new OperationCanceledException("private timeout") : new InvalidOperationException("input callback failed");
+			}
+			return ValueTask.FromResult(ArgumentPreprocessingResult.Continue());
+		});
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+		var raw = RunInteractiveSession(harness, sut, "boom\rexit\r");
+		var start = raw.IndexOf("]133;C", StringComparison.Ordinal);
+		var diagnostic = raw.IndexOf(cancelled ? "private timeout" : "input callback failed", StringComparison.Ordinal);
+		var end = raw.IndexOf("]133;D;1", StringComparison.Ordinal);
+		raw.Should().NotContain("Cancelled.");
+		start.Should().BeGreaterThanOrEqualTo(0);
+		diagnostic.Should().BeGreaterThan(start);
+		end.Should().BeGreaterThan(diagnostic);
+		var commandRegion = raw[..(end + 1)];
+		commandRegion.Split("]133;C", StringSplitOptions.None).Length.Should().Be(2);
+	}
 
 	[TestMethod]
 	[Description("A successful interactive command is wrapped by the full lifecycle: prompt start, input start, output start, command output, and command end with exit code 0, then the next prompt starts a new cycle.")]
@@ -88,6 +117,70 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		var raw = RunInteractiveSession(harness, sut, "zorglub\rexit\r");
 
 		raw.Should().Contain("]133;D;64");
+	}
+
+	[TestMethod]
+	[Description("Verifies the command-end mark of a module's command carries the code the module declared, as its process exit code would.")]
+	public void When_AModuleDeclaresItsCodes_Then_ItsCommandEndMarkUsesThem()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new FailingTestsModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "tests run\rexit\r");
+
+		raw.Should().Contain("]133;D;2");
+	}
+
+	[TestMethod]
+	[Description("Verifies a refusal under a module's words carries the module's code in the command-end mark, as the same input would exit in a one-shot run.")]
+	[DataRow("tests bogus", DisplayName = "Unknown command")]
+	[DataRow("tests show abc", DisplayName = "Route constraint failure")]
+	[DataRow("tests r", DisplayName = "Ambiguous abbreviation")]
+	[DataRow("guarded", DisplayName = "Context validation failure")]
+	public void When_InputUnderAModuleIsRefused_Then_ItsCommandEndMarkUsesTheModuleCode(string input)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new FailingTestsModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, $"{input}\rexit\r");
+
+		raw.Should().Contain("]133;D;5");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route whose argument failed does not take a refusal away from a context matching more of the literal words, typed in full or relative to the current scope: the command-end mark carries the context module's code.")]
+	[DataRow("tests bad extra\r", DisplayName = "Typed in full")]
+	[DataRow("tests\rbad extra\r", DisplayName = "Relative to the scope")]
+	public void When_AFailedRouteMatchesFewerLiteralWordsThanAContext_Then_TheCommandEndMarkUsesTheContextModuleCode(string input)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new CountingModule());
+		sut.MapModule(new BadGroupModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, $"{input}exit\r");
+
+		raw.Should().Contain("]133;D;7");
+		raw.Should().NotContain("]133;D;5");
+	}
+
+	[TestMethod]
+	[Description("Verifies an abbreviation ambiguous at the first word between commands of one module carries that module's code in the command-end mark, as the same input would exit in a one-shot run.")]
+	public void When_EveryExpansionOfAnAmbiguousAbbreviationBelongsToOneModule_Then_TheCommandEndMarkUsesTheModuleCode()
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var sut = CreateMarkedApp();
+		sut.MapModule(new ToolingModule());
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "t run\rexit\r");
+
+		raw.Should().Contain("]133;D;5");
 	}
 
 	[TestMethod]
@@ -789,6 +882,42 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 		harness.RawOutput.Should().NotContain("]633;");
 	}
 
+	[TestMethod]
+	[Description("Early handler fallback failures retain formatted binding diagnostics and command-end codes while the interactive session stays usable.")]
+	[DataRow(false)]
+	[DataRow(true)]
+	public void When_HandlerFallbackFailsBeforeATypedHook_Then_InteractiveMarksRetainBindingPolicy(bool hook)
+	{
+		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
+		var factories = 0;
+		var kinds = new List<ReplExecutionOutcomeKind>();
+		var nextRan = false;
+		var sut = ReplApp.Create(services => services.AddTransient<Uri>(_ => { factories++; throw new InvalidOperationException("factory failed"); }))
+			.UseDefaultInteractive().UseTerminalIntegration(options => options.ShellIntegration = ShellIntegrationMode.Always);
+		sut.Options(options =>
+		{
+			options.Output.AnsiMode = AnsiMode.Always;
+			options.Output.ColorizeStructuredInteractive = false;
+			options.ExitCodes.BindingError = 17;
+			options.ExitCodes.Resolver = outcome =>
+			{
+				if (outcome.Scope == ReplExitCodeScope.ShellIntegrationMark) { kinds.Add(outcome.Kind); }
+				return outcome.ExitCode;
+			};
+		});
+		sut.Map("run", (Uri endpoint, int count) => Assert.Fail("The failing handler dependency must prevent dispatch."));
+		sut.Map("next", () => { nextRan = true; });
+		if (hook) { sut.UseInvocationHook((int count = 0) => ReplInvocationResult.Continue()); }
+		var harness = new TerminalHarness(cols: 80, rows: 12);
+
+		var raw = RunInteractiveSession(harness, sut, "run 5 --output:json\rnext\rexit\r");
+
+		raw.Should().Contain("execution_error").And.NotContain("input_callback_error").And.Contain("]133;D;17");
+		kinds[0].Should().Be(ReplExecutionOutcomeKind.BindingError);
+		factories.Should().Be(1);
+		nextRan.Should().BeTrue();
+	}
+
 	private static ReplApp CreateMarkedApp(ShellIntegrationMode mode = ShellIntegrationMode.Always)
 	{
 		var sut = ReplApp.Create()
@@ -948,6 +1077,45 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 				Threw = true;
 				throw new IOException("simulated transport failure on mark write");
 			}
+		}
+	}
+
+	private sealed class CountingModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 5 };
+
+		public void Map(IReplMap map) => map.Map("tests {count:int}", (int count) => count);
+	}
+
+	// Nested so that "tests" is a scope the relative row can enter.
+	private sealed class BadGroupModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 7 };
+
+		public void Map(IReplMap map) => map.Context("tests", static tests => tests.Context("bad group", static _ => { }));
+	}
+
+	private sealed class FailingTestsModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 5, CompletedWithFailures = 2 };
+
+		public void Map(IReplMap map)
+		{
+			map.Map("tests run", () => Results.CompletedWithFailures("1 failed"));
+			map.Map("tests rerun", () => "ok");
+			map.Map("tests show {id:int}", (int id) => id);
+			map.Context("guarded", scoped => scoped.Map("run", () => "ok"), validation: () => false);
+		}
+	}
+
+	private sealed class ToolingModule : IReplModuleExitCodes
+	{
+		public ReplExitCodeOverrides ExitCodes { get; } = new() { UsageError = 5 };
+
+		public void Map(IReplMap map)
+		{
+			map.Map("tests run", () => "ok");
+			map.Map("tools run", () => "ok");
 		}
 	}
 }

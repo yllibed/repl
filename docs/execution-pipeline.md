@@ -3,6 +3,16 @@
 This document describes the command execution pipeline in the Repl Toolkit,
 from raw input to final output. The pipeline is driven by `CoreReplApp.ExecuteCoreAsync`.
 
+Applications integrating an existing CLI or a larger host can opt into
+[advanced input adaptation and validation](advanced-input.md). Adapters run before
+the global-option stage; typed input validators run before handler binding. The
+ordinary command-definition workflow does not require these hooks.
+
+[Startup preparation and hooks](advanced-startup.md#callback-and-lifecycle-order)
+document the outer lifecycle: preparation before composition, startup hooks in the
+run/session scope, then hosted-service startup and the dispatch pipeline below.
+Startup hooks do not repeat for each interactive command or nested tool call.
+
 ```text
 Input
   |
@@ -159,13 +169,15 @@ precedence:
 
 1. `CancellationToken` — injected from the execution context
 2. Explicit attributes — `[FromServices]`, `[FromContext]`
-3. Options groups — `[ReplOptionsGroup]` for multi-property binding
-4. Route values — values extracted during route resolution
-5. Named options — values from command option parsing
-6. Context/services — resolved from the DI container or execution context
-7. Positional arguments — remaining unmatched tokens, in order
-8. Default values — parameter defaults from the method signature
-9. Null — for nullable types without other source
+3. Parameters Repl supplies — progress reporters, the interaction channel and other framework services
+4. Typed global options — a `UseGlobalOptions<T>()` type, resolved from services
+5. Options groups — `[ReplOptionsGroup]` for multi-property binding
+6. Route values — values extracted during route resolution
+7. Named options — values from command option parsing
+8. Context/services — resolved from the DI container or execution context
+9. Positional arguments — remaining unmatched tokens, in order
+10. Default values — parameter defaults from the method signature
+11. Null — for nullable types without other source
 
 See [parameter-system.md](parameter-system.md) for full parameter binding details.
 
@@ -210,6 +222,7 @@ that is rendered and classified in the handler's place.
 The raw handler return value is unwrapped and interpreted:
 
 - `IExitResult` — carries an explicit exit code and optional message.
+- `ICompletedWithFailuresResult` — the command completed and reports failures; only its payload renders.
 - `ITuple` — destructured into result components.
 - `EnterInteractiveResult` — transitions the session into interactive mode.
 - Navigation transformations are applied if the result triggers context changes.
@@ -243,9 +256,10 @@ mapped to an integer by `ReplOptions.ExitCodes` (`ExitCodeOptions`), then handed
 | `HandlerError` | handler returned `Results.Error` / `Validation` / `NotFound` / `Cancelled`, or any `IReplResult` whose kind the framework does not recognize as success-like | `1` |
 | `HandlerExitCode` | handler returned an `IExitResult` — its code is used verbatim, the table is bypassed | `IExitResult.ExitCode` |
 | `HandlerException` | the handler, a middleware, or user code running after binding threw — including a handler that raised `OperationCanceledException` without the caller having asked for cancellation, and an output transformer that failed. The outcome carries the exception and the refusal the framework reported for it — reported, not necessarily rendered: when the transformer itself is what failed, the message is written unformatted to stderr instead, and the run keeps this kind because the caller still saw it | `1` |
-| `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
+| `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, while an interactive session waits for input, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
 | `Interrupted` | a process signal (SIGINT, Ctrl+Break, SIGTERM) the framework claimed, for a standalone run that opted in through `ReplRunOptions.ProcessSignalHandling`. Only a clean or cancelled run is reclassified: one that already produced a refusal or failure keeps reporting it | `ExitCodes.Interrupted`, else the `128 + signal` code the handler supplies, else `130` |
 | `FrameworkError` | incompatible programmatic adapter, unsupported hosting capability, hosted-service start or stop failure | `1` |
+| `CompletedWithFailures` | handler returned `Results.CompletedWithFailures` — the command ran to completion and its report contains failures (tests that failed). Not success-like: it does not enter interactive mode, even with `--interactive`, and a process signal does not reclassify it. It keeps its outcome when a cancellation lands while its payload renders, whatever code it maps to | `1` |
 
 The table is the **process** exit code. Ctrl+C during an interactive command is also a `Cancelled`
 outcome, but it decorates that command's shell-integration command-end mark and the loop continues —
@@ -259,9 +273,42 @@ interactive session instead treats a **command-scoped** `OperationCanceledExcept
 Ctrl+C and a self-cancelling handler alike: it prints `Cancelled.`, decorates the mark with the
 `Cancelled` code, and does not render the exception.
 
-Two interactive cases are not `Cancelled` at all, and neither carries a code: an abandoned prompt
+Two interactive cases are not `Cancelled` cycles, and neither puts a code on its mark: an abandoned prompt
 (empty line, Escape, end of input), and a cancellation of the session's own token — host shutdown —
-which closes the cycle with an aborted mark and then propagates out of the loop.
+which closes the cycle with an aborted mark and then propagates out of the loop, ending the run as a cancellation.
+
+> **Changed in 0.12.** A cancellation of the session's own token while the line editor waited for a key, in a
+> hosted session (`StreamedReplHost.RunSessionAsync`, `ReplWebSocketSession.RunAsync`, `ReplTelnetSession.RunAsync`) or
+> with advanced input, used to end the session as if its input had ended, with exit code `0`; a prompt waiting there
+> answered its default. The cycle's mark still carries no code, but the run now ends as a cancellation, as everywhere
+> else: the `OperationCanceledException` propagates, or `ExitCodes.Cancelled` or the resolver maps it to an exit code.
+> A session whose client closes it still ends normally; a host that passes a request-abort token should catch the
+> `OperationCanceledException` raised when that token is cancelled.
+>
+> **Changed in 0.12.** `ReplTelnetSession.RunAsync` used to keep waiting for input once the peer had closed its side
+> of the connection, until its token was cancelled; it now ends the session, with exit code `0`. Once the session ends,
+> it also returns without waiting for the peer to close its side: it sends its remaining output, then stops reading,
+> and over a WebSocket it closes the connection normally. That output goes out in writes of at most 4 KB, each given
+> two seconds or the time it takes at 256 bytes a second, whichever is longer, and the rest is given up when one is not
+> done by then: a peer that stopped reading holds the session about sixteen seconds at most, while one that keeps that
+> pace receives all the output however long it takes, unless the session's token is cancelled. Over an `IDuplexPipe`
+> that buffers, a write is done only once the peer has read what the pipe holds past its resume threshold, so the
+> peer must keep a faster pace. A peer gone before the opening negotiation could be sent ends the session instead of leaving it waiting for input. The
+> building blocks change with it: `TelnetFraming.RunAsync` returns once the peer's input ends while the output stays
+> open, so the framing must now be disposed, before its pipe is completed; `TelnetFraming.DisposeAsync` waits for the
+> negotiation and the output to be sent, then stops the read `RunAsync` has pending, and `RunAsync` no longer fails
+> with an `IOException` when the negotiation cannot be sent; cancelling a `WebSocketStream` read closes the WebSocket
+> normally instead of aborting it, aborting it a second later if the peer has not answered, disposing the stream
+> asynchronously closes it too, a read once that disposal began is refused with an `ObjectDisposedException`, and a
+> failed connection surfaces as an `IOException` rather than a `WebSocketException`.
+>
+> **Changed in 0.12.** `ReplWebSocketSession.RunAsync` used to abort its WebSocket when the session ended, so the peer
+> saw the connection closed without a close handshake. It now closes it normally, waiting up to a second for the peer
+> to answer and aborting the connection if it does not, so `RunAsync` can return up to a second later. A session ended
+> by cancelling its token still aborts the connection at once.
+>
+> **Changed in 0.12.** A cancellation of a hosted session's token while it detected the terminal (VT probe, Telnet
+> NAWS wait) used to propagate even with `ExitCodes.Cancelled` or a resolver set; it now goes through them too.
 
 A hosted-service failure is resolved once, after the whole lifecycle, and the outcome carries the
 exception. A shutdown that fails outranks everything the run had produced — including any exception
@@ -273,7 +320,9 @@ hosting defect: it is a `Cancelled` outcome, it prints no startup error, and wit
 policy configured it propagates the `OperationCanceledException` like every other path.
 
 Framework diagnostics go to **stderr** — the hosted-lifecycle failures and the unknown-`--output`
-refusal alike — so a headless run's stdout carries the command payload alone.
+refusal alike — so a headless run's stdout carries the command payload alone. Interaction feedback
+follows it there whenever the payload is for a program (a machine-readable format, or a redirected
+stdout); see [Progress](progress.md#which-stream-receives-progress).
 
 Exit codes should stay within `0`-`255`: POSIX `wait` exposes only the low eight bits to the parent
 process, so `Help = 300` reaches a shell as `44`. Repl does not clamp — a code outside the range is
@@ -290,10 +339,77 @@ app.Options(options =>
 });
 ```
 
-The resolver receives a `ReplExecutionOutcome` (`Kind`, table-mapped `ExitCode`, the final `Result`
-object when one exists, the `Exception` that ended the run when applicable, and a `Scope`). `Scope`
-is an init-only property rather than a positional parameter, so it is not part of the record's
-generated `Deconstruct` — read it by name.
+The resolver receives a `ReplExecutionOutcome` (`Kind`, the `ExitCode` mapped by the command's module
+codes and then the table, the final `Result` object when one exists, the `Exception` that ended the
+run when applicable, a `Scope`, and the `Route` template of the command the invocation resolved to
+or addressed — `null` otherwise, for example for help, an unknown command or ambiguous abbreviation,
+a refusal before routing, a framework failure, or a cancellation or interruption that stopped the run
+around the command).
+`Scope` and `Route` are init-only properties rather than positional parameters, so they are not part
+of the record's generated `Deconstruct` — read them by name.
+
+#### Exit codes declared by a module
+
+A module that follows another tool's conventions declares its own codes by implementing
+`IReplModuleExitCodes`. They are read once, when the module is mapped, travel with the module wherever
+it is mounted, and apply to the outcomes of its commands before the application's table:
+
+```csharp
+public sealed class TestRunnerModule : IReplModuleExitCodes
+{
+    // dotnet test (Microsoft.Testing.Platform): 2 = tests failed, 5 = invalid command line.
+    public ReplExitCodeOverrides ExitCodes { get; } = new() { CompletedWithFailures = 2, UsageError = 5 };
+
+    public void Map(IReplMap map) => map.Map("tests run", RunTests);
+}
+```
+
+- A code left `null` is inherited from the module that mapped this one, then from `ReplOptions.ExitCodes`.
+- The codes cover `Success`, `UsageError`, `BindingError`, `HandlerError`, `HandlerException` and
+  `CompletedWithFailures`. Help, cancellation, interruption and framework errors describe the run,
+  not one module's command, and keep the application's codes; a `Results.Exit` code is never remapped.
+- An outcome belongs to the module of the command the invocation resolved to, a refused option
+  included. An argument that fails a route constraint, or a missing argument, belongs to that route's
+  module, and is reported as that argument's error, as long as no other route, and no context, matches
+  more of the words typed; the word a parameter rejects counts, since it was typed where the route
+  expects one, so `user bob` against `user {id:int}` and `user {name} rename {newName}` is still an
+  invalid `id`. Inside an interactive context, a word of the scope is not on the line typed: a route
+  rejecting it does not take the line's refusal from the context that accepted it. Among the routes
+  addressed that way, a value rejected on a line the route fits comes first, then a route only waiting
+  for more words, then a value rejected on a line too short for its route. When no failure is
+  addressed, the invocation is refused as an unknown command among those words. An unknown command
+  belongs to the
+  module whose routes share the most leading words with it (`tests bogus` is refused as the `tests`
+  module would refuse it). In both cases literal words count before parameters that accept a word, so a
+  route such as `{env} {region} deploy` does not take `tests` away from the module that spells it out.
+
+  > **Changed in 0.12.** Such an invocation used to be refused with the argument error of the failed
+  > route routing ranked first, even when another route or a context matched more of its words. It is
+  > now refused with the argument error of a failed route that no other route or context outscores,
+  > which can name another route, parameter and module, or else as an unknown command: under `--json`,
+  > an error result with the code `unknown_command` rather than a validation result. Conversely, a value
+  > a route rejects on a line too short for that route, which used to be refused as an unknown command,
+  > is now refused with that argument's error. The exit code is a usage error either way.
+
+- An ambiguous abbreviation belongs to the modules of what it could expand to. Each expansion, its
+  other abbreviations expanded too, is weighed as an unknown command is, and the expansions matching
+  the most words decide: `t run`, between a module's `tests run` and `tools run`, is refused as that
+  module would refuse it, even though `t` is not a whole word of either. When those expansions belong
+  to different modules, or to a module and the application, they are settled as tied modules are,
+  below.
+- A context decides only when it matches more words than every route — within one expansion, for an
+  ambiguous abbreviation — so a module mounted under one of the application's contexts still owns the
+  commands under its words. Modules that tie and apply the same codes share them; otherwise the module
+  that mapped them all decides — the application when none did.
+- A context's failed validation belongs to the module that mapped the context, unless the invocation
+  resolved to a command, whose module then decides.
+- Global options, input hooks and argument preprocessors run before any command is resolved: their
+  refusals and the results they answer with keep the application's codes. An unknown `--output`
+  format is the exception: a command reports it when it renders, so it takes that command's module
+  code, even when the command could not run, as a hosted protocol-passthrough command without
+  `IReplIoContext`.
+- The resolver runs after the module's codes, and receives them in `ExitCode`. Shell-integration
+  marks use them too, interactive refusals included; nested sub-invocations keep the built-in defaults.
 
 `Scope` says what the code is for, so a hook with side effects can tell one from the other:
 
@@ -307,10 +423,11 @@ generated `Deconstruct` — read it by name.
   with shell integration off (the default), never for a protocol-passthrough command, and never for
   an abandoned prompt cycle (empty line, Escape, end of input, session cancellation).
 
-The resolver must not throw. An exception from it is swallowed and the table-mapped code is used
-instead, with one diagnostic line written to the session's error stream on a best-effort basis — a
-faulty exit-code hook cannot replace the run's own outcome nor tear down an interactive session, and
-a failing error stream cannot turn the report of that hook's failure into the failure itself.
+The resolver must not throw. An exception from it is swallowed and the mapped code — the module's,
+then the table's — is used instead, with one diagnostic line written to the session's error stream on
+a best-effort basis — a faulty exit-code hook cannot replace the run's own outcome nor tear down an
+interactive session, and a failing error stream cannot turn the report of that hook's failure into the
+failure itself.
 
 Nested sub-invocations (MCP tool calls executed through the Repl pipeline) always use the built-in
 defaults and skip the resolver: the policy describes the *process* exit, and nested callers only test
@@ -326,7 +443,7 @@ Errors at each stage produce targeted diagnostics:
   exists.
 - **Binding errors** — renders a message identifying the missing or invalid parameter.
 - **Handler exceptions** — caught and unwrapped from `TargetInvocationException`,
-  then rendered as an error to stderr.
+  then rendered as an error result through the active output format, on stdout.
 - **Cancellation** — in one-shot mode the caller's own token produces
   `ReplExecutionOutcomeKind.Cancelled`; a handler that raises `OperationCanceledException` on its own
   account is a `HandlerException` instead. The interactive loop treats both as an abort and prints

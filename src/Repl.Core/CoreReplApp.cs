@@ -58,13 +58,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			InvalidateRoutingFromOptionsMutation,
 			_configurationMutationGate);
 		_globalOptionsSnapshot = new GlobalOptionsSnapshot(_options.Parsing);
+		_globalOptionsSnapshot.NativeValues = () => _currentInput.Value?.Request?.GlobalValues;
 		_services = CreateDefaultServiceProvider();
 		_shellCompletionRuntime = new ShellCompletionRuntime(
 			_options,
 			ResolveEntryAssemblyName,
 			ResolveShellCompletionCommandName,
 			ResolveShellCompletionCandidatesAsync);
-		_moduleRegistrations.Add(new ModuleRegistration(ModuleId: 0, IsPresent: static _ => true));
+		_moduleRegistrations.Add(new ModuleRegistration(ModuleId: 0, ParentModuleId: 0, IsPresent: static _ => true));
 		_moduleMappingScope.Push(0);
 		MapModule(
 			new ShellCompletionModule(_shellCompletionRuntime),
@@ -325,6 +326,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				() => _options.Parsing.OptionCaseSensitivity);
 			ApplyMetadataFromAttributes(command, handler);
 			var parsedTemplate = RouteTemplateParser.Parse(route, _options.Parsing);
+			ValidateParameterNamesAreDistinct(handler);
 			var template = InferRouteConstraintsFromHandler(parsedTemplate, handler);
 			var moduleId = ResolveCurrentMappingModuleId();
 			RouteConfigurationValidator.ValidateUnique(
@@ -348,6 +350,32 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 		InvalidateRouting();
 		return command;
+	}
+
+	// Route segments, options and help all look handler parameters up by name without regard to case, so two
+	// names equal but for case would resolve to whichever came last.
+	private static void ValidateParameterNamesAreDistinct(Delegate handler)
+	{
+		var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var parameter in handler.Method.GetParameters())
+		{
+			if (string.IsNullOrWhiteSpace(parameter.Name))
+			{
+				continue;
+			}
+
+			if (names.TryAdd(parameter.Name, parameter.Name))
+			{
+				continue;
+			}
+
+			var first = names[parameter.Name];
+			// Lambda discards all carry the name '_', so a handler can repeat a name exactly.
+			throw new InvalidOperationException(string.Equals(first, parameter.Name, StringComparison.Ordinal)
+				? $"Two parameters share the name '{parameter.Name}'; give each parameter its own name."
+				: $"Parameters '{first}' and '{parameter.Name}' differ only by case; Repl matches parameter names "
+					+ "without regard to case, even when option tokens are case-sensitive, so rename one of them.");
+		}
 	}
 
 	private static RouteTemplate InferRouteConstraintsFromHandler(RouteTemplate template, Delegate handler)
@@ -536,26 +564,20 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		return Resolve(inputTokens, activeGraph.Routes);
 	}
 
-	internal RouteResolver.RouteResolutionResult ResolveWithDiagnostics(IReadOnlyList<string> inputTokens)
-	{
-		var activeGraph = ResolveActiveRoutingGraph();
-		return ResolveWithDiagnostics(inputTokens, activeGraph.Routes);
-	}
-
 	internal RouteMatch? Resolve(IReadOnlyList<string> inputTokens, IReadOnlyList<RouteDefinition> routes) =>
 		RouteResolver.Resolve(routes, inputTokens, _options.Parsing);
 
 	internal RouteResolver.RouteResolutionResult ResolveWithDiagnostics(
 		IReadOnlyList<string> inputTokens,
 		IReadOnlyList<RouteDefinition> routes) =>
-		RouteResolver.ResolveWithDiagnostics(routes, inputTokens, _options.Parsing);
+		ResolveInvocationRoute(inputTokens, routes);
 
 	private void MapModuleCore(
 		IReplModule module,
 		Func<ModulePresenceContext, bool> isPresent,
 		IReplMap map)
 	{
-		var moduleId = RegisterModule(isPresent);
+		var moduleId = RegisterModule(module, isPresent);
 		_moduleMappingScope.Push(moduleId);
 		try
 		{
@@ -567,10 +589,14 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		}
 	}
 
-	private int RegisterModule(Func<ModulePresenceContext, bool> isPresent)
+	private int RegisterModule(IReplModule module, Func<ModulePresenceContext, bool> isPresent)
 	{
+		// Read before anything is registered: a getter that throws leaves no half-registered module.
+		var declaredExitCodes = (module as IReplModuleExitCodes)?.ExitCodes;
 		var moduleId = _nextModuleId++;
-		_moduleRegistrations.Add(new ModuleRegistration(moduleId, isPresent));
+		var parentModuleId = ResolveCurrentMappingModuleId();
+		_moduleRegistrations.Add(new ModuleRegistration(moduleId, parentModuleId, isPresent));
+		RegisterModuleExitCodes(moduleId, parentModuleId, declaredExitCodes);
 		InvalidateRouting();
 		return moduleId;
 	}
@@ -876,7 +902,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 			[typeof(IReplIoContext)] = new LiveReplIoContext(),
 			[typeof(TimeProvider)] = TimeProvider.System,
 		};
-		return new DefaultServiceProvider(defaults);
+		return new DefaultServiceProvider(this, defaults);
 	}
 
 	internal static bool IsHelpToken(string token) =>
@@ -912,6 +938,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 	private readonly record struct ModuleRegistration(
 		int ModuleId,
+		int ParentModuleId,
 		Func<ModulePresenceContext, bool> IsPresent);
 
 	/// <param name="ServiceProvider">Resolves handler arguments for this invocation.</param>
@@ -984,7 +1011,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 		}
 	}
 
-	private sealed class DefaultServiceProvider(IReadOnlyDictionary<Type, object> services) : IServiceProvider
+	private sealed class DefaultServiceProvider(CoreReplApp app, IReadOnlyDictionary<Type, object> services) : IServiceProvider
 	{
 		public object? GetService(Type serviceType)
 		{
@@ -999,7 +1026,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				return this;
 			}
 
-			return services.TryGetValue(serviceType, out var service) ? service : null;
+			return services.TryGetValue(serviceType, out var service) ? service : app.CreateGlobalOptions(serviceType, app.GlobalOptionsAccessor);
 		}
 	}
 

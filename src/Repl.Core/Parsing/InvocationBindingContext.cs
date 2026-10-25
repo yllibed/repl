@@ -31,9 +31,14 @@ internal sealed class InvocationBindingContext(
 
 	public IServiceProvider ServiceProvider { get; } = serviceProvider;
 
+	internal IServiceProvider KeyedServiceProvider { get; init; } = serviceProvider;
+	internal IReadOnlyDictionary<string, object?> NativeValues { get; init; } = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
 	public InteractionOptions InteractionOptions { get; } = interactionOptions;
 
 	public CancellationToken CancellationToken { get; } = cancellationToken;
+
+	internal Dictionary<string, object?>? InputServiceFallbacks { get; set; }
 
 	public ImplicitServiceParameterRegistry ImplicitServiceParameters { get; } =
 		implicitServiceParameters ?? throw new ArgumentNullException(nameof(implicitServiceParameters));

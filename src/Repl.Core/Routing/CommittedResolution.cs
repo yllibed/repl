@@ -20,13 +20,15 @@ internal readonly struct CommittedResolution
 		GlobalInvocationOptions? options,
 		ActiveRoutingGraph? graph,
 		PrefixResolutionResult? prefix,
-		RouteResolver.RouteResolutionResult? routes)
+		RouteResolver.RouteResolutionResult? routes,
+		int scopeTokenCount = 0)
 	{
 		Kind = kind;
 		_options = options;
 		_graph = graph;
 		_prefix = prefix;
 		_routes = routes;
+		ScopeTokenCount = scopeTokenCount;
 	}
 
 	public static CommittedResolution Ambient() =>
@@ -48,10 +50,14 @@ internal readonly struct CommittedResolution
 		GlobalInvocationOptions options,
 		ActiveRoutingGraph graph,
 		PrefixResolutionResult prefix,
-		RouteResolver.RouteResolutionResult routes) =>
-		new(CommittedKind.Routed, options, graph, prefix, routes);
+		RouteResolver.RouteResolutionResult routes,
+		int scopeTokenCount) =>
+		new(CommittedKind.Routed, options, graph, prefix, routes, scopeTokenCount);
 
 	public CommittedKind Kind { get; }
+
+	/// <summary>How many leading words of the routed tokens are the scope the line was resolved in.</summary>
+	public int ScopeTokenCount { get; }
 
 	public GlobalInvocationOptions Options =>
 		_options ?? throw new InvalidOperationException("An ambient resolution captures no global options.");

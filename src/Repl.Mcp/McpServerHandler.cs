@@ -265,22 +265,24 @@ internal sealed class McpServerHandler
 
 	internal McpServerOptions BuildStaticServerOptions()
 	{
+		var target = new McpServerOptions();
+		ApplyStaticServerOptions(target);
+		return target;
+	}
+
+	internal void ApplyStaticServerOptions(McpServerOptions target)
+	{
 		var serverName = _options.ServerName ?? ResolveAppName() ?? "repl-mcp-server";
 		var serverVersion = _options.ServerVersion ?? "1.0.0";
-		// Built once, before any request, and then shared by every connection — so it cannot vary per
-		// connection whatever it contains. Built with the modern, invariant view because that is the
-		// only one that makes it complete: resolving capabilities against no request would silently
-		// drop every capability-gated module from a catalog that can never be rebuilt.
+		// A static projection has no connection context. The invariant view keeps capability-gated
+		// modules in the catalog rather than resolving them against a missing client request.
 		var snapshot = BuildSnapshotCore(_catalogContext, sessionless: true);
 
-		return new McpServerOptions
-		{
-			ServerInfo = new Implementation { Name = serverName, Version = serverVersion },
-			Capabilities = BuildCapabilities(),
-			ToolCollection = ToCollection(snapshot.Tools),
-			ResourceCollection = ToResourceCollection(snapshot.Resources),
-			PromptCollection = ToCollection(snapshot.Prompts),
-		};
+		target.ServerInfo = new Implementation { Name = serverName, Version = serverVersion };
+		target.Capabilities = BuildCapabilities();
+		target.ToolCollection = ToCollection(snapshot.Tools);
+		target.ResourceCollection = ToResourceCollection(snapshot.Resources);
+		target.PromptCollection = ToCollection(snapshot.Prompts);
 	}
 
 	internal McpGeneratedSnapshot BuildSnapshotForTests() =>

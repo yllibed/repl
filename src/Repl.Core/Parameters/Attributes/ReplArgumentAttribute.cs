@@ -3,6 +3,10 @@ namespace Repl.Parameters;
 /// <summary>
 /// Configures positional argument metadata for a handler parameter.
 /// </summary>
+/// <remarks>
+/// A parameter Repl supplies, such as <see cref="CancellationToken"/> or <see cref="IReplInteractionChannel"/>, is
+/// never an argument, so mapping a command fails when this attribute is declared on one.
+/// </remarks>
 [AttributeUsage(AttributeTargets.Parameter | AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
 public sealed class ReplArgumentAttribute : Attribute
 {
