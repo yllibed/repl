@@ -221,9 +221,9 @@ internal sealed class RoutingEngine(CoreReplApp app)
 		return Results.Validation($"Scope validation failed for '{scope}'.", details);
 	}
 
-	private IReplResult CreateUnknownCommandResult(IReadOnlyList<string> tokens)
+	// Takes the graph CoreReplApp.DecideUnresolvedRefusal scored, so the suggestion comes from the same routes.
+	internal IReplResult CreateUnknownCommandResult(IReadOnlyList<string> tokens, ActiveRoutingGraph activeGraph)
 	{
-		var activeGraph = app.ResolveActiveRoutingGraph();
 		var discoverableRoutes = ResolveDiscoverableRoutes(
 			activeGraph.Routes,
 			activeGraph.Contexts,
@@ -252,14 +252,14 @@ internal sealed class RoutingEngine(CoreReplApp app)
 		return Results.Validation(message);
 	}
 
-	private static IReplResult CreateInvalidRouteValueResult(RouteResolver.RouteConstraintFailure failure)
+	internal static IReplResult CreateInvalidRouteValueResult(RouteResolver.RouteConstraintFailure failure)
 	{
 		var expected = GetConstraintDisplayName(failure.Segment);
 		var message = $"Invalid value '{failure.Value}' for parameter '{failure.Segment.Name}' (expected: {expected}).";
 		return Results.Validation(message);
 	}
 
-	private static IReplResult CreateMissingRouteValuesResult(RouteResolver.RouteMissingArgumentsFailure failure)
+	internal static IReplResult CreateMissingRouteValuesResult(RouteResolver.RouteMissingArgumentsFailure failure)
 	{
 		if (failure.MissingSegments.Length == 1)
 		{
@@ -271,24 +271,6 @@ internal sealed class RoutingEngine(CoreReplApp app)
 
 		var names = string.Join(", ", failure.MissingSegments.Select(segment => segment.Name));
 		return Results.Validation($"Missing values for parameters: {names}.");
-	}
-
-	internal IReplResult CreateRouteResolutionFailureResult(
-		IReadOnlyList<string> tokens,
-		RouteResolver.RouteConstraintFailure? constraintFailure,
-		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure)
-	{
-		if (constraintFailure is { } routeConstraintFailure)
-		{
-			return CreateInvalidRouteValueResult(routeConstraintFailure);
-		}
-
-		if (missingArgumentsFailure is { } routeMissingArgumentsFailure)
-		{
-			return CreateMissingRouteValuesResult(routeMissingArgumentsFailure);
-		}
-
-		return CreateUnknownCommandResult(tokens);
 	}
 
 	private static string GetConstraintDisplayName(DynamicRouteSegment segment) =>
@@ -427,8 +409,8 @@ internal sealed class RoutingEngine(CoreReplApp app)
 				// Ambiguous shorthand must fail fast so users don't execute the wrong command.
 				return new PrefixResolutionResult(
 					tokens: resolved,
-					ambiguousToken: token,
-					candidates: prefixMatches);
+					candidates: prefixMatches,
+					ambiguousIndex: index);
 			}
 		}
 

@@ -14,6 +14,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed bidirectional pipe.
 	/// This is the primary overload — all other overloads adapt to <see cref="IDuplexPipe"/>.
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		IDuplexPipe pipe,
@@ -31,6 +32,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed bidirectional pipe and exposes
 	/// Telnet negotiation metadata callbacks (NAWS and TERMINAL-TYPE).
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		IDuplexPipe pipe,
@@ -52,6 +54,7 @@ public static class ReplTelnetSession
 	/// (TCP <see cref="System.Net.Sockets.NetworkStream"/>, named pipe, etc.).
 	/// The stream is adapted to an <see cref="IDuplexPipe"/> internally.
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		Stream stream,
@@ -69,6 +72,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed bidirectional stream and exposes
 	/// Telnet negotiation metadata callbacks (NAWS and TERMINAL-TYPE).
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		Stream stream,
@@ -102,6 +106,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed WebSocket connection.
 	/// The WebSocket is adapted to an <see cref="IDuplexPipe"/> internally.
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		WebSocket socket,
@@ -119,6 +124,7 @@ public static class ReplTelnetSession
 	/// Runs a REPL app session over a Telnet-framed WebSocket connection and exposes
 	/// Telnet negotiation metadata callbacks (NAWS and TERMINAL-TYPE).
 	/// </summary>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync" path="/exception"/>
 	public static async ValueTask<int> RunAsync(
 		ReplApp app,
 		WebSocket socket,
@@ -195,7 +201,8 @@ public static class ReplTelnetSession
 			}
 			finally
 			{
-				host.Complete();
+				// Ends the input and drops the session's registration, which would otherwise outlive the connection.
+				await host.DisposeAsync().ConfigureAwait(false);
 			}
 
 			return exitCode;
@@ -210,6 +217,8 @@ public static class ReplTelnetSession
 		}
 	}
 
+	// Once the peer's input ends, no more can arrive: completing the host lets the session see the end of its input
+	// rather than wait for it. A cancellation is left to the session, which reports it as one.
 	private static async Task PipeInputAsync(
 		ChannelTextReader framingInput,
 		StreamedReplHost host,
@@ -221,7 +230,17 @@ public static class ReplTelnetSession
 			while (!ct.IsCancellationRequested)
 			{
 				var read = await framingInput.ReadAsync(buffer, ct).ConfigureAwait(false);
-				if (read == 0) break;
+				if (read == 0)
+				{
+					// The framing also ends its input when cancelled; that cancellation is not the peer leaving.
+					if (!ct.IsCancellationRequested)
+					{
+						host.Complete();
+					}
+
+					return;
+				}
+
 				host.EnqueueInput(new string(buffer, 0, read));
 			}
 		}

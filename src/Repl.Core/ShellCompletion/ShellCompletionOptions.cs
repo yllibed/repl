@@ -59,7 +59,8 @@ public sealed class ShellCompletionOptions
 
 	/// <summary>
 	/// Gets or sets the deadline applied to each <see cref="CompletionDelegate"/> invocation
-	/// on the shell completion bridge. The invoking shell blocks until the bridge answers, so
+	/// on the shell completion bridge, and to the argument-adaptation and input-validation stages
+	/// as one combined input budget. The invoking shell blocks until the bridge answers, so
 	/// a provider that hangs (or ignores its cancellation token) is abandoned after this delay
 	/// and completion degrades to the static candidates. The opt-in scope keeps slow providers
 	/// out by design; this bounds a normally-fast provider against a transient stall.

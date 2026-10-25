@@ -17,7 +17,31 @@ public sealed class TelnetFraming : IAsyncDisposable
 	private readonly IDuplexPipe _pipe;
 	private readonly ChannelTextReader _vtInput = new();
 	private readonly TelnetTextWriter _vtOutput;
+	// The most the send loop writes at once, so a long output is given time write by write, and a peer that stopped
+	// reading holds disposal no longer than one write's allowance.
+	private const int MaxWriteSlice = 4096;
+
+	// The most continuation bytes a UTF-8 character has, which bounds how far a slice backs off to end between two.
+	private const int MaxUtf8ContinuationBytes = 3;
+
+	// Once the session has ended, a write is given up when the peer has not taken it in the time it needs at this pace,
+	// in bytes a second, or in MinWriteAllowance for a short one; the remarks on DisposeAsync and the change note in
+	// docs/execution-pipeline.md state it too. A transport reports no progress inside a write, so the allowance is
+	// sized to the write rather than renewed as the peer reads it.
+	private const int MinDrainRate = 256;
+
+	private static readonly TimeSpan MinWriteAllowance = TimeSpan.FromSeconds(2);
+
 	private readonly Channel<byte[]> _outChannel = Channel.CreateUnbounded<byte[]>();
+	// Guards what RunAsync starts against disposal: the sending, the read, and whether the framing has stopped.
+	private readonly Lock _gate = new();
+	private Task _sending = Task.CompletedTask;
+	private CancellationTokenSource? _sendingStop;
+	private bool _draining;
+	// The length of the write under way, 0 when there is none, so a disposal that begins during it allows it in full.
+	private int _writeLength;
+	private bool _reading;
+	private bool _stopped;
 
 	private ParserState _state = ParserState.Normal;
 	private byte _negotiationCommand;
@@ -49,33 +73,132 @@ public sealed class TelnetFraming : IAsyncDisposable
 	public event EventHandler<TerminalTypeEventArgs>? TerminalTypeChanged;
 
 	/// <summary>
-	/// Sends the initial Telnet negotiation and runs the receive/send loops
-	/// until the transport closes or cancellation is requested.
+	/// Sends the initial Telnet negotiation and runs the receive/send loops. It returns once the peer's input ends,
+	/// cancellation is requested, or the framing is disposed; the output stays open until the framing is disposed, so
+	/// the reply to a command the peer sent before closing its side still goes out.
 	/// </summary>
 	public async Task RunAsync(CancellationToken ct)
 	{
-		await SendNegotiationAsync(ct).ConfigureAwait(false);
+		CancellationTokenSource sendingStop;
+		lock (_gate)
+		{
+			// Disposal marks the output as draining before it looks for the sending to wait for, so a run that starts
+			// once disposal began would write what disposal no longer waits for.
+			if (_stopped || _draining)
+			{
+				return;
+			}
 
-		var sendTask = SendLoopAsync(ct);
+			// Started under the gate, so a disposal racing this start still waits for the negotiation.
+			sendingStop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			_sendingStop = sendingStop;
+			_sending = SendAsync(sendingStop);
+		}
+
 		try
 		{
 			await ReceiveLoopAsync(ct).ConfigureAwait(false);
 		}
 		finally
 		{
-			_outChannel.Writer.TryComplete();
+			// The session sees the end of the peer's input; its output stays open for what it still has to send.
 			_vtInput.Complete();
-			try { await sendTask.ConfigureAwait(false); }
-			catch (OperationCanceledException) { }
 		}
 	}
 
 	/// <inheritdoc />
-	public ValueTask DisposeAsync()
+	/// <remarks>
+	/// Waits for the output already written to be sent, then cancels the read <see cref="RunAsync"/> has pending on
+	/// the pipe, if any, so that it returns; the pipe is not completed. It also waits for an opening negotiation still
+	/// being written. The output goes out in writes of at most 4 KB, each given two seconds or the time it takes at 256
+	/// bytes a second, whichever is longer, counted from its start, or from the start of disposal for one already under
+	/// way; the rest is given up when one is not done by then. A peer that stopped reading thus holds disposal about
+	/// sixteen seconds at most, while one that keeps that pace receives all the output however long it takes; cancel
+	/// the token passed to <see cref="RunAsync"/> to bound that. A write is done once the transport accepts it: over a
+	/// pipe that buffers, such as a <see cref="Pipe"/>, the peer must also read what the pipe holds past its resume
+	/// threshold in that time. How a cancelled read ends depends on the transport: <see cref="WebSocketStream"/>
+	/// closes its WebSocket. Disposal is what ends the output once <see cref="RunAsync"/> has returned, so a framing must be
+	/// disposed, and before its pipe is completed.
+	/// </remarks>
+	public async ValueTask DisposeAsync()
+	{
+		// The output goes out first, as stopping a read can end the connection on some transports.
+		try
+		{
+			await EndOutputAsync().ConfigureAwait(false);
+		}
+		finally
+		{
+			StopReading();
+		}
+	}
+
+	// Ends the output and the VT input, then waits for what was already written to be sent.
+	private async Task EndOutputAsync()
 	{
 		_outChannel.Writer.TryComplete();
 		_vtInput.Complete();
-		return default;
+		Task sending;
+		lock (_gate)
+		{
+			_draining = true;
+			_sendingStop?.CancelAfter(WriteAllowance(_writeLength));
+			sending = _sending;
+		}
+
+#pragma warning disable VSTHRD003 // The sending RunAsync started is what ending the output waits to drain.
+		await sending.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+	}
+
+	// Stops reading the peer: a later read will not start, and the one RunAsync has pending returns.
+	private void StopReading()
+	{
+		lock (_gate)
+		{
+			_stopped = true;
+			if (_reading)
+			{
+				_pipe.Input.CancelPendingRead();
+			}
+		}
+	}
+
+	// Owns its stop source, which outlives RunAsync when the peer's input ends first.
+	private async Task SendAsync(CancellationTokenSource stop)
+	{
+		var ct = stop.Token;
+		try
+		{
+			// Leaves the gate RunAsync started this under before any write, which may wait for the peer.
+			await Task.Yield();
+			try
+			{
+				await SendNegotiationAsync(ct).ConfigureAwait(false);
+			}
+			catch (IOException)
+			{
+				// The peer left before the negotiation could be sent: the session has no one to serve.
+				_vtInput.Complete();
+				StopReading();
+				return;
+			}
+			catch (OperationCanceledException)
+			{
+				return;
+			}
+
+			await SendLoopAsync(ct).ConfigureAwait(false);
+		}
+		finally
+		{
+			lock (_gate)
+			{
+				_sendingStop = null;
+			}
+
+			stop.Dispose();
+		}
 	}
 
 	private async Task SendNegotiationAsync(CancellationToken ct)
@@ -94,11 +217,23 @@ public sealed class TelnetFraming : IAsyncDisposable
 			TelnetCommand.Iac, TelnetCommand.Do, TelnetOption.Naws,
 		];
 
-		await _pipe.Output.WriteAsync(negotiation, ct).ConfigureAwait(false);
+		await WriteAsync(negotiation, ct).ConfigureAwait(false);
 	}
 
 	private async Task ReceiveLoopAsync(CancellationToken ct)
 	{
+		// Disposal cancels a read only while this loop runs, so a caller's later read on its pipe is not cancelled,
+		// short of a disposal that lands as the loop ends.
+		lock (_gate)
+		{
+			if (_stopped)
+			{
+				return;
+			}
+
+			_reading = true;
+		}
+
 		var reader = _pipe.Input;
 		try
 		{
@@ -106,6 +241,11 @@ public sealed class TelnetFraming : IAsyncDisposable
 			{
 				var result = await reader.ReadAsync(ct).ConfigureAwait(false);
 				var buffer = result.Buffer;
+				if (result.IsCanceled)
+				{
+					reader.AdvanceTo(buffer.Start);
+					break;
+				}
 
 				foreach (var segment in buffer)
 				{
@@ -119,6 +259,69 @@ public sealed class TelnetFraming : IAsyncDisposable
 		}
 		catch (OperationCanceledException) { }
 		catch (IOException) { }
+		finally
+		{
+			lock (_gate)
+			{
+				_reading = false;
+			}
+		}
+	}
+
+	// Writes to the peer; while draining, the write gets its own allowance as it starts.
+	private async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
+	{
+		lock (_gate)
+		{
+			_writeLength = data.Length;
+			if (_draining)
+			{
+				_sendingStop?.CancelAfter(WriteAllowance(data.Length));
+			}
+		}
+
+		try
+		{
+			await _pipe.Output.WriteAsync(data, ct).ConfigureAwait(false);
+		}
+		finally
+		{
+			lock (_gate)
+			{
+				_writeLength = 0;
+			}
+		}
+	}
+
+	// Ends a slice on a character boundary, so a consumer that decodes each write on its own, such as one reading
+	// WebSocket messages, never sees a character split in two. The output is UTF-8, which never holds the 0xFF that IAC
+	// escaping doubles, so a cut between characters never splits an escape either.
+	private static int SliceLength(byte[] data, int offset)
+	{
+		var end = offset + MaxWriteSlice;
+		if (end >= data.Length)
+		{
+			return data.Length - offset;
+		}
+
+		// Bytes that are not UTF-8 are cut at the slice size.
+		for (var cut = end; cut > end - MaxUtf8ContinuationBytes - 1; cut--)
+		{
+			if (!IsUtf8Continuation(data[cut]))
+			{
+				return cut - offset;
+			}
+		}
+
+		return MaxWriteSlice;
+	}
+
+	private static bool IsUtf8Continuation(byte value) => (value & 0xC0) == 0x80;
+
+	private static TimeSpan WriteAllowance(int length)
+	{
+		var atMinDrainRate = TimeSpan.FromSeconds((double)length / MinDrainRate);
+		return atMinDrainRate > MinWriteAllowance ? atMinDrainRate : MinWriteAllowance;
 	}
 
 	private async Task SendLoopAsync(CancellationToken ct)
@@ -127,7 +330,12 @@ public sealed class TelnetFraming : IAsyncDisposable
 		{
 			await foreach (var data in _outChannel.Reader.ReadAllAsync(ct).ConfigureAwait(false))
 			{
-				await _pipe.Output.WriteAsync(data, ct).ConfigureAwait(false);
+				for (var offset = 0; offset < data.Length;)
+				{
+					var length = SliceLength(data, offset);
+					await WriteAsync(data.AsMemory(offset, length), ct).ConfigureAwait(false);
+					offset += length;
+				}
 			}
 		}
 		catch (OperationCanceledException) { }

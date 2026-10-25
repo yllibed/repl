@@ -1,5 +1,20 @@
 # Configuration Reference
 
+## Advanced Input
+
+`ReplOptions.Input` holds ordered `Preprocessors` and injectable `Validators`.
+Both collections are empty by default. The fluent registration helpers are
+`UseArgumentPreprocessor(...)` and `UseInputValidator(...)` on root applications.
+
+`Interactive.Autocomplete.NormalizeInputOnTab` defaults to `true`: valid adapted
+input can be converted to equivalent Repl syntax on the first Tab. Set it to
+`false` to preserve the legacy text while continuing to analyze its normalized
+arguments.
+
+These are advanced features for compatibility and larger host applications. See
+[Advanced Input](advanced-input.md) for processing modes, diagnostics, service
+injection and callback responsibilities during typing and completion.
+
 This is the complete configuration reference for the Repl Toolkit. All options are accessible through the `ReplOptions` object passed to `app.Options(...)`.
 
 ```csharp
@@ -92,13 +107,14 @@ Accessed via `ReplOptions.Output`.
 - `PaletteProvider` (`IAnsiPaletteProvider`, default: `DefaultAnsiPaletteProvider`) — Custom color palette provider.
 - `BannerEnabled` (`bool`, default: `true`) — Enable banner output.
 - `BannerFormats` (`ISet<string>`, default: `{"human"}`) — Output formats that display banners.
+- `FeedbackStream` (`ReplFeedbackStream`, default: `Auto`) — Stream for progress, status, notices, warnings, problems and prompts. `Auto` uses standard error when the output is machine-readable (`IOutputTransformer.IsMachineReadable`) or the local standard output is redirected; `Output` and `Error` force one stream.
 - `ColorizeStructuredInteractive` (`bool`, default: `true`) — Colorize JSON/XML in interactive mode.
 - `PreferredWidth` (`int?`, default: `null`) — Preferred render width. `null` uses automatic detection.
 - `FallbackWidth` (`int`, default: `120`) — Fallback width when the terminal is unavailable.
 - `ResultFlow` (`ResultFlowOptions`) - Paging and large-result behavior.
 - `JsonSerializerOptions` (`JsonSerializerOptions`, default: Web defaults + indented) — JSON serializer options.
 
-Built-in transformers: `human`, `json`, `xml`, `yaml`, `markdown`.
+Built-in transformers: `human`, `json`, `xml`, `yaml`, `markdown`. Of these, `json`, `xml` and `yaml` are machine-readable.
 
 ### ResultFlowOptions
 
@@ -144,10 +160,13 @@ of a top-level run; nested MCP sub-invocations always use the defaults and skip 
 - `BindingError` (`int`, default: `2`) — A handler argument could not be bound: token conversion failed or was missing, or a binder-resolved value (context value, `[FromServices]` dependency, typed global options service) was unavailable.
 - `HandlerError` (`int`, default: `1`) — Handler returned an error-like `IReplResult`.
 - `HandlerException` (`int`, default: `1`) — Handler or middleware threw.
-- `Cancelled` (`int?`, default: `null`) — Cancellation through the caller's own token, during the command or while hosted services were starting. `null` rethrows the `OperationCanceledException` unless a `Resolver` is set, in which case the resolver is handed `130` (`128 + SIGINT`); a value is returned instead. A handler that raises `OperationCanceledException` without the caller having asked for cancellation is a `HandlerException`, not a cancellation.
+- `Cancelled` (`int?`, default: `null`) — Cancellation through the caller's own token, during the command, while an interactive session waits for input, or while hosted services were starting. `null` rethrows the `OperationCanceledException` unless a `Resolver` is set, in which case the resolver is handed `130` (`128 + SIGINT`); a value is returned instead. A handler that raises `OperationCanceledException` without the caller having asked for cancellation is a `HandlerException`, not a cancellation.
 - `Interrupted` (`int?`, default: `null`) — A process signal (SIGINT, Ctrl+Break, SIGTERM) the framework claimed for a standalone run that opted in through `ReplRunOptions.ProcessSignalHandling`. `null` uses the conventional `128 + signal` code the signal carries (`130` for SIGINT/Ctrl+Break, `143` for SIGTERM), falling back to `130` when none is supplied; setting it publishes one code for every signal. Only a clean or cancelled run is reclassified as interrupted — one that already produced a refusal or failure keeps reporting it.
 - `FrameworkError` (`int`, default: `1`) — Incompatible programmatic adapter, unsupported hosting capability, or a hosted-service start/stop failure. The outcome carries the exception that caused it; when a shutdown failure suppressed an exception the run was propagating, that is an `AggregateException` of both. Neither a cancellation nor an interruption falls back to this code.
-- `Resolver` (`Func<ReplExecutionOutcome, int>?`, default: `null`) — Final interception hook. Receives the outcome with its table-mapped `ExitCode`; its return value wins. Also sees `HandlerExitCode` outcomes (explicit `Results.Exit`), which bypass the table. `ReplExecutionOutcome.Scope` distinguishes the process exit code (`ReplExitCodeScope.Process`, once per run) from one interactive command's shell-integration mark (`ReplExitCodeScope.ShellIntegrationMark`, only when a mark actually carries a code). Setting a resolver also opts in to observing cancellation. It must not throw: an exception degrades to the table-mapped code plus one diagnostic line on the error stream.
+- `CompletedWithFailures` (`int`, default: `1`) — The handler returned `Results.CompletedWithFailures`: the command ran to completion and its report contains failures. `1` is what test runners such as pytest return when tests fail; Microsoft.Testing.Platform uses `2`. The default is shared with `HandlerError` and `HandlerException`, so give it its own code when a script must tell a run with failures from a failed command.
+- `Resolver` (`Func<ReplExecutionOutcome, int>?`, default: `null`) — Final interception hook. Receives the outcome with its `ExitCode` — mapped by the codes the command's module declares through `IReplModuleExitCodes`, then by this table — and the command's `Route` template; its return value wins. Also sees `HandlerExitCode` outcomes (explicit `Results.Exit`), which bypass the table. `ReplExecutionOutcome.Scope` distinguishes the process exit code (`ReplExitCodeScope.Process`, once per run) from one interactive command's shell-integration mark (`ReplExitCodeScope.ShellIntegrationMark`, only when a mark actually carries a code). Setting a resolver also opts in to observing cancellation. It must not throw: an exception degrades to the mapped code (the module's, then the table's) plus one diagnostic line on the error stream.
+
+A module overrides these codes for its own commands by implementing `IReplModuleExitCodes` and returning a `ReplExitCodeOverrides`; see [execution pipeline — exit codes declared by a module](execution-pipeline.md#exit-codes-declared-by-a-module).
 
 Codes should stay within `0`-`255` — POSIX `wait` exposes only the low eight bits to the parent
 process. Repl passes a configured code through unchanged rather than clamping it.
@@ -215,7 +234,7 @@ Accessed via `ReplOptions.ShellCompletion`. See [Shell Completion](shell-complet
 - `SetupMode` (`ShellCompletionSetupMode`, default: `Manual`) — Completion setup mode.
 - `PreferredShell` (`ShellKind?`, default: `null`) — Preferred shell for completion. `null` uses automatic detection.
 - `PromptOnce` (`bool`, default: `true`) — Only prompt the user once for completion setup.
-- `ProviderTimeout` (`TimeSpan`, default: 1 second) — Deadline applied to each opted-in `WithCompletion` provider on the completion bridge; a stalled provider is abandoned and completion degrades to static candidates.
+- `ProviderTimeout` (`TimeSpan`, default: 1 second) — Deadline applied to each opted-in `WithCompletion` provider on the completion bridge, and separately to adaptation plus input validation as one combined budget. A stalled provider degrades to static candidates; an input callback failure or timeout produces no suggestions and a diagnostic on stderr.
 - `StateFilePath` (`string?`, default: `null`) — Path to the completion state file.
 - `BashProfilePath` (`string?`, default: `null`) — Custom path for the Bash profile.
 - `PowerShellProfilePath` (`string?`, default: `null`) — Custom path for the PowerShell profile.

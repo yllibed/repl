@@ -68,6 +68,7 @@ public sealed class Given_ProcessSignalExitCodePolicy
 
 		ExecutionOutcome.UsageError().IsInterruptible.Should().BeFalse();
 		ExecutionOutcome.HandlerError(Results.Error("boom", "failed")).IsInterruptible.Should().BeFalse();
+		ExecutionOutcome.CompletedWithFailures(Results.CompletedWithFailures("1 failed")).IsInterruptible.Should().BeFalse();
 		ExecutionOutcome.HandlerException(new FormatException("boom")).IsInterruptible.Should().BeFalse();
 		ExecutionOutcome.BindingError(new FormatException("boom")).IsInterruptible.Should().BeFalse();
 		ExecutionOutcome.FrameworkError(rendered: null).IsInterruptible.Should().BeFalse();
@@ -434,6 +435,76 @@ public sealed class Given_ProcessSignalExitCodePolicy
 
 		result.Should().Be(ConsoleCancelKeyHandlingResult.SuppressProcessTermination);
 		writer.ToString().Should().Contain("Ctrl+Break").And.NotContain("Received SIGINT");
+	}
+
+	[TestMethod]
+	[Description("Verifies a run that completed with failures keeps that outcome when the caller cancels while its payload renders: the run's verdict was already reached, as for a non-zero exit result.")]
+	public async Task When_ACompletedWithFailuresRenderIsCancelledByTheCaller_Then_TheRunKeepsItsOutcome()
+	{
+		using var cts = new CancellationTokenSource();
+		ReplExecutionOutcome? observed = null;
+		var app = ReplApp.Create();
+		app.Options(options =>
+		{
+			options.Output.BannerEnabled = false;
+			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
+			options.Output.AddTransformer("cancelling", new CallerCancellingTransformer(cts));
+			options.ExitCodes.Cancelled = 66;
+			options.ExitCodes.CompletedWithFailures = 2;
+			options.ExitCodes.Resolver = outcome =>
+			{
+				observed = outcome;
+				return outcome.ExitCode;
+			};
+		});
+		app.Map("work", () => Results.CompletedWithFailures("1 failed"));
+
+		using var writer = new StringWriter();
+		using var session = ReplSessionIO.SetSession(writer, TextReader.Null, commandOutput: writer, error: writer);
+
+		var exitCode = await app.RunAsync(
+				["work", "--output:cancelling"],
+				new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.None },
+				cts.Token)
+			.ConfigureAwait(false);
+
+		exitCode.Should().Be(2);
+		observed!.Kind.Should().Be(ReplExecutionOutcomeKind.CompletedWithFailures);
+	}
+
+	[TestMethod]
+	[Description("Verifies a completed-with-failures run keeps its outcome on a caller cancellation during its payload render whatever code it maps to: the verdict is the kind, and an app mapping it to 0 has declared that verdict a success. Reading the code would consult a table that neither MCP sub-invocations nor the resolver follow.")]
+	public async Task When_ACompletedWithFailuresMappedToZeroIsCancelledWhileRendering_Then_TheVerdictStillWins()
+	{
+		using var cts = new CancellationTokenSource();
+		ReplExecutionOutcome? observed = null;
+		var app = ReplApp.Create();
+		app.Options(options =>
+		{
+			options.Output.BannerEnabled = false;
+			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
+			options.Output.AddTransformer("cancelling", new CallerCancellingTransformer(cts));
+			options.ExitCodes.Cancelled = 66;
+			options.ExitCodes.CompletedWithFailures = 0;
+			options.ExitCodes.Resolver = outcome =>
+			{
+				observed = outcome;
+				return outcome.ExitCode;
+			};
+		});
+		app.Map("work", () => Results.CompletedWithFailures("1 failed"));
+
+		using var writer = new StringWriter();
+		using var session = ReplSessionIO.SetSession(writer, TextReader.Null, commandOutput: writer, error: writer);
+
+		var exitCode = await app.RunAsync(
+				["work", "--output:cancelling"],
+				new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.None },
+				cts.Token)
+			.ConfigureAwait(false);
+
+		exitCode.Should().Be(0);
+		observed!.Kind.Should().Be(ReplExecutionOutcomeKind.CompletedWithFailures);
 	}
 
 	// Cancels the caller's token and observes it, so the cancellation belongs to the run rather than

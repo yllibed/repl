@@ -12,6 +12,44 @@ namespace Repl.McpTests;
 public sealed class Given_McpServerOptionsBuilder
 {
 	[TestMethod]
+	[Description("Applying a new projection replaces the previous catalog and advertised capabilities without changing SDK transport settings.")]
+	public void When_ConfiguringSdkOptions_Then_ProjectionIsReplacedAndHostSettingsSurvive()
+	{
+		var original = ReplApp.Create();
+		original.Map("old", () => "old");
+		var target = original.BuildMcpServerOptions();
+		var originalTools = target.ToolCollection;
+		var originalCapabilities = new ServerCapabilities();
+		target.Capabilities = originalCapabilities;
+		target.ProtocolVersion = "2026-07-28";
+		target.ServerInstructions = "host instructions";
+		target.ScopeRequests = false;
+		var handlers = target.Handlers;
+		var filters = target.Filters;
+		var app = CoreReplApp.Create();
+		app.Map("new", () => "new");
+		app.Map("resource", () => "data").AsResource();
+		app.Map("prompt", () => "instructions").AsPrompt();
+
+		app.ConfigureMcpServerOptions(target, options => options.ServerName = "projected");
+
+		target.ToolCollection.Should().ContainSingle().Which.ProtocolTool.Name.Should().Be("new");
+		originalTools.Should().ContainSingle().Which.ProtocolTool.Name.Should().Be("old");
+		target.ResourceCollection.Should().ContainSingle();
+		target.PromptCollection.Should().ContainSingle();
+		target.ServerInfo!.Name.Should().Be("projected");
+		target.Capabilities.Should().NotBeSameAs(originalCapabilities);
+		target.Capabilities!.Tools.Should().NotBeNull();
+		target.Capabilities.Resources.Should().NotBeNull();
+		target.Capabilities.Prompts.Should().NotBeNull();
+		target.ProtocolVersion.Should().Be("2026-07-28");
+		target.ServerInstructions.Should().Be("host instructions");
+		target.ScopeRequests.Should().BeFalse();
+		target.Handlers.Should().BeSameAs(handlers);
+		target.Filters.Should().BeSameAs(filters);
+	}
+
+	[TestMethod]
 	[Description("BuildMcpServerOptions captures the current tools as a pre-populated collection.")]
 	public void When_AppHasCommands_Then_OptionsContainToolCollection()
 	{
@@ -27,19 +65,20 @@ public sealed class Given_McpServerOptionsBuilder
 	}
 
 	[TestMethod]
-	[Description("Core MCP dispatch guarantees a per-call interaction channel even when no base provider is supplied. Static discovery must retain a tool whose AutomationHidden required progress parameter is therefore synthesizable.")]
-	public void When_CoreMcpOptionsHaveNoBaseProvider_Then_RequiredHiddenProgressToolIsRetained()
+	[Description("Static discovery without a base provider retains a tool that receives progress, with no progress argument in its schema.")]
+	public void When_CoreMcpOptionsHaveNoBaseProvider_Then_AProgressToolIsRetained()
 	{
 		var app = CoreReplApp.Create();
 		app.Map(
 			"sync",
-			([ReplOption(Name = "progress", Arity = ReplArity.ExactlyOne, AutomationHidden = true)] IProgress<ReplProgressEvent> progress) =>
+			(IProgress<ReplProgressEvent> progress) =>
 				progress is not null ? "progress-ready" : "missing");
 
 		var options = app.BuildMcpServerOptions();
 
-		options.ToolCollection.Should().Contain(tool =>
-			string.Equals(tool.ProtocolTool.Name, "sync", StringComparison.Ordinal));
+		var tool = options.ToolCollection.Should().ContainSingle(candidate =>
+			string.Equals(candidate.ProtocolTool.Name, "sync", StringComparison.Ordinal)).Subject;
+		tool.ProtocolTool.InputSchema.GetProperty("properties").TryGetProperty("progress", out _).Should().BeFalse();
 	}
 
 	[TestMethod]

@@ -73,7 +73,9 @@ internal static partial class ConsoleLineReader
 		int ReplaceLength,
 		IReadOnlyList<AutocompleteSuggestion> Suggestions,
 		string? HintLine = null,
-		IReadOnlyList<TokenClassification>? TokenClassifications = null);
+		IReadOnlyList<TokenClassification>? TokenClassifications = null,
+		string? NormalizedInput = null,
+		int? NormalizedCursor = null);
 
 	internal enum AutocompleteRenderMode
 	{
@@ -94,8 +96,27 @@ internal static partial class ConsoleLineReader
 		bool liveHintEnabled,
 		bool colorizeInputLine,
 		bool colorizeHintAndMenu,
-		AutocompleteColorStyles colorStyles)
+		AutocompleteColorStyles colorStyles,
+		bool backgroundInputAnalysis = false) : IDisposable
 	{
+		public bool BackgroundInputAnalysis { get; } = backgroundInputAnalysis;
+		public CancellationTokenSource? PreviewCancellation { get; set; }
+		public Task<AutocompleteResult?>? PendingPreview { get; set; }
+		public string? PreviewText { get; set; }
+		public int PreviewCursor { get; set; }
+
+		public void CancelPreview()
+		{
+#pragma warning disable MA0045 // Disposal and editor state changes must invalidate the preview synchronously.
+			PreviewCancellation?.Cancel();
+#pragma warning restore MA0045
+			PreviewCancellation?.Dispose();
+			PreviewCancellation = null;
+			PendingPreview = null;
+		}
+
+		public void Dispose() => CancelPreview();
+
 		public AutocompleteResolver? Resolver { get; } = resolver;
 
 		public AutocompleteRenderMode RenderMode { get; } = renderMode;
@@ -134,11 +155,14 @@ internal static partial class ConsoleLineReader
 	/// When the console is redirected (tests, pipes), falls back to <c>Console.In.ReadLineAsync</c>.
 	/// When interactive, reads key-by-key with Esc detection and cancellation support.
 	/// </summary>
-	internal static async ValueTask<ReadResult> ReadLineAsync(CancellationToken ct)
+	/// <param name="ct">Cancels the read.</param>
+	/// <param name="output">Where what the user types is echoed; the session's output, or the console's, by default.</param>
+	internal static async ValueTask<ReadResult> ReadLineAsync(CancellationToken ct, TextWriter? output = null)
 	{
 		if (ReplSessionIO.KeyReader is { } keyReader)
 		{
-			return await ReadLineRemoteAsync(keyReader, navigator: null, editor: null, ct).ConfigureAwait(false);
+			return await ReadLineRemoteAsync(keyReader, navigator: null, editor: null, output ?? ReplSessionIO.Output, ct)
+				.ConfigureAwait(false);
 		}
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
@@ -148,7 +172,8 @@ internal static partial class ConsoleLineReader
 			return new ReadResult(line, Escaped: false);
 		}
 
-		return await Task.Run(() => ReadLineSync(navigator: null, editor: null, ct), ct).ConfigureAwait(false);
+		return await Task.Run(() => ReadLineSync(navigator: null, editor: null, output ?? Console.Out, ct), ct)
+			.ConfigureAwait(false);
 	}
 
 	/// <summary>
@@ -177,9 +202,10 @@ internal static partial class ConsoleLineReader
 		bool colorizeInputLine,
 		bool colorizeHintAndMenu,
 		AutocompleteColorStyles colorStyles,
-		CancellationToken ct)
+		CancellationToken ct,
+		bool backgroundInputAnalysis = false)
 	{
-		var editor = new LineEditorState(
+		using var editor = new LineEditorState(
 			autocompleteResolver,
 			renderMode,
 			maxVisibleSuggestions,
@@ -187,11 +213,12 @@ internal static partial class ConsoleLineReader
 			liveHintEnabled,
 			colorizeInputLine,
 			colorizeHintAndMenu,
-			colorStyles);
+			colorStyles,
+			backgroundInputAnalysis);
 		if (ReplSessionIO.KeyReader is { } keyReader)
 		{
 			var navigator = await CreateNavigatorAsync(history, ct).ConfigureAwait(false);
-			return await ReadLineRemoteAsync(keyReader, navigator, editor, ct).ConfigureAwait(false);
+			return await ReadLineRemoteAsync(keyReader, navigator, editor, ReplSessionIO.Output, ct).ConfigureAwait(false);
 		}
 
 		if (Console.IsInputRedirected || ReplSessionIO.IsSessionActive)
@@ -202,18 +229,48 @@ internal static partial class ConsoleLineReader
 		}
 
 		var nav = await CreateNavigatorAsync(history, ct).ConfigureAwait(false);
-		return await Task.Run(() => ReadLineSync(nav, editor, ct), ct).ConfigureAwait(false);
+		if (backgroundInputAnalysis)
+		{
+			return await ReadLineRemoteAsync(new ConsoleKeyReader(), nav, editor, ReplSessionIO.Output, ct).ConfigureAwait(false);
+		}
+		return await Task.Run(() => ReadLineSync(nav, editor, Console.Out, ct), ct).ConfigureAwait(false);
 	}
 
 	// ---------- Remote async path (IReplKeyReader + TextWriter) ----------
+
+	// The next key, or null when the reader stopped on its own at the end of its input. A cancelled ct, whether the
+	// caller's or a timed prompt's deadline, propagates as ct's own however the reader observed it (PromptCancellation),
+	// so the run reports a cancellation and a timed prompt recognises its deadline, rather than a successful end of input.
+	private static async ValueTask<ConsoleKeyInfo?> ReadNextKeyAsync(
+		IReplKeyReader keyReader,
+		LineEditorState? editor,
+		StringBuilder buffer,
+		int cursor,
+		StringBuilder echo,
+		CancellationToken ct)
+	{
+		try
+		{
+			return await ReadKeyWithPreviewAsync(keyReader, editor, buffer, cursor, echo, ct).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException ex) when (ex is not PromptAbandonedException
+			&& PromptCancellation.IsThroughAnotherToken(ex, ct))
+		{
+			throw PromptCancellation.AsCancellationOf(ex, ct);
+		}
+		catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+		{
+			return null;
+		}
+	}
 
 	private static async ValueTask<ReadResult> ReadLineRemoteAsync(
 		IReplKeyReader keyReader,
 		HistoryNavigator? navigator,
 		LineEditorState? editor,
+		TextWriter output,
 		CancellationToken ct)
 	{
-		var output = ReplSessionIO.Output;
 		var buffer = new StringBuilder();
 		var cursor = 0;
 		var echo = new StringBuilder();
@@ -222,12 +279,7 @@ internal static partial class ConsoleLineReader
 		{
 			ct.ThrowIfCancellationRequested();
 
-			ConsoleKeyInfo key;
-			try
-			{
-				key = await keyReader.ReadKeyAsync(ct).ConfigureAwait(false);
-			}
-			catch (OperationCanceledException)
+			if (await ReadNextKeyAsync(keyReader, editor, buffer, cursor, echo, ct).ConfigureAwait(false) is not { } key)
 			{
 				return new ReadResult(Line: null, Escaped: false);
 			}
@@ -248,13 +300,7 @@ internal static partial class ConsoleLineReader
 					await RefreshAssistAfterEditingAsync(editor, buffer, cursor, echo, ct).ConfigureAwait(false);
 				}
 
-				if (echo.Length > 0)
-				{
-					await output.WriteAsync(echo.ToString()).ConfigureAwait(false);
-					await output.FlushAsync(ct).ConfigureAwait(false);
-					echo.Clear();
-				}
-
+				await WriteEchoAsync(output, echo, settled: result is not null, ct).ConfigureAwait(false);
 				if (result is not null)
 				{
 					return result.Value;
@@ -263,25 +309,56 @@ internal static partial class ConsoleLineReader
 				continue;
 			}
 
-			if (echo.Length > 0)
-			{
-				await output.WriteAsync(echo.ToString()).ConfigureAwait(false);
-				await output.FlushAsync(ct).ConfigureAwait(false);
-				echo.Clear();
-			}
+			await WriteEchoAsync(output, echo, settled: false, ct).ConfigureAwait(false);
+		}
+	}
+
+	private static async ValueTask WriteEchoAsync(TextWriter output, StringBuilder echo, bool settled, CancellationToken ct)
+	{
+		if (echo.Length == 0)
+		{
+			return;
+		}
+
+		var text = echo.ToString();
+		echo.Clear();
+		await WriteEchoAsync(output, text, settled, ct).ConfigureAwait(false);
+	}
+
+	// Writes the echo of a key in a hosted terminal. Once Enter or Esc has settled the prompt, a cancelled flush of its
+	// echo, whatever cancelled it, does not undo the key.
+	internal static async ValueTask WriteEchoAsync(TextWriter output, string text, bool settled, CancellationToken ct)
+	{
+		if (text.Length == 0)
+		{
+			return;
+		}
+
+		await output.WriteAsync(text).ConfigureAwait(false);
+		try
+		{
+			await output.FlushAsync(ct).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (settled)
+		{
+			// The caller sees the key's outcome rather than the cancellation.
+		}
+		catch (OperationCanceledException ex) when (PromptCancellation.IsThroughAnotherToken(ex, ct))
+		{
+			throw PromptCancellation.AsCancellationOf(ex, ct);
 		}
 	}
 
 	// ---------- Console sync path ----------
 
-	private static ReadResult ReadLineSync(HistoryNavigator? navigator, LineEditorState? editor, CancellationToken ct)
+	private static ReadResult ReadLineSync(HistoryNavigator? navigator, LineEditorState? editor, TextWriter output, CancellationToken ct)
 	{
 #pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run from ReadLineAsync
 		ConsoleInputGate.Gate.Wait(ct);
 #pragma warning restore MA0045
 		try
 		{
-			return ReadLineCore(navigator, editor, ct);
+			return ReadLineCore(navigator, editor, output, ct);
 		}
 		finally
 		{
@@ -290,7 +367,7 @@ internal static partial class ConsoleLineReader
 	}
 
 	[System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "MA0051:Method is too long", Justification = "Sync polling loop with inline pragma suppressions slightly exceeds threshold.")]
-	private static ReadResult ReadLineCore(HistoryNavigator? navigator, LineEditorState? editor, CancellationToken ct)
+	private static ReadResult ReadLineCore(HistoryNavigator? navigator, LineEditorState? editor, TextWriter output, CancellationToken ct)
 	{
 		var buffer = new StringBuilder();
 		var cursor = 0;
@@ -334,7 +411,9 @@ internal static partial class ConsoleLineReader
 
 				if (echo.Length > 0)
 				{
-					Console.Write(echo);
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run; cannot await in sync polling loop
+					output.Write(echo);
+#pragma warning restore MA0045
 					echo.Clear();
 				}
 
@@ -348,7 +427,9 @@ internal static partial class ConsoleLineReader
 
 			if (echo.Length > 0)
 			{
-				Console.Write(echo);
+#pragma warning disable MA0045 // Intentionally synchronous — called via Task.Run; cannot await in sync polling loop
+				output.Write(echo);
+#pragma warning restore MA0045
 				echo.Clear();
 			}
 		}

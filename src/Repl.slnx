@@ -31,5 +31,6 @@
 		<Project Path="../samples/06-testing/TestingSample.csproj" />
 		<Project Path="../samples/07-spectre/SpectreOpsSample.csproj" />
 		<Project Path="../samples/08-mcp-server/McpServerSample.csproj" />
+		<Project Path="../samples/09-advanced-input/AdvancedInputSample.csproj" />
 	</Folder>
 </Solution>

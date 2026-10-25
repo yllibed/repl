@@ -45,9 +45,9 @@ internal static class McpSchemaGenerator
 				prop["enum"] = enumArray;
 			}
 
-			if (opt.DefaultValue is not null)
+			if (AdvertisedDefault(opt) is { } defaultValue)
 			{
-				prop["default"] = opt.DefaultValue;
+				prop["default"] = defaultValue;
 			}
 
 			properties[opt.Name] = prop;
@@ -76,6 +76,10 @@ internal static class McpSchemaGenerator
 
 		return JsonSerializer.SerializeToElement(schema, McpJsonContext.Default.JsonObject);
 	}
+
+	// The documented default is display text: for an array, an agent sending it back would bind one element.
+	private static string? AdvertisedDefault(ReplDocOption option) =>
+		IsCollectionType(option.Type) ? null : option.DefaultValue;
 
 	private static void AddResultFlowProperties(JsonObject properties)
 	{
@@ -221,17 +225,20 @@ internal static class McpSchemaGenerator
 	private static (string Type, string? Format) MapType(string replType)
 	{
 		// Collection types: List<T>, IList<T>, T[], IReadOnlyList<T>, IEnumerable<T>, etc.
-		if (replType.EndsWith("[]", StringComparison.Ordinal)
-			|| replType.StartsWith("List<", StringComparison.OrdinalIgnoreCase)
-			|| replType.StartsWith("IList<", StringComparison.OrdinalIgnoreCase)
-			|| replType.StartsWith("IReadOnlyList<", StringComparison.OrdinalIgnoreCase)
-			|| replType.StartsWith("IEnumerable<", StringComparison.OrdinalIgnoreCase))
+		if (IsCollectionType(replType))
 		{
 			return ("array", null);
 		}
 
 		return MapScalarType(replType);
 	}
+
+	internal static bool IsCollectionType(string replType) =>
+		replType.EndsWith("[]", StringComparison.Ordinal)
+		|| replType.StartsWith("List<", StringComparison.OrdinalIgnoreCase)
+		|| replType.StartsWith("IList<", StringComparison.OrdinalIgnoreCase)
+		|| replType.StartsWith("IReadOnlyList<", StringComparison.OrdinalIgnoreCase)
+		|| replType.StartsWith("IEnumerable<", StringComparison.OrdinalIgnoreCase);
 
 	private static string ExtractCollectionItemType(string replType)
 	{

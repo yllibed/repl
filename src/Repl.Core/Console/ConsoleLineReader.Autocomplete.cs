@@ -20,6 +20,23 @@ internal static partial class ConsoleLineReader
 		{
 			return;
 		}
+		if (editor.BackgroundInputAnalysis && !editor.IsMenuOpen)
+		{
+			editor.CancelPreview();
+			var previewCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			editor.PreviewCancellation = previewCancellation;
+			editor.PreviewText = buffer.ToString();
+			editor.PreviewCursor = cursor;
+			var request = new AutocompleteRequest(editor.PreviewText, cursor, MenuRequested: false);
+			var token = previewCancellation.Token;
+			editor.PendingPreview = Task.Run(async () =>
+			{
+				try { return await editor.Resolver(request, token).ConfigureAwait(false); }
+				catch (OperationCanceledException) when (token.IsCancellationRequested) { return null; }
+				catch (Exception exception) { return new AutocompleteResult(cursor, 0, [], HintLine: $"Input analysis failed: {exception.Message}"); }
+			}, token);
+			return;
+		}
 
 		var assist = await editor.Resolver(
 				new AutocompleteRequest(
@@ -109,6 +126,7 @@ internal static partial class ConsoleLineReader
 		StringBuilder echo,
 		CancellationToken ct)
 	{
+		editor.CancelPreview();
 		// A Tab press is always an explicit completion request — even the first Tab that does
 		// not yet open the menu (Hybrid/Classic) must invoke value providers.
 		var request = new AutocompleteRequest(
@@ -117,6 +135,16 @@ internal static partial class ConsoleLineReader
 			MenuRequested: ShouldOpenMenu(editor),
 			ExplicitCompletion: true);
 		var assist = await editor.Resolver!(request, ct).ConfigureAwait(false);
+		if (assist is { NormalizedInput: { } normalized })
+		{
+			ReplaceLine(buffer, ref cursor, normalized, echo);
+			MoveBack(cursor - (assist.Value.NormalizedCursor ?? normalized.Length), echo);
+			cursor = assist.Value.NormalizedCursor ?? normalized.Length;
+			editor.IsMenuOpen = false;
+			editor.ConsecutiveTabPresses = 0;
+			await RefreshAssistAfterEditingAsync(editor, buffer, cursor, echo, ct).ConfigureAwait(false);
+			return (true, cursor);
+		}
 		ApplyAssistResult(editor, assist);
 		if (editor.LastResult is not { } result || result.Suggestions.Count == 0)
 		{
@@ -147,6 +175,34 @@ internal static partial class ConsoleLineReader
 
 		RenderMenu(editor, buffer, cursor, echo);
 		return (true, cursor);
+	}
+
+	private static async ValueTask<ConsoleKeyInfo> ReadKeyWithPreviewAsync(
+		IReplKeyReader reader, LineEditorState? editor, StringBuilder buffer, int cursor,
+		StringBuilder echo, CancellationToken cancellationToken)
+	{
+		var keyTask = reader.ReadKeyAsync(cancellationToken).AsTask();
+		while (!keyTask.IsCompleted && editor?.PendingPreview is { } preview)
+		{
+			if (await Task.WhenAny(keyTask, preview).ConfigureAwait(false) == keyTask) { break; }
+			AutocompleteResult? result;
+			try { result = await preview.ConfigureAwait(false); }
+			catch (OperationCanceledException) { result = null; }
+			if (ReferenceEquals(preview, editor.PendingPreview)
+				&& string.Equals(editor.PreviewText, buffer.ToString(), StringComparison.Ordinal) && editor.PreviewCursor == cursor)
+			{
+				ApplyAssistResult(editor, result);
+				RenderOverlay(editor, buffer, cursor, echo);
+				if (echo.Length != 0)
+				{
+					await ReplSessionIO.Output.WriteAsync(echo.ToString()).ConfigureAwait(false);
+					await ReplSessionIO.Output.FlushAsync(cancellationToken).ConfigureAwait(false);
+					echo.Clear();
+				}
+				editor.CancelPreview();
+			}
+		}
+		return await keyTask.ConfigureAwait(false);
 	}
 
 	private static void ApplyAssistResult(LineEditorState editor, AutocompleteResult? assist)
