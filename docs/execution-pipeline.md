@@ -256,7 +256,7 @@ mapped to an integer by `ReplOptions.ExitCodes` (`ExitCodeOptions`), then handed
 | `HandlerError` | handler returned `Results.Error` / `Validation` / `NotFound` / `Cancelled`, or any `IReplResult` whose kind the framework does not recognize as success-like | `1` |
 | `HandlerExitCode` | handler returned an `IExitResult` — its code is used verbatim, the table is bypassed | `IExitResult.ExitCode` |
 | `HandlerException` | the handler, a middleware, or user code running after binding threw — including a handler that raised `OperationCanceledException` without the caller having asked for cancellation, and an output transformer that failed. The outcome carries the exception and the refusal the framework reported for it — reported, not necessarily rendered: when the transformer itself is what failed, the message is written unformatted to stderr instead, and the run keeps this kind because the caller still saw it | `1` |
-| `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
+| `Cancelled` | the caller's own `CancellationToken` stopped the run — already cancelled at the call, during the command, while an interactive session waits for input, or while hosted services were starting | unmapped: the exception propagates unless `ExitCodes.Cancelled` or a `Resolver` is set, and a `Resolver` alone is handed `130` |
 | `Interrupted` | a process signal (SIGINT, Ctrl+Break, SIGTERM) the framework claimed, for a standalone run that opted in through `ReplRunOptions.ProcessSignalHandling`. Only a clean or cancelled run is reclassified: one that already produced a refusal or failure keeps reporting it | `ExitCodes.Interrupted`, else the `128 + signal` code the handler supplies, else `130` |
 | `FrameworkError` | incompatible programmatic adapter, unsupported hosting capability, hosted-service start or stop failure | `1` |
 | `CompletedWithFailures` | handler returned `Results.CompletedWithFailures` — the command ran to completion and its report contains failures (tests that failed). Not success-like: it does not enter interactive mode, even with `--interactive`, and a process signal does not reclassify it. It keeps its outcome when a cancellation lands while its payload renders, whatever code it maps to | `1` |
@@ -273,9 +273,42 @@ interactive session instead treats a **command-scoped** `OperationCanceledExcept
 Ctrl+C and a self-cancelling handler alike: it prints `Cancelled.`, decorates the mark with the
 `Cancelled` code, and does not render the exception.
 
-Two interactive cases are not `Cancelled` at all, and neither carries a code: an abandoned prompt
+Two interactive cases are not `Cancelled` cycles, and neither puts a code on its mark: an abandoned prompt
 (empty line, Escape, end of input), and a cancellation of the session's own token — host shutdown —
-which closes the cycle with an aborted mark and then propagates out of the loop.
+which closes the cycle with an aborted mark and then propagates out of the loop, ending the run as a cancellation.
+
+> **Changed in 0.12.** A cancellation of the session's own token while the line editor waited for a key, in a
+> hosted session (`StreamedReplHost.RunSessionAsync`, `ReplWebSocketSession.RunAsync`, `ReplTelnetSession.RunAsync`) or
+> with advanced input, used to end the session as if its input had ended, with exit code `0`; a prompt waiting there
+> answered its default. The cycle's mark still carries no code, but the run now ends as a cancellation, as everywhere
+> else: the `OperationCanceledException` propagates, or `ExitCodes.Cancelled` or the resolver maps it to an exit code.
+> A session whose client closes it still ends normally; a host that passes a request-abort token should catch the
+> `OperationCanceledException` raised when that token is cancelled.
+>
+> **Changed in 0.12.** `ReplTelnetSession.RunAsync` used to keep waiting for input once the peer had closed its side
+> of the connection, until its token was cancelled; it now ends the session, with exit code `0`. Once the session ends,
+> it also returns without waiting for the peer to close its side: it sends its remaining output, then stops reading,
+> and over a WebSocket it closes the connection normally. That output goes out in writes of at most 4 KB, each given
+> two seconds or the time it takes at 256 bytes a second, whichever is longer, and the rest is given up when one is not
+> done by then: a peer that stopped reading holds the session about sixteen seconds at most, while one that keeps that
+> pace receives all the output however long it takes, unless the session's token is cancelled. Over an `IDuplexPipe`
+> that buffers, a write is done only once the peer has read what the pipe holds past its resume threshold, so the
+> peer must keep a faster pace. A peer gone before the opening negotiation could be sent ends the session instead of leaving it waiting for input. The
+> building blocks change with it: `TelnetFraming.RunAsync` returns once the peer's input ends while the output stays
+> open, so the framing must now be disposed, before its pipe is completed; `TelnetFraming.DisposeAsync` waits for the
+> negotiation and the output to be sent, then stops the read `RunAsync` has pending, and `RunAsync` no longer fails
+> with an `IOException` when the negotiation cannot be sent; cancelling a `WebSocketStream` read closes the WebSocket
+> normally instead of aborting it, aborting it a second later if the peer has not answered, disposing the stream
+> asynchronously closes it too, a read once that disposal began is refused with an `ObjectDisposedException`, and a
+> failed connection surfaces as an `IOException` rather than a `WebSocketException`.
+>
+> **Changed in 0.12.** `ReplWebSocketSession.RunAsync` used to abort its WebSocket when the session ended, so the peer
+> saw the connection closed without a close handshake. It now closes it normally, waiting up to a second for the peer
+> to answer and aborting the connection if it does not, so `RunAsync` can return up to a second later. A session ended
+> by cancelling its token still aborts the connection at once.
+>
+> **Changed in 0.12.** A cancellation of a hosted session's token while it detected the terminal (VT probe, Telnet
+> NAWS wait) used to propagate even with `ExitCodes.Cancelled` or a resolver set; it now goes through them too.
 
 A hosted-service failure is resolved once, after the whole lifecycle, and the outcome carries the
 exception. A shutdown that fails outranks everything the run had produced — including any exception
