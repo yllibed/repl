@@ -881,6 +881,26 @@ public sealed class Given_McpConcurrentSessions
 		}
 	}
 
+	[TestMethod]
+	[Description("Publishing one era's catalog must not evict the other's. A connection is served modern requests, then an initialize and legacy ones — and a modern request accepted before initialize can still be in flight, since the SDK dispatches one connection's requests concurrently. With one slot, that late modern publication replaced the legacy entry the availability fallback reads, so a legacy build that then failed transiently found only an opposite-era catalog and failed closed.")]
+	public async Task When_BothErasPublishOnOneSession_Then_EachKeepsItsOwnEntry()
+	{
+		var app = ReplApp.Create();
+		var roots = new McpClientRootsService(app.Core, new McpRequestServerAccessor(), McpRootsScope.Connection);
+		var context = new McpSessionContext(roots, McpTestFixture.EmptyServices, scope: null);
+		await using var owner = context.ConfigureAwait(false);
+		var legacy = new McpServerHandler.McpGeneratedSnapshot(null!, [], [], []);
+		var modern = new McpServerHandler.McpGeneratedSnapshot(null!, [], [], []);
+
+		context.PublishSnapshot(legacy, version: 1, sessionless: false);
+		context.PublishSnapshot(modern, version: 1, sessionless: true);
+
+		var legacyEntry = context.GetSnapshotCache(sessionless: false);
+		legacyEntry.Should().NotBeNull("the modern publication must leave the legacy entry in place");
+		legacyEntry!.Snapshot.Should().BeSameAs(legacy);
+		context.GetSnapshotCache(sessionless: true)!.Snapshot.Should().BeSameAs(modern);
+	}
+
 	private static async Task StopRawServerAsync(CancellationTokenSource cts, McpRawIo io, Task serverTask)
 	{
 		await cts.CancelAsync().ConfigureAwait(false);
