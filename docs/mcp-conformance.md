@@ -33,6 +33,7 @@ nothing a client can *observe* may depend on the connection.
 | `cacheScope` / `ttlMs` on list results | Absent — not in the schema | Set to private, zero TTL | `Given_McpIntegration.When_ClientPinsLegacyProtocolVersion_Then_ListResultsCarryNoCacheHints` / `Given_McpConcurrentSessions.When_ModernClientListsTools_Then_ListResultIsTaggedPrivateAndStale` |
 | Message notifications for a request that declared no log level | Emitted, subject to the session threshold | **Not emitted** — the feedback rides in the result instead | `Given_McpUserFeedback.When_RequestDeclaresNoLogLevel_Then_FeedbackRidesInTheToolResultInstead` |
 | Same, through `prompts/get` | Emitted | Rides in the prompt result after the payload, and in the surfaced error when the prompt fails | `Given_McpUserFeedback.When_APromptDeclaresNoLogLevel_Then_FeedbackRidesInThePromptResultInstead` / `...When_AFailingPromptDeclaresNoLogLevel_Then_FeedbackRidesInTheError` |
+| Error code for an unknown resource URI | `ResourceNotFound` (-32002) | `InvalidParams` (-32602) | `Given_McpProtocolErrorCodes.When_ReadingUnknownResource_Then_ResourceNotFoundCodeIsReturned` / `...When_ReadingUnknownResourceOnTheSessionlessRevision_Then_InvalidParamsCodeIsReturned` |
 
 ## Tool list invariance on `2026-07-28`
 
@@ -136,6 +137,7 @@ returned by a creation tool and passed back as an argument, rather than implicit
 
 | Identifier | Status in Repl |
 | --- | --- |
+| SEP-2164 — standard error codes for an unknown resource or prompt | The codes the SDK's own handlers use: `InvalidParams` for an unknown prompt name on every revision, and for an unknown resource URI as the table above shows by revision |
 | SEP-2549 — `cacheScope` / `ttlMs` | Set on list and resource results, on `2026-07-28` only |
 | SEP-2575 — stateless requests: per-request `_meta`, and no message notification without a declared log level | The protocol version in `_meta` is what selects the era on every request; the log-level rule is honoured, and the feedback is appended to the result instead |
 | SEP-2577 — Roots, Sampling and Logging deprecated | Still supported for the compatibility path; the SDK reports them under diagnostic `MCP9005` |
