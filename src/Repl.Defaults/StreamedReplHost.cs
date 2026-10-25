@@ -11,6 +11,8 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 {
 	private readonly ChannelTextReader _input = new();
 	private readonly IWindowSizeProvider? _windowSizeProvider;
+	private readonly Lock _registration = new();
+	private bool _disposed;
 	private string? _transportName;
 	private string? _remotePeer;
 
@@ -88,8 +90,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 			return;
 		}
 
-		ReplSessionIO.UpdateSession(
-			SessionId,
+		UpdateSession(
 			session => session.WithExplicitCapabilities(TerminalCapabilities.ResizeReporting)
 				with { WindowSize = (width, height), });
 	}
@@ -106,8 +107,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 
 		// Same replace-inferred semantics as ReplSessionIO.TerminalIdentity: a downgrade
 		// (e.g. Windows Terminal → dumb) revokes the previously inferred capabilities.
-		ReplSessionIO.UpdateSession(
-			SessionId,
+		UpdateSession(
 			session => session.WithTerminalIdentity(terminalIdentity));
 	}
 
@@ -122,8 +122,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 		}
 
 		var isAnsiSupported = ansiSupported.Value;
-		ReplSessionIO.UpdateSession(
-			SessionId,
+		UpdateSession(
 			session =>
 			{
 				var updated = isAnsiSupported
@@ -138,8 +137,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// </summary>
 	public void UpdateTerminalCapabilities(TerminalCapabilities capabilities)
 	{
-		ReplSessionIO.UpdateSession(
-			SessionId,
+		UpdateSession(
 			session => session.WithExplicitCapabilities(capabilities));
 	}
 
@@ -178,6 +176,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// <param name="options">Optional run options.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
+	/// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled, for example while the session waited for input, and neither <see cref="ExitCodeOptions.Cancelled"/> nor <see cref="ExitCodeOptions.Resolver"/> is set to map the cancellation to an exit code. A client that closes the session ends it normally instead.</exception>
 	public async ValueTask<int> RunSessionAsync(
 		ReplApp app,
 		ReplRunOptions? options = null,
@@ -190,8 +189,16 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 		var ansiMode = runOptions.AnsiSupport;
 		var (provider, dttermProvider) = ResolveProvider();
 
-		await DetectSizeAndAnsiAsync(provider, dttermProvider, runOptions, ansiMode, cancellationToken)
-			.ConfigureAwait(false);
+		try
+		{
+			await DetectSizeAndAnsiAsync(provider, dttermProvider, runOptions, ansiMode, cancellationToken)
+				.ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+		{
+			// The run below reports the caller's cancellation as soon as it starts, under the configured cancellation
+			// policy, as it does for a cancellation at any later point.
+		}
 
 		provider.SizeChanged += OnSizeChanged;
 		SetupKeyReader(dttermProvider);
@@ -207,11 +214,30 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	}
 
 	/// <inheritdoc />
+	/// <remarks>Once disposed, the host ignores further terminal metadata updates, so they cannot register the ended session again.</remarks>
 	public ValueTask DisposeAsync()
 	{
 		Complete();
-		ReplSessionIO.RemoveSession(SessionId);
+		lock (_registration)
+		{
+			_disposed = true;
+			ReplSessionIO.RemoveSession(SessionId);
+		}
+
 		return default;
+	}
+
+	// ReplSessionIO.UpdateSession registers a session it does not know, and a transport may still report terminal
+	// metadata once the session has ended, so an update after disposal must not register this session again.
+	private void UpdateSession(Func<ReplSessionIO.SessionMetadata, ReplSessionIO.SessionMetadata> updater)
+	{
+		lock (_registration)
+		{
+			if (!_disposed)
+			{
+				ReplSessionIO.UpdateSession(SessionId, updater);
+			}
+		}
 	}
 
 	private (IWindowSizeProvider Provider, DttermWindowSizeProvider? Dtterm) ResolveProvider()
@@ -274,8 +300,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	private void ApplyConfiguredMetadata(ReplRunOptions runOptions)
 	{
 		var overrides = runOptions.TerminalOverrides;
-		ReplSessionIO.UpdateSession(
-			SessionId,
+		UpdateSession(
 			session => session with
 			{
 				TransportName = !string.IsNullOrWhiteSpace(overrides?.TransportName)
@@ -296,8 +321,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 
 		if (overrides?.TerminalCapabilities is { } forcedCapabilities)
 		{
-			ReplSessionIO.UpdateSession(
-				SessionId,
+			UpdateSession(
 				session => session with
 				{
 					TerminalCapabilities = forcedCapabilities,

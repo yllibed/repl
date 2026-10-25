@@ -21,6 +21,13 @@ public interface IOutputTransformer
 	bool SupportsInteractivePaging => false;
 
 	/// <summary>
+	/// Gets a value indicating whether this transformer's output is meant to be parsed by a program
+	/// (for example JSON) rather than read by a person. The console's interaction feedback then moves to
+	/// the error stream, out of the payload; see <see cref="OutputOptions.FeedbackStream"/>.
+	/// </summary>
+	bool IsMachineReadable => false;
+
+	/// <summary>
 	/// Transforms a value to the target representation.
 	/// </summary>
 	/// <param name="value">Input value.</param>

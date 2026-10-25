@@ -127,3 +127,5 @@ In `Interactive` and `Session`, that module surface is absent.
 - Prefer reading precomputed state from session/app services instead of recalculating expensive checks in predicates.
 - Put state checks in session/app services, not in globals.
 - Prefer module-level switching for coherent experiences.
+- A module can also declare its own exit codes by implementing `IReplModuleExitCodes`; see
+  [execution pipeline — exit codes declared by a module](execution-pipeline.md#exit-codes-declared-by-a-module).

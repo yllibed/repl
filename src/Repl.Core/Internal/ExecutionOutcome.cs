@@ -2,7 +2,8 @@ namespace Repl;
 
 /// <summary>
 /// Internal carrier threaded through the execution pipeline until the exit-code policy is applied once
-/// at the top level. Mirrors <see cref="ReplExecutionOutcome"/> minus the resolved code.
+/// at the top level. Mirrors <see cref="ReplExecutionOutcome"/> minus the resolved code, plus the module
+/// codes that resolve it.
 /// </summary>
 /// <param name="Kind">Outcome category.</param>
 /// <param name="Result">Final result object, when one exists.</param>
@@ -17,6 +18,15 @@ internal readonly record struct ExecutionOutcome(
 	Exception? Exception = null,
 	int? ExplicitExitCode = null)
 {
+	/// <summary>
+	/// The codes of the module whose command the invocation addressed, which apply before the application's
+	/// table; <see langword="null"/> when it addressed none, or one that declares none.
+	/// </summary>
+	public ReplExitCodeOverrides? ModuleExitCodes { get; init; }
+
+	/// <summary>The route template the invocation resolved to or addressed, when there is one.</summary>
+	public string? Route { get; init; }
+
 	public static ExecutionOutcome Success { get; } = new(ReplExecutionOutcomeKind.Success);
 
 	public static ExecutionOutcome Help { get; } = new(ReplExecutionOutcomeKind.Help);
@@ -36,6 +46,9 @@ internal readonly record struct ExecutionOutcome(
 
 	public static ExecutionOutcome HandlerExitCode(IExitResult exitResult) =>
 		new(ReplExecutionOutcomeKind.HandlerExitCode, exitResult, ExplicitExitCode: exitResult.ExitCode);
+
+	public static ExecutionOutcome CompletedWithFailures(ICompletedWithFailuresResult result) =>
+		new(ReplExecutionOutcomeKind.CompletedWithFailures, result);
 
 	/// <summary>
 	/// A failure the framework reported on user code's behalf. <paramref name="rendered"/> is the
@@ -60,9 +73,6 @@ internal readonly record struct ExecutionOutcome(
 		new(ReplExecutionOutcomeKind.FrameworkError, rendered, exception);
 
 	/// <summary>
-	/// True when the outcome should not prevent an automatic transition into the interactive loop.
-	/// </summary>
-	/// <summary>
 	/// True when a claimed process signal should reclassify this outcome as
 	/// <see cref="ReplExecutionOutcomeKind.Interrupted"/>. A run that completed cleanly, or that the
 	/// signal's own token cancelled, has nothing of its own to report and the interruption is the story.
@@ -72,6 +82,9 @@ internal readonly record struct ExecutionOutcome(
 	public bool IsInterruptible =>
 		IsSuccessLike || Kind is ReplExecutionOutcomeKind.Cancelled;
 
+	/// <summary>
+	/// True when the outcome should not prevent an automatic transition into the interactive loop.
+	/// </summary>
 	public bool IsSuccessLike =>
 		Kind is ReplExecutionOutcomeKind.Success or ReplExecutionOutcomeKind.Help
 		|| (Kind == ReplExecutionOutcomeKind.HandlerExitCode && ExplicitExitCode == 0);

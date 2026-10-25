@@ -8,7 +8,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies handler uses interaction channel status so that status is rendered.")]
 	public void When_HandlerUsesInteractionChannelStatus_Then_StatusIsRendered()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		sut.Map("import", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
 			await channel.WriteStatusAsync("Import started", ct).ConfigureAwait(false);
@@ -26,7 +26,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies user-facing notice, warning, and problem feedback render semantically.")]
 	public void When_HandlerUsesStructuredUserFeedback_Then_FeedbackIsRendered()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
 			await channel.WriteNoticeAsync("Connection established", ct).ConfigureAwait(false);
@@ -49,7 +49,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies percentage progress injection so that handlers can report progress through IProgress<double>.")]
 	public void When_HandlerUsesInjectedPercentageProgress_Then_ProgressIsRendered()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		sut.Map("sync", (IProgress<double> progress) =>
 		{
 			progress.Report(25);
@@ -68,7 +68,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies structured progress injection so that handlers can report progress through IProgress<ReplProgressEvent>.")]
 	public void When_HandlerUsesInjectedStructuredProgress_Then_ProgressIsRendered()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		sut.Map("import", (IProgress<ReplProgressEvent> progress) =>
 		{
 			progress.Report(new ReplProgressEvent("Importing", Current: 3, Total: 4));
@@ -85,7 +85,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies indeterminate progress helpers render a user-facing message while the command continues.")]
 	public void When_HandlerUsesIndeterminateProgressHelper_Then_MessageIsRendered()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
 			await channel.WriteIndeterminateProgressAsync("Waiting", "Remote side", ct).ConfigureAwait(false);
@@ -103,7 +103,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies progress is cleared after successful execution so stale progress indicators do not linger.")]
 	public void When_CommandCompletesAfterProgress_Then_ProgressIsCleared()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		var observer = new RecordingObserver();
 		sut.Core.ExecutionObserver = observer;
 		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
@@ -124,7 +124,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies progress is cleared after handler failures so stale progress does not survive exceptions.")]
 	public void When_CommandFailsAfterProgress_Then_ProgressIsCleared()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		var observer = new RecordingObserver();
 		sut.Core.ExecutionObserver = observer;
 		sut.Map("sync", async (IReplInteractionChannel channel, CancellationToken ct) =>
@@ -146,7 +146,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies progress template and default label options are applied to injected progress rendering.")]
 	public void When_ProgressTemplateAndDefaultLabelConfigured_Then_InjectedProgressUsesConfiguredFormatting()
 	{
-		var sut = ReplApp.Create().Options(o =>
+		var sut = CreateApp().Options(o =>
 		{
 			o.Interaction.DefaultProgressLabel = "Sync";
 			o.Interaction.ProgressTemplate = "[{label}] {percent:0.0}%";
@@ -167,7 +167,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prompt fallback is fail and no answer provided so that command fails.")]
 	public void When_PromptFallbackIsFailAndNoAnswerProvided_Then_CommandFails()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("confirm", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -185,7 +185,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prompt fallback uses default so that default answer is applied.")]
 	public void When_PromptFallbackUsesDefault_Then_DefaultAnswerIsApplied()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
 		sut.Map("confirm", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -203,7 +203,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prefilled confirmation answer is provided so that prompt is not required in non-interactive mode.")]
 	public void When_ConfirmationAnswerIsPrefilled_Then_PrefilledValueIsUsed()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("confirm", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -222,7 +222,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prefilled text answer is provided so that prompt fallback fail does not block execution.")]
 	public void When_TextAnswerIsPrefilled_Then_CommandUsesPrefilledValue()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("rename", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -241,7 +241,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prefilled secret answer bypasses interactive prompt.")]
 	public void When_SecretAnswerIsPrefilled_Then_PrefilledValueIsUsed()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("login", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -260,7 +260,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prefilled multi-choice answer with comma-separated indices.")]
 	public void When_MultiChoiceAnswerIsPrefilled_Then_PrefilledIndicesAreUsed()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("features", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -297,7 +297,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies prefilled multi-choice answer with choice names.")]
 	public void When_MultiChoiceAnswerIsPrefilledByName_Then_MatchingIndicesAreUsed()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("features", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -318,7 +318,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies multi-choice fallback to default indices when no input provided.")]
 	public void When_MultiChoiceHasDefaultsAndNoInput_Then_DefaultIndicesAreReturned()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
 		sut.Map("features", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -340,7 +340,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies AskEnumAsync prefill by enum value name.")]
 	public void When_EnumAnswerIsPrefilledByName_Then_EnumValueIsReturned()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("choose-color", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -358,7 +358,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies AskNumberAsync prefill with numeric value.")]
 	public void When_NumberAnswerIsPrefilled_Then_ParsedValueIsReturned()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("set-count", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -376,7 +376,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies AskValidatedTextAsync accepts valid input through prefill.")]
 	public void When_ValidatedTextAnswerIsPrefilled_Then_ValidValueIsAccepted()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("set-email", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -397,7 +397,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies AskFlagsEnumAsync prefill by description names returns composite value.")]
 	public void When_FlagsEnumAnswerIsPrefilledByName_Then_CompositeValueIsReturned()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.Fail);
 		sut.Map("set-perms", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -415,7 +415,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies AskNumberAsync re-prompts when value is out of bounds.")]
 	public void When_NumberAnswerIsOutOfBounds_Then_FallbackDefaultIsUsed()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
 		sut.Map("set-count", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -437,7 +437,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies AskValidatedTextAsync re-prompts on invalid input.")]
 	public void When_ValidatedTextInputIsInvalid_Then_ErrorIsDisplayedAndReprompts()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
 		sut.Map("set-email", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -460,7 +460,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies ClearScreenAsync emits clear screen event.")]
 	public void When_ClearScreenAsyncIsCalled_Then_ClearEventIsEmitted()
 	{
-		var sut = ReplApp.Create();
+		var sut = CreateApp();
 		sut.Map("cls", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
 			await channel.ClearScreenAsync(ct).ConfigureAwait(false);
@@ -477,7 +477,7 @@ public sealed class Given_InteractionChannel
 	[Description("Regression guard: verifies secret prompt fallback uses empty string when AllowEmpty is true.")]
 	public void When_SecretAllowsEmptyAndNoInput_Then_EmptyStringIsReturned()
 	{
-		var sut = ReplApp.Create()
+		var sut = CreateApp()
 			.Options(o => o.Interaction.PromptFallback = PromptFallback.UseDefault);
 		sut.Map("token", async (IReplInteractionChannel channel, CancellationToken ct) =>
 		{
@@ -492,4 +492,10 @@ public sealed class Given_InteractionChannel
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("none");
 	}
+
+	// These tests check how feedback renders, not which stream it takes. A test host may redirect standard
+	// output, which would move the feedback to standard error (see Given_FeedbackStream); forcing Output
+	// keeps them independent of the runner.
+	private static ReplApp CreateApp() =>
+		ReplApp.Create().Options(o => o.Output.FeedbackStream = ReplFeedbackStream.Output);
 }

@@ -2,10 +2,47 @@
 
 internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGlobalOptionsAccessor
 {
-	private volatile IReadOnlyDictionary<string, IReadOnlyList<string>> _sessionBaseline =
+	internal Func<IReadOnlyDictionary<string, object?>?>? NativeValues { get; set; }
+	private readonly AsyncLocal<InputFrame?> _inputFrame = new();
+	private readonly AsyncLocal<IReadOnlyDictionary<string, object?>?> _nativeSessionBaseline = new();
+	private sealed record InputFrame(IReadOnlyDictionary<string, IReadOnlyList<string>> Values, HashSet<string> ExplicitKeys, bool InheritSessionBaseline, IReadOnlyDictionary<string, IReadOnlyList<string>> SubmittedValues);
+	private IReadOnlyDictionary<string, IReadOnlyList<string>> CurrentValues => _inputFrame.Value?.Values ?? _currentValues;
+	private HashSet<string> CurrentExplicitKeys => _inputFrame.Value?.ExplicitKeys ?? _explicitKeys;
+
+	internal IDisposable PushInputValues(IReadOnlyDictionary<string, IReadOnlyList<string>> values,
+		bool preserveSessionExplicitKeys = false, bool inheritSessionBaseline = true)
+	{
+		var previous = _inputFrame.Value;
+		var merged = inheritSessionBaseline
+			? new Dictionary<string, IReadOnlyList<string>>(_sessionBaseline, StringComparer.OrdinalIgnoreCase)
+			: new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+		foreach (var pair in values) { merged[pair.Key] = pair.Value; }
+		var explicitKeys = new HashSet<string>(values.Keys, StringComparer.OrdinalIgnoreCase);
+		if (inheritSessionBaseline && preserveSessionExplicitKeys) { explicitKeys.UnionWith(_sessionBaseline.Keys); }
+		_inputFrame.Value = new(merged, explicitKeys, inheritSessionBaseline, values);
+		return new InputScope(this, previous);
+	}
+
+	internal IDisposable PushNativeSessionBaseline(IReadOnlyDictionary<string, object?> values)
+	{
+		var previous = _nativeSessionBaseline.Value;
+		_nativeSessionBaseline.Value = values;
+		return new NativeSessionScope(this, previous);
+	}
+
+	private sealed class NativeSessionScope(GlobalOptionsSnapshot owner, IReadOnlyDictionary<string, object?>? previous) : IDisposable
+	{
+		public void Dispose() => owner._nativeSessionBaseline.Value = previous;
+	}
+
+	private sealed class InputScope(GlobalOptionsSnapshot owner, InputFrame? previous) : IDisposable
+	{
+		public void Dispose() => owner._inputFrame.Value = previous;
+	}
+	private volatile Dictionary<string, IReadOnlyList<string>> _sessionBaseline =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 
-	private volatile IReadOnlyDictionary<string, IReadOnlyList<string>> _currentValues =
+	private volatile Dictionary<string, IReadOnlyList<string>> _currentValues =
 		new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
 
 	private volatile HashSet<string> _explicitKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +105,11 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-		if (_currentValues.TryGetValue(name, out var values) && values.Count > 0)
+		if (TryGetNativeValue(name, out var native))
+		{
+			return (T?)ParameterValueConverter.ConvertNative(native, typeof(T), parsingOptions.NumericFormatProvider);
+		}
+		if (CurrentValues.TryGetValue(name, out var values) && values.Count > 0)
 		{
 			return (T?)ParameterValueConverter.ConvertSingle(
 				values[0],
@@ -92,7 +133,7 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-		return _currentValues.TryGetValue(name, out var values)
+		return CurrentValues.TryGetValue(name, out var values)
 			? values
 			: [];
 	}
@@ -101,8 +142,16 @@ internal sealed class GlobalOptionsSnapshot(ParsingOptions parsingOptions) : IGl
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-		return _explicitKeys.Contains(name);
+		return NativeValues?.Invoke()?.ContainsKey(name) == true || CurrentExplicitKeys.Contains(name);
 	}
 
-	public IEnumerable<string> GetOptionNames() => _currentValues.Keys;
+	internal bool TryGetNativeValue(string name, out object? value)
+	{
+		value = null;
+		if (NativeValues?.Invoke()?.TryGetValue(name, out value) == true) { return true; }
+		return _inputFrame.Value is { InheritSessionBaseline: true } frame && !frame.SubmittedValues.ContainsKey(name)
+			&& _nativeSessionBaseline.Value?.TryGetValue(name, out value) == true;
+	}
+
+	public IEnumerable<string> GetOptionNames() => CurrentValues.Keys;
 }

@@ -7,8 +7,95 @@ namespace Repl;
 /// </summary>
 internal sealed class ShellCompletionEngine(CoreReplApp app)
 {
+	private sealed record AnalyzedShellInput(ProcessedInput Input, ParsedInputContext? Analysis);
 
 	public async ValueTask<string[]> ResolveShellCompletionCandidatesAsync(
+		string line,
+		int cursor,
+		ShellKind shell,
+		IServiceProvider serviceProvider,
+		CancellationToken cancellationToken)
+	{
+		if (!app.OptionsSnapshot.Input.IsEnabled)
+		{
+			return await ResolveCanonicalShellCompletionCandidatesAsync(line, cursor, shell, serviceProvider, cancellationToken).ConfigureAwait(false);
+		}
+		try
+		{
+			if (!TryFindArgumentRegion(line, out var executableEnd, out var start)) { return []; }
+			// A cursor on the executable, its end included as plain completion counts it, is outside the arguments input
+			// adaptation sees; past it, even in the separating spaces, the arguments are adapted from their start.
+			if (cursor <= executableEnd)
+			{
+				return await ResolveCanonicalShellCompletionCandidatesAsync(line, cursor, shell, serviceProvider, cancellationToken)
+					.ConfigureAwait(false);
+			}
+
+			var inputText = line[start..];
+			var arguments = InputTokenizer.Tokenize(inputText).Select(static token => token.Value).ToArray();
+			var analyzed = await InvokeWithDeadlineAsync(async token =>
+			{
+				var processed = await app.PreprocessInputAsync(arguments, [], InputProcessingMode.ShellCompletion,
+					inputText, Math.Max(0, cursor - start), token).ConfigureAwait(false);
+				processed = await app.InvokeInvocationHooksAsync(processed, serviceProvider, token).ConfigureAwait(false);
+				using var inputScope = app.PushProcessedInput(processed);
+				var analysis = processed.IsHandled ? null
+					: await app.AnalyzeInputAsync(processed, serviceProvider, token).ConfigureAwait(false);
+				return new AnalyzedShellInput(processed, analysis);
+			}, serviceProvider, reportInputFailure: true, cancellationToken).ConfigureAwait(false);
+			if (analyzed is null || analyzed.Input.IsHandled
+				|| analyzed.Analysis?.ApplicationValidation.State == InputValidationState.Invalid) { return []; }
+			var input = analyzed.Input;
+			using var inputScope = app.PushProcessedInput(input);
+			// Re-encoding loses shell quoting and escaping; never insert into that original context.
+			if (input.WasRewritten && HasUnsafeOriginalShellContext(line, cursor)) { return []; }
+			var normalized = input.WasRewritten ? InputTokenizer.Format(input.Context.Arguments) : inputText;
+			if (inputText.Length != 0 && char.IsWhiteSpace(inputText[^1]) && input.WasRewritten) { normalized += " "; }
+			var cursorMapped = AutocompleteEngine.TryMapInputCursor(input, normalized, Math.Max(0, cursor - start), out var mappedCursor);
+			if (input.WasRewritten && AnalyzeShellCompletionInput(line, cursor).CurrentTokenPrefix.Length != 0)
+			{
+				if (!cursorMapped) { return []; }
+				var currentIndex = InputTokenizer.Tokenize(normalized).FindIndex(token => mappedCursor >= token.Start && mappedCursor <= token.Start + token.Length);
+				if (currentIndex < 0 || input.Context.ArgumentOrigins.ElementAtOrDefault(currentIndex) is null) { return []; }
+			}
+			var globals = GlobalOptionParser.Parse(input.Context.Arguments, app.OptionsSnapshot.Output, app.OptionsSnapshot.Parsing);
+			using var globalsScope = app.GlobalOptionsSnapshotInstance.PushInputValues(globals.CustomGlobalNamedOptions);
+			var executable = line[..executableEnd] + " ";
+			return await ResolveCanonicalShellCompletionCandidatesAsync(executable + normalized, executable.Length + mappedCursor,
+				shell, serviceProvider, cancellationToken).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+		catch (Exception exception)
+		{
+			await WriteInputFailureAsync(exception).ConfigureAwait(false);
+			return [];
+		}
+	}
+
+	// The executable is the first token; the argument region starts after it and the whitespace that follows.
+	private static bool TryFindArgumentRegion(string line, out int executableEnd, out int argumentStart)
+	{
+		var tokens = InputTokenizer.Tokenize(line);
+		if (tokens.Count == 0)
+		{
+			executableEnd = argumentStart = 0;
+			return false;
+		}
+
+		executableEnd = tokens[0].Start + tokens[0].Length;
+		argumentStart = executableEnd;
+		while (argumentStart < line.Length && char.IsWhiteSpace(line[argumentStart])) { argumentStart++; }
+		return true;
+	}
+
+	private static bool HasUnsafeOriginalShellContext(string line, int cursor)
+	{
+		// Shell escapes may carry quote context across word boundaries our tokenizer cannot recognize.
+		var prefix = line.AsSpan(0, Math.Clamp(cursor, 0, line.Length));
+		return prefix.ContainsAny('"', '\'') || prefix.ContainsAny('\\', '`');
+	}
+
+	private async ValueTask<string[]> ResolveCanonicalShellCompletionCandidatesAsync(
 		string line,
 		int cursor,
 		ShellKind shell,
@@ -333,23 +420,29 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 	// Returns null on timeout OR provider fault so the caller degrades to static candidates
 	// (a transient lookup failure must not fail the completion invocation or spam the shell's
 	// completion stream).
-	private async ValueTask<IReadOnlyList<string>?> InvokeProviderWithDeadlineAsync(
+	private ValueTask<IReadOnlyList<string>?> InvokeProviderWithDeadlineAsync(
 		CompletionDelegate provider,
 		IServiceProvider serviceProvider,
 		string input,
-		CancellationToken cancellationToken)
+		CancellationToken cancellationToken) =>
+		InvokeWithDeadlineAsync(token => provider(new CompletionContext(serviceProvider), input, token),
+			serviceProvider, reportInputFailure: false, cancellationToken);
+
+	private async ValueTask<T?> InvokeWithDeadlineAsync<T>(
+		Func<CancellationToken, ValueTask<T>> callback, IServiceProvider serviceProvider,
+		bool reportInputFailure, CancellationToken cancellationToken) where T : class
 	{
 		var timeout = app.OptionsSnapshot.ShellCompletion.ProviderTimeout;
 		// Resolve the app's TimeProvider so the deadline is driven by an injectable clock
 		// (deterministic under FakeTimeProvider) rather than hardcoding the system clock.
 		var timeProvider = serviceProvider.GetService(typeof(TimeProvider)) as TimeProvider ?? TimeProvider.System;
 		var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		var providerTask = Task.Run(
-			() => provider(new CompletionContext(serviceProvider), input, deadline.Token).AsTask(),
+		var callbackTask = Task.Run(
+			() => callback(deadline.Token).AsTask(),
 			CancellationToken.None);
 		try
 		{
-			var result = await providerTask.WaitAsync(timeout, timeProvider, cancellationToken).ConfigureAwait(false);
+			var result = await callbackTask.WaitAsync(timeout, timeProvider, cancellationToken).ConfigureAwait(false);
 			deadline.Dispose();
 			return result;
 		}
@@ -358,10 +451,10 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			// Caller cancelled: hand the still-running provider to the same detached
 			// abandon/observe/dispose path as the timeout case, so we never dispose the CTS
 			// while the provider still holds its token.
-			AbandonProvider(deadline, providerTask);
+			AbandonCallback(deadline, callbackTask);
 			throw;
 		}
-		catch (TimeoutException)
+		catch (TimeoutException exception)
 		{
 			// The provider overran the deadline. Cancel the token to let a cooperative
 			// provider unwind, but off a DETACHED task: Cancel() runs the provider's
@@ -369,18 +462,35 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			// keep the bridge (and the user's shell) waiting past the deadline. The same
 			// detached task observes the abandoned provider's eventual fault and disposes the
 			// CTS once it settles, so Cancel() and Dispose() never race.
-			AbandonProvider(deadline, providerTask);
+			AbandonCallback(deadline, callbackTask);
+			if (reportInputFailure) { await WriteInputFailureAsync(exception).ConfigureAwait(false); }
 			return null;
 		}
-		catch (Exception)
+		catch (Exception exception)
 		{
-			// Provider fault (sync or async) — degrade to static candidates.
+			// The caller chooses its fallback; input failures also need an error diagnostic.
 			deadline.Dispose();
+			if (reportInputFailure) { await WriteInputFailureAsync(exception).ConfigureAwait(false); }
 			return null;
 		}
 	}
 
-	private static void AbandonProvider(CancellationTokenSource deadline, Task providerTask) =>
+	private static async ValueTask WriteInputFailureAsync(Exception exception)
+	{
+		try
+		{
+			var message = exception is TimeoutException
+				? "Shell completion input callbacks timed out."
+				: $"Shell completion input callbacks failed: {exception.GetType().Name}: {exception.Message}";
+			await ReplSessionIO.Error.WriteLineAsync(message).ConfigureAwait(false);
+		}
+		catch
+		{
+			// A torn-down error stream must not replace the callback failure or write to protocol stdout.
+		}
+	}
+
+	private static void AbandonCallback(CancellationTokenSource deadline, Task callbackTask) =>
 		_ = Task.Run(async () =>
 		{
 			try
@@ -399,7 +509,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 				// VSTHRD003: awaiting a task started elsewhere is intentional — there is no
 				// sync context on this pool task, so no deadlock; we only observe the fault.
 #pragma warning disable VSTHRD003
-				await providerTask.ConfigureAwait(false);
+				await callbackTask.ConfigureAwait(false);
 #pragma warning restore VSTHRD003
 			}
 			catch

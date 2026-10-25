@@ -82,4 +82,11 @@ public enum ReplExecutionOutcomeKind
 	/// caused it.
 	/// </summary>
 	FrameworkError = 9,
+
+	/// <summary>
+	/// The handler ran to completion and returned an <see cref="ICompletedWithFailuresResult"/>: the
+	/// command did its job, and what it reports contains failures (tests that failed, records that were
+	/// rejected). Distinct from <see cref="HandlerError"/>, where the command itself failed.
+	/// </summary>
+	CompletedWithFailures = 10,
 }

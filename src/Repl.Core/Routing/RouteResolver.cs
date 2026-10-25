@@ -7,12 +7,18 @@ internal static class RouteResolver
 		RouteConstraintFailure? ConstraintFailure,
 		RouteMissingArgumentsFailure? MissingArgumentsFailure);
 
+	/// <summary>
+	/// A value a route rejected. <paramref name="IsIncompleteLine"/> when the line is shorter than the route,
+	/// which ranks it below any failure on a line the route fits, and below a route only waiting for more
+	/// words.
+	/// </summary>
 	internal readonly record struct RouteConstraintFailure(
 		RouteDefinition Route,
 		DynamicRouteSegment Segment,
 		string Value,
 		int Score,
-		int SegmentIndex);
+		int SegmentIndex,
+		bool IsIncompleteLine = false);
 
 	internal readonly record struct RouteMissingArgumentsFailure(
 		RouteDefinition Route,
@@ -75,6 +81,11 @@ internal static class RouteResolver
 			return true;
 		}
 
+		if (candidate.IsIncompleteLine != currentBest.Value.IsIncompleteLine)
+		{
+			return !candidate.IsIncompleteLine;
+		}
+
 		if (candidate.Score != currentBest.Value.Score)
 		{
 			return candidate.Score > currentBest.Value.Score;
@@ -123,7 +134,7 @@ internal static class RouteResolver
 		var requiredCount = segments.Count(s => s is not DynamicRouteSegment { IsOptional: true });
 		if (inputTokens.Count < requiredCount)
 		{
-			return TryMatchIncomplete(route, inputTokens, parsingOptions, out missingArgumentsFailure);
+			return TryMatchIncomplete(route, inputTokens, parsingOptions, out constraintFailure, out missingArgumentsFailure);
 		}
 
 		var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -175,8 +186,10 @@ internal static class RouteResolver
 		RouteDefinition route,
 		IReadOnlyList<string> inputTokens,
 		ParsingOptions parsingOptions,
+		out RouteConstraintFailure? constraintFailure,
 		out RouteMissingArgumentsFailure? missingArgumentsFailure)
 	{
+		constraintFailure = null;
 		missingArgumentsFailure = null;
 		var segments = route.Template.Segments;
 		var score = 0;
@@ -199,6 +212,14 @@ internal static class RouteResolver
 			var dynamic = (DynamicRouteSegment)segment;
 			if (!RouteConstraintEvaluator.IsMatch(dynamic, token, parsingOptions))
 			{
+				// No word still to come makes the rejected value valid, so the route reports it.
+				constraintFailure = new RouteConstraintFailure(
+					Route: route,
+					Segment: dynamic,
+					Value: token,
+					Score: score,
+					SegmentIndex: i,
+					IsIncompleteLine: true);
 				return null;
 			}
 
@@ -223,9 +244,9 @@ internal static class RouteResolver
 		return null;
 	}
 
-	// Shared with the autocomplete engine so the alias rule cannot drift between routing
-	// and completion; the comparison is a parameter because autocomplete honors its own
-	// configurable case sensitivity.
+	// Shared with the autocomplete engine and RoutePrefixOwners so the alias rule cannot drift
+	// between routing, completion and exit-code attribution; the comparison is a parameter because
+	// autocomplete honors its own configurable case sensitivity.
 	internal static bool IsLiteralMatch(
 		RouteDefinition route,
 		LiteralRouteSegment segment,

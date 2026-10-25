@@ -8,6 +8,26 @@ namespace Repl;
 /// </summary>
 public static class ReplServiceCollectionExtensions
 {
+	/// <summary>Registers a prepared application without building the caller's provider.</summary>
+	/// <param name="services">Caller-owned service collection.</param>
+	/// <param name="prepared">Successful preparation.</param>
+	/// <param name="configureServices">Application service registration, before provider construction.</param>
+	/// <param name="configure">Application mapping, with the completed host provider.</param>
+	/// <returns>The collection.</returns>
+	public static IServiceCollection AddRepl(this IServiceCollection services, PreparedReplStartup prepared,
+		Action<IServiceCollection> configureServices, Action<IServiceProvider, ReplApp> configure)
+	{
+		ArgumentNullException.ThrowIfNull(services);
+		ArgumentNullException.ThrowIfNull(configureServices);
+		ArgumentNullException.ThrowIfNull(configure);
+		var app = ReplApp.Create(prepared);
+		configureServices(services);
+		services.AddReplLogging();
+		app.RegisterPreparedGlobals(services);
+		services.TryAddSingleton(sp => { configure(sp, app); return app; });
+		return services;
+	}
+
 	/// <summary>
 	/// Creates and registers a singleton <see cref="ReplApp"/> in the service collection.
 	/// </summary>
