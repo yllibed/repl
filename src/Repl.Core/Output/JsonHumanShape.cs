@@ -1,0 +1,249 @@
+using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace Repl;
+
+/// <summary>
+/// Recognizes JSON data — <see cref="JsonNode"/> and <see cref="JsonElement"/> — for the human renderers,
+/// which would otherwise reflect over the CLR members of those types (<c>Options</c>, <c>Parent</c>,
+/// <c>Root</c>, <c>Count</c>, <c>ValueKind</c>) instead of showing the data.
+/// </summary>
+/// <remarks>
+/// Values render as compact JSON literals, so a string reads <c>"x"</c>, an explicit JSON null reads
+/// <c>null</c>, and a nested object or array stays visible as itself. The relaxed encoder keeps non-ASCII
+/// text readable and escapes every control character; format characters (bidirectional overrides and
+/// isolates, zero-width marks), which it lets through, are escaped here too, so a JSON string can neither
+/// drive the terminal it is printed to nor make it display something other than the data. Nothing here
+/// mutates the value it reads.
+/// </remarks>
+internal static class JsonHumanShape
+{
+	private static readonly JsonWriterOptions LiteralWriterOptions = new()
+	{
+		Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+	};
+
+	public static bool IsJson([NotNullWhen(true)] object? value) => value is JsonNode or JsonElement;
+
+	/// <summary>
+	/// What a <see langword="null"/> declared as <paramref name="type"/> reads as: a JSON null, as <c>--json</c>
+	/// writes it, for a JSON type; <see langword="null"/>, the renderer's own default, for any other.
+	/// </summary>
+	public static string? NullText(Type type) => IsJsonType(type) ? Literal(node: null) : null;
+
+	/// <summary>Whether items declared as <paramref name="type"/> are JSON data, nullable elements included.</summary>
+	public static bool IsJsonType(Type type) =>
+		typeof(JsonNode).IsAssignableFrom(type) || (Nullable.GetUnderlyingType(type) ?? type) == typeof(JsonElement);
+
+	/// <summary>
+	/// Reads <paramref name="value"/> as a JSON node. A <see cref="JsonElement"/> is copied into nodes, and the
+	/// element itself is never modified. A JSON null comes back as a <see langword="null"/> node with
+	/// <see langword="true"/>.
+	/// </summary>
+	public static bool TryGetNode(object? value, out JsonNode? node)
+	{
+		switch (value)
+		{
+			case JsonNode jsonNode:
+				node = jsonNode;
+				return true;
+			case JsonElement element:
+				node = FromElement(element);
+				return true;
+			default:
+				node = null;
+				return false;
+		}
+	}
+
+	// Built property by property rather than through JsonObject.Create: an element may repeat a property name,
+	// which a JsonObject cannot hold, and enumerating one created over such an element throws. The last value
+	// wins, as JavaScript reads it. Scalars keep referring to the element rather than copying its text.
+	private static JsonNode? FromElement(JsonElement element)
+	{
+		switch (element.ValueKind)
+		{
+			case JsonValueKind.Object:
+				var jsonObject = new JsonObject();
+				foreach (var property in element.EnumerateObject())
+				{
+					jsonObject[property.Name] = FromElement(property.Value);
+				}
+
+				return jsonObject;
+			case JsonValueKind.Array:
+				var jsonArray = new JsonArray();
+				foreach (var item in element.EnumerateArray())
+				{
+					jsonArray.Add(FromElement(item));
+				}
+
+				return jsonArray;
+			case JsonValueKind.Null or JsonValueKind.Undefined:
+				return null;
+			default:
+				return JsonValue.Create(element);
+		}
+	}
+
+	/// <summary>
+	/// The literal for an item of a JSON collection: <see langword="null"/> — a JSON null — reads
+	/// <c>null</c>. <see langword="false"/> for a value that is not JSON at all.
+	/// </summary>
+	public static bool TryLiteral(object? value, [NotNullWhen(true)] out string? literal)
+	{
+		if (value is null)
+		{
+			literal = Literal(node: null);
+			return true;
+		}
+
+		if (TryGetNode(value, out var node))
+		{
+			literal = Literal(node);
+			return true;
+		}
+
+		literal = null;
+		return false;
+	}
+
+	/// <summary>
+	/// The compact JSON text of <paramref name="node"/>. Written with no serializer options, so a
+	/// <see cref="JsonValue"/> wrapping a CLR object keeps the type information it was created with;
+	/// options without a type resolver make that write throw.
+	/// </summary>
+	public static string Literal(JsonNode? node)
+	{
+		if (node is null)
+		{
+			return "null";
+		}
+
+		var buffer = new ArrayBufferWriter<byte>();
+		// Synchronous on purpose: the writer targets an in-memory buffer, so disposing it only flushes there.
+#pragma warning disable MA0045
+		using (var writer = new Utf8JsonWriter(buffer, LiteralWriterOptions))
+#pragma warning restore MA0045
+		{
+			node.WriteTo(writer, options: null);
+		}
+
+		return EscapeFormatCharacters(Encoding.UTF8.GetString(buffer.WrittenSpan));
+	}
+
+	/// <summary>A property name as a label: escaped like a JSON string, without the quotes.</summary>
+	public static string Label(string key) =>
+		EscapeFormatCharacters(JsonEncodedText.Encode(key, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).ToString());
+
+	/// <summary>
+	/// Reads <paramref name="values"/> as rows of JSON objects. The columns are the union of their keys in
+	/// first-seen order, so a key missing from one row leaves its cell empty rather than dropping the row.
+	/// Fails unless every value is a JSON object with at least one key. A JSON null or an empty object would
+	/// render as a blank row, which reads as no row at all and, as the last one, is trimmed away with the payload's
+	/// trailing whitespace; those rows then read as their literals instead.
+	/// </summary>
+	public static bool TryGetObjectRows(
+		IReadOnlyList<object?> values,
+		[NotNullWhen(true)] out string[]? columns,
+		[NotNullWhen(true)] out JsonObject[]? rows)
+	{
+		columns = null;
+		rows = null;
+		if (values.Count == 0)
+		{
+			return false;
+		}
+
+		var converted = new JsonObject[values.Count];
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+		var ordered = new List<string>();
+		for (var i = 0; i < values.Count; i++)
+		{
+			if (!TryGetNode(values[i], out var node) || node is not JsonObject { Count: > 0 } row)
+			{
+				return false;
+			}
+
+			converted[i] = row;
+			foreach (var property in row)
+			{
+				if (seen.Add(property.Key))
+				{
+					ordered.Add(property.Key);
+				}
+			}
+		}
+
+		columns = [.. ordered];
+		rows = converted;
+		return true;
+	}
+
+	/// <summary>
+	/// The cell for <paramref name="column"/>: empty when the row does not have the key. Matched ordinally, the
+	/// way the columns were collected, even in a row built with case-insensitive property names.
+	/// </summary>
+	public static string Cell(JsonObject row, string column)
+	{
+		if (row.IndexOf(column) is not (>= 0 and var index))
+		{
+			return string.Empty;
+		}
+
+		var property = row.GetAt(index);
+		return string.Equals(property.Key, column, StringComparison.Ordinal) ? Literal(property.Value) : string.Empty;
+	}
+
+	// Format characters can only appear inside a JSON string here, where \uXXXX is the same character
+	// to a JSON reader. Returns the input unchanged — no allocation — when it has none.
+	private static string EscapeFormatCharacters(string text)
+	{
+		var index = IndexOfFormatCharacter(text);
+		if (index < 0)
+		{
+			return text;
+		}
+
+		var builder = new StringBuilder(text.Length + 12);
+		builder.Append(text, 0, index);
+		Span<char> units = stackalloc char[2];
+		foreach (var rune in text.AsSpan(index).EnumerateRunes())
+		{
+			var written = rune.EncodeToUtf16(units);
+			if (Rune.GetUnicodeCategory(rune) != UnicodeCategory.Format)
+			{
+				builder.Append(units[..written]);
+				continue;
+			}
+
+			for (var i = 0; i < written; i++)
+			{
+				builder.Append(CultureInfo.InvariantCulture, $"\\u{(int)units[i]:X4}");
+			}
+		}
+
+		return builder.ToString();
+	}
+
+	private static int IndexOfFormatCharacter(string text)
+	{
+		var index = 0;
+		foreach (var rune in text.EnumerateRunes())
+		{
+			if (Rune.GetUnicodeCategory(rune) == UnicodeCategory.Format)
+			{
+				return index;
+			}
+
+			index += rune.Utf16SequenceLength;
+		}
+
+		return -1;
+	}
+}

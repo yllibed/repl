@@ -26,6 +26,7 @@ internal static class OptionSchemaBuilder
 		var parameters = new Dictionary<string, OptionSchemaParameter>(StringComparer.OrdinalIgnoreCase);
 		var regularPositionalParameterNames = new List<string>();
 		var groupPositionalPropertyNames = new List<string>();
+		var optionsGroupTypes = new List<Type>();
 		foreach (var parameter in command.Handler.Method.GetParameters())
 		{
 			if (ShouldSkipSchemaParameter(parameter, routeParameterNames, implicitServiceParameters))
@@ -42,6 +43,7 @@ internal static class OptionSchemaBuilder
 					parameters,
 					groupPositionalPropertyNames,
 					parsingOptions);
+				optionsGroupTypes.Add(parameter.ParameterType);
 			}
 #pragma warning restore IL2072
 			else
@@ -59,7 +61,10 @@ internal static class OptionSchemaBuilder
 		return new OptionSchema(
 			entries,
 			parameters,
-			resolveGlobalCaseSensitivity ?? (() => parsingOptions.OptionCaseSensitivity));
+			resolveGlobalCaseSensitivity ?? (() => parsingOptions.OptionCaseSensitivity))
+		{
+			OptionsGroupTypes = optionsGroupTypes,
+		};
 	}
 
 	private static bool ShouldSkipSchemaParameter(
@@ -73,22 +78,37 @@ internal static class OptionSchemaBuilder
 		{
 			if (optionAttribute is not null || argumentAttribute is not null)
 			{
-				var attributeName = optionAttribute is not null
-					? nameof(ReplOptionAttribute).Replace("Attribute", string.Empty, StringComparison.Ordinal)
-					: nameof(ReplArgumentAttribute).Replace("Attribute", string.Empty, StringComparison.Ordinal);
 				throw new InvalidOperationException(
 					$"Parameter '{parameter.Name}' uses typed global options '{globalOptionsType.Name}' registered through "
-					+ $"UseGlobalOptions<T>() and cannot declare [{attributeName}]. Remove the attribute or use a separate command options type.");
+					+ $"UseGlobalOptions<T>() and cannot declare [{DescribeAttribute(optionAttribute)}]. Remove the attribute or use a separate command options type.");
+			}
+
+			return true;
+		}
+
+		// A parameter Repl supplies binds before any value matched by name (HandlerArgumentBinder.BindParameter), so
+		// option metadata on it would do nothing and a route segment named like it would capture a value never used.
+		if (ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType))
+		{
+			if (optionAttribute is not null || argumentAttribute is not null)
+			{
+				throw new InvalidOperationException(
+					$"Parameter '{parameter.Name}' is supplied by Repl and is never an option or an argument; "
+					+ $"remove [{DescribeAttribute(optionAttribute)}].");
+			}
+
+			if (parameter.Name is { } name && routeParameterNames.Contains(name))
+			{
+				throw new InvalidOperationException(
+					$"Route segment '{{{name}}}' is named like the parameter '{name}' that Repl supplies, so its value "
+					+ "would never reach it. Rename one of them.");
 			}
 
 			return true;
 		}
 
 		if (string.IsNullOrWhiteSpace(parameter.Name)
-			|| parameter.ParameterType == typeof(CancellationToken)
-			|| implicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
-			|| parameter.GetCustomAttribute<FromContextAttribute>() is not null
-			|| parameter.GetCustomAttribute<FromServicesAttribute>() is not null)
+			|| HandlerArgumentBinder.HasExplicitBindingDirection(parameter))
 		{
 			return true;
 		}
@@ -432,6 +452,9 @@ internal static class OptionSchemaBuilder
 		}
 	}
 
+	private static string DescribeAttribute(ReplOptionAttribute? optionAttribute) =>
+		optionAttribute is not null ? "ReplOption" : "ReplArgument";
+
 	// Mirrors the requiredness rule the documentation model reports: a value type with no default and
 	// no nullable wrapper has nothing to bind from when the option is absent, so the binder rejects
 	// it. Options-group properties always carry the default instance's value and so are never
@@ -466,7 +489,8 @@ internal static class OptionSchemaBuilder
 			CaseSensitivity: optionAttribute?.CaseSensitivityOverride,
 			ExplicitArity: optionAttribute?.ArityOverride,
 			IsHidden: optionAttribute?.Hidden ?? false,
-			IsAutomationHidden: optionAttribute?.AutomationHidden ?? false);
+			IsAutomationHidden: optionAttribute?.AutomationHidden ?? false,
+			IsGroupProperty: true);
 		if (mode != ReplParameterMode.OptionOnly)
 		{
 			positionalPropertyNames.Add(property.Name);

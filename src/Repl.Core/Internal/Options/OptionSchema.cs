@@ -32,6 +32,24 @@ internal sealed class OptionSchema
 
 	public IReadOnlyDictionary<string, OptionSchemaParameter> Parameters { get; }
 
+	/// <summary>
+	/// The options-group types whose properties this schema expanded into options, in handler order.
+	/// </summary>
+	/// <remarks>
+	/// A parameter whose type is an options group but that is bound explicitly, from services or context, is not
+	/// expanded, so discovery surfaces read the groups from here rather than from the handler's signature.
+	/// </remarks>
+	public IReadOnlyList<Type> OptionsGroupTypes { get; init; } = [];
+
+	/// <summary>
+	/// Whether the schema records <paramref name="parameter"/> itself as an option or argument, as opposed to a group
+	/// property of the same name; <c>OptionSchemaBuilder.ShouldSkipSchemaParameter</c> decides which parameters those are.
+	/// </summary>
+	public bool IsOptionParameter(System.Reflection.ParameterInfo parameter) =>
+		parameter.Name is { } name
+		&& Parameters.TryGetValue(name, out var option)
+		&& !option.IsGroupProperty;
+
 	// Lazily materialized once: Entries is immutable and completion paths read this per
 	// keystroke — recomputing the Distinct projection on every access was pure waste.
 	// Benign race: concurrent first reads compute the same array.
@@ -112,8 +130,17 @@ internal sealed class OptionSchema
 			[parameter.Name] = parameter,
 		};
 
-		return new OptionSchema(Entries, parameters, _resolveGlobalCaseSensitivity);
+		return CopyWith(Entries, parameters);
 	}
+
+	// Every derived schema goes through here, so none loses what the builder recorded besides entries and parameters.
+	private OptionSchema CopyWith(
+		IReadOnlyList<OptionSchemaEntry> entries,
+		IReadOnlyDictionary<string, OptionSchemaParameter> parameters) =>
+		new(entries, parameters, _resolveGlobalCaseSensitivity)
+		{
+			OptionsGroupTypes = OptionsGroupTypes,
+		};
 
 	public OptionSchema WithAliasVisibility(
 		string parameterName,
@@ -172,7 +199,7 @@ internal sealed class OptionSchema
 		// A no-op call (the alias is already in the requested state) returns this same instance
 		// rather than an equivalent copy, so the caller's CAS loop can recognize nothing changed
 		// and skip publishing a schema and invalidating routing over it.
-		return changed ? new OptionSchema(entries, Parameters, _resolveGlobalCaseSensitivity) : this;
+		return changed ? CopyWith(entries, Parameters) : this;
 	}
 
 	private bool TokensAreEquivalent(

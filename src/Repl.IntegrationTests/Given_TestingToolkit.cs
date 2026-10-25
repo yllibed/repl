@@ -91,6 +91,45 @@ public sealed class Given_TestingToolkit
 	}
 
 	[TestMethod]
+	[Description("Verifies a test can tell a run that completed with failures from a success or a crash, and still read its report as a typed result.")]
+	public async Task When_CommandCompletesWithFailures_Then_OutcomeAndTypedReportAreAvailable()
+	{
+		await using var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create().UseDefaultInteractive();
+			app.Map("tests run", () => Results.CompletedWithFailures(new TestReport(Passed: 3, Failed: 1)));
+			return app;
+		});
+		await using var session = await host.OpenSessionAsync();
+
+		var result = await session.RunCommandAsync("tests run --no-logo");
+
+		result.OutcomeKind.Should().Be(ReplExecutionOutcomeKind.CompletedWithFailures);
+		result.ExitCode.Should().Be(1);
+		result.GetResult<TestReport>().Failed.Should().Be(1);
+		result.TryGetResult<ICompletedWithFailuresResult>(out _).Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Verifies the payload of an explicit exit result is readable as a typed result, like the payload of any other result that carries an outcome.")]
+	public async Task When_CommandReturnsExitResultWithPayload_Then_TypedPayloadIsAvailable()
+	{
+		await using var host = ReplTestHost.Create(() =>
+		{
+			var app = ReplApp.Create().UseDefaultInteractive();
+			app.Map("contact quit", () => Results.Exit(3, new Contact(42, "Alice")));
+			return app;
+		});
+		await using var session = await host.OpenSessionAsync();
+
+		var result = await session.RunCommandAsync("contact quit --no-logo");
+
+		result.OutcomeKind.Should().Be(ReplExecutionOutcomeKind.HandlerExitCode);
+		result.GetResult<Contact>().Id.Should().Be(42);
+		result.GetResult<IExitResult>().ExitCode.Should().Be(3, "the wrapper itself stays readable when it is the type asked for");
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies interaction and timeline events are captured per command for semantic assertions.")]
 	public async Task When_CommandEmitsInteraction_Then_EventsAreCaptured()
 	{
@@ -257,6 +296,8 @@ public sealed class Given_TestingToolkit
 	}
 
 	private sealed record Contact(int Id, string Name);
+
+	private sealed record TestReport(int Passed, int Failed);
 
 	[TestMethod]
 	[Description("Regression guard: verifies a command timeout larger than a cancellation source can carry is refused where it is set. It has never worked — CancelAfter rejects it, so the failure surfaced from inside RunCommandAsync naming a 'delay' parameter the caller never passed. Only the ceiling is checked: zero and negatives have meant 'no timeout' since this shipped.")]

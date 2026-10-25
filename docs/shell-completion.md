@@ -153,6 +153,11 @@ route option's value, with the same binding rules as the interactive menu.
 
 Bridge-side guarantees for provider values:
 
+When advanced input callbacks are configured, adaptation and validation share a
+separate input budget using the same `ProviderTimeout` setting. Failures and
+timeouts produce no suggestions and a diagnostic on stderr. See
+[advanced input](advanced-input.md#diagnostics-and-conversion-on-tab).
+
 - Each provider invocation is bounded by `ShellCompletionOptions.ProviderTimeout`
   (default: 1 second) — a stalled provider is abandoned and completion degrades to the
   static candidates instead of blocking the user's shell.
