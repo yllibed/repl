@@ -3,7 +3,9 @@ namespace Repl.Spectre;
 /// <summary>
 /// Handles interaction requests using Spectre.Console rich prompts.
 /// Returns <see cref="InteractionResult.Unhandled"/> when the terminal
-/// does not support interactive Spectre prompts (hosted sessions, redirected input).
+/// does not support interactive Spectre prompts (hosted sessions, redirected input), and while the
+/// command's feedback goes elsewhere than the output the prompts draw on (output for a program, such as
+/// <c>--json</c> or a redirected standard output): the text prompts then take over.
 /// </summary>
 public sealed class SpectreInteractionHandler : IReplInteractionHandler
 {
@@ -60,12 +62,12 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 	}
 
 	/// <summary>
-	/// Returns <c>true</c> when Spectre prompts can operate:
-	/// non-hosted session and non-redirected input.
+	/// Returns <c>true</c> when Spectre prompts can operate: non-hosted session, non-redirected input, and
+	/// feedback on the output the prompts draw on.
 	/// </summary>
-	private static bool CanHandle()
+	private bool CanHandle()
 	{
-		if (ReplSessionIO.IsHostedSession)
+		if (ReplSessionIO.IsHostedSession || !InteractionFeedbackRouting.PromptsMayDrawOnOutput(_outputOptions))
 		{
 			return false;
 		}

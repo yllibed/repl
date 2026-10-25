@@ -33,10 +33,6 @@ internal static class HandlerArgumentBinder
 		InvocationBindingContext context,
 		ref int positionalIndex)
 	{
-		var parameterName = parameter.Name ?? string.Empty;
-		var bindingMode = ResolveBindingMode(parameter, context.OptionSchema);
-		var enumIgnoreCase = ResolveEnumIgnoreCase(parameterName, context);
-
 		if (parameter.ParameterType == typeof(CancellationToken))
 		{
 			return context.CancellationToken;
@@ -52,6 +48,19 @@ internal static class HandlerArgumentBinder
 			throw new InvalidOperationException(
 				$"Unable to bind parameter '{parameter.Name}' ({parameter.ParameterType.Name}).");
 		}
+
+		// A parameter Repl supplies is never an option or a route value, so it resolves before any value is matched
+		// by name: an option sharing its name, even a global one registered later, keeps its own value.
+		if (ImplicitServiceParameterRegistry.IsFrameworkInjectedParameter(parameter.ParameterType))
+		{
+			return ResolveImplicitFromContextOrServices(parameter, context, skipContext: false, out var supplied)
+				? supplied
+				: BindUnresolved(parameter);
+		}
+
+		var parameterName = parameter.Name ?? string.Empty;
+		var bindingMode = ResolveBindingMode(parameter, context.OptionSchema);
+		var enumIgnoreCase = ResolveEnumIgnoreCase(parameterName, context);
 
 		if (context.ImplicitServiceParameters.TryGetGlobalOptionsServiceType(parameter.ParameterType, out var globalOptionsServiceType))
 		{
@@ -77,6 +86,12 @@ internal static class HandlerArgumentBinder
 		}
 #pragma warning restore IL2072
 
+		if (context.NativeValues.TryGetValue(parameterName, out var native))
+		{
+			ValidateNativeArity(context.OptionSchema, parameterName, native);
+			return ParameterValueConverter.ConvertNative(native, parameter.ParameterType, context.NumericFormatProvider, enumIgnoreCase);
+		}
+
 		if (context.RouteValues.TryGetValue(parameterName, out var routeValue))
 		{
 			return ParameterValueConverter.ConvertSingle(
@@ -86,26 +101,22 @@ internal static class HandlerArgumentBinder
 				enumIgnoreCase);
 		}
 
-		if (bindingMode != ReplParameterMode.ArgumentOnly
-			&& context.NamedOptions.TryGetValue(parameterName, out var namedValues))
+		if (InputValueSelector.TrySelectNamed(parameterName, bindingMode, context.NamedOptions,
+			context.PositionalArguments, positionalIndex, out var namedValues))
 		{
-			if (bindingMode == ReplParameterMode.OptionAndPositional
-				&& CanConsumePositional(parameter, context.PositionalArguments, positionalIndex))
-			{
-				throw new InvalidOperationException(
-					$"Parameter '{parameterName}' cannot receive both named and positional values in the same invocation.");
-			}
-
-				return ConvertManyOrSingle(
-					parameter,
-					namedValues,
-					parameter.ParameterType,
-					context.NumericFormatProvider,
-					enumIgnoreCase);
-			}
+			return ConvertManyOrSingle(
+				parameter,
+				namedValues,
+				parameter.ParameterType,
+				context.NumericFormatProvider,
+				enumIgnoreCase);
+		}
 
 		var isUserOption = context.OptionSchema.TryGetParameter(parameterName, out _);
-		if (TryResolveFromContextOrServices(parameter, context, skipContext: isUserOption, out var resolved))
+		var found = isUserOption
+			? TryResolveInputServiceFallback(parameter, context, out var resolved)
+			: TryResolveFromContextOrServices(parameter, context, skipContext: false, out resolved);
+		if (found)
 		{
 			return resolved;
 		}
@@ -134,6 +145,11 @@ internal static class HandlerArgumentBinder
 		// the parameter would have consumed positionally.
 		ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, parameterName);
 
+		return BindUnresolved(parameter);
+	}
+
+	private static object? BindUnresolved(System.Reflection.ParameterInfo parameter)
+	{
 		if (parameter.HasDefaultValue)
 		{
 			return parameter.DefaultValue;
@@ -153,7 +169,7 @@ internal static class HandlerArgumentBinder
 	// scalars) keeps its historical binding behavior, and inferred arities never produce
 	// OneOrMore. ArgumentOnly parameters have no named entry, so the message falls back to
 	// the parameter name instead of a token the parser would not accept.
-	private static void ThrowIfExplicitLowerBoundUnsatisfied(OptionSchema schema, string parameterName)
+	internal static void ThrowIfExplicitLowerBoundUnsatisfied(OptionSchema schema, string parameterName)
 	{
 		if (!schema.TryGetParameter(parameterName, out var schemaParameter)
 			|| schemaParameter.ExplicitArity is not (ReplArity.OneOrMore or ReplArity.ExactlyOne))
@@ -172,7 +188,7 @@ internal static class HandlerArgumentBinder
 	// Positional twin of the parse-time ValidateTooManyValues: only explicit upper bounds are
 	// enforced (inferred collection arity is ZeroOrMore), and only collections can consume
 	// more than one positional.
-	private static void ThrowIfExplicitUpperBoundExceeded(OptionSchema schema, string parameterName, int consumedCount)
+	internal static void ThrowIfExplicitUpperBoundExceeded(OptionSchema schema, string parameterName, int consumedCount)
 	{
 		if (consumedCount <= 1
 			|| !schema.TryGetParameter(parameterName, out var schemaParameter)
@@ -188,9 +204,19 @@ internal static class HandlerArgumentBinder
 			: $"{subject} requires exactly one value.");
 	}
 
-	private static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
+	internal static bool HasExplicitBindingDirection(System.Reflection.ParameterInfo parameter) =>
 		parameter.GetCustomAttributes(typeof(FromContextAttribute), inherit: true).Length > 0
 		|| parameter.GetCustomAttributes(typeof(FromServicesAttribute), inherit: true).Length > 0;
+
+	internal static bool TryResolveInputServiceFallback(ParameterInfo parameter, InvocationBindingContext context, out object? resolved)
+	{
+		var name = parameter.Name ?? string.Empty;
+		if (context.InputServiceFallbacks is { } cached && cached.TryGetValue(name, out resolved)) { return resolved is not null; }
+		var found = TryResolveFromContextOrServices(parameter, context, skipContext: true, out resolved);
+		// Retain null as well: a transient factory must not change the positional assignment after validation.
+		(context.InputServiceFallbacks ??= new(StringComparer.Ordinal))[name] = resolved;
+		return found;
+	}
 
 	private static bool TryResolveFromContextOrServices(
 		System.Reflection.ParameterInfo parameter,
@@ -215,12 +241,12 @@ internal static class HandlerArgumentBinder
 			return ResolveExplicitFromContext(parameter, context.ContextValues, fromContext!, out resolved);
 		}
 
-		if (hasFromServices)
+		if (fromServices is not null)
 		{
 			return ResolveExplicitFromServices(
 				parameter,
-				context.ServiceProvider,
-				fromServices!,
+				string.IsNullOrWhiteSpace(fromServices.Key) ? context.ServiceProvider : context.KeyedServiceProvider,
+				fromServices,
 				context.CancellationToken,
 				out resolved);
 		}
@@ -501,28 +527,22 @@ internal static class HandlerArgumentBinder
 		out object? value)
 	{
 		var targetType = parameter.ParameterType;
-		if (TryGetCollectionElementType(targetType, out var elementType))
-		{
-			var remaining = positionalArguments.Skip(positionalIndex).ToArray();
-			if (remaining.Length == 0)
-			{
-				value = null;
-				return false;
-			}
-
-			positionalIndex = positionalArguments.Count;
-			value = ConvertMany(remaining, targetType, elementType, numericFormatProvider, enumIgnoreCase);
-			return true;
-		}
-
-		if (positionalIndex >= positionalArguments.Count)
+		var selected = InputValueSelector.SelectPositional(targetType, positionalArguments, positionalIndex);
+		if (selected.Count == 0)
 		{
 			value = null;
 			return false;
 		}
+		if (TryGetCollectionElementType(targetType, out var elementType))
+		{
+			positionalIndex += selected.Count;
+			value = ConvertMany(positionalArguments.Skip(selected.Start).Take(selected.Count).ToArray(),
+				targetType, elementType, numericFormatProvider, enumIgnoreCase);
+			return true;
+		}
 
 		value = ParameterValueConverter.ConvertSingle(
-			positionalArguments[positionalIndex],
+			positionalArguments[selected.Start],
 			targetType,
 			numericFormatProvider,
 			enumIgnoreCase);
@@ -555,7 +575,7 @@ internal static class HandlerArgumentBinder
 		return ConvertMany(values, targetType, elementType, numericFormatProvider, enumIgnoreCase);
 	}
 
-	private static object ConvertMany(
+	internal static object ConvertMany(
 		IEnumerable<string> values,
 		Type targetType,
 		Type elementType,
@@ -587,18 +607,6 @@ internal static class HandlerArgumentBinder
 		return list;
 	}
 
-	private static bool CanConsumePositional(
-		System.Reflection.ParameterInfo parameter,
-		IReadOnlyList<string> positionalArguments,
-		int positionalIndex)
-	{
-		if (TryGetCollectionElementType(parameter.ParameterType, out _))
-		{
-			return positionalIndex < positionalArguments.Count;
-		}
-
-		return positionalIndex < positionalArguments.Count;
-	}
 
 	private static ReplParameterMode ResolveBindingMode(
 		System.Reflection.ParameterInfo parameter,
@@ -668,7 +676,7 @@ internal static class HandlerArgumentBinder
 		return false;
 	}
 
-	private static object ConvertMatchesToTargetCollection(
+	internal static object ConvertMatchesToTargetCollection(
 		Type targetType,
 		Type elementType,
 		object?[] matches)
@@ -716,56 +724,80 @@ internal static class HandlerArgumentBinder
 				continue;
 			}
 
-			var propertyName = property.Name;
-			var bindingMode = ResolvePropertyBindingMode(propertyName, property, context.OptionSchema);
-			var enumIgnoreCase = ResolveEnumIgnoreCase(propertyName, context);
-
-			if (bindingMode != ReplParameterMode.ArgumentOnly
-				&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
-			{
-				if (bindingMode == ReplParameterMode.OptionAndPositional
-					&& CanConsumePositionalForProperty(property, context.PositionalArguments, positionalIndex))
-				{
-					throw new InvalidOperationException(
-						$"Property '{propertyName}' cannot receive both named and positional values in the same invocation.");
-				}
-
-				var converted = ConvertPropertyManyOrSingle(
-					property,
-					namedValues,
-					property.PropertyType,
-					context.NumericFormatProvider,
-					enumIgnoreCase);
-				AssignProperty(property, instance, converted, context.CancellationToken);
-				continue;
-			}
-
-			if (bindingMode != ReplParameterMode.OptionOnly)
-			{
-				var positionalStart = positionalIndex;
-				if (TryConsumePositionalForProperty(
-					property,
-					context.PositionalArguments,
-					context.NumericFormatProvider,
-					enumIgnoreCase,
-					ref positionalIndex,
-					out var positionalValue))
-				{
-					// Same positional upper-bound parity as the handler-parameter path.
-					ThrowIfExplicitUpperBoundExceeded(
-						context.OptionSchema, propertyName, positionalIndex - positionalStart);
-					AssignProperty(property, instance, positionalValue, context.CancellationToken);
-					continue;
-				}
-			}
-
-			// Mirrors the handler-parameter path: an explicit lower bound rejects absence
-			// after both named and positional attempts, instead of silently keeping the
-			// property default.
-			ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, propertyName);
+			BindOptionsGroupProperty(property, instance, context, ref positionalIndex);
 		}
 
 		return instance;
+	}
+
+	private static void BindOptionsGroupProperty(
+		PropertyInfo property, object instance, InvocationBindingContext context, ref int positionalIndex)
+	{
+		var propertyName = property.Name;
+		var bindingMode = ResolvePropertyBindingMode(propertyName, property, context.OptionSchema);
+		var enumIgnoreCase = ResolveEnumIgnoreCase(propertyName, context);
+		if (context.NativeValues.TryGetValue(propertyName, out var native))
+		{
+			ValidateNativeArity(context.OptionSchema, propertyName, native);
+			AssignProperty(property, instance, ParameterValueConverter.ConvertNative(native, property.PropertyType,
+				context.NumericFormatProvider, enumIgnoreCase), context.CancellationToken);
+			return;
+		}
+
+		if (bindingMode != ReplParameterMode.ArgumentOnly
+			&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
+		{
+			if (bindingMode == ReplParameterMode.OptionAndPositional
+				&& CanConsumePositionalForProperty(property, context.PositionalArguments, positionalIndex))
+			{
+				throw new InvalidOperationException(
+					$"Property '{propertyName}' cannot receive both named and positional values in the same invocation.");
+			}
+
+			var converted = ConvertPropertyManyOrSingle(
+				property,
+				namedValues,
+				property.PropertyType,
+				context.NumericFormatProvider,
+				enumIgnoreCase);
+			AssignProperty(property, instance, converted, context.CancellationToken);
+			return;
+		}
+
+		if (bindingMode != ReplParameterMode.OptionOnly)
+		{
+			var positionalStart = positionalIndex;
+			if (TryConsumePositionalForProperty(
+				property,
+				context.PositionalArguments,
+				context.NumericFormatProvider,
+				enumIgnoreCase,
+				ref positionalIndex,
+				out var positionalValue))
+			{
+				// Same positional upper-bound parity as the handler-parameter path.
+				ThrowIfExplicitUpperBoundExceeded(
+					context.OptionSchema, propertyName, positionalIndex - positionalStart);
+				AssignProperty(property, instance, positionalValue, context.CancellationToken);
+				return;
+			}
+		}
+
+		// Mirrors the handler-parameter path: an explicit lower bound rejects absence
+		// after both named and positional attempts, instead of silently keeping the
+		// property default.
+		ThrowIfExplicitLowerBoundUnsatisfied(context.OptionSchema, propertyName);
+	}
+
+	internal static void ValidateNativeArity(OptionSchema schema, string name, object? value)
+	{
+		if (!schema.TryGetParameter(name, out var parameter) || parameter.ExplicitArity is null) { return; }
+		var collection = TryGetCollectionElementType(parameter.ParameterType, out _);
+		var count = value is null or System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Null } ? 0
+			: collection && value is System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.Array } json ? json.GetArrayLength()
+			: collection && value is System.Collections.IEnumerable items && value is not string ? items.Cast<object?>().Count() : 1;
+		ThrowIfExplicitUpperBoundExceeded(schema, name, count);
+		if (count == 0) { ThrowIfExplicitLowerBoundUnsatisfied(schema, name); }
 	}
 
 	private static ReplParameterMode ResolvePropertyBindingMode(

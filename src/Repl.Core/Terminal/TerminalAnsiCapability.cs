@@ -5,15 +5,22 @@ namespace Repl;
 /// progress). A hosted client can advertise ANSI purely through capability flags
 /// (identity inference, control messages, <c>TerminalSessionOverrides</c>) without ever
 /// setting the <c>AnsiSupport</c> override; honoring that flag avoids falling back to
-/// <see cref="OutputOptions.IsAnsiEnabled"/>'s view of the server console's redirection
+/// <see cref="OutputOptions.IsAnsiEnabled()"/>'s view of the server console's redirection
 /// state. Explicit opt-outs (<c>AnsiSupport=false</c>, <see cref="AnsiMode.Never"/>)
 /// still win.
 /// </summary>
 internal static class TerminalAnsiCapability
 {
-	public static bool IsAnsiCapableForTerminalSequences(OutputOptions outputOptions)
+	public static bool IsAnsiCapableForTerminalSequences(OutputOptions outputOptions) =>
+		IsAnsiCapableForTerminalSequences(outputOptions, Console.IsOutputRedirected);
+
+	/// <summary>
+	/// <see cref="IsAnsiCapableForTerminalSequences(OutputOptions)"/> for sequences written to a stream whose
+	/// redirection is <paramref name="isStreamRedirected"/>, rather than to standard output.
+	/// </summary>
+	public static bool IsAnsiCapableForTerminalSequences(OutputOptions outputOptions, bool isStreamRedirected)
 	{
-		if (outputOptions.IsAnsiEnabled())
+		if (outputOptions.IsAnsiEnabled(isStreamRedirected))
 		{
 			return true;
 		}

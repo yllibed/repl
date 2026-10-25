@@ -136,6 +136,16 @@ Route constraints and handler parameter types produce typed JSON Schema:
 
 Route arguments → **required** properties. Options with defaults → **optional** properties. `[Description]` attributes → schema `description` field.
 
+Collection options supported by the binder (`T[]`, `List<T>`, `IReadOnlyList<T>` and `IEnumerable<T>`)
+accept JSON arrays in `tools/call`. Each element becomes a repeated option value, so
+`{"layer":["raw","indexed"]}` binds two values rather than one serialized JSON string.
+String elements are preserved, including empty strings and values resembling CLI options.
+Numbers and booleans use their JSON scalar representation and the usual typed binder.
+The configured option arity still applies (set it explicitly for `IEnumerable<T>`).
+Null, object and nested-array elements are rejected. An empty array contributes no option
+occurrences: it behaves like omitting the option and does not clear a configured default.
+The scalar single-value workaround remains accepted for compatibility.
+
 ## Tool naming
 
 MCP tools are flat. Context segments are flattened:
@@ -194,6 +204,15 @@ app.UseMcpServer(o => o.InteractivityMode = InteractivityMode.PrefillThenElicita
 | **`Console.OpenStandardOutput()`** | MCP stdio transport directly | **Never.** Corrupts JSON-RPC. |
 
 > **Why this matters:** Console-style writes blur the boundary between result data, progress, logs, and protocol traffic. In MCP, this ranges from confusing agent behavior to protocol corruption.
+
+A tool call is an error (`isError: true`) when the command did not complete: a refusal, a handler
+failure (`Results.Error`, a non-zero `Results.Exit`) or an exception. A command that returns
+`Results.CompletedWithFailures(report)` did complete: the result carries the report with
+`isError: false`, and `_meta` holds `"io.github.yllibed.repl/outcome": "completedWithFailures"` so a
+client can tell the report contains failures without parsing it. The key is absent for every other
+outcome, and other values may be added later. When the command renders no report, the text says
+`Completed with failures.` rather than `OK`. Only tool calls carry the marker: a resource read or a
+prompt built from such a command returns its report as a plain success.
 
 ### Paged tool results
 

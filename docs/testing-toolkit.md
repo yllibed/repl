@@ -48,8 +48,12 @@ propagate or maps it to an exit code through `ReplOptions.ExitCodes.Cancelled`.
 
 ```csharp
 execution.ExitCode.Should().Be(0);
+execution.OutcomeKind.Should().Be(ReplExecutionOutcomeKind.Success);
 execution.OutputText.Should().Contain("world");
 ```
+
+`OutcomeKind` tells apart runs that the exit code may not, such as a command that completed with
+failures (`Results.CompletedWithFailures`) and one that failed.
 
 ### Typed result object
 
@@ -57,6 +61,9 @@ execution.OutputText.Should().Contain("world");
 var contact = execution.GetResult<Contact>();      // throws if wrong/missing type
 var ok = execution.TryGetResult<Contact>(out var typed);
 ```
+
+For a result that carries an outcome of its own (`Results.Exit(code, payload)`,
+`Results.CompletedWithFailures(payload)`), both read through to the payload.
 
 ### Rendered output contract (optional)
 
@@ -183,7 +190,9 @@ decision before it returns, so the framework decides synchronously and so does t
 
 Runs execute as **standalone invocations**, not hosted sessions — the same classification a
 process-owning `Main` gets. Commands gated to the CLI channel are therefore present, and handlers see
-`IReplIoContext.IsHostedSession == false`.
+`IReplIoContext.IsHostedSession == false`. A protocol-passthrough command splits its streams as in the
+process: `OutputText` holds what the handler writes to `IReplIoContext.Output` alone, while feedback,
+framework-rendered results and diagnostics go to `DiagnosticText`.
 
 `RunTimeout` is measured against the clock rather than against the run agreeing to stop, so a command
 that never observes its cancellation token still fails the test instead of hanging the suite. Such a

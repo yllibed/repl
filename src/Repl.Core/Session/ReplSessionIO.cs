@@ -66,10 +66,12 @@ internal static class ReplSessionIO
 	private static readonly AsyncLocal<TextReader?> s_input = new();
 	private static readonly AsyncLocal<IReplKeyReader?> s_keyReader = new();
 	private static readonly AsyncLocal<bool> s_isHostedSession = new();
-	private const int CurrentProgrammaticInvocationContractVersion = 1;
+	private const int CurrentProgrammaticInvocationContractVersion = 2;
 	private static readonly AsyncLocal<bool> s_isProgrammatic = new();
 	private static readonly AsyncLocal<int> s_programmaticInvocationContractVersion = new();
 	private static readonly AsyncLocal<bool> s_isProtocolPassthrough = new();
+	private static readonly AsyncLocal<bool> s_isProcessConsoleSession = new();
+	private static readonly AsyncLocal<bool> s_isMachineReadableOutput = new();
 	private static readonly AsyncLocal<string?> s_sessionId = new();
 	private static readonly ConcurrentDictionary<string, SessionMetadata> s_sessions = new(StringComparer.Ordinal);
 
@@ -124,6 +126,18 @@ internal static class ReplSessionIO
 		get => s_isProtocolPassthrough.Value;
 		set => s_isProtocolPassthrough.Value = value;
 	}
+
+	/// <summary>
+	/// Gets a value indicating whether the active session's writers are the process's own console streams,
+	/// as in the session <see cref="SetProcessConsoleSession"/> opens, rather than writers a host supplied.
+	/// </summary>
+	internal static bool IsProcessConsoleSession => s_isProcessConsoleSession.Value;
+
+	/// <summary>
+	/// Gets a value indicating whether the running command renders its payload in a format meant for a
+	/// program, which moves interaction feedback off the payload stream.
+	/// </summary>
+	internal static bool IsMachineReadableOutput => s_isMachineReadableOutput.Value;
 
 	/// <summary>
 	/// Gets the current hosted session identifier, when available.
@@ -291,6 +305,7 @@ internal static class ReplSessionIO
 		var previousIsProgrammatic = s_isProgrammatic.Value;
 		var previousProgrammaticInvocationContractVersion = s_programmaticInvocationContractVersion.Value;
 		var previousSessionId = s_sessionId.Value;
+		var previousIsProcessConsoleSession = s_isProcessConsoleSession.Value;
 
 		var resolvedSessionId = string.IsNullOrWhiteSpace(sessionId)
 			? $"session-{Guid.NewGuid():N}"
@@ -307,6 +322,8 @@ internal static class ReplSessionIO
 		// marker from an outer async context into a newly hosted programmatic session.
 		s_programmaticInvocationContractVersion.Value = 0;
 		s_sessionId.Value = resolvedSessionId;
+		// A session opened inside the console one brings its own writers.
+		s_isProcessConsoleSession.Value = false;
 
 		if (ansiMode == AnsiMode.Always)
 		{
@@ -331,8 +348,26 @@ internal static class ReplSessionIO
 			previousIsProgrammatic,
 			previousProgrammaticInvocationContractVersion,
 			previousSessionId,
+			previousIsProcessConsoleSession,
 			removeSessionOnDispose: removeSessionOnDispose ?? string.IsNullOrWhiteSpace(sessionId),
 			sessionIdToRemove: resolvedSessionId);
+	}
+
+	/// <summary>
+	/// Opens the session a protocol-passthrough command runs in from the console: framework output and
+	/// feedback on standard error, the handler's payload alone on standard output, and no ANSI.
+	/// </summary>
+	internal static IDisposable SetProcessConsoleSession()
+	{
+		var session = SetSession(
+			Console.Error,
+			Console.In,
+			ansiMode: AnsiMode.Never,
+			commandOutput: Console.Out,
+			error: Console.Error,
+			isHostedSession: false);
+		s_isProcessConsoleSession.Value = true;
+		return session;
 	}
 
 	internal static void EnsureSession(string sessionId)
@@ -361,19 +396,14 @@ internal static class ReplSessionIO
 			updater);
 	}
 
-	internal static IDisposable PushProgrammaticInvocationContract(int adapterContractVersion)
-	{
-		var previous = s_programmaticInvocationContractVersion.Value;
-		s_programmaticInvocationContractVersion.Value = adapterContractVersion;
-		return new ProgrammaticInvocationContractScope(previous);
-	}
+	internal static IDisposable PushProgrammaticInvocationContract(int adapterContractVersion) =>
+		new AsyncLocalScope<int>(s_programmaticInvocationContractVersion, adapterContractVersion);
 
-	internal static IDisposable PushProtocolPassthrough(bool isProtocolPassthrough = true)
-	{
-		var previous = s_isProtocolPassthrough.Value;
-		s_isProtocolPassthrough.Value = isProtocolPassthrough;
-		return new ProtocolPassthroughScope(previous);
-	}
+	internal static IDisposable PushProtocolPassthrough(bool isProtocolPassthrough = true) =>
+		new AsyncLocalScope<bool>(s_isProtocolPassthrough, isProtocolPassthrough);
+
+	internal static IDisposable PushMachineReadableOutput(bool isMachineReadableOutput) =>
+		new AsyncLocalScope<bool>(s_isMachineReadableOutput, isMachineReadableOutput);
 
 	internal static bool TryGetSession(string sessionId, out SessionMetadata session) =>
 		s_sessions.TryGetValue(sessionId, out session);
@@ -422,6 +452,7 @@ internal static class ReplSessionIO
 		bool previousIsProgrammatic,
 		int previousProgrammaticInvocationContractVersion,
 		string? previousSessionId,
+		bool previousIsProcessConsoleSession,
 		bool removeSessionOnDispose,
 		string sessionIdToRemove) : IDisposable
 	{
@@ -436,6 +467,7 @@ internal static class ReplSessionIO
 			s_isProgrammatic.Value = previousIsProgrammatic;
 			s_programmaticInvocationContractVersion.Value = previousProgrammaticInvocationContractVersion;
 			s_sessionId.Value = previousSessionId;
+			s_isProcessConsoleSession.Value = previousIsProcessConsoleSession;
 
 			if (removeSessionOnDispose)
 			{
@@ -444,26 +476,20 @@ internal static class ReplSessionIO
 		}
 	}
 
-	private sealed class ProgrammaticInvocationContractScope(int previousVersion) : IDisposable
+	/// <summary>Sets an ambient value for a scope and restores the previous one, once, on dispose.</summary>
+	private sealed class AsyncLocalScope<T> : IDisposable
+		where T : struct
 	{
+		private readonly AsyncLocal<T> _slot;
+		private readonly T _previous;
 		private bool _disposed;
 
-		public void Dispose()
+		public AsyncLocalScope(AsyncLocal<T> slot, T value)
 		{
-			if (_disposed)
-			{
-				return;
-			}
-
-			s_programmaticInvocationContractVersion.Value = previousVersion;
-			_disposed = true;
+			_slot = slot;
+			_previous = slot.Value;
+			slot.Value = value;
 		}
-	}
-
-	private sealed class ProtocolPassthroughScope(bool previousValue) : IDisposable
-	{
-		private readonly bool _previousValue = previousValue;
-		private bool _disposed;
 
 		public void Dispose()
 		{
@@ -472,7 +498,7 @@ internal static class ReplSessionIO
 				return;
 			}
 
-			s_isProtocolPassthrough.Value = _previousValue;
+			_slot.Value = _previous;
 			_disposed = true;
 		}
 	}

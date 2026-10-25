@@ -22,6 +22,8 @@ If you’re new, start with **01**, then follow the sequence.
    `Repl.Spectre` integration: FigletText, Table, paged result tables, Panel, Tree, BarChart, BreakdownChart, Calendar, JsonText, TextPath, Grid, Columns, Rule, Status, Progress, and all Spectre-powered prompts.
 8. [08 — Build an MCP Server with Repl.Mcp](08-mcp-server/)
    Build a concrete MCP server from a Repl command graph: CLI + REPL + MCP mode, host config snippets for Cursor/VS Code/Claude/Cline, tools, resources, prompts, behavioral annotations, automation visibility, and a minimal MCP Apps UI.
+9. [09 — Advanced Input](09-advanced-input/)
+   Legacy CLI adaptation, typed validators with injected services, and host-owned actions guarded during preview and completion. Advanced integration scenarios.
 
 ## Run
 
@@ -40,6 +42,7 @@ Replace the project path with the one you want:
 - `samples/06-testing/TestingSample.csproj`
 - `samples/07-spectre/SpectreOpsSample.csproj`
 - `samples/08-mcp-server/McpServerSample.csproj`
+- `samples/09-advanced-input/AdvancedInputSample.csproj`
 
 ## Suggested reading (existing docs)
 

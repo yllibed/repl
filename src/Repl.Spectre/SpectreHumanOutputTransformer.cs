@@ -5,13 +5,14 @@ using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Text.Json.Nodes;
 
 namespace Repl.Spectre;
 
 /// <summary>
 /// Output transformer that renders values using light Spectre.Console layouts.
 /// </summary>
-internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransformer
+internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTransformer
 {
 	private readonly Func<HumanRenderSettings> _resolveRenderSettings;
 	private readonly OutputOptions? _outputOptions;
@@ -46,33 +47,36 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 	public ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
-
-		if (value is null)
-		{
-			return ValueTask.FromResult(string.Empty);
-		}
-
-		return ValueTask.FromResult(value switch
-		{
-			HelpRenderDocument help => RenderHelp(help),
-			IReplPage page => RenderPage(page),
-			IReplResult replResult => RenderReplResult(replResult),
-			string text => text,
-			System.Collections.IEnumerable enumerable => RenderEnumerable(enumerable),
-			_ when TryRenderObject(value, out var objectText) => objectText,
-			_ => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty,
-		});
+		return ValueTask.FromResult(Render(value).Text);
 	}
 
-	public ValueTask<string> TransformPageAsync(
-		IReplPage page,
-		ResultFlowPageRenderMode mode,
-		CancellationToken cancellationToken = default)
+	public ValueTask<RenderedPayload> RenderAsync(object? value, CancellationToken cancellationToken = default)
+	{
+		cancellationToken.ThrowIfCancellationRequested();
+		return ValueTask.FromResult(Render(value));
+	}
+
+	public ValueTask<RenderedPayload> RenderPageAsync(IReplPage page, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(page);
 		cancellationToken.ThrowIfCancellationRequested();
-		return ValueTask.FromResult(RenderPage(page, mode, includeFooter: false));
+		return ValueTask.FromResult(RenderPageBody(page));
 	}
+
+	private RenderedPayload Render(object? value) => value switch
+	{
+		null => RenderedPayload.Plain(string.Empty),
+		HelpRenderDocument help => RenderedPayload.Plain(RenderHelp(help)),
+		IReplPage page => RenderPageWithFooter(page),
+		IReplResult replResult => RenderReplResult(replResult),
+		string text => RenderedPayload.Plain(text),
+		// Before the enumerable arm: a JsonObject enumerates as key/value pairs, and reflecting over
+		// those walks JsonNode's Root and Parent, which point back at each other.
+		_ when JsonHumanShape.TryGetNode(value, out var node) => RenderJson(node),
+		System.Collections.IEnumerable enumerable => RenderItems([.. enumerable.Cast<object?>()]),
+		_ when TryRenderObject(value, out var objectText) => RenderedPayload.Plain(objectText),
+		_ => RenderedPayload.Plain(Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty),
+	};
 
 	private string RenderHelp(HelpRenderDocument help)
 	{
@@ -170,7 +174,7 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		return RenderToString(new Rows(sections));
 	}
 
-	private string RenderReplResult(IReplResult result)
+	private RenderedPayload RenderReplResult(IReplResult result)
 	{
 		var statusMarkup = result.Kind.ToLowerInvariant() switch
 		{
@@ -185,91 +189,150 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 
 		if (result.Details is null)
 		{
-			return RenderToString(new Markup(statusMarkup));
+			return RenderedPayload.Plain(RenderToString(new Markup(statusMarkup)));
 		}
 
-		var details = result.Details is IReplPage page
-			? new Text(RenderPage(page))
+		if (result.Details is IReplPage page)
+		{
+			// The page is already rendered: appended as text rather than laid out again, which would count its
+			// escape sequences as columns and could wrap its lines, the footer among them. The status comes
+			// first, so no header starts the payload; the page's footer still ends it.
+			var renderedPage = RenderPageWithFooter(page);
+			return new RenderedPayload(
+				string.Concat(RenderToString(new Markup(statusMarkup)), Environment.NewLine, Environment.NewLine, renderedPage.Text),
+				RenderedLayout.None.WithFooter(renderedPage.Layout.FooterLineCount));
+		}
+
+		var details = JsonHumanShape.TryGetNode(result.Details, out var node)
+			// Like a JSON result, as the human transformer renders it, rather than as the compact literal a
+			// JSON value nested in a result object gets.
+			? BuildJson(node)
 			: RenderValueRenderable(result.Details, nested: false);
-		return RenderToString(new Rows(new IRenderable[]
+		return RenderedPayload.Plain(RenderToString(new Rows(new IRenderable[]
 		{
 			new Markup(statusMarkup),
 			new Text(string.Empty),
 			details,
-		}));
+		})));
 	}
 
-	private string RenderEnumerable(
-		System.Collections.IEnumerable enumerable,
-		bool includeTableHeader = true)
+	private RenderedPayload RenderItems(object?[] items)
 	{
-		var items = enumerable.Cast<object?>().ToArray();
-		if (items.Length == 0)
-		{
-			return "No results.";
-		}
-
 		var firstNonNull = items.FirstOrDefault(item => item is not null);
 		if (firstNonNull is null)
 		{
-			return "No results.";
+			return RenderedPayload.Plain("No results.");
 		}
 
-		if (IsSimpleValue(firstNonNull.GetType()))
+		// Only once the first item is JSON: ordinary collections must not pay for the JSON row scan.
+		if (JsonHumanShape.IsJson(firstNonNull))
 		{
-			return string.Join(
-				Environment.NewLine,
-				items.Select(item => Convert.ToString(item, CultureInfo.InvariantCulture) ?? string.Empty));
+			return RenderJsonItems(items);
 		}
 
-		var members = GetDisplayMembers(firstNonNull.GetType());
+		var members = IsSimpleValue(firstNonNull.GetType()) ? [] : GetDisplayMembers(firstNonNull.GetType());
 		if (members.Length == 0)
 		{
-			return string.Join(
+			var lines = string.Join(
 				Environment.NewLine,
 				items.Select(item => Convert.ToString(item, CultureInfo.InvariantCulture) ?? string.Empty));
+			return RenderedPayload.Plain(lines);
 		}
 
-		return RenderToString(BuildObjectTable(items, members, includeTableHeader));
+		return new RenderedPayload(
+			RenderToString(BuildObjectTable(items, members)),
+			new RenderedLayout(TableHeaderLineCount, [.. members.Select(member => member.Label)]));
 	}
 
-	private string RenderPage(IReplPage page) =>
-		RenderPage(page, ResultFlowPageRenderMode.Initial, includeFooter: true);
+	private RenderedPayload RenderPageWithFooter(IReplPage page) =>
+		RenderPageBody(page).WithFooterLine(ResultFlowPageFooterBuilder.RenderHuman(page));
 
-	private string RenderPage(
-		IReplPage page,
-		ResultFlowPageRenderMode mode,
-		bool includeFooter)
+	private RenderedPayload RenderPageBody(IReplPage page)
 	{
-		var body = page.UntypedItems.Count == 0
-			? "No results."
-			: RenderEnumerable(
-				page.UntypedItems,
-				includeTableHeader: mode == ResultFlowPageRenderMode.Initial);
-		var footer = includeFooter ? RenderPageFooter(page) : string.Empty;
-		return string.IsNullOrWhiteSpace(footer)
-			? body
-			: string.Concat(body, Environment.NewLine, footer);
+		if (page.UntypedItems.Count == 0)
+		{
+			return RenderedPayload.Plain("No results.");
+		}
+
+		// By its declared item type: a page of JSON nulls has no item to be recognized by.
+		if (JsonHumanShape.IsJsonType(page.ItemType))
+		{
+			return RenderJsonItems(page.UntypedItems);
+		}
+
+		return RenderItems([.. page.UntypedItems]);
 	}
 
-	private static string RenderPageFooter(IReplPage page)
+	private RenderedPayload RenderJson(JsonNode? node) => node switch
 	{
-		var info = page.PageInfo;
-		var count = page.UntypedItems.Count;
-		if (info.TotalCount is { } total)
+		JsonObject { Count: 0 } => RenderedPayload.Plain("{}"),
+		JsonObject jsonObject => RenderedPayload.Plain(RenderToString(BuildJsonObjectGrid(jsonObject))),
+		JsonArray { Count: 0 } => RenderedPayload.Plain("No results."),
+		// Its own path rather than RenderItems, which recognizes JSON by its first non-null item and so has
+		// nothing to go on for an array of nulls.
+		JsonArray jsonArray => RenderJsonItems([.. jsonArray]),
+		_ => RenderedPayload.Plain(JsonHumanShape.Literal(node)),
+	};
+
+	// The renderable for JSON composed into a larger layout, such as a result's details. Text wrapping an
+	// already-rendered string would count its escape sequences as columns and wrap its lines again.
+	private IRenderable BuildJson(JsonNode? node) => node switch
+	{
+		JsonObject { Count: > 0 } jsonObject => BuildJsonObjectGrid(jsonObject),
+		JsonArray jsonArray when JsonHumanShape.TryGetObjectRows([.. jsonArray], out var columns, out var rows)
+			=> BuildJsonTable(columns, rows),
+		// Literal lines only from here on: plain text, nothing styled.
+		_ => new Text(RenderJson(node).Text),
+	};
+
+	private static Grid BuildJsonObjectGrid(JsonObject jsonObject) =>
+		BuildLabelValueGrid(
+			[.. jsonObject.Select(static property =>
+				(JsonHumanShape.Label(property.Key), JsonHumanShape.Literal(property.Value))),]);
+
+	// The table's columns come from its own rows' keys rather than from a type, so a later page can name others;
+	// declaring those keys lets the pager tell a repeated header from one it must keep.
+	private RenderedPayload RenderJsonItems(IReadOnlyList<object?> items)
+	{
+		if (JsonHumanShape.TryGetObjectRows(items, out var columns, out var rows))
 		{
-			var prefix = $"Showing {count.ToString(CultureInfo.InvariantCulture)} of {total.ToString(CultureInfo.InvariantCulture)}.";
-			return info.HasMore
-				? $"{prefix} Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}."
-				: prefix;
+			return new RenderedPayload(
+				RenderToString(BuildJsonTable(columns, rows)),
+				new RenderedLayout(TableHeaderLineCount, columns));
 		}
 
-		if (!info.HasMore)
+		var literals = string.Join(
+			Environment.NewLine,
+			items.Select(item => JsonHumanShape.TryLiteral(item, out var literal) ? literal : RenderInlineValue(item)));
+		return RenderedPayload.Plain(literals);
+	}
+
+	// Both table builders label their columns with SingleLineLabel, which never wraps, and a borderless table puts
+	// no rule under its header: the header is exactly one line.
+	private const int TableHeaderLineCount = 1;
+
+	private static Table BuildJsonTable(string[] columns, JsonObject[] rows)
+	{
+		var table = new Table()
+			.Border(TableBorder.None)
+			.Collapse();
+		foreach (var column in columns)
 		{
-			return string.Empty;
+			table.AddColumn(new TableColumn(new SingleLineLabel(JsonHumanShape.Label(column))));
 		}
 
-		return $"Showing {count.ToString(CultureInfo.InvariantCulture)} result(s). Next data page: rerun with {ResultFlowCursorPolicy.FormatCliContinuation(info.NextCursor)}.";
+		foreach (var row in rows)
+		{
+			var cells = new IRenderable[columns.Length];
+			for (var i = 0; i < columns.Length; i++)
+			{
+				cells[i] = CreateTableCell(JsonHumanShape.Cell(row, columns[i]), table.Rows.Count, i);
+			}
+
+			table.AddRow(cells);
+		}
+
+		return table;
 	}
 
 	private bool TryRenderObject(object value, out string text)
@@ -302,22 +365,15 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		return grid;
 	}
 
-	private static Table BuildObjectTable(
-		object?[] items,
-		IReadOnlyList<DisplayMember> members,
-		bool includeHeaders = true)
+	private static Table BuildObjectTable(object?[] items, IReadOnlyList<DisplayMember> members)
 	{
 		var table = new Table()
 			.Border(TableBorder.None)
 			.Collapse();
-		if (!includeHeaders)
-		{
-			table.HideHeaders();
-		}
 
 		foreach (var member in members)
 		{
-			table.AddColumn(new TableColumn($"[bold]{Markup.Escape(member.Label)}[/]"));
+			table.AddColumn(new TableColumn(new SingleLineLabel(member.Label)));
 		}
 
 		foreach (var item in items)
@@ -425,6 +481,11 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 			return new Text(text);
 		}
 
+		if (JsonHumanShape.TryGetNode(value, out var node))
+		{
+			return new Text(JsonHumanShape.Literal(node));
+		}
+
 		if (value is System.Collections.IEnumerable enumerable)
 		{
 			var lines = RenderNestedEnumerableLines(enumerable);
@@ -459,6 +520,11 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 		if (value is string text)
 		{
 			return text;
+		}
+
+		if (JsonHumanShape.TryGetNode(value, out var node))
+		{
+			return JsonHumanShape.Literal(node);
 		}
 
 		if (value is System.Collections.IEnumerable enumerable)
@@ -600,7 +666,7 @@ internal sealed class SpectreHumanOutputTransformer : IResultFlowOutputTransform
 					property,
 					string.IsNullOrWhiteSpace(display?.GetName()) ? property.Name : display!.GetName()!,
 					display?.GetOrder(),
-					displayFormat?.NullDisplayText);
+					displayFormat?.NullDisplayText ?? JsonHumanShape.NullText(property.PropertyType));
 			})
 			.Where(member => member is not null)
 			.Select(member => member!)

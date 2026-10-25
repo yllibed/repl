@@ -45,12 +45,24 @@ internal static class Program
 			case "process-signal":
 				ConfigureProcessSignalScenario(app);
 				return;
+			case "invocation-hook":
+				ConfigureCompletionScenario(app);
+				var calls = 0;
+				app.UseInvocationHook((ReplInvocationContext context) =>
+				{
+					if (++calls != 1 || context.Parsed.Input.Mode != InputProcessingMode.ShellCompletion)
+					{
+						throw new InvalidOperationException("Invocation hooks must see the completion payload once.");
+					}
+					return ReplInvocationResult.Handled("completion payload must not render");
+				});
+				return;
 			case "process-signal-exit-code":
 				ConfigureProcessSignalExitCodeScenario(app);
 				return;
 			default:
 				throw new InvalidOperationException(
-					$"Unknown REPL test scenario '{scenario}'. Supported values: completion, setup, process-signal, process-signal-exit-code.");
+					$"Unknown REPL test scenario '{scenario}'. Supported values: completion, setup, invocation-hook, process-signal, process-signal-exit-code.");
 		}
 	}
 

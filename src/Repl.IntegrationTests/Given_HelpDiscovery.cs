@@ -462,22 +462,23 @@ public sealed class Given_HelpDiscovery
 	}
 
 	[TestMethod]
-	[Description("IProgress<T> is synthesized from IReplInteractionChannel before direct service lookup. Provider-aware hidden-option validation must recognize that established fallback so documentation and argument-free binding agree.")]
-	public void When_RequiredHiddenProgressOptionUsesInteractionChannel_Then_DiscoveryAndOmissionAreAllowed()
+	[Description("IProgress<T> is synthesized from IReplInteractionChannel, as CancellationToken is supplied by Repl: it is never an option, in help or in the documentation model, and the handler still receives it.")]
+	public void When_AHandlerReceivesProgress_Then_ItIsNeverAnOption()
 	{
 		var sut = ReplApp.Create();
 		sut.Map(
 			"sync",
-			([ReplOption(Name = "progress", Arity = ReplArity.ExactlyOne, Hidden = true, Mode = ReplParameterMode.OptionOnly)] IProgress<double> progress) =>
-				progress is not null ? "progress-ready" : "missing");
+			(IProgress<double> progress, IProgress<ReplProgressEvent> events) =>
+				progress is not null && events is not null ? "progress-ready" : "missing");
 
-		var document = () => sut.CreateDocumentationModel();
+		var document = sut.CreateDocumentationModel();
 		var help = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--help", "--no-logo"]));
 		var invocation = ConsoleCaptureHelper.Capture(() => sut.Run(["sync", "--no-logo"]));
 
-		document.Should().NotThrow();
+		document.Commands.Single(command => string.Equals(command.Path, "sync", StringComparison.Ordinal))
+			.Options.Should().BeEmpty();
 		help.ExitCode.Should().Be(0, help.Text);
-		help.Text.Should().NotContain("--progress");
+		help.Text.Should().NotContain("--progress").And.NotContain("--events");
 		invocation.ExitCode.Should().Be(0);
 		invocation.Text.Should().Contain("progress-ready");
 	}

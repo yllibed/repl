@@ -139,6 +139,39 @@ public sealed class Given_ResultSemantics
 		output.Text.Should().Contain("Error: custom failure");
 	}
 
+	[TestMethod]
+	[Description("Verifies a command that completed with failures does not end an interactive session: the next command still runs, as after any other result.")]
+	public void When_InteractiveCommandCompletesWithFailures_Then_TheSessionContinues()
+	{
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.Map("test", () => Results.CompletedWithFailures("1 of 4 tests failed"));
+		sut.Map("hello", () => "world");
+
+		var output = ConsoleCaptureHelper.CaptureWithInput(
+			"test\nhello\nexit\n",
+			() => sut.Run(["--interactive", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("1 of 4 tests failed");
+		output.Text.Should().Contain("world");
+	}
+
+	[TestMethod]
+	[Description("Verifies a one-shot command that completed with failures exits with its code rather than entering the interactive session --interactive asked for, as a failing command does.")]
+	public void When_CommandCompletesWithFailuresWithInteractiveFlag_Then_TheRunExitsInstead()
+	{
+		var sut = ReplApp.Create().UseDefaultInteractive();
+		sut.Map("test", () => Results.CompletedWithFailures("1 of 4 tests failed"));
+
+		var output = ConsoleCaptureHelper.CaptureWithInput(
+			"exit\n",
+			() => sut.Run(["test", "--interactive", "--no-logo"]));
+
+		output.ExitCode.Should().Be(1);
+		output.Text.Should().Contain("1 of 4 tests failed");
+		output.Text.Should().NotContain(">");
+	}
+
 	private sealed record ValidationDetails(string Field, string Reason);
 }
 
