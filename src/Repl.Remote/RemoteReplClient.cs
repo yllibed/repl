@@ -68,9 +68,12 @@ public sealed class RemoteReplClient : IAsyncDisposable
 	}
 
 	[JsonRpcMethod("terminal.output")]
-	private void Output(string sessionId, string text)
+	private async Task OutputAsync(string sessionId, string text)
 	{
-		if (_terminal is { } terminal && string.Equals(terminal.SessionId, sessionId, StringComparison.Ordinal)) { terminal.AcceptOutput(text); }
+		if (_terminal is { } terminal && string.Equals(terminal.SessionId, sessionId, StringComparison.Ordinal))
+		{
+			await terminal.AcceptOutputAsync(text).ConfigureAwait(false);
+		}
 	}
 
 	[JsonRpcMethod("terminal.exited")]

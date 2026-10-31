@@ -29,13 +29,13 @@ public sealed class RemoteTerminal : IAsyncDisposable
 	/// <summary>Interrupts the remote command.</summary>
 	public Task InterruptAsync(CancellationToken cancellationToken = default) =>
 		_rpc.InvokeWithParameterObjectAsync("terminal.interrupt", new { sessionId = SessionId }, cancellationToken);
-	internal void AcceptOutput(string text)
+	internal ValueTask AcceptOutputAsync(string text)
 	{
 		if (!_output.Writer.TryWrite(text))
 		{
-			Finish(new IOException("Terminal output exceeded the client buffer. Consume Output while the terminal is open."));
-			_rpc.Dispose();
+			return _disconnect(new IOException("Terminal output exceeded the client buffer. Consume Output while the terminal is open."));
 		}
+		return ValueTask.CompletedTask;
 	}
 	internal void Finish(int exitCode) { _output.Writer.TryComplete(); _completion.TrySetResult(exitCode); }
 	internal void Finish(Exception error) { _output.Writer.TryComplete(error); _completion.TrySetException(error); }

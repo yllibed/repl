@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using System.IO.Pipes;
+using Microsoft.Extensions.DependencyInjection;
+using Repl.Parameters;
 using Repl.Remote;
 using StreamJsonRpc;
 
@@ -70,6 +72,44 @@ public sealed class Given_RemoteLifetimes
 		finally { backend.Release.TrySetResult(130); }
 
 		await backend.Disposed.Task.WaitAsync(deadline.Token);
+	}
+
+	[TestMethod]
+	[Description("A slow client's full output buffer closes its factory-owned pipe, cancelling the active handler and releasing its DI scope before the client is explicitly disposed.")]
+	public async Task When_TheClientOutputOverflows_Then_TheServerReleasesItsSession()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var disposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = ReplApp.Create(services => services.AddScoped(_ => new TrackedScope(disposed))).UseEmbeddedConsoleProfile();
+		app.Map("flood", async (IReplIoContext io, [FromServices] TrackedScope scope, CancellationToken ct) =>
+		{
+			started.TrySetResult();
+			try
+			{
+				while (true) { await io.Output.WriteAsync("chunk".AsMemory(), ct).ConfigureAwait(false); }
+			}
+			finally { stopped.TrySetResult(); }
+		});
+		var name = TestPipeName.Create();
+		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
+		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+		await using var terminal = await client.OpenTerminalAsync(cancellationToken: deadline.Token);
+
+		try { await terminal.InputAsync("flood\r", deadline.Token); }
+		catch (ConnectionLostException) { }
+		await started.Task.WaitAsync(deadline.Token);
+		var completion = () => terminal.Completion.WaitAsync(deadline.Token);
+		await completion.Should().ThrowAsync<IOException>().WithMessage("*buffer*");
+
+		await stopped.Task.WaitAsync(deadline.Token);
+		await disposed.Task.WaitAsync(deadline.Token);
+	}
+
+	private sealed class TrackedScope(TaskCompletionSource disposed) : IAsyncDisposable
+	{
+		public ValueTask DisposeAsync() { disposed.TrySetResult(); return ValueTask.CompletedTask; }
 	}
 
 	private sealed class DelayedTerminal : IRemoteReplBackend, IRemoteTerminalSession
