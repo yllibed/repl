@@ -29,7 +29,8 @@ internal sealed class TerminalWriter : TextWriter
 	public override Task WriteAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default) =>
 		_queue.Writer.WriteAsync(buffer.ToString(), cancellationToken).AsTask();
 	public override Task WriteLineAsync(string? value) => WriteAsync(value + NewLine);
-	public override Task WriteLineAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default) => WriteAsync(buffer.ToString() + NewLine);
+	public override Task WriteLineAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default) =>
+		WriteAsync((buffer.ToString() + NewLine).AsMemory(), cancellationToken);
 
 	private async Task PumpAsync(Func<string, CancellationToken, ValueTask> write)
 	{
@@ -49,7 +50,11 @@ internal sealed class TerminalWriter : TextWriter
 			}
 			if (pendingSurrogate is not null) { await write("\ufffd", _lifetime.Token).ConfigureAwait(false); }
 		}
-		finally { await _lifetime.CancelAsync().ConfigureAwait(false); }
+		finally
+		{
+			_queue.Writer.TryComplete();
+			await _lifetime.CancelAsync().ConfigureAwait(false);
+		}
 	}
 
 	public override async ValueTask DisposeAsync()

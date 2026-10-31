@@ -7,13 +7,14 @@ namespace Repl.Remote;
 public sealed class RemoteTerminal : IAsyncDisposable
 {
 	private readonly JsonRpc _rpc;
+	private readonly Func<Exception, ValueTask> _disconnect;
 	private readonly Channel<string> _output = Channel.CreateBounded<string>(new BoundedChannelOptions(256)
 	{
 		SingleReader = true,
 		SingleWriter = true,
 	});
 	private readonly TaskCompletionSource<int> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-	internal RemoteTerminal(JsonRpc rpc) { _rpc = rpc; }
+	internal RemoteTerminal(JsonRpc rpc, Func<Exception, ValueTask> disconnect) { _rpc = rpc; _disconnect = disconnect; }
 	internal string SessionId { get; } = Guid.NewGuid().ToString("N");
 	/// <summary>Gets terminal output in arrival order. A slow consumer disconnects rather than losing text.</summary>
 	public ChannelReader<string> Output => _output.Reader;
@@ -44,7 +45,17 @@ public sealed class RemoteTerminal : IAsyncDisposable
 		if (!_completion.Task.IsCompleted)
 		{
 			using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-			await _rpc.InvokeWithParameterObjectAsync("terminal.close", new { sessionId = SessionId }, timeout.Token).ConfigureAwait(false);
+			try
+			{
+				await _rpc.InvokeWithParameterObjectAsync("terminal.close", new { sessionId = SessionId }, timeout.Token)
+					.WaitAsync(timeout.Token).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException error) when (timeout.IsCancellationRequested)
+			{
+				var failure = new TimeoutException("The remote terminal did not close within five seconds; the connection was disconnected.", error);
+				await _disconnect(failure).ConfigureAwait(false);
+				throw failure;
+			}
 		}
 	}
 }

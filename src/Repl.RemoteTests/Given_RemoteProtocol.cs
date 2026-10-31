@@ -14,7 +14,7 @@ public sealed class Given_RemoteProtocol
 	public async Task When_AClientConnects_Then_ItDiscoversAndExecutesJsonValues()
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-		var name = NewPipeName();
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend()));
 		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
 
@@ -39,7 +39,7 @@ public sealed class Given_RemoteProtocol
 	public async Task When_ATerminalIsOpen_Then_OnlyItsConnectionIsBusy()
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-		var name = NewPipeName();
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend()));
 		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
 		await using var other = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
@@ -63,7 +63,7 @@ public sealed class Given_RemoteProtocol
 	public async Task When_AConnectionIsDisposed_Then_BorrowedStreamsStayOpen()
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-		var name = NewPipeName();
+		var name = TestPipeName.Create();
 		await using var input = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
 		await using var output = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
 		var accept = input.WaitForConnectionAsync(deadline.Token);
@@ -86,7 +86,7 @@ public sealed class Given_RemoteProtocol
 	public async Task When_AnEndpointIsOwned_Then_ASecondListenerFails()
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-		var name = NewPipeName();
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend()));
 		await using (var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token)) { await client.DiscoverAsync(deadline.Token); }
 
@@ -99,11 +99,11 @@ public sealed class Given_RemoteProtocol
 	public async Task When_AnInvocationCrossesTwoServers_Then_TheResultReturnsToTheOriginalClient()
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-		var cName = NewPipeName();
+		var cName = TestPipeName.Create();
 		await using var cServer = new NamedPipeReplServer(cName, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend()));
 		var cClient = await NamedPipeReplServer.ConnectAsync(cName, deadline.Token).ConfigureAwait(false);
 		await using var cClientOwner = cClient.ConfigureAwait(false);
-		var bName = NewPipeName();
+		var bName = TestPipeName.Create();
 		var bServer = new NamedPipeReplServer(bName, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend(
 			async (request, ct) => await cClient.ExecuteAsync(request, ct).ConfigureAwait(false))));
 		await using var bServerOwner = bServer.ConfigureAwait(false);
@@ -125,7 +125,7 @@ public sealed class Given_RemoteProtocol
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 		RemoteReplClient? aClient = null;
-		var cName = NewPipeName();
+		var cName = TestPipeName.Create();
 		var rejected = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 		var cServer = new NamedPipeReplServer(cName, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend(async (request, ct) =>
 		{
@@ -135,7 +135,7 @@ public sealed class Given_RemoteProtocol
 		await using var cServerOwner = cServer.ConfigureAwait(false);
 		var cClient = await NamedPipeReplServer.ConnectAsync(cName, deadline.Token).ConfigureAwait(false);
 		await using var cClientOwner = cClient.ConfigureAwait(false);
-		var bName = NewPipeName();
+		var bName = TestPipeName.Create();
 		var bServer = new NamedPipeReplServer(bName, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend(
 			async (request, ct) => await cClient.ExecuteAsync(request, ct).ConfigureAwait(false))));
 		await using var bServerOwner = bServer.ConfigureAwait(false);
@@ -156,7 +156,7 @@ public sealed class Given_RemoteProtocol
 		using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
 		var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 		var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		var cName = NewPipeName();
+		var cName = TestPipeName.Create();
 		var cServer = new NamedPipeReplServer(cName, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend(async (_, ct) =>
 		{
 			started.TrySetResult();
@@ -167,7 +167,7 @@ public sealed class Given_RemoteProtocol
 		await using var cServerOwner = cServer.ConfigureAwait(false);
 		var cClient = await NamedPipeReplServer.ConnectAsync(cName, deadline.Token).ConfigureAwait(false);
 		await using var cClientOwner = cClient.ConfigureAwait(false);
-		var bName = NewPipeName();
+		var bName = TestPipeName.Create();
 		var bServer = new NamedPipeReplServer(bName, _ => ValueTask.FromResult<IRemoteReplBackend>(new Backend(
 			async (request, ct) => await cClient.ExecuteAsync(request, ct).ConfigureAwait(false))));
 		await using var bServerOwner = bServer.ConfigureAwait(false);
@@ -184,7 +184,67 @@ public sealed class Given_RemoteProtocol
 		await stopped.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
 	}
 
-	private static string NewPipeName() => $"repl-tests-{Guid.NewGuid():N}";
+
+	[TestMethod]
+	[Description("Cancellation after terminal creation but before its response arrives does not lose the terminal handle with the shipped RPC cancellation behavior.")]
+	public async Task When_AnOpenResponseIsDelayed_Then_CancellationDoesNotOrphanTheTerminal()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		using var caller = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+		var name = TestPipeName.Create();
+		await using var input = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+		await using var output = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+		var accept = input.WaitForConnectionAsync(deadline.Token);
+		await output.ConnectAsync(deadline.Token);
+		await accept;
+		await using var backend = new Backend();
+		await using var gate = new DelayedResponseStream(input);
+		var serving = RemoteReplServer.RunAsync(input, gate, backend, deadline.Token);
+		await using var client = new RemoteReplClient(output);
+		try
+		{
+			var opening = client.OpenTerminalAsync(cancellationToken: caller.Token);
+			await gate.Waiting.Task.WaitAsync(deadline.Token);
+
+			await caller.CancelAsync();
+			gate.Release.TrySetResult();
+			await using var terminal = await opening.WaitAsync(deadline.Token);
+			await terminal.DisposeAsync();
+
+			(await terminal.Completion.WaitAsync(deadline.Token)).Should().Be(130);
+			(await client.ExecuteAsync(new() { Arguments = ["health"] }, deadline.Token)).ExitCode.Should().Be(7);
+		}
+		finally
+		{
+			gate.Release.TrySetResult();
+			await deadline.CancelAsync();
+			try { await serving; } catch (OperationCanceledException) { }
+		}
+	}
+
+	private sealed class DelayedResponseStream(Stream inner) : Stream
+	{
+		internal TaskCompletionSource Waiting { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public override bool CanRead => false;
+		public override bool CanSeek => false;
+		public override bool CanWrite => true;
+		public override long Length => throw new NotSupportedException();
+		public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+		public override void Flush() => inner.Flush();
+		public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+		public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+		public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+		public override void SetLength(long value) => throw new NotSupportedException();
+		public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+		public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+		public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+		{
+			Waiting.TrySetResult();
+			await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+			await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+		}
+	}
 
 	private sealed class Backend(Func<RemoteInvocationRequest, CancellationToken, ValueTask<RemoteExecutionResult>>? execute = null) : IRemoteReplBackend
 	{

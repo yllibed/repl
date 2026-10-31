@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using System.IO.Pipes;
 using Repl.Remote;
 using StreamJsonRpc;
 
@@ -15,7 +16,7 @@ public sealed class Given_RemoteLifetimes
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 		var backend = new BlockedBackend();
-		var name = $"repl-lifetime-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(backend));
 		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
 		var call = describe ? (Task)client.DescribeAsync(deadline.Token) : client.ExecuteAsync(new() { Arguments = ["wait"] }, deadline.Token);
@@ -32,6 +33,63 @@ public sealed class Given_RemoteLifetimes
 
 		await backend.Disposed.Task.WaitAsync(deadline.Token);
 		backend.DisposedWhileRunning.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[DataRow(false, DisplayName = "Owned pipe disconnects")]
+	[DataRow(true, DisplayName = "Borrowed pipe stays open")]
+	[Description("A terminal close has a local deadline even when the backend delays completion; the failed RPC connection is retired without disposing borrowed streams.")]
+	public async Task When_ATerminalDelaysClosing_Then_TheClientTimesOutLocally(bool borrowStream)
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		var backend = new DelayedTerminal();
+		var name = TestPipeName.Create();
+		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(backend));
+		await using var pipe = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+		if (borrowStream) { await pipe.ConnectAsync(deadline.Token); }
+		await using var client = borrowStream ? new RemoteReplClient(pipe) : await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+		await using var terminal = await client.OpenTerminalAsync(cancellationToken: deadline.Token);
+		try
+		{
+			var close = terminal.DisposeAsync().AsTask();
+			await backend.Cancelled.Task.WaitAsync(deadline.Token);
+			var first = await Task.WhenAny(close, Task.Delay(TimeSpan.FromSeconds(8), TimeProvider.System, deadline.Token));
+
+			first.Should().BeSameAs(close, "the client's own close deadline must expire before the outer test deadline");
+#pragma warning disable VSTHRD003 // The assertion observes the close started by this test.
+			var observe = () => close;
+#pragma warning restore VSTHRD003
+			await observe.Should().ThrowAsync<TimeoutException>();
+#pragma warning disable VSTHRD003 // The remote terminal completes independently of the test thread.
+			var completion = () => terminal.Completion;
+#pragma warning restore VSTHRD003
+			await completion.Should().ThrowAsync<TimeoutException>();
+			if (borrowStream) { pipe.CanRead.Should().BeTrue(); }
+			backend.Disposed.Task.IsCompleted.Should().BeFalse();
+		}
+		finally { backend.Release.TrySetResult(130); }
+
+		await backend.Disposed.Task.WaitAsync(deadline.Token);
+	}
+
+	private sealed class DelayedTerminal : IRemoteReplBackend, IRemoteTerminalSession
+	{
+		internal TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		internal TaskCompletionSource<int> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		internal TaskCompletionSource Disposed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		private CancellationTokenRegistration _registration;
+		public Task<int> Completion => Release.Task;
+		public ValueTask<RemoteCommandGraph> DescribeAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new RemoteCommandGraph("delayed", [], []));
+		public ValueTask<RemoteExecutionResult> ExecuteAsync(RemoteInvocationRequest request, CancellationToken cancellationToken) => ValueTask.FromResult(new RemoteExecutionResult(0, "success"));
+		public ValueTask<IRemoteTerminalSession> OpenTerminalAsync(RemoteTerminalOptions options, Func<string, CancellationToken, ValueTask> writeOutput, CancellationToken cancellationToken)
+		{
+			_registration = cancellationToken.Register(() => Cancelled.TrySetResult());
+			return ValueTask.FromResult<IRemoteTerminalSession>(this);
+		}
+		public ValueTask InputAsync(string text, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+		public ValueTask ResizeAsync(int columns, int rows, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+		public ValueTask InterruptAsync(CancellationToken cancellationToken) => ValueTask.CompletedTask;
+		public ValueTask DisposeAsync() { _registration.Dispose(); Disposed.TrySetResult(); return ValueTask.CompletedTask; }
 	}
 
 	private sealed class BlockedBackend : IRemoteReplBackend

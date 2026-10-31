@@ -57,7 +57,7 @@ public sealed class RemoteReplClient : IAsyncDisposable
 	{
 		options ??= new();
 		options.Validate();
-		var terminal = new RemoteTerminal(_rpc);
+		var terminal = new RemoteTerminal(_rpc, DisconnectAsync);
 		if (Interlocked.CompareExchange(ref _terminal, terminal, comparand: null) is not null) { throw new InvalidOperationException("A terminal is already open."); }
 		try
 		{
@@ -97,5 +97,11 @@ public sealed class RemoteReplClient : IAsyncDisposable
 	{
 		_rpc.Dispose();
 		if (_ownedStream is not null) { await _ownedStream.DisposeAsync().ConfigureAwait(false); }
+	}
+
+	private async ValueTask DisconnectAsync(Exception error)
+	{
+		Interlocked.Exchange(ref _terminal, value: null)?.Finish(error);
+		await DisposeAsync().ConfigureAwait(false);
 	}
 }
