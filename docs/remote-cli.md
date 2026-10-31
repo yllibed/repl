@@ -1,8 +1,16 @@
 # Remote CLI and local administration
 
-`Repl.Remote` provides a client and server for invoking commands in an existing process. `Repl.Remote.Defaults` connects that protocol to a `ReplApp`. These are advanced hosting features: use them when Repl is one component of a larger application, or when an existing executable needs a compatible administration entry point.
+Attach a console to an application that is already running, or ask it to execute one command and return an exit code. For example, an operator can inspect shared state inside a container without restarting the service or starting a second application instance.
+
+`Repl.Remote` supplies the client and server; `Repl.Remote.Defaults` connects them to a `ReplApp`. These are advanced, optional hosting features, mainly for compatibility with existing executables and applications where Repl is one small component.
 
 For a runnable example, use [sample 05](../samples/05-hosting-remote/). The same process serves browser terminals, native console sessions and one-shot commands against shared application services.
+
+## Explicit opt-in
+
+Existing applications do not enable remote access by upgrading Core or Defaults. Neither package depends on the remote packages. Reference `Repl.Remote.Defaults` when integrating a `ReplApp`; it brings in `Repl.Remote`. Reference only `Repl.Remote` when implementing your own backend. Referencing a package alone starts no listener.
+
+The application explicitly creates `NamedPipeReplServer` to start listening, or calls `RemoteReplServer.RunAsync` over streams it supplies. The framework does not automatically recognize `--remote-console` or `--remote-exec`: those switches belong to the hosting executable, as illustrated by sample 05. The sample deliberately starts its pipe listener during server startup.
 
 ## Packages and boundaries
 
@@ -66,6 +74,24 @@ var result = await client.ExecuteAsync(new RemoteInvocationRequest
 return result.ExitCode;
 ```
 
+`DiscoverAsync` checks the protocol profile version; `DescribeAsync` returns the application's command graph. Use the canonical route and parameter keys returned by `DescribeAsync` for a structured call. For an application that registers `items show {id}`, for example:
+
+```csharp
+var graph = await client.DescribeAsync(deadline.Token);
+var item = await client.ExecuteAsync(new RemoteInvocationRequest
+{
+    Command = "items show {id}",
+    Values = new Dictionary<string, System.Text.Json.JsonElement>
+    {
+        ["id"] = System.Text.Json.JsonSerializer.SerializeToElement(42),
+    },
+}, deadline.Token);
+```
+
+`Arguments` contains already-separated tokens, not a shell command string. Supply either tokens or a structured route with `Values` and optional `GlobalValues`. Shell expansion, quoting and executable selection are the client's responsibility.
+
+A command failure returns a `RemoteExecutionResult` with its `Kind` and application-selected `ExitCode`; inspect those even when the RPC call succeeds. `Result` contains rendered JSON, while `StandardOutput` and `StandardError` contain text written through the invocation's I/O streams. Transport/protocol failures throw instead. Caller tokens define connection and invocation deadlines; execution has no automatic client timeout, and cancellation is cooperative rather than a guarantee that the handler stopped.
+
 For an interactive client, call `RemoteConsole.RunAsync(client, cancellationToken)`. It requires a real console. Ctrl+C interrupts the remote command; Ctrl+D detaches. Local console state is restored on normal exit, cancellation and failure. Consume `RemoteTerminal.Output` continuously when writing a custom terminal client.
 
 Closing a terminal waits locally for up to five seconds. If the server does not finish in that interval, the client reports `TimeoutException` and retires the RPC connection. Reconnect before issuing another command. This releases the local console even if a handler is slow to stop; it does not forcibly stop application code. Factory-owned pipes are closed, while caller-supplied streams remain borrowed.
@@ -128,7 +154,7 @@ The supplied listener uses `PipeOptions.CurrentUserOnly` on both ends. On Window
 
 This endpoint is intended for trusted local administration. It does not provide a network authentication layer, per-command authorization or a sandbox for handlers. A caller supplying another transport must establish those boundaries before passing its streams to the server. Terminal output contains application-controlled VT sequences.
 
-Terminal output buffers are bounded; a slow consumer causes a visible connection failure rather than silent text loss. This first implementation captures one-shot output in memory and relies on the application's input and result sizes. It is suited to modest administrative commands, not bulk data transfer or untrusted traffic.
+Terminal output buffers are bounded; if the client does not consume output fast enough, terminal completion fails and its RPC connection is retired. Factory-owned pipes close, cancelling the server session; borrowed streams still require their owner to close them. Reconnect before submitting more work. This first implementation captures one-shot output in memory and relies on the application's input and result sizes. It is suited to modest administrative commands, not bulk data transfer or untrusted traffic.
 
 ## Delegation and future adapters
 
