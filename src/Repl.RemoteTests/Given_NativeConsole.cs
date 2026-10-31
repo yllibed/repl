@@ -23,7 +23,7 @@ public sealed class Given_NativeConsole
 			await io.Output.WriteLineAsync("native-wait-started").ConfigureAwait(false);
 			await Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, ct).ConfigureAwait(false);
 		});
-		var name = $"repl-native-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var serverOwner = server.ConfigureAwait(false);
 		var root = FindRepositoryRoot();

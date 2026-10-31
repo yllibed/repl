@@ -28,7 +28,7 @@ public sealed class Given_RemoteTerminal
 			try { await Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, ct).ConfigureAwait(false); }
 			finally { stopped.TrySetResult(); }
 		});
-		var name = $"repl-terminal-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var serverOwner = server.ConfigureAwait(false);
 		var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token).ConfigureAwait(false);
@@ -66,7 +66,7 @@ public sealed class Given_RemoteTerminal
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
 		var app = ReplApp.Create().UseEmbeddedConsoleProfile();
 		app.Map("hello", () => "hello");
-		var name = $"repl-console-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var serverOwner = server.ConfigureAwait(false);
 		var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token).ConfigureAwait(false);
@@ -93,7 +93,7 @@ public sealed class Given_RemoteTerminal
 			foreach (var value in "🦆") { io.Output.Write(value); }
 #pragma warning restore MA0045
 		});
-		var name = $"repl-unicode-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
 		await using var terminal = await client.OpenTerminalAsync(cancellationToken: deadline.Token);
@@ -120,7 +120,7 @@ public sealed class Given_RemoteTerminal
 			var secret = await channel.AskSecretAsync("pin", "PIN", new AskSecretOptions(CancellationToken: ct)).ConfigureAwait(false);
 			received.TrySetResult(secret);
 		});
-		var name = $"repl-secret-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
 		await using var terminal = await client.OpenTerminalAsync(new() { Ansi = false }, deadline.Token);
@@ -155,7 +155,7 @@ public sealed class Given_RemoteTerminal
 			finally { stopped.TrySetResult(); }
 		});
 		app.Map("health", () => "ready");
-		var name = $"repl-prompt-{Guid.NewGuid():N}";
+		var name = TestPipeName.Create();
 		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
 		await using var terminal = await client.OpenTerminalAsync(new() { Ansi = false }, deadline.Token);
