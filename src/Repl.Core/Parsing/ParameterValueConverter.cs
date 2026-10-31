@@ -17,25 +17,7 @@ internal static class ParameterValueConverter
 			return HandlerArgumentBinder.ConvertMatchesToTargetCollection(targetType, elementType,
 				items.Select(item => ConvertNative(item, elementType, provider, enumIgnoreCase)).ToArray());
 		}
-		if (value is System.Text.Json.JsonElement json)
-		{
-			if (targetType == typeof(string))
-			{
-				return json.ValueKind == System.Text.Json.JsonValueKind.String ? json.GetString() : json.GetRawText();
-			}
-			if (json.ValueKind == System.Text.Json.JsonValueKind.Number)
-			{
-				return ConvertSingle(json.GetRawText(), targetType, CultureInfo.InvariantCulture, enumIgnoreCase);
-			}
-			value = json.ValueKind switch
-			{
-				System.Text.Json.JsonValueKind.String => json.GetString(),
-				System.Text.Json.JsonValueKind.True => true,
-				System.Text.Json.JsonValueKind.False => false,
-				System.Text.Json.JsonValueKind.Null => null,
-				_ => throw new InvalidCastException("Invocation values must be scalars or collections of scalars."),
-			};
-		}
+		if (value is System.Text.Json.JsonElement json) { value = ConvertJsonInput(json, targetType, enumIgnoreCase); }
 		if (value is null)
 		{
 			if (targetType.IsValueType && Nullable.GetUnderlyingType(targetType) is null)
@@ -64,6 +46,43 @@ internal static class ParameterValueConverter
 		if (type.IsEnum) { return Enum.ToObject(type, value); }
 		return Convert.ChangeType(value, type, provider);
 	}
+
+	private static object? ConvertJsonInput(System.Text.Json.JsonElement json, Type targetType, bool enumIgnoreCase)
+	{
+		if (targetType == typeof(string))
+		{
+			return json.ValueKind == System.Text.Json.JsonValueKind.String ? json.GetString() : json.GetRawText();
+		}
+		if (targetType == typeof(object) || json.ValueKind == System.Text.Json.JsonValueKind.Object) { return ReadNativeJson(json); }
+		if (json.ValueKind == System.Text.Json.JsonValueKind.Number)
+		{
+			return ConvertSingle(json.GetRawText(), targetType, CultureInfo.InvariantCulture, enumIgnoreCase);
+		}
+		return json.ValueKind switch
+		{
+			System.Text.Json.JsonValueKind.String => json.GetString(),
+			System.Text.Json.JsonValueKind.True => true,
+			System.Text.Json.JsonValueKind.False => false,
+			System.Text.Json.JsonValueKind.Null => null,
+			_ => throw new InvalidCastException("Invocation values must be scalars or collections of scalars."),
+		};
+	}
+
+	private static object? ReadNativeJson(System.Text.Json.JsonElement value) => value.ValueKind switch
+	{
+		System.Text.Json.JsonValueKind.Null => null,
+		System.Text.Json.JsonValueKind.True => true,
+		System.Text.Json.JsonValueKind.False => false,
+		System.Text.Json.JsonValueKind.String => value.GetString(),
+		System.Text.Json.JsonValueKind.Number when value.TryGetInt64(out var integer) => integer,
+		System.Text.Json.JsonValueKind.Number when value.TryGetUInt64(out var unsigned) => unsigned,
+		System.Text.Json.JsonValueKind.Number when value.TryGetDecimal(out var number) => number,
+		System.Text.Json.JsonValueKind.Number when double.IsFinite(value.GetDouble()) => value.GetDouble(),
+		System.Text.Json.JsonValueKind.Array => value.EnumerateArray().Select(ReadNativeJson).ToArray(),
+		System.Text.Json.JsonValueKind.Object => value.EnumerateObject().ToDictionary(property => property.Name,
+			property => ReadNativeJson(property.Value), StringComparer.Ordinal),
+		_ => throw new InvalidCastException("The JSON value cannot be represented as a native value."),
+	};
 
 	public static object? ConvertSingle(
 		string? value,

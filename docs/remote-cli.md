@@ -68,6 +68,8 @@ return result.ExitCode;
 
 For an interactive client, call `RemoteConsole.RunAsync(client, cancellationToken)`. It requires a real console. Ctrl+C interrupts the remote command; Ctrl+D detaches. Local console state is restored on normal exit, cancellation and failure. Consume `RemoteTerminal.Output` continuously when writing a custom terminal client.
 
+Closing a terminal waits locally for up to five seconds. If the server does not finish in that interval, the client reports `TimeoutException` and retires the RPC connection. Reconnect before issuing another command. This releases the local console even if a handler is slow to stop; it does not forcibly stop application code. Factory-owned pipes are closed, while caller-supplied streams remain borrowed.
+
 `new RemoteReplClient(stream)` and `RemoteReplServer.RunAsync(stream, backend, token)` borrow their streams. Their two-stream overloads also support redirected standard I/O. Callers close those streams and dispose the backend. The named-pipe listener instead owns its accepted streams and backend instances; the named-pipe client factory owns the pipe it creates.
 
 The stream server drains in-flight backend calls before returning. Listener shutdown waits up to five seconds, then throws `TimeoutException` if application code is still running; it retains those backends until their calls finish. The embedding application must keep borrowed services alive until that work has drained.
@@ -113,6 +115,10 @@ An execution supplies exactly one representation:
 ```
 
 Structured commands use registered route templates and canonical parameter keys from discovery. JSON arrays and objects remain native values. The Defaults adapter forces JSON output and prevents automatic interactive entry for `cli.execute`. Returned JSON is separate from handler writes through `IReplIoContext.Output` and `.Error`; multiple rendered results are returned as a JSON array. Write through these injected streams rather than process-global `Console` APIs.
+
+Object parameters receive JSON objects as dictionaries and JSON arrays as native arrays, with nested values preserved. List-like parameters support arrays, `List<T>`, `IList<T>`, `ICollection<T>`, `IReadOnlyCollection<T>`, `IReadOnlyList<T>` and `IEnumerable<T>` through the shared binder. Unknown custom types retain an unconstrained discovery schema; that does not promise arbitrary CLR deserialization.
+
+An empty invocation or a context without a command returns the ordinary `help` outcome with human-readable help in `StandardOutput` and no JSON result. Explicit `--help` retains its structured JSON result.
 
 Discovery follows Repl's metadata. Explicit service parameters are omitted; implicit service fallback parameters may remain optional CLI inputs. Unknown value types receive an unconstrained schema rather than a CLR type name. Hidden commands are omitted from discovery but remain invocable: hiding is not authorization.
 

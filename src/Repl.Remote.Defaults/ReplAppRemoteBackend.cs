@@ -61,8 +61,18 @@ public sealed class ReplAppRemoteBackend : IRemoteReplBackend
 		var outcome = await _app.Core.RunInvocationWithOutcomeAsync(invocation,
 			["--output:json", "--no-interactive"], scope.ServiceProvider, presenceServiceProvider: null,
 			ReplInvocationChannel.Programmatic, useApplicationExitCodes: true, cancellationToken).ConfigureAwait(false);
+		var renderedText = rendered.ToString();
+		var standardOutput = output.ToString();
+		JsonElement? result;
+		try { result = ParseRenderedResult(renderedText); }
+		catch (JsonException) when (outcome.Kind == ReplExecutionOutcomeKind.Help)
+		{
+			// Implicit root/context help is human text even when the command output format is JSON.
+			result = null;
+			standardOutput += renderedText;
+		}
 		return new(outcome.ExitCode, JsonNamingPolicy.CamelCase.ConvertName(outcome.Kind.ToString()),
-			ParseRenderedResult(rendered.ToString()), output.ToString(), error.ToString());
+			result, standardOutput, error.ToString());
 	}
 
 	private static Dictionary<string, object?>? ToValues(IReadOnlyDictionary<string, JsonElement>? values) =>

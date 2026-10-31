@@ -666,7 +666,9 @@ internal static class HandlerArgumentBinder
 		}
 
 		if (parameterType.IsGenericType
-			&& parameterType.GetGenericTypeDefinition() == typeof(List<>))
+			&& parameterType.GetGenericTypeDefinition() is var definition
+			&& (definition == typeof(List<>) || definition == typeof(IList<>)
+				|| definition == typeof(ICollection<>) || definition == typeof(IReadOnlyCollection<>)))
 		{
 			elementType = parameterType.GetGenericArguments()[0];
 			return true;

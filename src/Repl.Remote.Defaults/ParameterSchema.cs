@@ -20,12 +20,9 @@ internal static class ParameterSchema
 		}
 		if (type.IsEnum) { return new() { ["type"] = "string", ["enum"] = JsonSerializer.SerializeToNode(Enum.GetNames(type)) }; }
 		if (type.IsArray && type.GetArrayRank() == 1) { return new() { ["type"] = "array", ["items"] = Build(type.GetElementType()!) }; }
-		if (type.IsGenericType && type.GetGenericTypeDefinition() is var definition &&
-			(definition == typeof(List<>) || definition == typeof(IList<>) || definition == typeof(IReadOnlyList<>) ||
-			 definition == typeof(IEnumerable<>) || definition == typeof(ICollection<>) || definition == typeof(IReadOnlyCollection<>) ||
-			 definition == typeof(HashSet<>) || definition == typeof(ISet<>)))
+		if (!type.IsArray && HandlerArgumentBinder.TryGetCollectionElementType(type, out var elementType))
 		{
-			return new() { ["type"] = "array", ["items"] = Build(type.GetGenericArguments()[0]) };
+			return new() { ["type"] = "array", ["items"] = Build(elementType) };
 		}
 		return Build(type.Name);
 	}
@@ -43,7 +40,7 @@ internal static class ParameterSchema
 		if (type.EndsWith('?')) { return new() { ["anyOf"] = new JsonArray(Build(type[..^1]), new JsonObject { ["type"] = "null" }) }; }
 		if (type.EndsWith("[]", StringComparison.Ordinal)) { return new() { ["type"] = "array", ["items"] = Build(type[..^2]) }; }
 		if (type.EndsWith('>') && type.IndexOf('<') is > 0 and var start &&
-			type[..start] is "List" or "IList" or "IReadOnlyList" or "IEnumerable" or "ICollection" or "IReadOnlyCollection" or "HashSet" or "ISet")
+			type[..start] is "List" or "IList" or "IReadOnlyList" or "IEnumerable" or "ICollection" or "IReadOnlyCollection")
 		{
 			return new() { ["type"] = "array", ["items"] = Build(type[(start + 1)..^1]) };
 		}
