@@ -119,8 +119,8 @@ public static class RemoteReplServer
 			await _terminalIo.WaitAsync(waiting.Token).ConfigureAwait(false);
 			try
 			{
-				var terminal = GetTerminal(sessionId);
-				using var linked = CancellationTokenSource.CreateLinkedTokenSource(waiting.Token, _terminalLifetime!.Token);
+				var (terminal, terminalToken) = GetTerminal(sessionId);
+				using var linked = CancellationTokenSource.CreateLinkedTokenSource(waiting.Token, terminalToken);
 				await operation(terminal, linked.Token).ConfigureAwait(false);
 			}
 			finally { _terminalIo.Release(); }
@@ -143,8 +143,9 @@ public static class RemoteReplServer
 #pragma warning restore VSTHRD003
 		}
 
-		private IRemoteTerminalSession GetTerminal(string sessionId) =>
-			!_terminalClosing && string.Equals(_terminalId, sessionId, StringComparison.Ordinal) && _terminal is { } terminal ? terminal :
+		private (IRemoteTerminalSession Terminal, CancellationToken Token) GetTerminal(string sessionId) =>
+			!_terminalClosing && string.Equals(_terminalId, sessionId, StringComparison.Ordinal) &&
+			_terminal is { } terminal && _terminalLifetime is { } terminalLifetime ? (terminal, terminalLifetime.Token) :
 			throw new LocalRpcException("No active terminal with this sessionId.") { ErrorCode = -32002 };
 
 		private async Task FinishTerminalAsync(IRemoteTerminalSession terminal, string sessionId)

@@ -98,7 +98,7 @@ Closing a terminal waits locally for up to five seconds. If the server does not 
 
 `new RemoteReplClient(stream)` and `RemoteReplServer.RunAsync(stream, backend, token)` borrow their streams. Their two-stream overloads also support redirected standard I/O. Callers close those streams and dispose the backend. The named-pipe listener instead owns its accepted streams and backend instances; the named-pipe client factory owns the pipe it creates.
 
-The stream server drains in-flight backend calls before returning. Listener shutdown waits up to five seconds, then throws `TimeoutException` if application code is still running; it retains those backends until their calls finish. The embedding application must keep borrowed services alive until that work has drained.
+The stream server drains in-flight backend calls before returning. Listener shutdown stops accepting and closes its owned pipes before waiting for application cancellation callbacks or active calls. Its five-second deadline covers the entire asynchronous shutdown, including callbacks and acceptance teardown. If that deadline expires, disposal throws `TimeoutException` while cleanup continues in the background; deferred cleanup failures are traced. Active backends remain owned until their calls finish, and the embedding application must keep borrowed services alive until that work has drained.
 
 A connection permits one active execution or terminal. Different connections can execute concurrently; handlers must protect shared mutable state as they would for other hosted transports. A busy connection returns error `-32001`. A terminal identifier belongs only to its connection; a missing terminal returns `-32002`.
 

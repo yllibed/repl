@@ -38,6 +38,56 @@ public sealed class Given_RemoteLifetimes
 	}
 
 	[TestMethod]
+	[Description("A blocked application cancellation callback cannot delay listener shutdown or pipe retirement; active backend ownership remains until its method finishes.")]
+	public async Task When_ACancellationCallbackBlocks_Then_ListenerShutdownStillTimesOut()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		using var releaseCallback = new ManualResetEventSlim();
+		var callbackStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var backend = new BlockedBackend();
+		CancellationTokenRegistration registration = default;
+		var name = TestPipeName.Create();
+		await using var server = new NamedPipeReplServer(name, token =>
+		{
+			registration = token.Register(() => { callbackStarted.TrySetResult(); releaseCallback.Wait(); });
+			return ValueTask.FromResult<IRemoteReplBackend>(backend);
+		});
+		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+		var call = client.DescribeAsync(deadline.Token);
+		await backend.Started.Task.WaitAsync(deadline.Token);
+		var shutdown = server.DisposeAsync().AsTask();
+		try
+		{
+			await callbackStarted.Task.WaitAsync(deadline.Token);
+			var first = await Task.WhenAny(shutdown, Task.Delay(TimeSpan.FromSeconds(8), TimeProvider.System, deadline.Token));
+
+			first.Should().BeSameAs(shutdown, "the listener deadline must include application cancellation callbacks");
+#pragma warning disable VSTHRD003 // The assertion observes shutdown started by this test.
+			var observe = () => shutdown;
+#pragma warning restore VSTHRD003
+			await observe.Should().ThrowAsync<TimeoutException>();
+			server.Completion.IsCompleted.Should().BeTrue("acceptance stops without waiting for the application callback");
+			backend.Disposed.Task.IsCompleted.Should().BeFalse();
+			var invocation = () => call.WaitAsync(deadline.Token);
+			await invocation.Should().ThrowAsync<ConnectionLostException>();
+			using var connectionDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+			var reconnect = () => NamedPipeReplServer.ConnectAsync(name, connectionDeadline.Token);
+			await reconnect.Should().ThrowAsync<OperationCanceledException>();
+		}
+		finally
+		{
+			releaseCallback.Set();
+			backend.Release.TrySetResult();
+			try { await shutdown.WaitAsync(deadline.Token); } catch (TimeoutException) { }
+			try { await call.WaitAsync(deadline.Token); } catch (ConnectionLostException) { }
+			await registration.DisposeAsync();
+		}
+
+		await backend.Disposed.Task.WaitAsync(deadline.Token);
+		backend.DisposedWhileRunning.Should().BeFalse();
+	}
+
+	[TestMethod]
 	[DataRow(false, DisplayName = "Owned pipe disconnects")]
 	[DataRow(true, DisplayName = "Borrowed pipe stays open")]
 	[Description("A terminal close has a local deadline even when the backend delays completion; the failed RPC connection is retired without disposing borrowed streams.")]

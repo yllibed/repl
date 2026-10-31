@@ -15,7 +15,8 @@ public static class RemoteProtocol
 	/// <summary>Gets the OpenRPC description of this profile.</summary>
 	public static JsonElement Discover()
 	{
-		using var stream = typeof(RemoteProtocol).Assembly.GetManifestResourceStream("Repl.Remote.openrpc.json")!;
+		using var stream = typeof(RemoteProtocol).Assembly.GetManifestResourceStream("Repl.Remote.openrpc.json")
+			?? throw new InvalidOperationException("The embedded remote CLI protocol description is missing.");
 		using var document = JsonDocument.Parse(stream);
 		return document.RootElement.Clone();
 	}

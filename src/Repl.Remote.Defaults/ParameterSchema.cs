@@ -19,7 +19,10 @@ internal static class ParameterSchema
 			return new() { ["anyOf"] = new JsonArray(Build(underlying), new JsonObject { ["type"] = "null" }) };
 		}
 		if (type.IsEnum) { return new() { ["type"] = "string", ["enum"] = JsonSerializer.SerializeToNode(Enum.GetNames(type)) }; }
-		if (type.IsArray && type.GetArrayRank() == 1) { return new() { ["type"] = "array", ["items"] = Build(type.GetElementType()!) }; }
+		if (type.IsArray && type.GetArrayRank() == 1 && type.GetElementType() is { } arrayElementType)
+		{
+			return new() { ["type"] = "array", ["items"] = Build(arrayElementType) };
+		}
 		if (!type.IsArray && HandlerArgumentBinder.TryGetCollectionElementType(type, out var elementType))
 		{
 			return new() { ["type"] = "array", ["items"] = Build(elementType) };

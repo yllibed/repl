@@ -10,6 +10,7 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 	private readonly ConcurrentDictionary<long, Task> _connections = new();
 	private readonly ConcurrentDictionary<long, NamedPipeServerStream> _pipes = new();
 	private readonly NamedPipeServerStream _first;
+	private NamedPipeServerStream? _accepting;
 	private readonly string _pipeName;
 	private readonly Func<CancellationToken, ValueTask<IRemoteReplBackend>> _backendFactory;
 	private readonly Action<Exception>? _onConnectionError;
@@ -54,9 +55,12 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		var pipe = _first;
 		try
 		{
-			while (true)
+			while (Volatile.Read(ref _disposed) == 0)
 			{
+				Volatile.Write(ref _accepting, pipe);
+				if (Volatile.Read(ref _disposed) != 0) { break; }
 				await pipe.WaitForConnectionAsync(_lifetime.Token).ConfigureAwait(false);
+				if (Volatile.Read(ref _disposed) != 0) { break; }
 				var id = Interlocked.Increment(ref _nextId);
 				_pipes[id] = pipe;
 				var task = ServeAsync(pipe);
@@ -66,8 +70,10 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 			}
 		}
 		catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+		catch (Exception ex) when (_lifetime.IsCancellationRequested && ex is ObjectDisposedException or IOException) { }
 		finally
 		{
+			Volatile.Write(ref _accepting, value: null);
 			if (!ReferenceEquals(pipe, _first)) { await pipe.DisposeAsync().ConfigureAwait(false); }
 		}
 	}
@@ -106,28 +112,52 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		finally { _connections.TryRemove(id, out _); _pipes.TryRemove(id, out _); }
 	}
 
-	/// <summary>Stops accepting, cancels this listener's sessions, and waits up to five seconds for them.</summary>
+	/// <summary>Stops accepting and closes owned pipes, waiting up to five seconds for cancellation callbacks and in-flight sessions.</summary>
 	public async ValueTask DisposeAsync()
 	{
 		if (Interlocked.Exchange(ref _disposed, 1) != 0) { return; }
+		var shutdown = ShutdownAsync();
+		try { await shutdown.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false); }
+		catch (TimeoutException)
+		{
+			_ = ObserveShutdownAsync(shutdown);
+			throw;
+		}
+	}
+
+	private async Task ShutdownAsync()
+	{
+		var cancellation = _lifetime.CancelAsync();
 		try
 		{
-			try { await _lifetime.CancelAsync().ConfigureAwait(false); }
-			finally
-			{
-				try
-				{
-#pragma warning disable VSTHRD003 // Transport completion has no thread affinity.
-					await Completion.ConfigureAwait(false);
-#pragma warning restore VSTHRD003
-				}
-				finally
-				{
-					foreach (var pipe in _pipes.Values) { await pipe.DisposeAsync().ConfigureAwait(false); }
-				}
-			}
-			await Task.WhenAll(_connections.Values).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
+			// Application callbacks can block cancellation; close transport handles before awaiting them.
+			var accepting = Interlocked.Exchange(ref _accepting, value: null);
+			var pipes = _pipes.Values.Append(_first);
+			if (accepting is not null) { pipes = pipes.Append(accepting); }
+			await Task.WhenAll(pipes.Distinct().Select(pipe => pipe.DisposeAsync().AsTask())).ConfigureAwait(false);
 		}
-		finally { await _first.DisposeAsync().ConfigureAwait(false); }
+		finally
+		{
+			try { await Task.WhenAll(cancellation, DrainConnectionsAsync()).ConfigureAwait(false); }
+			finally { _lifetime.Dispose(); }
+		}
+	}
+
+	private async Task DrainConnectionsAsync()
+	{
+#pragma warning disable VSTHRD003 // Acceptance must stop before taking the final snapshot of connection tasks.
+		try { await Completion.ConfigureAwait(false); }
+#pragma warning restore VSTHRD003
+		finally { await Task.WhenAll(_connections.Values).ConfigureAwait(false); }
+	}
+
+	private static async Task ObserveShutdownAsync(Task shutdown)
+	{
+#pragma warning disable VSTHRD003 // Deferred shutdown outlives the caller's deadline and has no thread affinity.
+		try { await shutdown.ConfigureAwait(false); }
+#pragma warning restore VSTHRD003
+#pragma warning disable CA1031 // A timed-out caller cannot observe later cleanup failures; retain diagnostics without an unobserved task.
+		catch (Exception ex) { System.Diagnostics.Trace.TraceError("Remote CLI deferred shutdown failed: {0}", ex); }
+#pragma warning restore CA1031
 	}
 }
