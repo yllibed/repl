@@ -30,6 +30,10 @@ public sealed class VtKeyReader : IReplKeyReader
 	public bool KeyAvailable => false;
 
 	/// <inheritdoc />
+	/// <exception cref="OperationCanceledException">
+	/// <paramref name="ct"/> was cancelled before a key was read, or the terminal input ended. An Esc already read is
+	/// still returned when the wait for a following escape sequence is cut short.
+	/// </exception>
 	public async ValueTask<ConsoleKeyInfo> ReadKeyAsync(CancellationToken ct)
 	{
 		var ch = await ReadCharAsync(ct).ConfigureAwait(false);
@@ -58,8 +62,9 @@ public sealed class VtKeyReader : IReplKeyReader
 		{
 			next = await ReadCharAsync(cts.Token).ConfigureAwait(false);
 		}
-		catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+		catch (OperationCanceledException)
 		{
+			// The Esc was read before whatever ended the wait, a timeout, a deadline or the stream ending: it stands.
 			return MakeKey(ConsoleKey.Escape, '\x1b');
 		}
 
@@ -157,7 +162,7 @@ public sealed class VtKeyReader : IReplKeyReader
 		var read = await _reader.ReadAsync(_charBuf.AsMemory(), ct).ConfigureAwait(false);
 		if (read == 0)
 		{
-			throw new OperationCanceledException(ct);
+			throw new PromptAbandonedException(PromptAbandonedException.InputEndedMessage, ct);
 		}
 
 		return _charBuf[0];

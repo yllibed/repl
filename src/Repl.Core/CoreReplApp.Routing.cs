@@ -35,11 +35,8 @@ public sealed partial class CoreReplApp
 		CancellationToken cancellationToken) =>
 		RoutingEng.ValidateContextAsync(contextMatch, serviceProvider, cancellationToken);
 
-	internal IReplResult CreateRouteResolutionFailureResult(
-		IReadOnlyList<string> tokens,
-		RouteResolver.RouteConstraintFailure? constraintFailure,
-		RouteResolver.RouteMissingArgumentsFailure? missingArgumentsFailure) =>
-		RoutingEng.CreateRouteResolutionFailureResult(tokens, constraintFailure, missingArgumentsFailure);
+	internal IReplResult CreateUnknownCommandResult(IReadOnlyList<string> tokens, ActiveRoutingGraph graph) =>
+		RoutingEng.CreateUnknownCommandResult(tokens, graph);
 
 	internal ValueTask TryRenderCommandBannerAsync(
 		CommandBuilder command,

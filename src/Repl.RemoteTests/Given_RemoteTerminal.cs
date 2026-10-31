@@ -1,6 +1,7 @@
 using System.Text;
 using System.Collections.Concurrent;
 using AwesomeAssertions;
+using Repl.Interaction;
 using Repl.Remote;
 
 namespace Repl.RemoteTests;
@@ -105,6 +106,85 @@ public sealed class Given_RemoteTerminal
 		}
 
 		output.ToString().Should().NotContain("\ufffd");
+	}
+
+	[TestMethod]
+	[Description("A secret entered over JSON-RPC is masked by the hosted key reader, including editing, and never appears in terminal notifications.")]
+	public async Task When_ASecretIsEntered_Then_OnlyItsMaskCrossesTheWire()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		var received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = ReplApp.Create().UseEmbeddedConsoleProfile().Options(options => options.AmbientCommands.ExitCommandEnabled = true);
+		app.Map("unlock", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			var secret = await channel.AskSecretAsync("pin", "PIN", new AskSecretOptions(CancellationToken: ct)).ConfigureAwait(false);
+			received.TrySetResult(secret);
+		});
+		var name = $"repl-secret-{Guid.NewGuid():N}";
+		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
+		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+		await using var terminal = await client.OpenTerminalAsync(new() { Ansi = false }, deadline.Token);
+
+		await terminal.InputAsync("unlock\r", deadline.Token);
+		await ReadUntilAsync(terminal, "PIN: ", deadline.Token);
+		await terminal.InputAsync("qzx\u007f7\r", deadline.Token);
+		(await received.Task.WaitAsync(deadline.Token)).Should().Be("qz7");
+		var secretOutput = await ReadUntilAsync(terminal, "\r\n", deadline.Token);
+
+		secretOutput.Should().Contain("*").And.NotContainAny(["q", "z", "x", "7"]);
+
+		await terminal.InputAsync("exit\r", deadline.Token);
+		(await terminal.Completion.WaitAsync(deadline.Token)).Should().Be(0);
+	}
+
+	[TestMethod]
+	[Description("Disconnecting during a secret prompt cancels its handler rather than supplying an empty answer, and another connection can still execute.")]
+	public async Task When_AClientDisconnectsDuringAPrompt_Then_TheHandlerIsCancelled()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var answered = false;
+		var app = ReplApp.Create().UseEmbeddedConsoleProfile();
+		app.Map("unlock", async (IReplInteractionChannel channel, CancellationToken ct) =>
+		{
+			try
+			{
+				await channel.AskSecretAsync("pin", "PIN", new AskSecretOptions(AllowEmpty: true, CancellationToken: ct)).ConfigureAwait(false);
+				answered = true;
+			}
+			finally { stopped.TrySetResult(); }
+		});
+		app.Map("health", () => "ready");
+		var name = $"repl-prompt-{Guid.NewGuid():N}";
+		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
+		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+		await using var terminal = await client.OpenTerminalAsync(new() { Ansi = false }, deadline.Token);
+		await terminal.InputAsync("unlock\r", deadline.Token);
+		await ReadUntilAsync(terminal, "PIN: ", deadline.Token);
+
+		await client.DisposeAsync();
+		await stopped.Task.WaitAsync(deadline.Token);
+
+		answered.Should().BeFalse();
+		await using var other = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+		(await other.ExecuteAsync(new() { Arguments = ["health"] }, deadline.Token)).ExitCode.Should().Be(0);
+	}
+
+	private static async Task<string> ReadUntilAsync(RemoteTerminal terminal, string marker, CancellationToken ct)
+	{
+		var output = new StringBuilder();
+		try
+		{
+			while (!output.ToString().Contains(marker, StringComparison.Ordinal))
+			{
+				output.Append(await terminal.Output.ReadAsync(ct).ConfigureAwait(false));
+			}
+		}
+		catch (OperationCanceledException) when (ct.IsCancellationRequested)
+		{
+			throw new AssertFailedException($"Terminal did not output '{marker}'. Output: {output}");
+		}
+		return output.ToString();
 	}
 
 	private static async Task AssertExitAsync(RemoteTerminal terminal, ConcurrentQueue<string> chunks, CancellationToken ct)

@@ -228,6 +228,183 @@ public sealed class Given_OptionsGroupBinding
 	}
 
 	[TestMethod]
+	[Description("Verifies a handler parameter that is not an option but is named like one of a group's options, such as the options group itself, a service or a route value, does not take that option's help line: the line keeps the option's own type and description.")]
+	[DataRow("group", DisplayName = "The options-group parameter")]
+	[DataRow("service", DisplayName = "A service parameter")]
+	[DataRow("route", DisplayName = "A route parameter")]
+	public void When_AParameterIsNamedLikeAGroupOption_Then_TheOptionKeepsItsHelpLine(string parameter)
+	{
+		var sut = ReplApp.Create();
+		var command = parameter switch
+		{
+			"group" => "run",
+			"service" => "run",
+			"route" => "run {project:int}",
+			_ => throw new ArgumentOutOfRangeException(nameof(parameter), parameter, "Unknown test row."),
+		};
+		_ = parameter switch
+		{
+			"group" => sut.Map(command, (ProjectOptions project) => project.Project ?? "none"),
+			"service" => sut.Map(command, (ProjectOptions options, [FromServices] TimeProvider project) => options.Project ?? "none"),
+			_ => sut.Map(command, (int project, ProjectOptions options) => options.Project ?? "none"),
+		};
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--help", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		var line = output.Text.Split('\n').Single(candidate => candidate.Contains("--project"));
+		line.Should().Contain("<string>").And.Contain("The app's project file, or its folder.");
+		line.Should().NotContain("projectoptions").And.NotContain("timeprovider").And.NotContain("<int>");
+	}
+
+	[TestMethod]
+	[Description("Verifies two handler parameters whose names differ only by case are refused at Map with a message naming both, since Repl matches parameter names without regard to case: an option and a service named this way could not be told apart.")]
+	public void When_TwoParametersDifferOnlyByCase_Then_MapRefusesThem()
+	{
+		var sut = ReplApp.Create();
+
+		var act = () => sut.Map("run", (string? project, [FromServices] TimeProvider PROJECT) => project ?? "none");
+
+		// WithMessage wildcards ignore case, so each spelling is checked with an ordinal Contain.
+		var message = act.Should().Throw<InvalidOperationException>().Which.Message;
+		message.Should().Contain("'project'").And.Contain("'PROJECT'").And.Contain("differ only by case");
+	}
+
+	[TestMethod]
+	[Description("Verifies two handler parameters with the same name, such as two lambda discards, are refused at Map with a message saying they share that name rather than that they differ by case.")]
+	public void When_TwoParametersShareAName_Then_MapRefusesThemNamingIt()
+	{
+		var sut = ReplApp.Create();
+
+		var act = () => sut.Map("run", (CancellationToken _, TimeProvider _) => "ok");
+
+		var message = act.Should().Throw<InvalidOperationException>().Which.Message;
+		message.Should().Contain("share the name '_'").And.NotContain("differ only by case");
+	}
+
+	[ReplOptionsGroup]
+	public class ProjectOptions
+	{
+		[ReplOption(Name = "project", Mode = ReplParameterMode.OptionOnly)]
+		[System.ComponentModel.Description("The app's project file, or its folder.")]
+		public string? Project { get; set; }
+	}
+
+	[TestMethod]
+	[Description("Verifies an options group bound explicitly, from services or from context, contributes no options: a direct option named like one of its properties keeps its own help line and is the only such option in the documentation model.")]
+	[DataRow(false, DisplayName = "[FromServices]")]
+	[DataRow(true, DisplayName = "[FromContext]")]
+	public void When_AnOptionsGroupIsBoundExplicitly_Then_ItsPropertiesAreNotOptions(bool fromContext)
+	{
+		var sut = ReplApp.Create();
+		_ = fromContext
+			? sut.Map(
+				"run",
+				([System.ComponentModel.Description("The direct option.")] string? project,
+					[FromContext] BoundProjectOptions bound) => project ?? "none")
+			: sut.Map(
+				"run",
+				([System.ComponentModel.Description("The direct option.")] string? project,
+					[FromServices] BoundProjectOptions bound) => project ?? "none");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["run", "--help", "--no-logo"]));
+		var options = sut.CreateDocumentationModel().Commands
+			.Single(command => string.Equals(command.Path, "run", StringComparison.Ordinal)).Options;
+
+		output.ExitCode.Should().Be(0, output.Text);
+		var line = output.Text.Split('\n').Single(candidate => candidate.Contains("--project"));
+		line.Should().Contain("<string>").And.Contain("The direct option.").And.NotContain("BOUND PROPERTY");
+		options.Should().ContainSingle(option => string.Equals(option.Name, "project", StringComparison.Ordinal))
+			.Which.Description.Should().Be("The direct option.");
+	}
+
+	[ReplOptionsGroup]
+	public class BoundProjectOptions
+	{
+		[System.ComponentModel.Description("BOUND PROPERTY")]
+		public int Project { get; set; } = 123;
+	}
+
+	[TestMethod]
+	[Description("Verifies the default of a collection group property is rendered as its elements, in help and in the documentation model, and is absent when the collection is empty, never the collection's type name.")]
+	public void When_ACollectionGroupPropertyHasADefault_Then_ItsElementsAreShown()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("list", (CollectionDefaultsOptions options) => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["list", "--help", "--no-logo"]));
+		var options = sut.CreateDocumentationModel().Commands
+			.Single(command => string.Equals(command.Path, "list", StringComparison.Ordinal)).Options;
+
+		output.ExitCode.Should().Be(0);
+		var lines = output.Text.Split('\n');
+		lines.Single(line => line.Contains("--uids")).Should().NotContain("[default:");
+		lines.Single(line => line.Contains("--tags")).Should().Contain("[default: a, b]");
+		lines.Single(line => line.Contains("--labels")).Should().Contain("[default: x, y]");
+		lines.Single(line => line.Contains("--names")).Should().Contain("[default: m, n]");
+		lines.Single(line => line.Contains("--blanks")).Should().Contain("[default: ]");
+		options.Single(option => string.Equals(option.Name, "uids", StringComparison.Ordinal)).DefaultValue.Should().BeNull();
+		options.Single(option => string.Equals(option.Name, "tags", StringComparison.Ordinal)).DefaultValue.Should().Be("a, b");
+		options.Single(option => string.Equals(option.Name, "labels", StringComparison.Ordinal)).DefaultValue.Should().Be("x, y");
+		options.Single(option => string.Equals(option.Name, "names", StringComparison.Ordinal)).DefaultValue.Should().Be("m, n");
+		// One empty element is still a default, unlike an empty collection.
+		options.Single(option => string.Equals(option.Name, "blanks", StringComparison.Ordinal)).DefaultValue.Should().BeEmpty();
+	}
+
+	[TestMethod]
+	[Description("Verifies a lazy sequence default is never enumerated to describe it: help and the documentation model show no default rather than run an iterator that may be unbounded, costly or failing.")]
+	public void When_AGroupPropertyDefaultIsALazySequence_Then_ItIsNotEnumerated()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("list", (LazyDefaultOptions options) => "ok");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["list", "--help", "--no-logo"]));
+		var items = sut.CreateDocumentationModel().Commands
+			.Single(command => string.Equals(command.Path, "list", StringComparison.Ordinal)).Options
+			.Single(option => string.Equals(option.Name, "items", StringComparison.Ordinal));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Split('\n').Single(line => line.Contains("--items")).Should().NotContain("[default:");
+		items.DefaultValue.Should().BeNull();
+	}
+
+	[ReplOptionsGroup]
+	public class LazyDefaultOptions
+	{
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public IEnumerable<string> Items { get; set; } = new FailsIfEnumerated();
+	}
+
+	// Throws from GetEnumerator, so even previewing a single element fails the test.
+	private sealed class FailsIfEnumerated : IEnumerable<string>
+	{
+		public IEnumerator<string> GetEnumerator() =>
+			throw new InvalidOperationException("A lazy default must not be enumerated to describe it.");
+
+		System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+	}
+
+	[ReplOptionsGroup]
+	public class CollectionDefaultsOptions
+	{
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public string[] Uids { get; set; } = [];
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public string[] Tags { get; set; } = ["a", "b"];
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public IReadOnlyList<string> Labels { get; set; } = ["x", "y"];
+
+		// Declared like LazyDefaultOptions.Items, but holding a materialized list, so its elements show.
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public IEnumerable<string> Names { get; set; } = new List<string> { "m", "n" };
+
+		[ReplOption(Arity = ReplArity.ZeroOrMore)]
+		public string[] Blanks { get; set; } = [""];
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies a duplicate name between a group property and a regular parameter fails at registration with a duplicate-name diagnostic (not a token-collision one).")]
 	public void When_GroupPropertyCollidesWithParam_Then_MapFails()
 	{

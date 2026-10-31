@@ -10,6 +10,7 @@ namespace Repl.McpTests;
 public sealed class Given_McpInspectorCli
 {
 	private const string InspectorPackage = "@modelcontextprotocol/inspector@0.22.0";
+	// CI installs this exact package beforehand (ci.yml, "Install MCP Inspector"); keep both versions in step.
 	private const string HttpInspectorPackage = "@modelcontextprotocol/inspector@2.6.0";
 
 	[TestMethod]

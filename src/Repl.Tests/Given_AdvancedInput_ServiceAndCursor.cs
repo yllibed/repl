@@ -6,6 +6,97 @@ namespace Repl.Tests;
 [TestClass]
 public sealed class Given_AdvancedInput_ServiceAndCursor
 {
+	private static readonly ShellKind[] SupportedShells = [ShellKind.Bash, ShellKind.Zsh, ShellKind.PowerShell, ShellKind.Fish, ShellKind.Nu];
+
+	[TestMethod]
+	[DataRow("app", 0, false, DisplayName = "Cursor before the executable")]
+	[DataRow("app ", 1, false, DisplayName = "Cursor inside the executable, before a space")]
+	[DataRow("app q", 1, false, DisplayName = "Cursor inside the executable, before a partial command")]
+	[DataRow("app", 1, false, DisplayName = "Cursor inside a bare executable")]
+	[DataRow("app", 3, false, DisplayName = "Cursor at the end of a bare executable")]
+	[DataRow("app ", 3, false, DisplayName = "Cursor at the end of the executable, before a space")]
+	[DataRow("  app q", 1, false, DisplayName = "Cursor in leading whitespace")]
+	[DataRow("app ", 4, true, DisplayName = "Cursor at the argument boundary")]
+	[DataRow("app  q", 4, true, DisplayName = "Cursor between two separating spaces")]
+	[DataRow("app q", 5, true, DisplayName = "Cursor after a partial command")]
+	[Description("Verifies advanced input leaves shell completion unchanged around the executable token: with an identity adapter or an always-valid validator, every supported shell offers what plain completion offers, nothing while the cursor is on the executable and the command once it is past it.")]
+	public async Task When_AdvancedInputIsEnabled_Then_CompletionAroundTheExecutableMatchesPlainCompletion(
+		string line, int cursor, bool offersCommand)
+	{
+		foreach (var shell in SupportedShells)
+		{
+			var plain = await CompleteAsync(CreateQueryApp(static _ => { }), line, cursor, shell).ConfigureAwait(false);
+			if (offersCommand)
+			{
+				plain.Should().Contain("query", $"plain completion in {shell}");
+			}
+			else
+			{
+				plain.Should().BeEmpty($"plain completion in {shell}");
+			}
+
+			var identityAdapter = await CompleteAsync(CreateQueryApp(static app =>
+				app.UseArgumentPreprocessor((_, _) => ValueTask.FromResult(ArgumentPreprocessingResult.Continue()))), line, cursor, shell)
+				.ConfigureAwait(false);
+			identityAdapter.Should().Equal(plain, $"an identity adapter in {shell}");
+			var validValidator = await CompleteAsync(CreateQueryApp(static app =>
+				app.UseInputValidator(InputValidationResult (ParsedInputContext _) => InputValidationResult.Valid())), line, cursor, shell)
+				.ConfigureAwait(false);
+			validValidator.Should().Equal(plain, $"an always-valid validator in {shell}");
+		}
+	}
+
+	[TestMethod]
+	[DataRow("app ", 4, DisplayName = "Cursor at the argument boundary")]
+	[DataRow("app  q", 4, DisplayName = "Cursor between two separating spaces")]
+	[DataRow("app  q", 5, DisplayName = "Cursor at a partial command after two spaces")]
+	[Description("Verifies a cursor past the executable, even in the spaces before the arguments, goes through input validation: an always-invalid validator leaves nothing to complete.")]
+	public async Task When_InputValidationRefusesTheArguments_Then_NothingPastTheExecutableIsCompleted(string line, int cursor)
+	{
+		foreach (var shell in SupportedShells)
+		{
+			var refused = await CompleteAsync(CreateQueryApp(static app =>
+				app.UseInputValidator(InputValidationResult (ParsedInputContext _) => InputValidationResult.Invalid("Refused."))), line, cursor, shell)
+				.ConfigureAwait(false);
+			refused.Should().BeEmpty($"an always-invalid validator in {shell}");
+		}
+	}
+
+	[TestMethod]
+	[DataRow("app", 3, DisplayName = "Cursor at the end of a bare executable")]
+	[DataRow("app q", 1, DisplayName = "Cursor inside the executable")]
+	[Description("Verifies a cursor on the executable is answered as plain completion without running input callbacks: a failing adapter is never invoked, so nothing is offered and no callback diagnostic is written.")]
+	public async Task When_TheCursorIsOnTheExecutable_Then_InputCallbacksDoNotRun(string line, int cursor)
+	{
+		var calls = 0;
+		var app = CreateQueryApp(app => app.UseArgumentPreprocessor((_, _) =>
+		{
+			calls++;
+			throw new InvalidOperationException("adapter failure");
+		}));
+		using var error = new StringWriter();
+		using var io = ReplSessionIO.SetSession(TextWriter.Null, TextReader.Null, error: error);
+
+		var candidates = await CompleteAsync(app, line, cursor, ShellKind.Bash).ConfigureAwait(false);
+
+		candidates.Should().BeEmpty();
+		calls.Should().Be(0);
+		error.ToString().Should().BeEmpty();
+	}
+
+	private static CoreReplApp CreateQueryApp(Action<CoreReplApp> configure)
+	{
+		var app = CoreReplApp.Create();
+		app.Map("query", () => "ok");
+		configure(app);
+		return app;
+	}
+
+	private static Task<string[]> CompleteAsync(CoreReplApp app, string line, int cursor, ShellKind shell) =>
+		new ShellCompletionEngine(app)
+			.ResolveShellCompletionCandidatesAsync(line, cursor, shell, app.CurrentServiceProvider, CancellationToken.None)
+			.AsTask();
+
 	[TestMethod]
 	[DataRow(false)]
 	[DataRow(true)]

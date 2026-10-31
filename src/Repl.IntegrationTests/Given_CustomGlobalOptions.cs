@@ -118,6 +118,101 @@ public sealed class Given_CustomGlobalOptions
 		output.Text.Should().NotContain("[default:");
 	}
 
+	[TestMethod]
+	[Description("Verifies a global option holding a collection records no text default, whichever way it is registered: a collection cannot round-trip through one, so the accessor falls back to the caller's default instead of failing on a type name.")]
+	[DataRow(true, DisplayName = "Typed global options")]
+	[DataRow(false, DisplayName = "AddGlobalOption")]
+	public void When_AGlobalOptionHoldsACollection_Then_TheAccessorRecordsNoTextDefault(bool typed)
+	{
+		var sut = typed
+			? ReplApp.Create().UseGlobalOptions<TagGlobals>()
+			: ReplApp.Create().Options(options => options.Parsing.AddGlobalOption<string[]>("tags", defaultValue: ["a", "b"]));
+		sut.Map("status", (IGlobalOptionsAccessor globals) =>
+			string.Join('|', globals.GetValue<string[]>("tags") ?? ["none"]));
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["status", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Trim().Should().Be("none");
+	}
+
+	[TestMethod]
+	[Description("Verifies a global option declared as a collection of characters records no text default even though its default is a string: whether a default round-trips is judged from the declared type.")]
+	[DataRow(true, DisplayName = "Typed global options")]
+	[DataRow(false, DisplayName = "AddGlobalOption")]
+	public void When_AGlobalOptionIsACollectionOfCharacters_Then_ItsStringDefaultIsNotRecorded(bool typed)
+	{
+		var sut = typed
+			? ReplApp.Create().UseGlobalOptions<LetterGlobals>()
+			: ReplApp.Create().Options(options => options.Parsing.AddGlobalOption<IEnumerable<char>>("letters", defaultValue: "abc"));
+		sut.Map("status", (IGlobalOptionsAccessor globals) =>
+			globals.GetValue<IEnumerable<char>>("letters") is { } letters ? string.Concat(letters) : "none");
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["status", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Trim().Should().Be("none");
+	}
+
+	private sealed class TagGlobals
+	{
+		public string[] Tags { get; set; } = ["a", "b"];
+	}
+
+	private sealed class LetterGlobals
+	{
+		public IEnumerable<char> Letters { get; set; } = "abc";
+	}
+
+	[TestMethod]
+	[Description("Verifies a parameter of a type Repl supplies stays supplied when registered typed global options implement that type: two such registrations raise no ambiguity, the handler receives Repl's value, and a parameter of the globals type itself still receives the global options.")]
+	public void When_TypedGlobalOptionsImplementASuppliedType_Then_ItStaysSuppliedAndUnambiguous()
+	{
+		var sut = ReplApp.Create()
+			.UseGlobalOptions<FirstProgressGlobals>()
+			.UseGlobalOptions<SecondProgressGlobals>();
+		sut.Map("sync", (IProgress<double> progress, FirstProgressGlobals globals) => progress switch
+		{
+			null => "unbound",
+			FirstProgressGlobals or SecondProgressGlobals => "globals",
+			_ => $"supplied:{globals.Region}",
+		});
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["--region", "west", "sync", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0, output.Text);
+		output.Text.Should().Contain("supplied:west").And.NotContain("globals").And.NotContain("unbound");
+	}
+
+	[TestMethod]
+	[Description("Verifies a route segment named like a parameter of a type Repl supplies is refused even when one registered typed global options type implements that type, since the segment's value would never reach the parameter.")]
+	public void When_TypedGlobalOptionsImplementASuppliedType_Then_ARouteSegmentNamedLikeItIsRefused()
+	{
+		var sut = ReplApp.Create().UseGlobalOptions<FirstProgressGlobals>();
+
+		var act = () => sut.Map("check {progress}", (IProgress<double> progress) => "ok");
+
+		act.Should().Throw<InvalidOperationException>().WithMessage("*'{progress}'*Repl supplies*");
+	}
+
+	private sealed class FirstProgressGlobals : IProgress<double>
+	{
+		public string? Region { get; set; }
+
+		public void Report(double value)
+		{
+		}
+	}
+
+	private sealed class SecondProgressGlobals : IProgress<double>
+	{
+		public string? Zone { get; set; }
+
+		public void Report(double value)
+		{
+		}
+	}
+
 	private sealed class DemoGlobals
 	{
 		[System.ComponentModel.Description("Tenant id used for all commands.")]

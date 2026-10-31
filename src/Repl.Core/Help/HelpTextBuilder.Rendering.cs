@@ -242,8 +242,8 @@ internal static partial class HelpTextBuilder
 			parameterType = groupInfo.Property.PropertyType;
 			description = groupInfo.Property.GetCustomAttribute<DescriptionAttribute>()?.Description ?? string.Empty;
 			var propDefault = groupInfo.Property.GetValue(groupInfo.DefaultInstance);
-			defaultValue = propDefault is not null && !ParsingOptions.IsDefaultForType(propDefault, parameterType)
-				? $" [default: {propDefault}]"
+			defaultValue = ParsingOptions.FormatDefaultValue(propDefault, parameterType) is { } text
+				? $" [default: {text}]"
 				: string.Empty;
 		}
 		else
@@ -323,24 +323,22 @@ internal static partial class HelpTextBuilder
 		IServiceProvider serviceProvider,
 		Dictionary<Type, bool> serviceAvailability)
 	{
-		var parameters = route.Command.Handler.Method.GetParameters()
-			.Where(parameter => !string.IsNullOrWhiteSpace(parameter.Name))
-			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
+		var handlerParameters = route.Command.Handler.Method.GetParameters();
 		var groupProperties = new Dictionary<string, (PropertyInfo Property, object DefaultInstance)>(StringComparer.OrdinalIgnoreCase);
-		foreach (var methodParam in route.Command.Handler.Method.GetParameters())
+		foreach (var groupType in route.OptionSchema.OptionsGroupTypes)
 		{
-			if (!Attribute.IsDefined(methodParam.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
-			{
-				continue;
-			}
-
-			var defaultInstance = CreateOptionsGroupDefault(methodParam.ParameterType);
-			foreach (var prop in GetOptionsGroupProperties(methodParam.ParameterType)
+			var defaultInstance = CreateOptionsGroupDefault(groupType);
+			foreach (var prop in GetOptionsGroupProperties(groupType)
 				.Where(prop => prop.CanWrite && !groupProperties.ContainsKey(prop.Name)))
 			{
 				groupProperties[prop.Name] = (prop, defaultInstance);
 			}
 		}
+
+		// Mapping refuses two parameters whose names differ only by case, so each option parameter is keyed once.
+		var parameters = handlerParameters
+			.Where(route.OptionSchema.IsOptionParameter)
+			.ToDictionary(parameter => parameter.Name!, StringComparer.OrdinalIgnoreCase);
 
 		return route.OptionSchema.Parameters.Values
 			.Select(parameter => BuildOptionRow(

@@ -16,4 +16,7 @@ internal sealed record OptionSchemaParameter(
 	bool CanBeOmitted = true,
 	// Direct handler parameters may fall back to DI after named binding; options-group properties
 	// never do, because the binder constructs the group before reaching its service fallback.
-	bool SupportsServiceFallback = false);
+	bool SupportsServiceFallback = false,
+	// Whether the option is an options-group property rather than a handler parameter of the same name: a
+	// group parameter can be named like one of its own properties.
+	bool IsGroupProperty = false);

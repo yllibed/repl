@@ -639,7 +639,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return outcome;
 		}
 
-		return await HandleUnmatchedInteractiveInputAsync(activeGraph, resolution, globalOptions, cycle, cancellationToken)
+		return await HandleUnmatchedInteractiveInputAsync(activeGraph, resolution, committed.ScopeTokenCount, globalOptions, cycle, cancellationToken)
 			.ConfigureAwait(false);
 	}
 
@@ -650,6 +650,7 @@ internal sealed class InteractiveSession(CoreReplApp app)
 	private async ValueTask<ExecutionOutcome> HandleUnmatchedInteractiveInputAsync(
 		ActiveRoutingGraph activeGraph,
 		RouteResolver.RouteResolutionResult resolution,
+		int scopeTokenCount,
 		GlobalInvocationOptions globalOptions,
 		PromptCycleContext cycle,
 		CancellationToken cancellationToken)
@@ -658,6 +659,13 @@ internal sealed class InteractiveSession(CoreReplApp app)
 		var contextMatch = ContextResolver.ResolveExact(activeGraph.Contexts, globalOptions.RemainingTokens, app.OptionsSnapshot.Parsing);
 		if (contextMatch is not null)
 		{
+			// Input validation decides a submission before it moves the scope, as it does before a command runs.
+			if (await app.ValidateCurrentInputAsync(globalOptions.OutputFormat, serviceProvider, cancellationToken)
+				.ConfigureAwait(false) is { } refused)
+			{
+				return app.AttributeToContext(refused, contextMatch.Context);
+			}
+
 			var contextValidation = await app.ValidateContextAsync(contextMatch, serviceProvider, cancellationToken)
 				.ConfigureAwait(false);
 			if (!contextValidation.IsValid)
@@ -682,22 +690,18 @@ internal sealed class InteractiveSession(CoreReplApp app)
 			return ExecutionOutcome.Success;
 		}
 
-		var failure = app.CreateRouteResolutionFailureResult(
-			tokens: globalOptions.RemainingTokens,
-			resolution.ConstraintFailure,
-			resolution.MissingArgumentsFailure);
+		var unresolved = app.DecideUnresolvedRefusal(
+			activeGraph,
+			globalOptions.RemainingTokens,
+			scopeTokenCount,
+			resolution);
 		_ = await app.RenderOutputAsync(
-				failure,
+				unresolved.Failure,
 				globalOptions.OutputFormat,
 				cancellationToken,
 				isInteractive: true)
 			.ConfigureAwait(false);
-		return app.AttributeUnresolved(
-			ExecutionOutcome.UsageError(failure),
-			activeGraph,
-			globalOptions.RemainingTokens,
-			resolution.ConstraintFailure,
-			resolution.MissingArgumentsFailure);
+		return app.AttributeUnresolved(ExecutionOutcome.UsageError(unresolved.Failure), unresolved);
 	}
 
 	/// <summary>

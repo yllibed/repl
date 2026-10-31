@@ -15,6 +15,21 @@ public sealed class Given_McpCollectionArguments
 	private static readonly double[] Weights = [1.25, -2.5];
 	private static readonly string[] Names = ["first", "second"];
 	[TestMethod]
+	[Description("A collection option's default is not advertised in the tool schema: the schema's default is text, which an agent sending it back would bind as a single element.")]
+	public async Task When_ACollectionOptionHasADefault_Then_TheSchemaAdvertisesNone()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app =>
+			app.Map("search", (SearchOptions options) => "ok"));
+
+		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+		var layer = tools.Single(tool => string.Equals(tool.Name, "search", StringComparison.Ordinal)).JsonSchema
+			.GetProperty("properties").GetProperty("layer");
+
+		layer.GetProperty("type").GetString().Should().Be("array");
+		layer.TryGetProperty("default", out _).Should().BeFalse();
+	}
+
+	[TestMethod]
 	[DataRow("raw")]
 	[DataRow("raw", "indexed")]
 	[DataRow("")]

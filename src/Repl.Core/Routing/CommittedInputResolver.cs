@@ -47,6 +47,6 @@ internal sealed class CommittedInputResolver(
 		}
 
 		var routes = app.ResolveWithDiagnostics(resolvedOptions.RemainingTokens, graph.Routes);
-		return CommittedResolution.Routed(resolvedOptions, graph, prefixResolution, routes);
+		return CommittedResolution.Routed(resolvedOptions, graph, prefixResolution, routes, scopeTokens.Count);
 	}
 }

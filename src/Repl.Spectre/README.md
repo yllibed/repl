@@ -69,7 +69,9 @@ Works with all Spectre renderables: `Table`, `Tree`, `Panel`, `BarChart`, `Calen
 
 ### Transparent prompt upgrade
 
-`IReplInteractionChannel` calls are automatically rendered as Spectre prompts:
+`IReplInteractionChannel` calls are automatically rendered as Spectre prompts, unless the command's
+feedback goes to the error stream because its output is for a program (`--json`, a redirected standard
+output); the text prompts take over then:
 
 | Channel method | Spectre prompt |
 |----------------|---------------|

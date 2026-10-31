@@ -125,9 +125,12 @@ public sealed class ParsingOptions
 	/// <typeparam name="T">Declared value type.</typeparam>
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
 	/// <param name="aliases">Optional aliases. Values without prefix are normalized to <c>--alias</c>.</param>
-	/// <param name="defaultValue">Optional default value metadata.</param>
+	/// <param name="defaultValue">
+	/// Optional default value metadata. Ignored when <typeparamref name="T"/> is a collection, which one text default
+	/// cannot represent.
+	/// </param>
 	public void AddGlobalOption<T>(string name, string[]? aliases = null, T? defaultValue = default) =>
-		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)));
+		AddGlobalOptionCore(name, typeof(T), aliases, FormatGlobalDefaultValue(defaultValue, typeof(T)));
 
 	/// <summary>
 	/// Registers a custom global option with an explicit help description.
@@ -142,10 +145,13 @@ public sealed class ParsingOptions
 	/// <typeparam name="T">Declared value type.</typeparam>
 	/// <param name="name">Canonical name without prefix (for example: "tenant").</param>
 	/// <param name="aliases">Aliases (pass <c>null</c> for none). Values without prefix are normalized to <c>--alias</c>.</param>
-	/// <param name="defaultValue">Default value metadata (pass <c>default</c> for none).</param>
+	/// <param name="defaultValue">
+	/// Default value metadata (pass <c>default</c> for none). Ignored when <typeparamref name="T"/> is a collection,
+	/// which one text default cannot represent.
+	/// </param>
 	/// <param name="description">Description shown in help output.</param>
 	public void AddGlobalOption<T>(string name, string[]? aliases, T? defaultValue, string description) =>
-		AddGlobalOptionCore(name, typeof(T), aliases, FormatDefaultValue(defaultValue, typeof(T)), description);
+		AddGlobalOptionCore(name, typeof(T), aliases, FormatGlobalDefaultValue(defaultValue, typeof(T)), description);
 
 	/// <summary>
 	/// Registers a custom global option using a type or constraint name
@@ -480,8 +486,33 @@ public sealed class ParsingOptions
 
 	internal static string? FormatDefaultValue(object? value, Type type) =>
 		value is not null && !IsDefaultForType(value, type)
-			? value.ToString()
+			? FormatValue(value)
 			: null;
+
+	// A global option's default is text the accessor converts back into one value, which a collection cannot
+	// round-trip through, so a collection records none.
+	internal static string? FormatGlobalDefaultValue(object? value, Type type) =>
+		IsCollectionType(type) ? null : FormatDefaultValue(value, type);
+
+	// Judged from the declared type: a string is a valid value of a collection of characters.
+	internal static bool IsCollectionType(Type type) =>
+		type != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
+	/// <summary>
+	/// The text a default value is shown as: a collection's elements rather than its type name, and nothing
+	/// for an empty collection. A sequence that is not a materialized <see cref="System.Collections.ICollection"/>
+	/// shows nothing: describing it must not run an iterator that may be unbounded, costly or failing.
+	/// </summary>
+	internal static string? FormatValue(object? value) =>
+		value switch
+		{
+			null => null,
+			string text => text,
+			System.Collections.ICollection { Count: 0 } => null,
+			System.Collections.ICollection items => string.Join(", ", items.Cast<object?>()),
+			System.Collections.IEnumerable => null,
+			_ => value.ToString(),
+		};
 
 	[UnconditionalSuppressMessage(
 		"Trimming",

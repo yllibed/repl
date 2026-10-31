@@ -23,6 +23,12 @@ internal static class InteractionFeedbackRouting
 	/// redirection, which is what it has always followed. The console session of a protocol-passthrough
 	/// command is the exception: both its writers are the process's standard error, so that stream's own
 	/// redirection applies.
+	/// <para>
+	/// A protocol-passthrough command's protocol owns the command output, which its session splits off
+	/// where it can (<c>CoreReplApp.OpenPassthroughSession</c>). Feedback never shares that writer: it moves
+	/// to the session's error writer, and is not written at all when that is the protocol's too, as in a
+	/// hosted session whose transport has a single stream.
+	/// </para>
 	/// </remarks>
 	public static FeedbackTarget Resolve(OutputOptions? outputOptions, bool isOutputRedirected, bool isErrorRedirected)
 	{
@@ -31,14 +37,27 @@ internal static class InteractionFeedbackRouting
 		var toError = WritesToError(
 			outputOptions?.FeedbackStream ?? ReplFeedbackStream.Auto,
 			ReplSessionIO.IsMachineReadableOutput,
-			isLocalOutputRedirected: isLocal && isOutputRedirected);
+			isLocalOutputRedirected: isLocal && isOutputRedirected)
+			|| SharesTheProtocol(ReplSessionIO.Output);
 		var writesToStandardError = isLocal && (toError || isProcessConsole);
+		var writer = toError ? ReplSessionIO.Error : ReplSessionIO.Output;
 		return new FeedbackTarget(
-			toError ? ReplSessionIO.Error : ReplSessionIO.Output,
+			SharesTheProtocol(writer) ? TextWriter.Null : writer,
 			IsError: toError,
 			IsSessionWriter: !isLocal,
 			IsStreamRedirected: writesToStandardError ? isErrorRedirected : isOutputRedirected);
 	}
+
+	/// <summary>
+	/// Whether an interactive prompt may draw on the session's output, as the arrow-key menus and the Spectre
+	/// prompts do: only where its feedback goes too, so a menu never lands in a payload a program reads.
+	/// Otherwise the text prompts take over, whose label and echo follow the feedback.
+	/// </summary>
+	public static bool PromptsMayDrawOnOutput(OutputOptions? outputOptions) =>
+		ReferenceEquals(Resolve(outputOptions).Writer, ReplSessionIO.Output);
+
+	private static bool SharesTheProtocol(TextWriter writer) =>
+		ReplSessionIO.IsProtocolPassthrough && ReferenceEquals(writer, ReplSessionIO.CommandOutput);
 
 	/// <summary>
 	/// The routing rule: with <see cref="ReplFeedbackStream.Auto"/>, feedback leaves the output stream

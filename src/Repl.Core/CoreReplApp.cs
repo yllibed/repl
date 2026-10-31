@@ -326,6 +326,7 @@ public sealed partial class CoreReplApp : ICoreReplApp
 				() => _options.Parsing.OptionCaseSensitivity);
 			ApplyMetadataFromAttributes(command, handler);
 			var parsedTemplate = RouteTemplateParser.Parse(route, _options.Parsing);
+			ValidateParameterNamesAreDistinct(handler);
 			var template = InferRouteConstraintsFromHandler(parsedTemplate, handler);
 			var moduleId = ResolveCurrentMappingModuleId();
 			RouteConfigurationValidator.ValidateUnique(
@@ -349,6 +350,32 @@ public sealed partial class CoreReplApp : ICoreReplApp
 
 		InvalidateRouting();
 		return command;
+	}
+
+	// Route segments, options and help all look handler parameters up by name without regard to case, so two
+	// names equal but for case would resolve to whichever came last.
+	private static void ValidateParameterNamesAreDistinct(Delegate handler)
+	{
+		var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var parameter in handler.Method.GetParameters())
+		{
+			if (string.IsNullOrWhiteSpace(parameter.Name))
+			{
+				continue;
+			}
+
+			if (names.TryAdd(parameter.Name, parameter.Name))
+			{
+				continue;
+			}
+
+			var first = names[parameter.Name];
+			// Lambda discards all carry the name '_', so a handler can repeat a name exactly.
+			throw new InvalidOperationException(string.Equals(first, parameter.Name, StringComparison.Ordinal)
+				? $"Two parameters share the name '{parameter.Name}'; give each parameter its own name."
+				: $"Parameters '{first}' and '{parameter.Name}' differ only by case; Repl matches parameter names "
+					+ "without regard to case, even when option tokens are case-sensitive, so rename one of them.");
+		}
 	}
 
 	private static RouteTemplate InferRouteConstraintsFromHandler(RouteTemplate template, Delegate handler)

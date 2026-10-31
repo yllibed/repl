@@ -50,4 +50,19 @@ public sealed class Given_ReplSessionIO
 		session.TerminalCapabilities.Should().NotHaveFlag(TerminalCapabilities.ShellIntegrationMarks);
 		session.TerminalIdentity.Should().Be("dumb");
 	}
+
+	[TestMethod]
+	[Description("A transport that still reports terminal metadata after its host was disposed, such as a late Telnet TERMINAL-TYPE, does not register the ended session again.")]
+	public async Task When_AHostIsUpdatedAfterItWasDisposed_Then_ItsSessionStaysUnregistered()
+	{
+		var host = new StreamedReplHost(new StringWriter());
+		await host.DisposeAsync().ConfigureAwait(false);
+
+		host.UpdateTerminalIdentity("xterm");
+		host.UpdateWindowSize(80, 24);
+		host.UpdateAnsiSupport(ansiSupported: true);
+		host.UpdateTerminalCapabilities(TerminalCapabilities.VtInput);
+
+		ReplSessionIO.TryGetSession(host.SessionId, out _).Should().BeFalse();
+	}
 }

@@ -153,14 +153,11 @@ public sealed partial class CoreReplApp
 			{
 				return finished;
 			}
-			if (input.Context.Purpose == InputPurpose.Help && _options.Input.Validators.Count != 0)
+			if (input.Context.Purpose == InputPurpose.Help && _options.Input.Validators.Count != 0
+				&& await ValidateCurrentInputAsync(ParseInputGlobals(input).OutputFormat, serviceProvider, cancellationToken)
+					.ConfigureAwait(false) is { } helpRefused)
 			{
-				var help = await AnalyzeInputAsync(input, serviceProvider, cancellationToken).ConfigureAwait(false);
-				if (help.ApplicationValidation.State != InputValidationState.Valid)
-				{
-					var globals = ParseInputGlobals(input);
-					return await RefuseInputAsync(help.ApplicationValidation, globals.OutputFormat, cancellationToken).ConfigureAwait(false);
-				}
+				return helpRefused;
 			}
 			return await ExecuteUnprocessedCoreOutcomeAsync(input.Context.Arguments, serviceProvider,
 				isSubInvocation, cancellationToken, presenceServiceProvider).ConfigureAwait(false);
@@ -244,6 +241,25 @@ public sealed partial class CoreReplApp
 		RefuseAsync(Results.Validation(validation.Diagnostics.Count != 0 ? validation.Diagnostics[0].Message : "Input validation failed."),
 			requestedFormat, cancellationToken);
 
+	// Runs the application's input validators on the input being run when no route takes it, such as help or a
+	// submission naming a context: the refusal or callback failure to report, or null to proceed.
+	internal async ValueTask<ExecutionOutcome?> ValidateCurrentInputAsync(
+		string? requestedFormat, IServiceProvider services, CancellationToken cancellationToken)
+	{
+		if (_options.Input.Validators.Count == 0 || _currentInput.Value is not { IsHandled: false } input) { return null; }
+		try
+		{
+			var analysis = await AnalyzeInputAsync(input, services, cancellationToken).ConfigureAwait(false);
+			return analysis.ApplicationValidation.State == InputValidationState.Valid
+				? null
+				: await RefuseInputAsync(analysis.ApplicationValidation, requestedFormat, cancellationToken).ConfigureAwait(false);
+		}
+		catch (Exception exception) when (!IsCallerCancellation(exception, cancellationToken))
+		{
+			return await ReportInputCallbackFailureAsync(exception, requestedFormat, cancellationToken).ConfigureAwait(false);
+		}
+	}
+
 	internal async ValueTask<ParsedInputContext> AnalyzeInputAsync(
 		ProcessedInput input, IServiceProvider services, CancellationToken cancellationToken)
 	{
@@ -326,7 +342,8 @@ public sealed partial class CoreReplApp
 				|| Autocomplete.CollectVisibleMatchingRoutes(prefix.Tokens.ToArray(), comparison, graph.Routes, graph.Contexts).Count != 0;
 			if (!isContext)
 			{
-				checks.Add(resolution.ConstraintFailure is not null
+				// Live analysis refuses a failed constraint as execution does.
+				checks.Add(RefusesWithAConstraintFailure(graph, prefix.Tokens, input.Context.ScopeTokens.Count, resolution)
 					? InputValidationResult.Invalid("An argument does not satisfy its route constraint.")
 					: canComplete ? InputValidationResult.Incomplete("Complete the command and its required arguments.")
 					: InputValidationResult.Invalid("Unknown command."));
@@ -495,13 +512,9 @@ public sealed partial class CoreReplApp
 		return HandlerArgumentBinder.TryResolveInputServiceFallback(metadata, executionBinding, out _);
 	}
 
-	private bool IsInputServiceAvailable(Type type, IServiceProvider services)
-	{
-		if (InteractionProgressFactory.IsSupportedProgressType(type) &&
-			IsInputServiceAvailable(typeof(IReplInteractionChannel), services)) { return true; }
-		return InputServiceAvailability?.Invoke(services, type)
+	private bool IsInputServiceAvailable(Type type, IServiceProvider services) =>
+		InputServiceAvailability?.Invoke(services, type)
 			?? (services is DefaultServiceProvider && services.GetService(type) is not null);
-	}
 
 	private static bool IsInputScalar(Type type) => type.IsValueType || type == typeof(string)
 		|| type == typeof(Uri) || type == typeof(FileInfo) || type == typeof(DirectoryInfo);

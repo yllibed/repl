@@ -4,8 +4,9 @@ namespace Repl.Interaction;
 /// Options for <see cref="IReplInteractionChannel.AskSecretAsync"/>.
 /// </summary>
 /// <param name="Timeout">
-/// Optional timeout for the prompt. When the timeout elapses, an empty string
-/// is returned and a countdown is displayed inline.
+/// Optional timeout for the prompt. When the timeout elapses, the prompt gets no answer: an empty string
+/// when <paramref name="AllowEmpty"/> is set, otherwise it asks again. A local console shows the countdown
+/// inline.
 /// </param>
 /// <param name="Mask">
 /// Character used to echo each typed character. Use <c>'*'</c> for asterisks

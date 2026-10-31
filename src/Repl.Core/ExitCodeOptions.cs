@@ -39,13 +39,14 @@ public sealed class ExitCodeOptions
 
 	/// <summary>
 	/// Gets or sets the exit code for <see cref="ReplExecutionOutcomeKind.Cancelled"/> — a run stopped
-	/// through the caller's own <see cref="CancellationToken"/>, whether during the command or while
-	/// hosted services were starting. When <see langword="null"/> (the default) the
-	/// <see cref="OperationCanceledException"/> propagates to the caller instead of being converted,
-	/// unless a <see cref="Resolver"/> is set, which also opts in to observing cancellation — the
-	/// resolver is then handed <c>130</c>, the shell convention for <c>128 + SIGINT</c>. A handler that
-	/// raises <see cref="OperationCanceledException"/> without the caller having asked for cancellation
-	/// is a failure, reported as <see cref="ReplExecutionOutcomeKind.HandlerException"/>.
+	/// through the caller's own <see cref="CancellationToken"/>, whether during the command, while an
+	/// interactive session waits for input, or while hosted services were starting. When
+	/// <see langword="null"/> (the default) the <see cref="OperationCanceledException"/> propagates to
+	/// the caller instead of being converted, unless a <see cref="Resolver"/> is set, which also opts in
+	/// to observing cancellation — the resolver is then handed <c>130</c>, the shell convention for
+	/// <c>128 + SIGINT</c>. A handler that raises <see cref="OperationCanceledException"/> without the
+	/// caller having asked for cancellation is a failure, reported as
+	/// <see cref="ReplExecutionOutcomeKind.HandlerException"/>.
 	/// </summary>
 	public int? Cancelled { get; set; }
 

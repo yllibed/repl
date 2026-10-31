@@ -91,6 +91,10 @@ webApp.Map("/ws/repl", async (HttpContext context, ReplApp repl, SessionTracker 
 			controlMessage => ApplyControlMessageMetadata(tracker, sessionName, controlMessage),
 			context.RequestAborted);
 	}
+	catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+	{
+		// The client went away: the session ends with the request.
+	}
 	finally
 	{
 		tracker.Remove(sessionName);
@@ -139,6 +143,10 @@ webApp.Map("/ws/telnet", async (HttpContext context, ReplApp repl, SessionTracke
 					capabilities: TerminalCapabilities.Ansi | TerminalCapabilities.IdentityReporting | TerminalCapabilities.VtInput,
 					ansiSupported: true),
 			cancellationToken: context.RequestAborted);
+	}
+	catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+	{
+		// The client went away: the session ends with the request.
 	}
 	finally
 	{

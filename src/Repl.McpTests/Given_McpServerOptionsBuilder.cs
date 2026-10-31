@@ -65,19 +65,20 @@ public sealed class Given_McpServerOptionsBuilder
 	}
 
 	[TestMethod]
-	[Description("Core MCP dispatch guarantees a per-call interaction channel even when no base provider is supplied. Static discovery must retain a tool whose AutomationHidden required progress parameter is therefore synthesizable.")]
-	public void When_CoreMcpOptionsHaveNoBaseProvider_Then_RequiredHiddenProgressToolIsRetained()
+	[Description("Static discovery without a base provider retains a tool that receives progress, with no progress argument in its schema.")]
+	public void When_CoreMcpOptionsHaveNoBaseProvider_Then_AProgressToolIsRetained()
 	{
 		var app = CoreReplApp.Create();
 		app.Map(
 			"sync",
-			([ReplOption(Name = "progress", Arity = ReplArity.ExactlyOne, AutomationHidden = true)] IProgress<ReplProgressEvent> progress) =>
+			(IProgress<ReplProgressEvent> progress) =>
 				progress is not null ? "progress-ready" : "missing");
 
 		var options = app.BuildMcpServerOptions();
 
-		options.ToolCollection.Should().Contain(tool =>
-			string.Equals(tool.ProtocolTool.Name, "sync", StringComparison.Ordinal));
+		var tool = options.ToolCollection.Should().ContainSingle(candidate =>
+			string.Equals(candidate.ProtocolTool.Name, "sync", StringComparison.Ordinal)).Subject;
+		tool.ProtocolTool.InputSchema.GetProperty("properties").TryGetProperty("progress", out _).Should().BeFalse();
 	}
 
 	[TestMethod]

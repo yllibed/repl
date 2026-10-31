@@ -329,6 +329,49 @@ public sealed partial class Given_ProtocolPassthrough
 	}
 
 	[TestMethod]
+	[Description("Verifies a hosted protocol-passthrough command's interaction feedback is not written into the session stream its protocol uses, since the host has no other one, while an ordinary command in the same session shows it.")]
+	[DataRow(true, DisplayName = "Protocol passthrough")]
+	[DataRow(false, DisplayName = "Ordinary command, control")]
+	public void When_AHostedCommandWritesFeedback_Then_OnlyAPassthroughOneKeepsItOutOfTheSessionStream(bool isPassthrough)
+	{
+		var sut = ReplApp.Create();
+		var command = sut.Map(
+			"transfer send",
+			async (IReplIoContext io, IReplInteractionChannel channel, CancellationToken ct) =>
+			{
+				await channel.WriteStatusAsync("Connecting", ct).ConfigureAwait(false);
+				await channel.WriteProgressAsync("Indexing", 50, ct).ConfigureAwait(false);
+				await channel.WriteWarningAsync("Slow link", ct).ConfigureAwait(false);
+				await io.Output.WriteLineAsync("zmodem-start").ConfigureAwait(false);
+				return Results.Exit(0);
+			});
+		if (isPassthrough)
+		{
+			command.AsProtocolPassthrough();
+		}
+
+		using var input = new StringReader(string.Empty);
+		using var output = new StringWriter();
+		var host = new InMemoryHost(input, output);
+
+		var exitCode = sut.Run(
+			["transfer", "send", "--no-logo"],
+			host,
+			new ReplRunOptions { HostedServiceLifecycle = HostedServiceLifecycleMode.None });
+
+		exitCode.Should().Be(0);
+		output.ToString().Should().Contain("zmodem-start");
+		if (isPassthrough)
+		{
+			output.ToString().Trim().Should().Be("zmodem-start");
+		}
+		else
+		{
+			output.ToString().Should().Contain("Connecting").And.Contain("Indexing").And.Contain("Slow link");
+		}
+	}
+
+	[TestMethod]
 	[Description("Regression guard: verifies hosted protocol passthrough reports IsHostedSession=true through IReplIoContext.")]
 	public void When_ProtocolPassthroughRunsInHostedSessionWithIoContext_Then_IsHostedSessionIsTrue()
 	{

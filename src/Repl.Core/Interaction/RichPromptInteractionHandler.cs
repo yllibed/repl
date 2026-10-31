@@ -13,6 +13,7 @@ internal sealed partial class RichPromptInteractionHandler(
 	OutputOptions? outputOptions = null,
 	IReplInteractionPresenter? presenter = null) : IReplInteractionHandler
 {
+	private readonly OutputOptions? _outputOptions = outputOptions;
 	private readonly bool _useRichPrompts = outputOptions?.IsAnsiEnabled() ?? false;
 	private readonly AnsiPalette? _palette = outputOptions is not null && outputOptions.IsAnsiEnabled()
 		? outputOptions.ResolvePalette() : null;
@@ -85,6 +86,11 @@ internal sealed partial class RichPromptInteractionHandler(
 	/// </summary>
 	private bool CanUseRichPrompts()
 	{
+		if (!InteractionFeedbackRouting.PromptsMayDrawOnOutput(_outputOptions))
+		{
+			return false;
+		}
+
 		if (ReplSessionIO.IsSessionActive)
 		{
 			return ReplSessionIO.AnsiSupport == true && ReplSessionIO.KeyReader is not null;

@@ -932,12 +932,12 @@ public sealed class Given_McpServerEndToEnd
 	}
 
 	[TestMethod]
-	[Description("MCP supplies IReplInteractionChannel, so the binder synthesizes structured progress before direct service lookup. AutomationHidden requiredness must use that same fallback, retain the tool, omit the field, and allow an argument-free call.")]
-	public async Task When_AutomationHiddenRequiredProgressUsesInteractionChannel_Then_TheToolRemainsInvocable()
+	[Description("MCP supplies IReplInteractionChannel, so the binder synthesizes structured progress: the parameter is never a tool argument, and an argument-free call still receives it.")]
+	public async Task When_AToolReceivesProgress_Then_ItIsNeverAToolArgument()
 	{
 		await using var fixture = await McpTestFixture.CreateAsync(app => app.Map(
 			"sync",
-			([ReplOption(Name = "progress", Arity = ReplArity.ExactlyOne, AutomationHidden = true)] IProgress<ReplProgressEvent> progress) =>
+			(IProgress<ReplProgressEvent> progress) =>
 				progress is not null ? "progress-ready" : "missing"));
 
 		var tools = await fixture.Client.ListToolsAsync().ConfigureAwait(false);
@@ -950,6 +950,23 @@ public sealed class Given_McpServerEndToEnd
 		tool.JsonSchema.GetProperty("properties").TryGetProperty("progress", out _).Should().BeFalse();
 		result.IsError.Should().BeFalse();
 		text.Should().Contain("progress-ready");
+	}
+
+	[TestMethod]
+	[Description("A progress parameter is not a tool argument, so a client supplying one is refused as for any argument the schema does not define, and the handler does not run.")]
+	public async Task When_AClientSuppliesAProgressArgument_Then_TheCallIsRefused()
+	{
+		await using var fixture = await McpTestFixture.CreateAsync(app => app.Map(
+			"sync",
+			(IProgress<ReplProgressEvent> progress) => "progress-ready"));
+
+		var result = await fixture.Client.CallToolAsync(
+			toolName: "sync",
+			arguments: new Dictionary<string, object?>(StringComparer.Ordinal) { ["progress"] = true }).ConfigureAwait(false);
+		var text = string.Join('\n', result.Content.OfType<TextContentBlock>().Select(static block => block.Text));
+
+		result.IsError.Should().BeTrue();
+		text.Should().NotContain("progress-ready");
 	}
 
 	[TestMethod]

@@ -262,14 +262,10 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		var dynamicSegments = route.Template.Segments
 			.OfType<DynamicRouteSegment>()
 			.ToArray();
-		var routeParameterNames = dynamicSegments
-			.Select(segment => segment.Name)
-			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var handlerParams = route.Command.Handler.Method.GetParameters();
 		var arguments = BuildDocumentationArguments(dynamicSegments, handlerParams);
 		var options = BuildDocumentationOptions(
 			route,
-			routeParameterNames,
 			handlerParams,
 			includeHiddenOptions,
 			serviceAvailability,
@@ -297,7 +293,6 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 
 	private ReplDocOption[] BuildDocumentationOptions(
 		RouteDefinition route,
-		HashSet<string> routeParameterNames,
 		ParameterInfo[] handlerParams,
 		bool includeHiddenOptions,
 		Dictionary<Type, bool> serviceAvailability,
@@ -306,24 +301,17 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		var schema = route.OptionSchema;
 		var regularOptions = handlerParams
 			.Where(parameter =>
-				parameter.Name is { } name
-				&& parameter.ParameterType != typeof(CancellationToken)
-				&& !routeParameterNames.Contains(name)
-				&& !app.ImplicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
-				&& parameter.GetCustomAttribute<FromServicesAttribute>() is null
-				&& parameter.GetCustomAttribute<FromContextAttribute>() is null
-				&& !Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true)
-				&& (includeHiddenOptions || !schema.IsOptionHidden(name))
+				schema.IsOptionParameter(parameter)
+				&& (includeHiddenOptions || !schema.IsOptionHidden(parameter.Name!))
 				&& ShouldIncludeDocumentationOption(
-					route, name, includeHiddenOptions, customGlobalOwnership))
+					route, parameter.Name!, includeHiddenOptions, customGlobalOwnership))
 			.Select(parameter => BuildDocumentationOption(
 				schema, parameter, serviceAvailability, customGlobalOwnership));
-		var groupOptions = handlerParams
-			.Where(parameter => Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
-			.SelectMany(parameter =>
+		var groupOptions = schema.OptionsGroupTypes
+			.SelectMany(groupType =>
 			{
-				var defaultInstance = CreateOptionsGroupDefault(parameter.ParameterType);
-				return GetOptionsGroupProperties(parameter.ParameterType)
+				var defaultInstance = CreateOptionsGroupDefault(groupType);
+				return GetOptionsGroupProperties(groupType)
 					.Where(prop =>
 						prop.CanWrite
 						&& (includeHiddenOptions || !schema.IsOptionHidden(prop.Name))
@@ -418,24 +406,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 			|| !parameter.CanBeOmitted;
 		return requiresFallback
 			&& (!parameter.SupportsServiceFallback
-				|| !CanResolveFromActiveServices(parameter.ParameterType, serviceProvider, serviceAvailability));
-	}
-
-	private static bool CanResolveFromActiveServices(
-		Type parameterType,
-		IServiceProvider serviceProvider,
-		Dictionary<Type, bool> serviceAvailability)
-	{
-		// HandlerArgumentBinder synthesizes these progress types from the interaction channel before
-		// direct service lookup. Discovery must apply that same fallback and still allow an explicitly
-		// registered IProgress<T> when no channel is available.
-		if (InteractionProgressFactory.IsSupportedProgressType(parameterType)
-			&& IsServiceAvailable(typeof(IReplInteractionChannel), serviceProvider, serviceAvailability))
-		{
-			return true;
-		}
-
-		return IsServiceAvailable(parameterType, serviceProvider, serviceAvailability);
+				|| !IsServiceAvailable(parameter.ParameterType, serviceProvider, serviceAvailability));
 	}
 
 	private static bool IsServiceAvailable(
@@ -500,30 +471,8 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		ValidateHiddenOptionInvocability(route, serviceAvailability);
 
 		var schema = route.OptionSchema;
-		var routeParameterNames = route.Template.Segments
-			.OfType<DynamicRouteSegment>()
-			.Select(static segment => segment.Name)
-			.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var handlerParams = route.Command.Handler.Method.GetParameters();
-		var regularOptionNames = handlerParams
-			.Where(parameter =>
-				parameter.Name is not null
-				&& parameter.ParameterType != typeof(CancellationToken)
-				&& !routeParameterNames.Contains(parameter.Name)
-				&& !app.ImplicitServiceParameters.IsImplicitServiceParameter(parameter.ParameterType)
-				&& parameter.GetCustomAttribute<FromServicesAttribute>() is null
-				&& parameter.GetCustomAttribute<FromContextAttribute>() is null
-				&& !Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
-			.Select(static parameter => parameter.Name!);
-		var groupOptionNames = handlerParams
-			.Where(parameter => Attribute.IsDefined(parameter.ParameterType, typeof(ReplOptionsGroupAttribute), inherit: true))
-			.SelectMany(parameter => GetOptionsGroupProperties(parameter.ParameterType))
-			.Where(static property => property.CanWrite)
-			.Select(static property => property.Name);
-
-		foreach (var parameterName in regularOptionNames
-			.Concat(groupOptionNames)
-			.Distinct(StringComparer.OrdinalIgnoreCase))
+		// The schema holds every option exactly once: the handler's own and its expanded groups' properties.
+		foreach (var parameterName in schema.Parameters.Keys)
 		{
 			if (schema.IsOptionHidden(parameterName)
 				|| ShouldIncludeDocumentationOption(
@@ -656,10 +605,7 @@ internal sealed class DocumentationEngine(CoreReplApp app)
 		var enumValues = effectiveType.IsEnum
 			? Enum.GetNames(effectiveType)
 			: [];
-		var propDefault = property.GetValue(defaultInstance);
-		var defaultValue = propDefault is not null
-			? propDefault.ToString()
-			: null;
+		var defaultValue = ParsingOptions.FormatValue(property.GetValue(defaultInstance));
 		var option = new ReplDocOption(
 			Name: displayToken?.TrimStart('-') ?? property.Name,
 			Type: GetFriendlyTypeName(property.PropertyType),

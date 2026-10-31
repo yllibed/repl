@@ -796,7 +796,6 @@
     const profileRadios = Array.from(document.querySelectorAll('input[name="profile"]'));
     const featureInputs = Array.from(document.querySelectorAll('input[name="feature"]'));
     const query = new URLSearchParams(location.search);
-    const textDecoder = new TextDecoder();
     // ============================================================
     // Constants and lookup tables
     // ============================================================
@@ -1256,13 +1255,19 @@
       const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
       const ws = new WebSocket(`${wsProto}://${location.host}/ws/telnet${buildConnectionQuery(config)}`);
       ws.binaryType = 'arraybuffer';
+      // Telnet is a byte stream: a character may straddle two messages, so the decoder carries it over.
+      const textDecoder = new TextDecoder();
 
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); };
+      ws.onclose = ws.onerror = () => {
+        const rest = textDecoder.decode();
+        if (rest.length > 0) writeTerminalOutput(rest);
+        send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]');
+      };
 
       ws.onmessage = e => {
         const raw = new Uint8Array(e.data);
         const vt = telnetParse(raw);
-        if (vt.length > 0) writeTerminalOutput(textDecoder.decode(vt));
+        if (vt.length > 0) writeTerminalOutput(textDecoder.decode(vt, { stream: true }));
       };
 
       send = d => {

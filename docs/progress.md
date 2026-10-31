@@ -33,6 +33,14 @@ app.Map("sync", async (IProgress<double> progress, CancellationToken ct) =>
 
 `IProgress<double>` is connected to `IReplInteractionChannel.WriteProgressAsync(...)`. Reporting `42` is equivalent to sending a normal progress event with the configured default label and `Percent = 42`.
 
+Like `CancellationToken`, a progress parameter is supplied by Repl: it is never an option in help, completion,
+exported documentation or an MCP tool's input schema, and declaring `[ReplOption]` or `[ReplArgument]` on it fails when
+the command is mapped (see [Parameter binding precedence](commands.md#parameter-binding-precedence)).
+
+> **Changed in 0.12.** A progress parameter used to be listed as an option (`--progress`) and as an MCP tool argument;
+> `[ReplOption(AutomationHidden = true)]` or `.WithOption("progress", ...)` was the way to hide it. Remove either: both
+> now fail when the command is mapped.
+
 ## Structured Progress
 
 Use `IProgress<ReplProgressEvent>` when the progress update needs a label, computed percentage, state, unit, or details.
@@ -150,26 +158,38 @@ feedback of a `--json` command in that writer (`DiagnosticText`) rather than in 
 not hosted, it also gets the process's stream split for a protocol-passthrough command: feedback in
 that writer, the handler's payload alone in its output.
 
-Not covered: the echo of what a user types at a terminal prompt, masked secret input, and the prompts
-and menus of `RichPromptInteractionHandler` and Spectre still render on the output stream.
+A text prompt follows its label: what the user types is echoed to the same stream, as are the mask of
+secret input and a prompt's countdown. When that stream is redirected away from the terminal, the user
+answers without seeing the prompt; prefill the answer with `--answer:<name>=<value>` instead. The
+arrow-key menus of `RichPromptInteractionHandler` and the Spectre prompts draw on the output stream, so
+while feedback goes elsewhere they step aside and the text prompts take over.
 
 > **Changed in 0.12.** Feedback used to stay on standard output in every case. A script that read status
 > or progress lines from a redirected standard output, or a test that captures `Console.Out` in a test
-> host that redirects it, now finds them on standard error. To restore the previous behaviour:
+> host that redirects it, now finds them on standard error, and prompts in that case render as text
+> prompts on standard error rather than as menus on standard output. To restore the previous behaviour:
 >
 > ```csharp
 > app.Options(o => o.Output.FeedbackStream = ReplFeedbackStream.Output);
 > ```
 
-`ReplFeedbackStream.Error` forces the error stream instead.
+`ReplFeedbackStream.Error` forces the error stream instead, and with it the text prompts.
 
 A [protocol-passthrough](commands.md#protocol-passthrough-commands) command run from the console writes
 the feedback of its handler to standard error, uncoloured, whatever the format and `FeedbackStream`:
 standard output belongs to the protocol. A progress line is rewritten in place only when standard error
 reaches a terminal, so a client logging it gets one line per update. Feedback written before the
 command is resolved, by preprocessors and hooks, follows the rules above: a server started by a client
-with standard output piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a hosted
-session, the feedback goes to the session's writers, which most transports share with the protocol.
+with standard output piped keeps it on standard error, unless `FeedbackStream` is `Output`. In a session
+whose transport has a single stream, as every hosted host's has, that stream belongs to the protocol:
+the handler's feedback goes to the session's own error writer if it has one, and is not written at all
+otherwise, whatever `FeedbackStream` says. Feedback written before the command is resolved still
+reaches the session. A prompt's label is feedback too, and its answer would be read from the protocol's
+input: a protocol-passthrough handler should not prompt.
+
+> **Changed in 0.12.** A hosted protocol-passthrough handler's feedback used to be written into the
+> transport's stream, mixed with its protocol. To put text on that stream, write it to
+> `IReplIoContext.Output`.
 
 ## Advanced Terminal Progress
 
