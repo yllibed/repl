@@ -230,6 +230,70 @@ public sealed class Given_ReplAppBackend
 		}
 	}
 
+	[TestMethod]
+	[DataRow("scalar")]
+	[DataRow("nested")]
+	[DataRow("array")]
+	[Description("Small nonzero JSON numbers retain their magnitude through native object binding and real-pipe result rendering, including nested objects and object arrays.")]
+	public async Task When_SmallNumbersAreSubmitted_Then_TheirMagnitudeSurvives(string shape)
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		var app = ReplApp.Create();
+		app.Map("scalar", (object payload) => payload);
+		app.Map("nested", (object payload) => payload);
+		app.Map("array", (object[] payload) => payload);
+		var name = TestPipeName.Create();
+		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
+		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+
+		foreach (var literal in new[] { "1e-29", "-1e-50", "1e-300", "5e-324", "1e-28", "1.25", "0", "-0", "0e-999" })
+		{
+			var json = shape switch { "nested" => "{\"x\":" + literal + "}", "array" => "[" + literal + "]", _ => literal };
+			using var document = JsonDocument.Parse(json);
+			var result = await client.ExecuteAsync(new() { Command = shape, Values = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["payload"] = document.RootElement,
+			}, }, deadline.Token);
+
+			result.ExitCode.Should().Be(0, "{0} must bind in {1}", literal, shape);
+			var value = result.Result!.Value;
+			value = shape switch { "nested" => value.GetProperty("x"), "array" => value[0], _ => value };
+			value.GetDouble().Should().Be(double.Parse(literal, System.Globalization.CultureInfo.InvariantCulture), "{0} must survive in {1}", literal, shape);
+		}
+	}
+
+	[TestMethod]
+	[DataRow("scalar")]
+	[DataRow("nested")]
+	[DataRow("array")]
+	[Description("JSON numbers outside the supported native numeric range fail binding instead of reaching object handlers as zero or infinity.")]
+	public async Task When_NumbersCannotBeRepresented_Then_TheHandlerDoesNotRun(string shape)
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		var app = ReplApp.Create();
+		var invoked = false;
+		app.Map("scalar", (object payload) => { invoked = true; return payload; });
+		app.Map("nested", (object payload) => { invoked = true; return payload; });
+		app.Map("array", (object[] payload) => { invoked = true; return payload; });
+		var name = TestPipeName.Create();
+		await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
+		await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+
+		foreach (var literal in new[] { "1e-400", "-1e-400", "1e400" })
+		{
+			var json = shape switch { "nested" => "{\"x\":" + literal + "}", "array" => "[" + literal + "]", _ => literal };
+			using var document = JsonDocument.Parse(json);
+			var result = await client.ExecuteAsync(new() { Command = shape, Values = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
+			{
+				["payload"] = document.RootElement,
+			}, }, deadline.Token);
+
+			result.ExitCode.Should().Be(2);
+			result.Kind.Should().Be("bindingError");
+			invoked.Should().BeFalse("{0} cannot be represented in {1}", literal, shape);
+		}
+	}
+
 	public sealed class Globals
 	{
 		public string Tenant { get; set; } = "default";

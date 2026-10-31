@@ -76,13 +76,24 @@ internal static class ParameterValueConverter
 		System.Text.Json.JsonValueKind.String => value.GetString(),
 		System.Text.Json.JsonValueKind.Number when value.TryGetInt64(out var integer) => integer,
 		System.Text.Json.JsonValueKind.Number when value.TryGetUInt64(out var unsigned) => unsigned,
-		System.Text.Json.JsonValueKind.Number when value.TryGetDecimal(out var number) => number,
-		System.Text.Json.JsonValueKind.Number when double.IsFinite(value.GetDouble()) => value.GetDouble(),
+		System.Text.Json.JsonValueKind.Number when value.TryGetDecimal(out var number) && (number != 0 || IsJsonZero(value)) => number,
+		System.Text.Json.JsonValueKind.Number when value.TryGetDouble(out var real) && double.IsFinite(real) && (real != 0 || IsJsonZero(value)) => real,
 		System.Text.Json.JsonValueKind.Array => value.EnumerateArray().Select(ReadNativeJson).ToArray(),
 		System.Text.Json.JsonValueKind.Object => value.EnumerateObject().ToDictionary(property => property.Name,
 			property => ReadNativeJson(property.Value), StringComparer.Ordinal),
 		_ => throw new InvalidCastException("The JSON value cannot be represented as a native value."),
 	};
+
+	private static bool IsJsonZero(System.Text.Json.JsonElement value)
+	{
+		// Numeric parsers can round a nonzero significand to zero; the exponent cannot make a literal zero nonzero.
+		foreach (var character in value.GetRawText())
+		{
+			if (character is 'e' or 'E') { break; }
+			if (character is >= '1' and <= '9') { return false; }
+		}
+		return true;
+	}
 
 	public static object? ConvertSingle(
 		string? value,

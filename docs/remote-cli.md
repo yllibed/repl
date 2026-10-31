@@ -144,6 +144,8 @@ Structured commands use registered route templates and canonical parameter keys 
 
 Object parameters receive JSON objects as dictionaries and JSON arrays as native arrays, with nested values preserved. List-like parameters support arrays, `List<T>`, `IList<T>`, `ICollection<T>`, `IReadOnlyCollection<T>`, `IReadOnlyList<T>` and `IEnumerable<T>` through the shared binder. Unknown custom types retain an unconstrained discovery schema; that does not promise arbitrary CLR deserialization.
 
+For `object` inputs, numbers use `long`, `ulong`, `decimal`, then finite `double` as needed. A nonzero value that would round to zero in `decimal` falls back to `double`; a value that still underflows to zero or overflows the supported types fails binding. This is not arbitrary-precision JSON arithmetic. Use explicitly typed numeric parameters when the command requires a particular numeric type.
+
 An empty invocation or a context without a command returns the ordinary `help` outcome with human-readable help in `StandardOutput` and no JSON result. Explicit `--help` retains its structured JSON result.
 
 Discovery follows Repl's metadata. Explicit service parameters are omitted; implicit service fallback parameters may remain optional CLI inputs. Unknown value types receive an unconstrained schema rather than a CLR type name. Hidden commands are omitted from discovery but remain invocable: hiding is not authorization.
