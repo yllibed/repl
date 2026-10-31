@@ -70,7 +70,7 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 			}
 		}
 		catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-		catch (Exception ex) when (_lifetime.IsCancellationRequested && ex is ObjectDisposedException or IOException) { }
+		catch (Exception ex) when (_lifetime.IsCancellationRequested && ex is ObjectDisposedException or IOException or System.Net.Sockets.SocketException) { }
 		finally
 		{
 			Volatile.Write(ref _accepting, value: null);

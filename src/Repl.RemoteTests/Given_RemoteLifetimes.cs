@@ -11,6 +11,24 @@ namespace Repl.RemoteTests;
 public sealed class Given_RemoteLifetimes
 {
 	[TestMethod]
+	[Description("Repeated listener shutdown with a pending accept completes cleanly on both socket-backed Unix pipes and Windows pipes.")]
+	public async Task When_AListenerStopsAccepting_Then_ClosingItsPendingPipeIsNotAnError()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		for (var iteration = 0; iteration < 25; iteration++)
+		{
+			var name = TestPipeName.Create();
+			await using var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new DelayedTerminal()));
+			await using var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+			await client.DiscoverAsync(deadline.Token);
+
+			await server.DisposeAsync();
+
+			server.Completion.IsCompletedSuccessfully.Should().BeTrue();
+		}
+	}
+
+	[TestMethod]
 	[DataRow(true, DisplayName = "Blocked description")]
 	[DataRow(false, DisplayName = "Execution delaying cancellation")]
 	[Description("Listener shutdown remains bounded while backend ownership lasts until all in-flight methods really finish.")]
