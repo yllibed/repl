@@ -81,6 +81,8 @@ The dashboard shows each branch separately as well as the fused result. A keywor
 
 [IndexingWorker.cs](../IndexingWorker.cs) is the only rebuild owner. It scans initially and every 60 seconds, or after a manual request. Requests are coalesced; a request during an active build reports that work is already running.
 
+The worker is also the only writer of its immutable status. It publishes status and the current cancellation action together with `Volatile.Read/Write`; readers need no worker lock or retry loop. Concurrent cancellation callers atomically complete a per-build signal with `TrySetResult` and share the task that forwards cancellation. Finishing a build closes that signal and awaits forwarding before disposing the token source, so a caller holding an older snapshot cannot cancel a later build or touch a disposed source. The channel and .NET cancellation primitives still manage their own internal synchronization.
+
 ```mermaid
 flowchart LR
     Source[Markdown files] --> Stage[Prepare staging database]
