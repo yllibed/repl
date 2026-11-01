@@ -145,3 +145,28 @@ send hello
 - Use `--ansi:never` to force Plain mode (no ANSI), which demonstrates the text fallback for interactive prompts.
 - The browser panel is a teaching aid: it parses the same hosted `OSC 9;4` progress signals that a richer terminal could consume for native UI integration.
 - Canonical support matrix and precedence order live in [`docs/terminal-metadata.md`](../../docs/terminal-metadata.md).
+
+## Container hosting checks
+
+`health` reports readiness from the host lifetime and the shared `maintenance` setting.
+`health --liveness` ignores maintenance; the Docker image uses it for its exec-form
+health check. `log "operator checkpoint"` writes to the host logger while acknowledging
+only the calling session.
+
+See [container hosting and live administration](../../docs/container-hosting.md) for
+Portainer attachment, logging, non-root users, mounts and startup/shutdown order.
+Use `docker stop --time 20 repl-hosting-remote` to allow the sample's fifteen-second
+shutdown budget to complete before Docker forces termination.
+
+On Linux, with Node.js 22+, Python 3 and Docker available, run from the repository root:
+
+```sh
+node eng/ci/container-hosting-smoke.mjs
+```
+
+This builds the image and checks maintenance/readiness, Docker liveness, browser and
+native sessions, shared settings, isolated output, interruption, detach and shutdown
+with sessions active. It also checks a custom pipe name with a matching health check.
+Logs and inspect output are saved under `artifacts/container-hosting` before the test
+removes its containers and images. To test an existing image, set `REPL_CONTAINER_IMAGE`;
+the script leaves that image in place.

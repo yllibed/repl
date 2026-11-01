@@ -1,18 +1,13 @@
-using System.Collections.Concurrent;
-
 using Microsoft.AspNetCore.SignalR;
 
 using Repl;
 
 namespace HostingRemoteSample;
 
-public sealed class ReplHub(ReplApp app, SessionTracker tracker) : Hub
+internal sealed class ReplHub(SignalRSessions sessions, SessionTracker tracker) : Hub
 {
-	private static readonly ConcurrentDictionary<string, SessionState> s_sessions = new();
-
 	public override async Task OnConnectedAsync()
 	{
-		var cts = new CancellationTokenSource();
 		var host = new StreamedReplHost(new SignalRTextWriter(Clients.Caller))
 		{
 			TransportName = "signalr",
@@ -20,7 +15,6 @@ public sealed class ReplHub(ReplApp app, SessionTracker tracker) : Hub
 		};
 		host.UpdateTerminalCapabilities(TerminalCapabilities.VtInput);
 		var sessionName = $"signalr-{Context.ConnectionId[..8]}";
-		var state = new SessionState(host, cts, sessionName);
 		var options = new ReplRunOptions
 		{
 			TerminalOverrides = new TerminalSessionOverrides
@@ -30,38 +24,29 @@ public sealed class ReplHub(ReplApp app, SessionTracker tracker) : Hub
 			},
 		};
 
-		s_sessions[Context.ConnectionId] = state;
 		tracker.Add(sessionName, transport: "signalr", host.RemotePeer);
 		ApplyInitialMetadataFromQuery(sessionName);
 
-		state.RunTask = Task.Run(async () =>
+		try { sessions.Start(Context.ConnectionId, host, sessionName, options, Context.ConnectionAborted); }
+		catch
 		{
-			try
-			{
-				await host.RunSessionAsync(app, options, cts.Token);
-			}
-			catch (OperationCanceledException)
-			{
-				// Session closed.
-			}
-			finally
-			{
-				await host.DisposeAsync();
-			}
-		});
+			tracker.Remove(sessionName);
+			await host.DisposeAsync();
+			throw;
+		}
 
 		await base.OnConnectedAsync();
 	}
 
 	public void OnInput(string text)
 	{
-		if (s_sessions.TryGetValue(Context.ConnectionId, out var state))
+		if (sessions.TryGet(Context.ConnectionId, out var host, out var sessionName))
 		{
 			if (TerminalControlProtocol.TryParse(text, out var controlMessage))
 			{
-				state.Host.ApplyControlMessage(controlMessage);
+				host.ApplyControlMessage(controlMessage);
 				tracker.UpdateMetadataByName(
-					state.SessionName,
+					sessionName,
 					terminal: controlMessage.TerminalIdentity,
 					screen: controlMessage.WindowSize is { } size ? $"{size.Width}x{size.Height}" : null,
 					capabilities: controlMessage.TerminalCapabilities,
@@ -69,27 +54,15 @@ public sealed class ReplHub(ReplApp app, SessionTracker tracker) : Hub
 				return;
 			}
 
-			state.Host.EnqueueInput(text);
-			tracker.Touch(state.SessionName);
+			host.EnqueueInput(text);
+			tracker.Touch(sessionName);
 		}
 	}
 
 	public override async Task OnDisconnectedAsync(Exception? exception)
 	{
-		if (s_sessions.TryRemove(Context.ConnectionId, out var state))
-		{
-			state.Host.Complete();
-			tracker.Remove(state.SessionName);
-			await state.Cts.CancelAsync();
-			state.Cts.Dispose();
-		}
-
+		await sessions.DisconnectAsync(Context.ConnectionId);
 		await base.OnDisconnectedAsync(exception);
-	}
-
-	private sealed record SessionState(StreamedReplHost Host, CancellationTokenSource Cts, string SessionName)
-	{
-		public Task? RunTask { get; set; }
 	}
 
 	private string? ResolveRemotePeer()

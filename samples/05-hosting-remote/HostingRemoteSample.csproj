@@ -9,5 +9,6 @@
 		<ProjectReference Include="..\..\src\Repl\Repl.csproj" />
 		<ProjectReference Include="..\..\src\Repl.WebSocket\Repl.WebSocket.csproj" />
 		<ProjectReference Include="..\..\src\Repl.Telnet\Repl.Telnet.csproj" />
+		<InternalsVisibleTo Include="Repl.RemoteTests" />
 	</ItemGroup>
 </Project>

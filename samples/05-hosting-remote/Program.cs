@@ -22,6 +22,7 @@ builder.Services.AddSignalR();
 builder.Services.AddSingleton<ISettingsService, InMemorySettingsService>();
 builder.Services.AddSingleton<IMessageBus, InMemoryMessageBus>();
 builder.Services.AddSingleton<SessionTracker>();
+builder.Services.AddSingleton<SignalRSessions>();
 
 // REPL application — resolved lazily so the module can pull from host DI.
 builder.Services.AddRepl((sp, replApp) =>
@@ -36,16 +37,22 @@ builder.Services.AddRepl((sp, replApp) =>
 	replApp.MapModule(new RemoteModule(
 		sp.GetRequiredService<ISettingsService>(),
 		sp.GetRequiredService<IMessageBus>(),
-		sp.GetRequiredService<SessionTracker>()));
+		sp.GetRequiredService<SessionTracker>(),
+		sp.GetRequiredService<IHostApplicationLifetime>(),
+		sp.GetRequiredService<ILogger<RemoteModule>>()));
 });
 
 await using var webApp = builder.Build();
 var pipeName = webApp.Configuration["Repl:PipeName"] ?? "repl-hosting-sample";
-var connectionFailed = LoggerMessage.Define(LogLevel.Warning, eventId: default, "Remote CLI connection failed");
-await using var remote = new NamedPipeReplServer(pipeName,
-	_ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(
-		webApp.Services.GetRequiredService<ReplApp>(), webApp.Services)),
-	error => connectionFailed(webApp.Logger, error));
+webApp.Use(async (context, next) =>
+{
+	if (webApp.Lifetime.ApplicationStopping.IsCancellationRequested)
+	{
+		context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+		return;
+	}
+	await next(context);
+});
 
 webApp.UseWebSockets();
 webApp.UseDefaultFiles();
@@ -60,7 +67,8 @@ webApp.Map("/ws/repl", async (HttpContext context, ReplApp repl, SessionTracker 
 		return;
 	}
 
-	var socket = await context.WebSockets.AcceptWebSocketAsync();
+	using var socket = await context.WebSockets.AcceptWebSocketAsync();
+	using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, webApp.Lifetime.ApplicationStopping);
 	var sessionName = $"ws-{Guid.NewGuid().ToString("N")[..8]}";
 	var remotePeer = FormatRemotePeer(context);
 	tracker.Add(sessionName, transport: "websocket", remotePeer);
@@ -89,16 +97,16 @@ webApp.Map("/ws/repl", async (HttpContext context, ReplApp repl, SessionTracker 
 			socket,
 			options,
 			controlMessage => ApplyControlMessageMetadata(tracker, sessionName, controlMessage),
-			context.RequestAborted);
+			sessionLifetime.Token);
 	}
-	catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+	catch (OperationCanceledException) when (sessionLifetime.IsCancellationRequested)
 	{
-		// The client went away: the session ends with the request.
+		// A disconnected client or host shutdown ends this session.
 	}
 	finally
 	{
 		tracker.Remove(sessionName);
-		await TryCloseSocketAsync(socket, context.RequestAborted);
+		await TryCloseSocketAsync(socket, sessionLifetime.Token);
 	}
 });
 
@@ -111,7 +119,8 @@ webApp.Map("/ws/telnet", async (HttpContext context, ReplApp repl, SessionTracke
 		return;
 	}
 
-	var socket = await context.WebSockets.AcceptWebSocketAsync();
+	using var socket = await context.WebSockets.AcceptWebSocketAsync();
+	using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, webApp.Lifetime.ApplicationStopping);
 	var sessionName = $"telnet-{Guid.NewGuid().ToString("N")[..8]}";
 	var remotePeer = FormatRemotePeer(context);
 	tracker.Add(sessionName, transport: "telnet", remotePeer);
@@ -142,26 +151,28 @@ webApp.Map("/ws/telnet", async (HttpContext context, ReplApp repl, SessionTracke
 					terminal: terminal,
 					capabilities: TerminalCapabilities.Ansi | TerminalCapabilities.IdentityReporting | TerminalCapabilities.VtInput,
 					ansiSupported: true),
-			cancellationToken: context.RequestAborted);
+			cancellationToken: sessionLifetime.Token);
 	}
-	catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+	catch (OperationCanceledException) when (sessionLifetime.IsCancellationRequested)
 	{
-		// The client went away: the session ends with the request.
+		// A disconnected client or host shutdown ends this session.
 	}
 	finally
 	{
 		tracker.Remove(sessionName);
-		await TryCloseSocketAsync(socket, context.RequestAborted);
+		await TryCloseSocketAsync(socket, sessionLifetime.Token);
 	}
 });
 
 // SignalR endpoint
 webApp.MapHub<ReplHub>("/hub/repl");
 
-// Keep host services alive until the local listener has drained its sessions.
-await webApp.StartAsync();
-await webApp.WaitForShutdownAsync();
-return 0;
+var repl = webApp.Services.GetRequiredService<ReplApp>();
+var connectionFailed = LoggerMessage.Define(LogLevel.Warning, eventId: default, "Remote CLI connection failed");
+var remote = new NamedPipeReplServer(pipeName,
+	_ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(repl, webApp.Services)),
+	error => connectionFailed(webApp.Logger, error));
+return await HostingLifetime.RunAsync(webApp, remote);
 
 static string? FormatRemotePeer(HttpContext context)
 {

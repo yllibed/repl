@@ -39,15 +39,29 @@ builder.Services.AddRepl((services, app) =>
 
 await using var host = builder.Build();
 var app = host.Services.GetRequiredService<ReplApp>();
-await using var remote = new NamedPipeReplServer("my-app",
+var remote = new NamedPipeReplServer("my-app",
     _ => ValueTask.FromResult<IRemoteReplBackend>(
         new ReplAppRemoteBackend(app, host.Services)));
 
-await host.StartAsync();
-await host.WaitForShutdownAsync();
+try
+{
+    await host.StartAsync();
+    await Task.Delay(Timeout.InfiniteTimeSpan, host.Lifetime.ApplicationStopping);
+}
+catch (OperationCanceledException) when (host.Lifetime.ApplicationStopping.IsCancellationRequested)
+{
+}
+finally
+{
+    host.Lifetime.StopApplication();
+    try { await remote.DisposeAsync(); }
+    finally { await host.StopAsync(); }
+}
 ```
 
 Use the host's real readiness state for a production health command. A successful connection alone proves only that the listener is accepting connections. A health command should check the dependencies that determine readiness and return an appropriate exit code.
+
+Drain remote work before stopping hosted services that handlers may still use. `WaitForShutdownAsync` stops the host itself, so it does not provide this ordering. The [container hosting recipe](container-hosting.md) also covers browser sessions, a total shutdown budget and the sample's failure policy.
 
 The order of startup and callbacks is:
 

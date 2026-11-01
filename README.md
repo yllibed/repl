@@ -126,6 +126,8 @@ One command graph. CLI, REPL, remote interactive sessions, and AI agents — all
 
 For advanced administration of an existing process, [Repl.Remote and Repl.Remote.Defaults](docs/remote-cli.md) add native console attachment and one-shot commands over a local named pipe. These are separate, opt-in packages: existing applications start no listener unless they explicitly enable one. The protocol package is independent of the application engine and DI.
 
+For a complete container recipe, see [container hosting and live administration](docs/container-hosting.md): shell-free health probes, native and browser consoles, host logging and bounded shutdown using the existing hosting sample.
+
 ## Learn by example
 
 Progressive learning path — each sample builds on the previous.

@@ -15,5 +15,5 @@ ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 USER $APP_UID
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD ["dotnet", "/app/HostingRemoteSample.dll", "--remote-exec", "repl-hosting-sample", "health"]
+    CMD ["dotnet", "/app/HostingRemoteSample.dll", "--remote-exec", "repl-hosting-sample", "health", "--liveness"]
 ENTRYPOINT ["dotnet", "HostingRemoteSample.dll"]
