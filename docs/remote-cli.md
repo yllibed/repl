@@ -39,15 +39,29 @@ builder.Services.AddRepl((services, app) =>
 
 await using var host = builder.Build();
 var app = host.Services.GetRequiredService<ReplApp>();
-await using var remote = new NamedPipeReplServer("my-app",
+var remote = new NamedPipeReplServer("my-app",
     _ => ValueTask.FromResult<IRemoteReplBackend>(
         new ReplAppRemoteBackend(app, host.Services)));
 
-await host.StartAsync();
-await host.WaitForShutdownAsync();
+try
+{
+    await host.StartAsync();
+    await Task.Delay(Timeout.InfiniteTimeSpan, host.Lifetime.ApplicationStopping);
+}
+catch (OperationCanceledException) when (host.Lifetime.ApplicationStopping.IsCancellationRequested)
+{
+}
+finally
+{
+    host.Lifetime.StopApplication();
+    try { await remote.DisposeAsync(); }
+    finally { await host.StopAsync(); }
+}
 ```
 
 Use the host's real readiness state for a production health command. A successful connection alone proves only that the listener is accepting connections. A health command should check the dependencies that determine readiness and return an appropriate exit code.
+
+Drain remote work before stopping hosted services that handlers may still use. `WaitForShutdownAsync` stops the host itself, so it does not provide this ordering. The [container hosting recipe](container-hosting.md) also covers browser sessions, a total shutdown budget and the sample's failure policy.
 
 The order of startup and callbacks is:
 
@@ -108,7 +122,7 @@ The envelope is [JSON-RPC 2.0](https://www.jsonrpc.org/specification). Discovery
 
 The CLI method names, `x-cli` discovery extension and terminal conventions are an **experimental Repl profile**, not an established industry CLI standard. The profile version is separate from the OpenRPC document version. Clients check the profile's major version and inspect capabilities; compatible extensions can add methods and optional JSON fields. A breaking wire change requires another profile major version.
 
-Messages use UTF-8 JSON preceded by ASCII `Content-Length: <byte-count>\r\n\r\n`. Count encoded bytes, not characters. This is stream framing, not HTTP. [StreamJsonRpc](https://microsoft.github.io/vs-streamjsonrpc/docs/connecting.html) handles framing, request correlation and cancellation in the .NET implementation. Python interoperability tests exercise the same protocol without that library.
+Messages use UTF-8 JSON preceded by ASCII `Content-Length: <byte-count>\r\n\r\n`. Count encoded bytes, not characters. This is stream framing, not HTTP. [StreamJsonRpc](https://microsoft.github.io/vs-streamjsonrpc/docs/connecting.html) handles framing, request correlation and cancellation in the .NET implementation. The independent C# contract client exercises the same framing without StreamJsonRpc or the Repl.Remote client and DTOs.
 
 | Method | Direction | Purpose |
 | --- | --- | --- |

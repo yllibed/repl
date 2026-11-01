@@ -19,6 +19,11 @@ Browser terminal (xterm.js / VT-compatible, raw mode)
           -> ReplApp command graph (same handlers as local)
 ```
 
+Start with [Program.cs](Program.cs) for service registration, Repl configuration and host startup.
+[WebSocketEndpoints.cs](WebSocketEndpoints.cs) owns the raw WebSocket and Telnet session flow;
+[ReplHub.cs](ReplHub.cs) handles SignalR. Both use [TerminalMetadata.cs](TerminalMetadata.cs)
+to interpret terminal metadata. [HostingLifetime.cs](HostingLifetime.cs) coordinates shutdown.
+
 ## What It Shows
 
 | Area | Command(s) | Notes |
@@ -93,7 +98,7 @@ docker exec repl-hosting-remote dotnet /app/HostingRemoteSample.dll --remote-exe
 
 Use that same executable command in a container administration tool's console, with an interactive TTY. It connects to the process already serving the browser. The image's exec-form `HEALTHCHECK` uses this pipe too; no HTTP probe tool is required. Its pipe name is the default shown above; update the health-check command if you customize the server's endpoint.
 
-The optional build target runs protocol, adapter and independent Python interoperability tests under Linux:
+The optional build target runs protocol, adapter and independent JSON-RPC contract tests under Linux:
 
 ```powershell
 docker build --target tests -f samples/05-hosting-remote/Dockerfile .
@@ -145,3 +150,30 @@ send hello
 - Use `--ansi:never` to force Plain mode (no ANSI), which demonstrates the text fallback for interactive prompts.
 - The browser panel is a teaching aid: it parses the same hosted `OSC 9;4` progress signals that a richer terminal could consume for native UI integration.
 - Canonical support matrix and precedence order live in [`docs/terminal-metadata.md`](../../docs/terminal-metadata.md).
+
+## Container hosting checks
+
+`health` reports readiness from the host lifetime and the shared `maintenance` setting.
+`health --liveness` ignores maintenance; the Docker image uses it for its exec-form
+health check. `log "operator checkpoint"` writes to the host logger while acknowledging
+only the calling session.
+
+See [container hosting and live administration](../../docs/container-hosting.md) for
+Portainer attachment, logging, non-root users, mounts and startup/shutdown order.
+Use `docker stop --time 20 repl-hosting-remote` to allow the sample's fifteen-second
+shutdown budget to complete before Docker forces termination.
+
+On Linux, with .NET 10, Node.js 22+ and Docker available, run from the repository root:
+
+```sh
+node eng/ci/container-hosting-smoke.mjs
+```
+
+The script builds the shared C# console test host, whose PTY dependency is confined to test tooling.
+
+This builds the image and checks maintenance/readiness, Docker liveness, browser and
+native sessions, shared settings, isolated output, interruption, detach and shutdown
+with sessions active. It also checks a custom pipe name with a matching health check.
+Logs and inspect output are saved under `artifacts/container-hosting` before the test
+removes its containers and images. To test an existing image, set `REPL_CONTAINER_IMAGE`;
+the script leaves that image in place.

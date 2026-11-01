@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Threading.Channels;
 
 using Repl;
+using Repl.Parameters;
 
 using Results = Repl.Results;
 
@@ -13,16 +14,31 @@ namespace HostingRemoteSample;
 internal sealed class RemoteModule(
 	ISettingsService settings,
 	IMessageBus bus,
-	SessionTracker tracker) : IReplModule
+	SessionTracker tracker,
+	IHostApplicationLifetime lifetime,
+	ILogger<RemoteModule> logger) : IReplModule
 {
+	private static readonly Action<ILogger, string, Exception?> OperatorMessage = LoggerMessage.Define<string>(LogLevel.Information, eventId: default, "Operator message: {Message}");
+
 	public void Map(IReplMap map)
 	{
 		map.Map("health",
-			[Description("Check that the host has started and is accepting commands")]
-			(Microsoft.Extensions.Hosting.IHostApplicationLifetime lifetime) =>
-				lifetime.ApplicationStarted.IsCancellationRequested && !lifetime.ApplicationStopping.IsCancellationRequested
-					? Results.Exit(0, new { status = "ready" })
-					: Results.Exit(1, new { status = "notReady" }));
+			[Description("Check readiness, or liveness independently of maintenance")]
+			([ReplOption] bool liveness = false) =>
+			{
+				var running = lifetime.ApplicationStarted.IsCancellationRequested && !lifetime.ApplicationStopping.IsCancellationRequested;
+				var healthy = running && (liveness || !string.Equals(settings.Get("maintenance"), "on", StringComparison.OrdinalIgnoreCase));
+				var status = liveness ? (healthy ? "alive" : "notAlive") : (healthy ? "ready" : "notReady");
+				return Results.Exit(healthy ? 0 : 1, new { status });
+			});
+
+		map.Map("log {message}",
+			[Description("Write an operator message to the host logs")]
+			(string message) =>
+			{
+				OperatorMessage(logger, message, null);
+				return Results.Success("Message written to host logs.");
+			});
 
 		map.Context(
 			"settings",
@@ -74,9 +90,15 @@ internal sealed class RemoteModule(
 				{
 					using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 					var displayTask = DisplayMessagesAsync(messages.Reader, channel, cts.Token);
-					await channel.AskTextAsync("watch-stop", "Watching... press Enter to stop");
-					await cts.CancelAsync();
-					await displayTask.ConfigureAwait(false);
+					try
+					{
+						await channel.AskTextAsync("watch-stop", "Watching... press Enter to stop");
+					}
+					finally
+					{
+						await cts.CancelAsync();
+						await displayTask.ConfigureAwait(false);
+					}
 				}
 				finally
 				{

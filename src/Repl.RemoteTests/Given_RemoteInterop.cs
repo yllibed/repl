@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using AwesomeAssertions;
 using Repl.Remote;
+using Repl.Remote.TestHost;
 
 namespace Repl.RemoteTests;
 
@@ -9,11 +10,11 @@ public sealed class Given_RemoteInterop
 {
 	[TestMethod]
 	[TestCategory("ExternalToolchain")]
-	[Description("A Python standard-library client proves that framing, JSON values, discovery and errors do not depend on the .NET client or CLR serialization.")]
+	[Description("An independently framed C# client checks UTF-8 JSON, discovery, request ids and errors without Repl.Remote DTOs or StreamJsonRpc.")]
 	public async Task When_AStandardJsonRpcClientConnects_Then_TheWireContractIsPortable()
 	{
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-		var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "python" : "python3")
+		var start = new ProcessStartInfo("dotnet")
 		{
 			UseShellExecute = false,
 			CreateNoWindow = true,
@@ -21,7 +22,8 @@ public sealed class Given_RemoteInterop
 			RedirectStandardOutput = true,
 			RedirectStandardError = true,
 		};
-		start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "protocol_client.py"));
+		start.ArgumentList.Add(typeof(PtySession).Assembly.Location);
+		start.ArgumentList.Add("protocol");
 		using var process = Process.Start(start)!;
 		var error = process.StandardError.ReadToEndAsync(CancellationToken.None);
 		var backend = new Backend();
@@ -32,6 +34,8 @@ public sealed class Given_RemoteInterop
 			await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
 			process.ExitCode.Should().Be(0, await error.ConfigureAwait(false));
 			backend.Executions.Should().Be(1);
+			typeof(PtySession).Assembly.GetReferencedAssemblies().Select(assembly => assembly.Name)
+				.Should().NotContain("Repl.Remote").And.NotContain("StreamJsonRpc");
 		}
 		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
 	}
@@ -39,7 +43,7 @@ public sealed class Given_RemoteInterop
 	private sealed class Backend : IRemoteReplBackend
 	{
 		public int Executions { get; private set; }
-		public ValueTask<RemoteCommandGraph> DescribeAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new RemoteCommandGraph("python-interop", [], []));
+		public ValueTask<RemoteCommandGraph> DescribeAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new RemoteCommandGraph("raw-interop", [], []));
 		public ValueTask<RemoteExecutionResult> ExecuteAsync(RemoteInvocationRequest request, CancellationToken cancellationToken)
 		{
 			Executions++;
