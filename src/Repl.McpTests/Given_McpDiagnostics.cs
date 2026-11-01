@@ -5,6 +5,10 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using Repl.Mcp;
 
+// Deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005); kept for existing hosts.
+// Rationale and successor: docs/mcp-reference.md#sdk-and-protocol-versions (#51).
+#pragma warning disable MCP9005
+
 namespace Repl.McpTests;
 
 /// <summary>
@@ -16,7 +20,8 @@ namespace Repl.McpTests;
 public sealed class Given_McpDiagnostics
 {
 	// The category and event ids are what an operator filters on, so the tests pin them rather than
-	// matching any entry that happens to carry an exception.
+	// matching any entry that happens to carry an exception: the capturing provider only looks at this
+	// category, and finds entries by event id.
 	private const string Category = "Repl.Mcp";
 	private const int ToolFailureWithheldEvent = 2001;
 	private const int StaleCatalogServedEvent = 2002;
@@ -24,6 +29,7 @@ public sealed class Given_McpDiagnostics
 	private const int StaleCatalogStillServedEvent = 2004;
 	private const int CatalogRecoveredEvent = 2005;
 	private const int RootsPrimeStillFailingEvent = 2006;
+	private const int RootsPrimeRecoveredEvent = 2007;
 
 	[TestMethod]
 	[Description("A tool call that fails with a withheld detail (an unhandled exception, not McpException/McpInteractionException) must still record that detail for the operator: the client's generic 'Command failed' message is deliberate, discarding invocation.Failure and its rendered text entirely is not.")]
@@ -38,10 +44,12 @@ public sealed class Given_McpDiagnostics
 
 		result.Should().NotContain("secret-detail", "the withheld detail must not reach the remote client");
 		var entry = provider.Single(ToolFailureWithheldEvent);
-		entry.Category.Should().Be(Category);
 		entry.Level.Should().Be(LogLevel.Error);
 		entry.Exception.Should().BeOfType<InvalidOperationException>().Which.Message.Should().Be("secret-detail");
 		entry.Message.Should().Contain("secret-detail", "the rendered detail the client did not get belongs in the message");
+		entry.Message.Should().Contain(
+			"boom failed",
+			"the entry is written after the pipeline's logging scope has ended, so only its own text can say which tool failed");
 	}
 
 	[TestMethod]
@@ -52,13 +60,12 @@ public sealed class Given_McpDiagnostics
 		await using var fixture = await McpTestFixture.CreateAsync(
 			app => app.Map("touch", () => "ok"),
 			configureOptions: null,
-			clientOptions: CreateBrokenRootsClient(),
+			clientOptions: CreateRootsClient(),
 			configureServices: services => CaptureLogs(services, provider)).ConfigureAwait(false);
 
 		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
 
 		var warning = provider.Single(RootsPrimeFailedEvent);
-		warning.Category.Should().Be(Category);
 		warning.Level.Should().Be(LogLevel.Warning);
 		warning.Exception.Should().BeOfType<UriFormatException>("the client answered roots/list with an unparseable URI");
 		provider.Count(RootsPrimeStillFailingEvent).Should().Be(0, "the first failure of an episode is the one that warns");
@@ -66,7 +73,47 @@ public sealed class Given_McpDiagnostics
 		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
 
 		provider.Count(RootsPrimeFailedEvent).Should().Be(1, "a repeat of the same episode must not warn again");
-		provider.Count(RootsPrimeStillFailingEvent).Should().Be(1, "the repeat is still recorded, at Debug");
+		provider.Count(RootsPrimeStillFailingEvent).Should().Be(1, "the repeat is still recorded");
+		provider.Count(LogLevel.Warning).Should().Be(1, "the repeat is recorded at Debug, below the threshold an operator reads");
+	}
+
+	[TestMethod]
+	[Description("A prime that succeeds ends the failure episode, and says so: without a recovery entry, a quiet log at Information reads the same as a client that is still failing on every call. It also re-arms the warning, so the next outage on that connection warns again instead of going straight to Debug.")]
+	public async Task When_RootsPrimingRecovers_Then_TheRecoveryIsLoggedAndTheNextFailureWarns()
+	{
+		var provider = new CapturingLoggerProvider();
+		var answersValidly = 0;
+		await using var fixture = await McpTestFixture.CreateAsync(
+			app => app.Map("touch", () => "ok"),
+			configureOptions: null,
+			clientOptions: CreateRootsClient(answersValidly: () => Volatile.Read(ref answersValidly) == 1),
+			configureServices: services => CaptureLogs(services, provider)).ConfigureAwait(false);
+
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+		provider.Count(RootsPrimeFailedEvent).Should().Be(1);
+
+		Volatile.Write(ref answersValidly, 1);
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+
+		var recovery = provider.Single(RootsPrimeRecoveredEvent);
+		recovery.Level.Should().Be(LogLevel.Information);
+
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+		provider.Count(RootsPrimeRecoveredEvent).Should().Be(
+			1,
+			"a prime answered from the cache also succeeds, and only the one that ends a failure is a recovery");
+
+		// Roots are cached once a prime succeeds, so only the client saying they changed makes the next
+		// call ask again. The routing invalidation the notification raises orders it before that call.
+		Volatile.Write(ref answersValidly, 0);
+		var cacheCleared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		fixture.App.Core.RoutingInvalidated += (_, _) => cacheCleared.TrySetResult();
+		await fixture.Client.SendNotificationAsync(NotificationMethods.RootsListChangedNotification).ConfigureAwait(false);
+		await cacheCleared.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
+
+		provider.Count(RootsPrimeFailedEvent).Should().Be(2, "the recovery ended the first episode, so this failure opens a new one");
+		provider.Count(RootsPrimeStillFailingEvent).Should().Be(0);
 	}
 
 	[TestMethod]
@@ -82,7 +129,7 @@ public sealed class Given_McpDiagnostics
 		await using var fixture = await McpTestFixture.CreateAsync(
 			app => app.Map("touch", () => "ok"),
 			configureOptions: null,
-			clientOptions: CreateBrokenRootsClient(async cancellationToken =>
+			clientOptions: CreateRootsClient(async cancellationToken =>
 			{
 				Interlocked.Increment(ref fetches);
 				if (Interlocked.Exchange(ref slowNext, 0) == 1)
@@ -104,9 +151,7 @@ public sealed class Given_McpDiagnostics
 		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
 		Volatile.Read(ref fetches).Should().Be(afterSlowFailure, "the slow failure stood the prime down, so this call asked nothing");
 
-#pragma warning disable MCP9005
 		await fixture.Client.SendNotificationAsync(NotificationMethods.RootsListChangedNotification).ConfigureAwait(false);
-#pragma warning restore MCP9005
 		await standDownLifted.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
 		await CallAsync(fixture.Client, "touch").ConfigureAwait(false);
 
@@ -119,22 +164,9 @@ public sealed class Given_McpDiagnostics
 	public async Task When_AStaleCatalogIsServedUntilRecovery_Then_ItWarnsOnceAndLogsTheRecovery()
 	{
 		var provider = new CapturingLoggerProvider();
-		var app = ReplApp.Create(services => CaptureLogs(services, provider));
-		app.UseMcpServer();
-		app.Map("initial", () => "ok");
-		var options = new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory };
-		var handler = new McpServerHandler(app.Core, options, app.Services);
-
 		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-		var session = await McpPipeSession.StartAsync(
-			handler.RunAsync,
-			new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions },
-			cts.Token).ConfigureAwait(false);
+		var (_, options, session) = await StartFailingLegacyCatalogAsync(provider, cts.Token).ConfigureAwait(false);
 		await using var sessionScope = session.ConfigureAwait(false);
-
-		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
-		options.CommandFilter = _ => throw new InvalidOperationException("projection-boom");
-		app.Core.InvalidateRouting();
 
 		var stale = await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
 
@@ -142,7 +174,6 @@ public sealed class Given_McpDiagnostics
 			tool => string.Equals(tool.Name, "initial", StringComparison.Ordinal),
 			"the fallback itself is unchanged: the previous catalog is still served");
 		var warning = provider.Single(StaleCatalogServedEvent);
-		warning.Category.Should().Be(Category);
 		warning.Level.Should().Be(LogLevel.Warning);
 		warning.Exception.Should().BeOfType<InvalidOperationException>().Which.Message.Should().Be("projection-boom");
 		provider.Count(StaleCatalogStillServedEvent).Should().Be(0, "the first failure of an episode is the one that warns");
@@ -150,13 +181,15 @@ public sealed class Given_McpDiagnostics
 		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
 
 		provider.Count(StaleCatalogServedEvent).Should().Be(1, "a retry of the same failing version must not warn again");
-		provider.Count(StaleCatalogStillServedEvent).Should().BeGreaterThan(0, "the retry's failure is still recorded, at Debug");
+		provider.Count(StaleCatalogStillServedEvent).Should().BeGreaterThan(0, "the retry's failure is still recorded");
+		provider.Count(LogLevel.Warning).Should().Be(1, "the retry is recorded at Debug, below the threshold an operator reads");
 		provider.Count(CatalogRecoveredEvent).Should().Be(0, "nothing has recovered yet");
 
 		options.CommandFilter = null;
 		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
 
-		provider.Single(CatalogRecoveredEvent).Level.Should().Be(LogLevel.Information);
+		var recovery = provider.Single(CatalogRecoveredEvent);
+		recovery.Level.Should().Be(LogLevel.Information);
 		provider.Count(StaleCatalogServedEvent).Should().Be(1, "recovering must not re-warn the episode it just ended");
 	}
 
@@ -165,22 +198,9 @@ public sealed class Given_McpDiagnostics
 	public async Task When_RoutingMovesDuringTheRecoveryBuild_Then_RecoveryWaitsForACurrentCatalog()
 	{
 		var provider = new CapturingLoggerProvider();
-		var app = ReplApp.Create(services => CaptureLogs(services, provider));
-		app.UseMcpServer();
-		app.Map("initial", () => "ok");
-		var options = new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory };
-		var handler = new McpServerHandler(app.Core, options, app.Services);
-
 		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-		var session = await McpPipeSession.StartAsync(
-			handler.RunAsync,
-			new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions },
-			cts.Token).ConfigureAwait(false);
+		var (app, options, session) = await StartFailingLegacyCatalogAsync(provider, cts.Token).ConfigureAwait(false);
 		await using var sessionScope = session.ConfigureAwait(false);
-
-		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
-		options.CommandFilter = _ => throw new InvalidOperationException("projection-boom");
-		app.Core.InvalidateRouting();
 		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
 		provider.Count(StaleCatalogServedEvent).Should().Be(1);
 
@@ -212,24 +232,15 @@ public sealed class Given_McpDiagnostics
 	public async Task When_ARetractionRestartsTheRecoveryBuild_Then_RecoveryIsLoggedAtThePublishedVersion()
 	{
 		var provider = new CapturingLoggerProvider();
-		var app = ReplApp.Create(services => CaptureLogs(services, provider));
-		app.UseMcpServer();
-		app.Map("initial", () => "ok");
-		var extra = app.Map("extra", () => "x");
-		var options = new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory };
-		var handler = new McpServerHandler(app.Core, options, app.Services);
-
+		CommandBuilder? extra = null;
 		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-		var session = await McpPipeSession.StartAsync(
-			handler.RunAsync,
-			new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions },
-			cts.Token).ConfigureAwait(false);
+		var (_, options, session) = await StartFailingLegacyCatalogAsync(
+			provider,
+			cts.Token,
+			app => extra = app.Map("extra", () => "x")).ConfigureAwait(false);
 		await using var sessionScope = session.ConfigureAwait(false);
 
-		// Version 1 is served; the failing rebuild is requested at version 2.
-		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
-		options.CommandFilter = _ => throw new InvalidOperationException("projection-boom");
-		app.Core.InvalidateRouting();
+		// Version 1 was served; the failing rebuild is requested at version 2.
 		await session.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
 		provider.Count(StaleCatalogServedEvent).Should().Be(1);
 
@@ -240,7 +251,7 @@ public sealed class Given_McpDiagnostics
 		{
 			if (Interlocked.Exchange(ref retractOnce, 0) == 1)
 			{
-				extra.Hidden();
+				extra!.Hidden();
 			}
 
 			return true;
@@ -259,12 +270,46 @@ public sealed class Given_McpDiagnostics
 			builder.AddProvider(provider);
 		});
 
-	private static McpClientOptions CreateBrokenRootsClient(Func<CancellationToken, Task>? beforeAnswer = null)
+	/// <summary>
+	/// Starts an initialize-era session that has been served the catalog at routing version 1, then makes
+	/// every later build fail and invalidates routing, so the next request falls back to that catalog.
+	/// </summary>
+	private static async Task<(ReplApp App, ReplMcpServerOptions Options, McpPipeSession Session)> StartFailingLegacyCatalogAsync(
+		CapturingLoggerProvider provider,
+		CancellationToken cancellationToken,
+		Action<ReplApp>? mapMore = null)
 	{
-		// Roots is deprecated by MCP spec 2026-07-28 (SEP-2577), but hosts still use it and Repl keeps
-		// supporting it until the SDK removes the surface (#51).
-#pragma warning disable MCP9005
-		return new McpClientOptions
+		var app = ReplApp.Create(services => CaptureLogs(services, provider));
+		app.UseMcpServer();
+		app.Map("initial", () => "ok");
+		mapMore?.Invoke(app);
+		var options = new ReplMcpServerOptions { TransportFactory = McpTestFixture.PipeTransportFactory };
+		var handler = new McpServerHandler(app.Core, options, app.Services);
+
+		var session = await McpPipeSession.StartAsync(
+			handler.RunAsync,
+			new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions },
+			cancellationToken).ConfigureAwait(false);
+		try
+		{
+			await session.Client.ListToolsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
+		}
+		catch
+		{
+			// The caller only takes ownership once this returns.
+			await session.DisposeAsync().ConfigureAwait(false);
+			throw;
+		}
+
+		options.CommandFilter = _ => throw new InvalidOperationException("projection-boom");
+		app.Core.InvalidateRouting();
+		return (app, options, session);
+	}
+
+	private static McpClientOptions CreateRootsClient(
+		Func<CancellationToken, Task>? beforeAnswer = null,
+		Func<bool>? answersValidly = null) =>
+		new()
 		{
 			Capabilities = new ClientCapabilities { Roots = new RootsCapability() },
 			Handlers = new McpClientHandlers
@@ -273,18 +318,18 @@ public sealed class Given_McpDiagnostics
 				// no client-side throw, which would escape the SDK's own message loop instead.
 				RootsHandler = async (_, cancellationToken) =>
 				{
-					var invalid = new Root { Uri = "http://", Name = "invalid" };
 					if (beforeAnswer is not null)
 					{
 						await beforeAnswer(cancellationToken).ConfigureAwait(false);
 					}
 
-					return new ListRootsResult { Roots = [invalid] };
+					var root = answersValidly?.Invoke() == true
+						? new Root { Uri = "file:///workspace", Name = "workspace" }
+						: new Root { Uri = "http://", Name = "invalid" };
+					return new ListRootsResult { Roots = [root] };
 				},
 			},
 		};
-#pragma warning restore MCP9005
-	}
 
 	private static async Task<string> CallAsync(McpClient client, string tool)
 	{
@@ -301,9 +346,16 @@ public sealed class Given_McpDiagnostics
 
 		public ILogger CreateLogger(string categoryName) => new CapturingLogger(categoryName, _entries);
 
-		public CapturedLogEntry Single(int eventId) => _entries.Should().ContainSingle(entry => entry.EventId == eventId).Subject;
+		// Only Repl.Mcp's entries: the SDK and Repl.Core log through the same provider, and their event ids and
+		// levels are not the ones under test. A diagnostic logged under another category is then not found.
+		private IEnumerable<CapturedLogEntry> McpEntries =>
+			_entries.Where(entry => string.Equals(entry.Category, Category, StringComparison.Ordinal));
 
-		public int Count(int eventId) => _entries.Count(entry => entry.EventId == eventId);
+		public CapturedLogEntry Single(int eventId) => McpEntries.Should().ContainSingle(entry => entry.EventId == eventId).Subject;
+
+		public int Count(int eventId) => McpEntries.Count(entry => entry.EventId == eventId);
+
+		public int Count(LogLevel level) => McpEntries.Count(entry => entry.Level == level);
 
 		public void Dispose()
 		{

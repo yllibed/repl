@@ -26,13 +26,13 @@ internal sealed partial class McpLoggerDiagnostics
 		_logger = loggerFactory.CreateLogger(LoggerCategory);
 	}
 
-	[LoggerMessage(EventId = 2001, Level = LogLevel.Error, Message = "An MCP command failed with exit code {ExitCode}; the client received a generic message instead of this detail: {Detail}")]
-	public partial void ToolFailureWithheld(Exception? exception, int exitCode, string detail);
+	[LoggerMessage(EventId = 2001, Level = LogLevel.Error, Message = "The MCP tool or resource {Name} failed with exit code {ExitCode}; the client received a generic message instead of this detail: {Detail}")]
+	public partial void ToolFailureWithheld(Exception? exception, string name, int exitCode, string detail);
 
-	[LoggerMessage(EventId = 2002, Level = LogLevel.Warning, Message = "Building the MCP catalog at routing version {FailingVersion} failed; the connection keeps its previous catalog (version {ServedVersion}) until a rebuild succeeds or a visibility retraction withdraws it. Repeats are logged at Debug.")]
+	[LoggerMessage(EventId = 2002, Level = LogLevel.Warning, Message = "Building the MCP catalog at routing version {FailingVersion} failed; the connection keeps its previous catalog (version {ServedVersion}) until a rebuild succeeds or a command hidden at runtime withdraws it. Repeats are logged at Debug.")]
 	public partial void StaleCatalogServed(Exception exception, long failingVersion, long servedVersion);
 
-	[LoggerMessage(EventId = 2003, Level = LogLevel.Warning, Message = "Priming the MCP client's roots failed; commands still run, and a handler that reads roots asks the client again. Repeats are logged at Debug until a prime succeeds.")]
+	[LoggerMessage(EventId = 2003, Level = LogLevel.Warning, Message = "Fetching the MCP client's roots before a command ran failed; the command still runs, and a handler that reads roots asks the client again. Repeats are logged at Debug until a fetch succeeds.")]
 	public partial void RootsPrimeFailed(Exception exception);
 
 	[LoggerMessage(EventId = 2004, Level = LogLevel.Debug, Message = "Building the MCP catalog at routing version {FailingVersion} failed again; the previous catalog is still served.")]
@@ -41,6 +41,9 @@ internal sealed partial class McpLoggerDiagnostics
 	[LoggerMessage(EventId = 2005, Level = LogLevel.Information, Message = "The MCP catalog was rebuilt at routing version {Version} after a failure; the connection serves the current catalog again.")]
 	public partial void CatalogRecovered(long version);
 
-	[LoggerMessage(EventId = 2006, Level = LogLevel.Debug, Message = "Priming the MCP client's roots failed again.")]
+	[LoggerMessage(EventId = 2006, Level = LogLevel.Debug, Message = "Fetching the MCP client's roots failed again.")]
 	public partial void RootsPrimeStillFailing(Exception exception);
+
+	[LoggerMessage(EventId = 2007, Level = LogLevel.Information, Message = "Fetching the MCP client's roots succeeded after a failure; the next failure warns again.")]
+	public partial void RootsPrimeRecovered();
 }

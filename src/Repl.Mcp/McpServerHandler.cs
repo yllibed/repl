@@ -108,7 +108,7 @@ internal sealed class McpServerHandler
 
 	private McpSessionContext CreateSessionContext(McpRootsScope rootsScope)
 	{
-		var roots = new McpClientRootsService(_app, _requestServers, rootsScope);
+		var roots = new McpClientRootsService(_app, _requestServers, rootsScope, _diagnostics);
 		var overlayServices = new Dictionary<Type, object>
 		{
 			[typeof(IMcpClientRoots)] = roots,

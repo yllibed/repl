@@ -151,7 +151,7 @@ internal sealed partial class McpToolAdapter
 		var (request, transport, prefills) = PrepareStructuredExecution(command, arguments);
 		var invocation = await ExecuteThroughPipelineAsync(request, transport, prefills, server, progressToken, ct)
 			.ConfigureAwait(false);
-		var output = invocation.Completed ? invocation.Output : DescribeFailure(invocation);
+		var output = invocation.Completed ? invocation.Output : DescribeFailure(toolName, invocation);
 		if (string.IsNullOrWhiteSpace(output))
 		{
 			// Only a completed run reaches here: DescribeFailure names the exit code when it has nothing else.
@@ -192,7 +192,7 @@ internal sealed partial class McpToolAdapter
 			// A failed read has no body to carry what the command reported — the success path's body has
 			// to match the advertised MIME type — so the surfaced error is the only place left for it.
 			return new McpResourceReadInvocation(
-				AppendMessages(DescribeFailure(invocation), invocation.UndeliveredMessages),
+				AppendMessages(DescribeFailure(resourceName, invocation), invocation.UndeliveredMessages),
 				TextPlainMimeType,
 				IsError: true);
 		}
@@ -339,16 +339,19 @@ internal sealed partial class McpToolAdapter
 	/// unable to say what it needs.
 	/// </para>
 	/// </remarks>
-	private string DescribeFailure(in McpPipelineInvocation invocation)
+	private string DescribeFailure(string name, in McpPipelineInvocation invocation)
 	{
 		var withheld = $"Command failed with exit code {invocation.ExitCode}.";
 		if (WithholdsFailureText(invocation))
 		{
 			// Withheld from the client, not discarded: the rendered detail and the exception behind it
 			// are exactly what the operator needs, and the log is the one reader that should get them.
+			// Named, because the pipeline's logging scope has ended by now. The name has already matched one
+			// the server advertised, ignoring case, so it cannot carry arbitrary client text into the log.
 			var detail = string.IsNullOrWhiteSpace(invocation.Output) ? invocation.Error : invocation.Output;
 			_diagnostics.ToolFailureWithheld(
 				invocation.Failure,
+				name,
 				invocation.ExitCode,
 				string.IsNullOrWhiteSpace(detail) ? "(nothing was rendered)" : detail);
 			return withheld;

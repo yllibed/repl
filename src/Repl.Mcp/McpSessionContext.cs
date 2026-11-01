@@ -23,7 +23,7 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
 	// The routing version whose build last failed onto the availability fallback, or 0 for none —
-	// versions start at 1. Read and written only under SnapshotGate, like the cache it describes.
+	// versions start at 1. Interlocked, like the intro flag, so no caller has to hold a lock.
 	private long _catalogFailureVersion;
 
 	private readonly AsyncServiceScope? _scope;
@@ -73,33 +73,15 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	/// <summary>
 	/// Records that the build for <paramref name="failingVersion"/> failed onto the fallback;
 	/// <see langword="true"/> the first time for that version, so the failure warns once rather than
-	/// on every request that retries it. Call only under <see cref="SnapshotGate"/>.
+	/// on every request that retries it.
 	/// </summary>
-	public bool TryMarkCatalogFailure(long failingVersion)
-	{
-		if (_catalogFailureVersion == failingVersion)
-		{
-			return false;
-		}
-
-		_catalogFailureVersion = failingVersion;
-		return true;
-	}
+	public bool TryMarkCatalogFailure(long failingVersion) =>
+		Interlocked.Exchange(ref _catalogFailureVersion, failingVersion) != failingVersion;
 
 	/// <summary>
 	/// Ends a failure episode after a successful build; <see langword="true"/> if one was in progress.
-	/// Call only under <see cref="SnapshotGate"/>.
 	/// </summary>
-	public bool TryClearCatalogFailure()
-	{
-		if (_catalogFailureVersion == 0)
-		{
-			return false;
-		}
-
-		_catalogFailureVersion = 0;
-		return true;
-	}
+	public bool TryClearCatalogFailure() => Interlocked.Exchange(ref _catalogFailureVersion, 0) != 0;
 
 	/// <summary>
 	/// Claims this session's one-time compatibility-shim intro; <see langword="true"/> for the first
