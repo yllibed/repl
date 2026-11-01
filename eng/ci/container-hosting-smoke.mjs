@@ -74,6 +74,8 @@ async function terminal(url, signalR = false) {
 }
 
 try {
+    const build = spawnSync('dotnet', ['build', 'src/Repl.Remote.TestHost/Repl.Remote.TestHost.csproj', '-c', 'Release', '-warnaserror'], { cwd: root, encoding: 'utf8', timeout: 180_000 });
+    assert.equal(build.status, 0, `C# console test host build failed:\n${build.stdout}\n${build.stderr}\n${build.error ?? ''}`);
     if (!process.env.REPL_CONTAINER_IMAGE) {
         docker(['build', '-f', 'samples/05-hosting-remote/Dockerfile', '-t', image, '.'], 0, 600_000);
     }
@@ -116,7 +118,7 @@ try {
     await hub.expect('after-log-marker');
     assert(!ws.transcript().includes('host-only-marker') && !hub.transcript().includes('host-only-marker'));
 
-    native = spawn('python3', [resolve(root, 'eng/ci/container-console.py'), name], { stdio: ['pipe', 'pipe', 'pipe'] });
+    native = spawn('dotnet', [resolve(root, 'src/Repl.Remote.TestHost/bin/Release/net10.0/Repl.Remote.TestHost.dll'), 'container', name], { stdio: ['pipe', 'pipe', 'pipe'] });
     let nativeOutput = '';
     let nativeError = '';
     native.stdout.on('data', data => { nativeOutput += data; });
@@ -125,7 +127,7 @@ try {
         native.on('error', error => resolveExit({ code: -1, error }));
         native.on('exit', code => resolveExit({ code }));
     });
-    await until(() => nativeOutput.includes('READY_FOR_STOP'), `native console ready: ${nativeError}`, 45_000);
+    await until(() => nativeOutput.includes('READY_FOR_STOP'), () => `native console ready: ${nativeError}`, 45_000);
     assert(JSON.stringify(probe(['settings', 'show', 'greeting'])).includes('native-shared'));
     docker(['stop', '--time', '20', name]);
     const state = JSON.parse(docker(['inspect', '-f', '{{json .State}}', name]));

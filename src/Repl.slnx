@@ -18,6 +18,7 @@
 	<Project Path="Repl.Remote/Repl.Remote.csproj" />
 	<Project Path="Repl.Remote.Defaults/Repl.Remote.Defaults.csproj" />
 	<Project Path="Repl.RemoteTests/Repl.RemoteTests.csproj" />
+	<Project Path="Repl.Remote.TestHost/Repl.Remote.TestHost.csproj" />
 	<Project Path="Repl.Spectre/Repl.Spectre.csproj" />
 	<Project Path="Repl.ShellCompletionTestHost/Repl.ShellCompletionTestHost.csproj" />
 	<Project Path="Repl.Tests/Repl.Tests.csproj" />

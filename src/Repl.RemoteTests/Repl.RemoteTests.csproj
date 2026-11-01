@@ -8,11 +8,8 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<PackageReference Include="AwesomeAssertions" />
+		<ProjectReference Include="../Repl.Remote.TestHost/Repl.Remote.TestHost.csproj" />
 		<ProjectReference Include="../Repl.Remote.Defaults/Repl.Remote.Defaults.csproj" />
 		<ProjectReference Include="../../samples/05-hosting-remote/HostingRemoteSample.csproj" />
-	</ItemGroup>
-	<ItemGroup>
-		<None Update="protocol_client.py" CopyToOutputDirectory="PreserveNewest" />
-		<None Update="console_client.py" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 </Project>

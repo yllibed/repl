@@ -1,6 +1,6 @@
-using System.Diagnostics;
 using AwesomeAssertions;
 using Repl.Remote;
+using Repl.Remote.TestHost;
 
 namespace Repl.RemoteTests;
 
@@ -29,20 +29,25 @@ public sealed class Given_NativeConsole
 		var root = FindRepositoryRoot();
 		var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
 		var assembly = Path.Combine(root, "samples", "05-hosting-remote", "bin", configuration, "net10.0", "HostingRemoteSample.dll");
-		var start = new ProcessStartInfo("python3") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-		start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "console_client.py"));
-		start.ArgumentList.Add(assembly);
-		start.ArgumentList.Add(name);
-		using var process = Process.Start(start)!;
-		var output = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
-		var error = process.StandardError.ReadToEndAsync(CancellationToken.None);
-		try
-		{
-			await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
-			process.ExitCode.Should().Be(0, await error.ConfigureAwait(false));
-			(await output.ConfigureAwait(false)).Should().Contain("detach passed");
-		}
-		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
+		await using var terminal = await PtySession.StartAsync("dotnet", [assembly, "--remote-console", name], deadline.Token);
+		await terminal.ExpectAsync("> ", deadline.Token);
+		await terminal.SendAsync("health\r", deadline.Token);
+		await terminal.ExpectAsync("native-ready-marker", deadline.Token);
+		await terminal.ExpectAsync("> ", deadline.Token);
+		terminal.Resize(120, 45);
+		await terminal.SendAsync("size\r", deadline.Token);
+		await terminal.ExpectAsync("native-size:120x45", deadline.Token);
+		await terminal.ExpectAsync("> ", deadline.Token);
+		await terminal.SendAsync("ec\t ab\x1b[DZ\r", deadline.Token);
+		await terminal.ExpectAsync("native-echo:aZb", deadline.Token);
+		await terminal.ExpectAsync("> ", deadline.Token);
+		await terminal.SendAsync("wait\r", deadline.Token);
+		await terminal.ExpectAsync("native-wait-started", deadline.Token);
+		await terminal.SendAsync("\x03", deadline.Token);
+		await terminal.ExpectAsync("Cancelled.", deadline.Token);
+		await terminal.ExpectAsync("> ", deadline.Token);
+		await terminal.SendAsync("\x04", deadline.Token);
+		(await terminal.WaitForExitAsync(deadline.Token)).Should().Be(130);
 		var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 		(await client.ExecuteAsync(new() { Arguments = ["health"] }, deadline.Token).ConfigureAwait(false)).ExitCode.Should().Be(0);

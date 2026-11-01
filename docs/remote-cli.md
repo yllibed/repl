@@ -122,7 +122,7 @@ The envelope is [JSON-RPC 2.0](https://www.jsonrpc.org/specification). Discovery
 
 The CLI method names, `x-cli` discovery extension and terminal conventions are an **experimental Repl profile**, not an established industry CLI standard. The profile version is separate from the OpenRPC document version. Clients check the profile's major version and inspect capabilities; compatible extensions can add methods and optional JSON fields. A breaking wire change requires another profile major version.
 
-Messages use UTF-8 JSON preceded by ASCII `Content-Length: <byte-count>\r\n\r\n`. Count encoded bytes, not characters. This is stream framing, not HTTP. [StreamJsonRpc](https://microsoft.github.io/vs-streamjsonrpc/docs/connecting.html) handles framing, request correlation and cancellation in the .NET implementation. Python interoperability tests exercise the same protocol without that library.
+Messages use UTF-8 JSON preceded by ASCII `Content-Length: <byte-count>\r\n\r\n`. Count encoded bytes, not characters. This is stream framing, not HTTP. [StreamJsonRpc](https://microsoft.github.io/vs-streamjsonrpc/docs/connecting.html) handles framing, request correlation and cancellation in the .NET implementation. The independent C# contract client exercises the same framing without StreamJsonRpc or the Repl.Remote client and DTOs.
 
 | Method | Direction | Purpose |
 | --- | --- | --- |

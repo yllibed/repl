@@ -93,7 +93,7 @@ docker exec repl-hosting-remote dotnet /app/HostingRemoteSample.dll --remote-exe
 
 Use that same executable command in a container administration tool's console, with an interactive TTY. It connects to the process already serving the browser. The image's exec-form `HEALTHCHECK` uses this pipe too; no HTTP probe tool is required. Its pipe name is the default shown above; update the health-check command if you customize the server's endpoint.
 
-The optional build target runs protocol, adapter and independent Python interoperability tests under Linux:
+The optional build target runs protocol, adapter and independent JSON-RPC contract tests under Linux:
 
 ```powershell
 docker build --target tests -f samples/05-hosting-remote/Dockerfile .
@@ -158,11 +158,13 @@ Portainer attachment, logging, non-root users, mounts and startup/shutdown order
 Use `docker stop --time 20 repl-hosting-remote` to allow the sample's fifteen-second
 shutdown budget to complete before Docker forces termination.
 
-On Linux, with Node.js 22+, Python 3 and Docker available, run from the repository root:
+On Linux, with .NET 10, Node.js 22+ and Docker available, run from the repository root:
 
 ```sh
 node eng/ci/container-hosting-smoke.mjs
 ```
+
+The script builds the shared C# console test host, whose PTY dependency is confined to test tooling.
 
 This builds the image and checks maintenance/readiness, Docker liveness, browser and
 native sessions, shared settings, isolated output, interruption, detach and shutdown

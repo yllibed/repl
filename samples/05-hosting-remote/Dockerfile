@@ -4,7 +4,6 @@ COPY . .
 RUN dotnet publish samples/05-hosting-remote/HostingRemoteSample.csproj -c Release -o /app
 
 FROM build AS tests
-RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
 RUN dotnet build src/Repl.RemoteTests/Repl.RemoteTests.csproj -c Release
 RUN dotnet src/Repl.RemoteTests/bin/Release/net10.0/Repl.RemoteTests.dll --timeout 2m
 

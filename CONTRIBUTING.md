@@ -10,7 +10,7 @@ Thanks for contributing.
 
 ## Local checks
 
-The remote interoperability tests require Python 3 (`python` on Windows, `python3` on Unix). CI installs it explicitly.
+The remote tests build their C# helpers with the .NET SDK. Native terminal checks use a test-only PTY dependency; no additional language runtime is required.
 
 ```powershell
 dotnet restore src/Repl.slnx
