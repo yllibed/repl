@@ -4,6 +4,15 @@ A runnable Markdown search server: a small public MCP surface, a richer administ
 
 > **Demo security boundary:** administration has no authentication. Anyone who can reach its port can run administrative commands. Keep it private. Production exposure requires authentication, authorization, TLS and network restrictions. Public MCP search also needs quotas and abuse protection appropriate to your deployment.
 
+<details>
+<summary>View the search dashboard and administration console</summary>
+
+The supplied English documents can be searched in French. The dashboard compares keyword, vector and hybrid rankings while the console inspects the same running index.
+
+![Dashboard comparing keyword, vector and hybrid results for a French query over the supplied English documents.](screenshots/overview.jpg)
+
+</details>
+
 ## Run locally
 
 Requires .NET 10. The packaged native targets are Windows x64, Linux x64 and macOS Apple Silicon. macOS Intel is not supported by the selected ONNX Runtime NuGet package; the application reports an unsupported-target error rather than attempting a partial setup.
@@ -89,6 +98,10 @@ One-shot client mode also preserves the remote command's exit code, stdout and s
 ```sh
 dotnet run -- exec docs search --query "connect to a process"
 ```
+
+The browser console renders `index status` with Spectre and runs `health --ready` against the live process:
+
+![Browser administration console displaying the index generation and a successful readiness check.](screenshots/console.jpg)
 
 ## How the pieces fit
 
