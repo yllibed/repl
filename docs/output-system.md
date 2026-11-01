@@ -83,6 +83,20 @@ app.Configure<OutputOptions>(o =>
 
 The transformer receives the command result object and writes formatted output to the provided stream.
 
+To customize an existing format, use `DecorateTransformer` instead of registering a new format name:
+
+```csharp
+app.UseSpectreConsole();
+app.Configure<OutputOptions>(o =>
+{
+    o.DecorateTransformer("spectre", fallback => new CustomConsoleOutput(fallback));
+});
+```
+
+The decorator handles application-specific values and delegates other values to `fallback`.
+Keeping the format name preserves its aliases, banner eligibility and help factory, so Spectre still receives its rich help model.
+The wrapper must also expose the appropriate `IOutputTransformer` capabilities; these are not copied from the fallback.
+
 ### Custom aliases
 
 Map an alias to any registered format name:
