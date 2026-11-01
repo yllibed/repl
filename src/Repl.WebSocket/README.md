@@ -26,7 +26,19 @@ return await ReplWebSocketSession.RunAsync(app, socket);
 
 ## Notes
 
+For an application embedded in an ASP.NET Core host, pass its services explicitly. The request owns the WebSocket session scope:
+
+```csharp
+await ReplWebSocketSession.RunWithServicesAsync(app, socket, context.RequestServices,
+    new ReplRunOptions { SessionScope = SessionScopeBehavior.CallerOwned },
+    cancellationToken: context.RequestAborted);
+```
+
+`RunAsync` uses the Repl application's own services. `RunWithServicesAsync` borrows the supplied provider; it neither starts host services nor disposes that provider. Its default scope behavior opens a scope per session; use `CallerOwned` when the provider already represents the connection's scope.
+
 - Supports in-band terminal control messages (`@@repl:*`) for terminal/session metadata.
+- Reassembles fragmented messages before decoding terminal controls and preserves UTF-8 characters split across reads.
+- A terminal Ctrl+C interrupts the active command in that session; it does not stop the host.
 
 ## Docs
 

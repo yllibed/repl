@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using Repl.WebSocket;
 
 namespace Repl.IntegrationTests;
@@ -167,6 +168,123 @@ public sealed class Given_WebSocketSession
 
 			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
 			server.State.Should().Be(WebSocketState.Aborted);
+		}
+	}
+
+	[TestMethod]
+	[Description("A WebSocket session borrows the embedding host's services and caller-owned scope without resolving a second scoped instance or disposing shared state.")]
+	public async Task When_TheHostSuppliesServices_Then_CommandsUseTheCallerScope()
+	{
+		using var services = new ServiceCollection().AddScoped<ServiceProbe>().BuildServiceProvider();
+		using var scope = services.CreateScope();
+		var expected = scope.ServiceProvider.GetRequiredService<ServiceProbe>();
+		ServiceProbe? observed = null;
+		var app = ReplApp.Create();
+		app.Map("probe", (ServiceProbe probe) => { observed = probe; return "ok"; });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(Encoding.UTF8.GetBytes("probe\rexit\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			var result = await ReplWebSocketSession.RunWithServicesAsync(app, server, scope.ServiceProvider,
+				s_options with { SessionScope = SessionScopeBehavior.CallerOwned }).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+			result.Should().Be(0);
+			observed.Should().BeSameAs(expected);
+			expected.Disposed.Should().BeFalse();
+			(await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure);
+		}
+	}
+
+	private sealed class ServiceProbe : IDisposable
+	{
+		internal bool Disposed { get; private set; }
+		public void Dispose() => Disposed = true;
+	}
+
+	[TestMethod]
+	[Description("A multibyte character split across WebSocket fragments reaches the command intact rather than being replaced by invalid UTF-8 markers.")]
+	public async Task When_Utf8SpansFragments_Then_CommandArgumentsRemainIntact()
+	{
+		var app = ReplApp.Create();
+		string? observed = null;
+		app.Map("echo {text}", (string text) => { observed = text; return text; });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			var bytes = Encoding.UTF8.GetBytes("echo café🌈\rexit\r");
+			var split = Array.IndexOf(bytes, (byte)0xc3) + 1;
+			await client.SendAsync(bytes.AsMemory(0, split), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(bytes.AsMemory(split), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			await ReplWebSocketSession.RunAsync(app, server, s_options).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+			observed.Should().Be("café🌈");
+			await peer.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("A pending supplementary Unicode character and a full following receive buffer are decoded without overflowing the character buffer; an empty final fragment still completes the command.")]
+	public async Task When_AFullFragmentCompletesASupplementaryCharacter_Then_TheCommandIsPreserved()
+	{
+		var app = ReplApp.Create();
+		string? observed = null;
+		app.Map("echo {text}", (string text) => { observed = text; return "ok"; });
+		var expected = "🌈" + new string('a', 4095);
+		var bytes = Encoding.UTF8.GetBytes("echo " + expected + "\rexit\r");
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(bytes.AsMemory(0, 8), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(bytes.AsMemory(8, 4096), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(bytes.AsMemory(4104), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(ReadOnlyMemory<byte>.Empty, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			(await ReplWebSocketSession.RunAsync(app, server, s_options).AsTask().WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+
+			observed.Should().Be(expected);
+			await peer.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("A terminal Ctrl+C cancels the active command while preserving the session for a subsequent command and normal exit.")]
+	public async Task When_ThePeerSendsControlC_Then_OnlyTheActiveCommandIsCancelled()
+	{
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = ReplApp.Create();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally { cancelled.TrySetResult(); }
+		});
+		var pinged = false;
+		app.Map("ping", () => { pinged = true; return "pong"; });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+			await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+
+			await client.SendAsync(new byte[] { 3 }, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			await cancelled.Task.WaitAsync(Patience).ConfigureAwait(false);
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(Encoding.UTF8.GetBytes("ping\rexit\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			(await run.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+			pinged.Should().BeTrue();
+			await peer.WaitAsync(Patience).ConfigureAwait(false);
 		}
 	}
 

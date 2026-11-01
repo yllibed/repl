@@ -53,12 +53,33 @@ public static class ReplWebSocketSession
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
 	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync(ReplApp, ReplRunOptions?, CancellationToken)" path="/exception"/>
-	public static async ValueTask<int> RunAsync(
+	public static ValueTask<int> RunAsync(
 		ReplApp app,
 		System.Net.WebSockets.WebSocket socket,
 		ReplRunOptions? options,
 		Action<TerminalControlMessage>? onControlMessage,
-		CancellationToken cancellationToken = default)
+		CancellationToken cancellationToken = default) =>
+		RunCoreAsync(app, socket, services: null, options, onControlMessage, cancellationToken);
+
+	/// <summary>Runs a WebSocket session using services borrowed from the embedding host.</summary>
+	/// <param name="app">Configured REPL application.</param>
+	/// <param name="socket">Connected WebSocket.</param>
+	/// <param name="services">Host-owned provider; session scopes follow the run options.</param>
+	/// <param name="options">Optional run options.</param>
+	/// <param name="onControlMessage">Optional terminal metadata observer.</param>
+	/// <param name="cancellationToken">Session cancellation.</param>
+	/// <returns>Session exit code.</returns>
+	public static ValueTask<int> RunWithServicesAsync(ReplApp app, System.Net.WebSockets.WebSocket socket,
+		IServiceProvider services, ReplRunOptions? options = null,
+		Action<TerminalControlMessage>? onControlMessage = null, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(services);
+		return RunCoreAsync(app, socket, services, options, onControlMessage, cancellationToken);
+	}
+
+	private static async ValueTask<int> RunCoreAsync(ReplApp app, System.Net.WebSockets.WebSocket socket,
+		IServiceProvider? services, ReplRunOptions? options, Action<TerminalControlMessage>? onControlMessage,
+		CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(app);
 		ArgumentNullException.ThrowIfNull(socket);
@@ -75,7 +96,9 @@ public static class ReplWebSocketSession
 			int exitCode;
 			try
 			{
-				exitCode = await host.RunSessionAsync(app, options, cancellationToken).ConfigureAwait(false);
+				exitCode = services is null
+					? await host.RunSessionAsync(app, options, cancellationToken).ConfigureAwait(false)
+					: await host.RunSessionAsync(app, services, options, cancellationToken).ConfigureAwait(false);
 			}
 			finally
 			{
@@ -169,6 +192,9 @@ public static class ReplWebSocketSession
 		CancellationToken cancellationToken)
 	{
 		var buffer = new byte[4096];
+		var characters = new char[Encoding.UTF8.GetMaxCharCount(buffer.Length)];
+		var decoder = Encoding.UTF8.GetDecoder();
+		var message = new StringBuilder();
 		try
 		{
 			// Reading goes on after the session's own close, until the peer answers it.
@@ -182,9 +208,12 @@ public static class ReplWebSocketSession
 				}
 
 				// Once the session's close is sent, the session has ended: what the peer still sends is not applied.
-				if (result.Count > 0 && socket.State is not WebSocketState.CloseSent)
+				if ((result.Count > 0 || result.EndOfMessage) && socket.State is not WebSocketState.CloseSent)
 				{
-					var payload = Encoding.UTF8.GetString(buffer, 0, result.Count);
+					message.Append(characters, 0, decoder.GetChars(buffer, 0, result.Count, characters, 0, flush: result.EndOfMessage));
+					if (!result.EndOfMessage) { continue; }
+					var payload = message.ToString();
+					message.Clear();
 					if (result.MessageType == WebSocketMessageType.Text
 					    && TerminalControlProtocol.TryParse(payload, out var controlMessage))
 					{
@@ -193,7 +222,12 @@ public static class ReplWebSocketSession
 						continue;
 					}
 
-					host.EnqueueInput(payload);
+					var segments = payload.Split('\u0003');
+					for (var i = 0; i < segments.Length; i++)
+					{
+						if (segments[i].Length > 0) { host.EnqueueInput(segments[i]); }
+						if (i < segments.Length - 1) { host.Interrupt(); }
+					}
 				}
 			}
 		}
