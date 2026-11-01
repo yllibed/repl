@@ -1,0 +1,434 @@
+{
+  "openrpc": "1.3.2",
+  "info": {
+    "title": "Repl CLI profile",
+    "version": "1.0.0",
+    "description": "Experimental CLI conventions over JSON-RPC 2.0. Engine-independent JSON values and terminal text."
+  },
+  "x-cli": {
+    "version": "1.0.0",
+    "capabilities": [
+      "describe",
+      "execute",
+      "terminal",
+      "cancel"
+    ],
+    "framing": "content-length",
+    "schemaDialect": "http://json-schema.org/draft-07/schema#"
+  },
+  "methods": [
+    {
+      "name": "rpc.discover",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "name": "cli.describe",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/CommandGraph"
+        }
+      }
+    },
+    {
+      "name": "cli.execute",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "arguments",
+          "required": false,
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "name": "command",
+          "required": false,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "values",
+          "required": false,
+          "schema": {
+            "type": "object"
+          }
+        },
+        {
+          "name": "globalValues",
+          "required": false,
+          "schema": {
+            "type": "object"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ExecutionResult"
+        }
+      },
+      "description": "Supply exactly one of arguments or command. Values and globalValues require command. Commands execute once; never retry automatically after losing the response."
+    },
+    {
+      "name": "terminal.open",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "options",
+          "required": true,
+          "schema": {
+            "$ref": "#/components/schemas/TerminalOptions"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "name": "terminal.input",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "name": "terminal.resize",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "columns",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        {
+          "name": "rows",
+          "required": true,
+          "schema": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "name": "terminal.interrupt",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "name": "terminal.close",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "name": "terminal.output",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "text",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    {
+      "name": "terminal.exited",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "sessionId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "exitCode",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ]
+    },
+    {
+      "name": "$/cancelRequest",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "components": {
+    "schemas": {
+      "TerminalOptions": {
+        "type": "object",
+        "properties": {
+          "terminal": {
+            "type": "string"
+          },
+          "columns": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ansi": {
+            "type": "boolean"
+          }
+        },
+        "required": []
+      },
+      "ExecutionResult": {
+        "type": "object",
+        "properties": {
+          "exitCode": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "result": {},
+          "standardOutput": {
+            "type": "string"
+          },
+          "standardError": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "exitCode",
+          "kind",
+          "standardOutput",
+          "standardError"
+        ]
+      },
+      "CommandGraph": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Command"
+            }
+          },
+          "contexts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Context"
+            }
+          },
+          "globalParameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Parameter"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "commands",
+          "contexts"
+        ]
+      },
+      "Command": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "parameters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Parameter"
+            }
+          }
+        },
+        "required": [
+          "path",
+          "aliases",
+          "parameters"
+        ]
+      },
+      "Context": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "Parameter": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "argument",
+              "option"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema": {
+            "type": "object"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "required",
+          "schema",
+          "aliases"
+        ]
+      }
+    }
+  }
+}

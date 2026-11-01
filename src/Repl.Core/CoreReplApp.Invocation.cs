@@ -97,18 +97,24 @@ public sealed partial class CoreReplApp
 		}
 	}
 
-	async ValueTask<SubInvocationOutcome> ISubInvocableReplApp.RunSubInvocationWithOutcomeAsync(
+	ValueTask<SubInvocationOutcome> ISubInvocableReplApp.RunSubInvocationWithOutcomeAsync(
 		ReplInvocationRequest request, string[] transportArguments, IServiceProvider serviceProvider,
-		IServiceProvider? presenceServiceProvider, CancellationToken cancellationToken)
+		IServiceProvider? presenceServiceProvider, CancellationToken cancellationToken) =>
+		RunInvocationWithOutcomeAsync(request, transportArguments, serviceProvider, presenceServiceProvider,
+			ReplInvocationChannel.Mcp, useApplicationExitCodes: false, cancellationToken);
+
+	internal async ValueTask<SubInvocationOutcome> RunInvocationWithOutcomeAsync(
+		ReplInvocationRequest request, string[] transportArguments, IServiceProvider serviceProvider,
+		IServiceProvider? presenceServiceProvider, ReplInvocationChannel channel, bool useApplicationExitCodes, CancellationToken cancellationToken)
 	{
-		using var scope = PushInvocationRequest(request, ReplInvocationChannel.Mcp);
+		using var scope = PushInvocationRequest(request, channel);
 		var previous = _invocationTransport.Value;
 		_invocationTransport.Value = transportArguments.ToArray();
 		try
 		{
 			var outcome = await RunUnderCancellationPolicyAsync(GetInvocationArguments(request), serviceProvider,
 				isSubInvocation: true, cancellationToken, presenceServiceProvider).ConfigureAwait(false);
-			return new(ResolveProcessExitCode(outcome, isSubInvocation: true), outcome.Kind, outcome.Exception);
+			return new(ResolveProcessExitCode(outcome, isSubInvocation: !useApplicationExitCodes), outcome.Kind, outcome.Exception);
 		}
 		finally { _invocationTransport.Value = previous; }
 	}

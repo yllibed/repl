@@ -48,6 +48,11 @@ jobs:
           dotnet-version: '10.0.x'
           dotnet-quality: ga
 
+      - name: Setup Python (wire interoperability tests)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
       - name: Restore
         run: dotnet restore src/Repl.slnx --force
 

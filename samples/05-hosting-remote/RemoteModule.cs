@@ -17,6 +17,13 @@ internal sealed class RemoteModule(
 {
 	public void Map(IReplMap map)
 	{
+		map.Map("health",
+			[Description("Check that the host has started and is accepting commands")]
+			(Microsoft.Extensions.Hosting.IHostApplicationLifetime lifetime) =>
+				lifetime.ApplicationStarted.IsCancellationRequested && !lifetime.ApplicationStopping.IsCancellationRequested
+					? Results.Exit(0, new { status = "ready" })
+					: Results.Exit(1, new { status = "notReady" }));
+
 		map.Context(
 			"settings",
 			[Description("Read and write shared settings")]

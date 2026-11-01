@@ -5,6 +5,7 @@
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 	<ItemGroup>
+		<ProjectReference Include="..\..\src\Repl.Remote.Defaults\Repl.Remote.Defaults.csproj" />
 		<ProjectReference Include="..\..\src\Repl\Repl.csproj" />
 		<ProjectReference Include="..\..\src\Repl.WebSocket\Repl.WebSocket.csproj" />
 		<ProjectReference Include="..\..\src\Repl.Telnet\Repl.Telnet.csproj" />

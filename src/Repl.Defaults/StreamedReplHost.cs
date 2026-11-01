@@ -44,7 +44,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 
 	/// <summary>
 	/// Gets or sets the transport name (e.g. "websocket", "telnet", "signalr").
-	/// Set this before calling <see cref="RunSessionAsync"/> to make it available
+	/// Set this before calling <see cref="RunSessionAsync(ReplApp, ReplRunOptions?, CancellationToken)"/> to make it available
 	/// via <see cref="IReplSessionInfo.TransportName"/>.
 	/// </summary>
 	public string? TransportName
@@ -79,6 +79,10 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// Signals that no more input will arrive (connection closed).
 	/// </summary>
 	public void Complete() => _input.Complete();
+
+	/// <summary>Interrupts this session's active command without signalling or stopping the process.</summary>
+	/// <returns>Whether an active command accepted the interruption. An idle prompt is left open.</returns>
+	public bool Interrupt() => CancelKeyHandler.TryInterruptSession(SessionId);
 
 	/// <summary>
 	/// Updates the known terminal window size for this session.
@@ -180,7 +184,24 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	public async ValueTask<int> RunSessionAsync(
 		ReplApp app,
 		ReplRunOptions? options = null,
-		CancellationToken cancellationToken = default)
+		CancellationToken cancellationToken = default) =>
+		await RunSessionCoreAsync(app, services: null, options, cancellationToken).ConfigureAwait(false);
+
+	/// <summary>Runs a session using services supplied by the embedding host.</summary>
+	/// <param name="app">Configured REPL application.</param>
+	/// <param name="services">Borrowed service provider; scope ownership follows the run options.</param>
+	/// <param name="options">Optional run options.</param>
+	/// <param name="cancellationToken">Session cancellation.</param>
+	/// <returns>Session exit code.</returns>
+	public async ValueTask<int> RunSessionAsync(ReplApp app, IServiceProvider services,
+		ReplRunOptions? options, CancellationToken cancellationToken = default)
+	{
+		ArgumentNullException.ThrowIfNull(services);
+		return await RunSessionCoreAsync(app, services, options, cancellationToken).ConfigureAwait(false);
+	}
+
+	private async ValueTask<int> RunSessionCoreAsync(ReplApp app, IServiceProvider? services,
+		ReplRunOptions? options, CancellationToken cancellationToken)
 	{
 		ArgumentNullException.ThrowIfNull(app);
 		var runOptions = options ?? new ReplRunOptions();
@@ -205,7 +226,9 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 
 		try
 		{
-			return await app.RunAsync([], this, runOptions, cancellationToken).ConfigureAwait(false);
+			return services is null
+				? await app.RunAsync([], this, runOptions, cancellationToken).ConfigureAwait(false)
+				: await app.RunAsync([], this, services, runOptions, cancellationToken).ConfigureAwait(false);
 		}
 		finally
 		{

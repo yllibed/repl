@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+
 namespace Repl;
 
 /// <summary>
@@ -12,10 +14,17 @@ internal sealed class CancelKeyHandler : IDisposable
 	private readonly Lock _lock = new();
 	private readonly IDisposable? _registration;
 	private int _disposed;
+	private static readonly ConcurrentDictionary<string, CancelKeyHandler> HostedHandlers = new(StringComparer.Ordinal);
+	private readonly string? _sessionId;
 
 	internal CancelKeyHandler()
 	{
-		if (!ReplSessionIO.IsSessionActive)
+		if (ReplSessionIO.IsSessionActive && ReplSessionIO.CurrentSessionId is { } sessionId)
+		{
+			_sessionId = sessionId;
+			if (!HostedHandlers.TryAdd(sessionId, this)) { throw new InvalidOperationException("An interactive loop is already running in this session."); }
+		}
+		else
 		{
 			// The key is irrelevant here: Ctrl+C and Ctrl+Break cancel the active command the same way.
 			_registration = ConsoleCancelKeyCoordinator.RegisterInteractive(_ => TryHandleCancelKey());
@@ -42,6 +51,20 @@ internal sealed class CancelKeyHandler : IDisposable
 		}
 
 		_registration?.Dispose();
+		if (_sessionId is not null) { HostedHandlers.TryRemove(new KeyValuePair<string, CancelKeyHandler>(_sessionId, this)); }
+	}
+
+	internal static bool TryInterruptSession(string sessionId) =>
+		HostedHandlers.TryGetValue(sessionId, out var handler) && handler.TryInterruptCommand();
+
+	private bool TryInterruptCommand()
+	{
+		lock (_lock)
+		{
+			if (_disposed != 0 || _commandCts is not { IsCancellationRequested: false } command) { return false; }
+			command.Cancel();
+			return true;
+		}
 	}
 
 	internal ConsoleCancelKeyHandlingResult HandleCancelKeyForTesting() => TryHandleCancelKey();

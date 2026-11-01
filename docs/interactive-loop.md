@@ -91,6 +91,10 @@ The interactive loop records each executed input line in a history buffer. The `
 
 Pressing **Ctrl+C** during input clears the current line and returns to the prompt. During command execution, Ctrl+C triggers the `CancellationToken` passed to the handler, allowing cooperative cancellation. It does not terminate the interactive session.
 
+For hosted transports, route an interrupt control message to `StreamedReplHost.Interrupt()`. It cancels only that session's active command and returns whether a command accepted the interruption. An idle prompt and other sessions remain open. Queuing a Ctrl+C character as ordinary input cannot interrupt a handler that is not reading input.
+
+`StreamedReplHost.RunSessionAsync(app, services, options, cancellationToken)` lets an embedding host supply its service provider. Scope ownership follows `ReplRunOptions.SessionScope`; the existing overload continues to use the application's services.
+
 ## See Also
 
 - [Commands](commands.md) — defining commands and contexts.
