@@ -88,6 +88,39 @@ public sealed class Given_DocumentIndex
 	}
 
 	[TestMethod]
+	[DataRow(true, DisplayName = "Source edited then restored during preparation")]
+	[DataRow(false, DisplayName = "Source edited and left changed during preparation")]
+	[Description("A staged draft cannot be published under another source fingerprint, even when the source is restored before the final scan.")]
+	public async Task When_SourceChangesDuringPreparation_Then_TheStagedContentMustMatchTheFinalScan(bool restoreSource)
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("a.md", "# First\n\nFirst document.").ConfigureAwait(false);
+		const string published = "# Second\n\nPublished source.";
+		await fixture.WriteAsync("b.md", published).ConfigureAwait(false);
+		var original = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		var id = fixture.Corpus.Parse("b.md", published).Id;
+		var embeddings = 0;
+		fixture.Embedding.BeforeEmbedding = () =>
+		{
+#pragma warning disable MA0045 // The synchronous embedding callback must finish each edit before the next source is read.
+			if (++embeddings == 1) { File.WriteAllText(Path.Combine(fixture.Settings.Documents, "b.md"), "# Second\n\nTransient draft."); }
+			else { File.WriteAllText(Path.Combine(fixture.Settings.Documents, "b.md"), restoreSource ? published : "# Second\n\nFinal source."); }
+#pragma warning restore MA0045
+		};
+
+		var rebuild = () => fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None);
+		await rebuild.Should().ThrowAsync<IOException>().WithMessage("Documents changed during indexing*").ConfigureAwait(false);
+
+		fixture.Index.Generation()!.Id.Should().Be(original.Id);
+		fixture.Index.Fetch(id, 20000).Text.Should().Be(published);
+		fixture.Embedding.BeforeEmbedding = null;
+		var replacement = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		replacement.Fingerprint.Should().Be(await fixture.Corpus.FingerprintAsync(CancellationToken.None).ConfigureAwait(false));
+		fixture.Index.Fetch(id, 20000).Text.Should().Be(await fixture.Corpus.ReadAsync(Path.Combine(fixture.Settings.Documents, "b.md"), CancellationToken.None).ConfigureAwait(false));
+	}
+
+	[TestMethod]
 	[Description("Long headings and colliding heading slugs produce bounded identifiers that search clients can fetch.")]
 	public async Task When_HeadingNamesAreUnusual_Then_AllSearchResultsCanBeFetched()
 	{

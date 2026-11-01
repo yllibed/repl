@@ -33,10 +33,15 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		foreach (var path in Files())
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			hash.AppendData(Encoding.UTF8.GetBytes(RelativePath(path) + "\0"));
-			hash.AppendData(SHA256.HashData(Encoding.UTF8.GetBytes(await ReadAsync(path, cancellationToken))));
+			AppendFingerprint(hash, RelativePath(path), await ReadAsync(path, cancellationToken));
 		}
 		return Convert.ToHexStringLower(hash.GetHashAndReset());
+	}
+
+	internal static void AppendFingerprint(IncrementalHash hash, string source, string text)
+	{
+		hash.AppendData(Encoding.UTF8.GetBytes(source + "\0"));
+		hash.AppendData(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 	}
 
 	internal SourceDocument Parse(string source, string markdown)

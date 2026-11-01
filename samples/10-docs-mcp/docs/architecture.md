@@ -97,7 +97,7 @@ flowchart LR
     Check -->|Changed during build| Keep
 ```
 
-Embedding work and replacement rows are prepared on disk outside the live database's writer transaction. Before publication, the worker rechecks the corpus fingerprint. If the files changed, it rejects that replacement and retries on a later scan.
+Embedding work and replacement rows are prepared on disk outside the live database's writer transaction. The replacement fingerprint accumulates the exact ordered source paths and document text written to staging. Before publication, it is compared with a fresh corpus scan. A mismatch rejects the replacement and a later scan can retry, including when a file was edited and restored while its transient content was being embedded.
 
 Publication copies document, section, keyword and vector rows plus generation metadata in one transaction. SQLite WAL and read transactions let a search or fetch see a coherent generation. Cancellation before commit rolls back publication; staging files are removed when the operation unwinds.
 

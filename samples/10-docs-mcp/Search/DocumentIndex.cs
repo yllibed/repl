@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
@@ -58,7 +59,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		var stagingPath = Path.Combine(settings.Index, $"build-{Guid.NewGuid():N}.db");
 		try
 		{
-			var fingerprint = await corpus.FingerprintAsync(cancellationToken);
+			using var stagedContent = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 			using var staging = Open(stagingPath);
 			CreateTables(staging);
 			var documents = 0;
@@ -69,6 +70,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 				{
 					cancellationToken.ThrowIfCancellationRequested();
 					var document = corpus.Parse(corpus.RelativePath(path), await corpus.ReadAsync(path, cancellationToken));
+					MarkdownCorpus.AppendFingerprint(stagedContent, document.Source, document.Text);
 					Execute(staging, "INSERT INTO documents VALUES($1,$2,$3,$4)", document.Id, document.Source, document.Title, document.Text);
 					foreach (var section in document.Sections)
 					{
@@ -85,6 +87,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 				}
 				transaction.Commit();
 			}
+			var fingerprint = Convert.ToHexStringLower(stagedContent.GetHashAndReset());
 			if (fingerprint != await corpus.FingerprintAsync(cancellationToken)) { throw new IOException("Documents changed during indexing; the next scan will retry."); }
 			var generation = new IndexGeneration(Guid.NewGuid().ToString("N")[..12], fingerprint, embedding.Identity, documents, sections, time.GetUtcNow());
 			using var live = Open();
