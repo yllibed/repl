@@ -3,6 +3,7 @@ using DocsMcpSample.Search;
 using ModelContextProtocol.AspNetCore;
 using Repl;
 using Repl.Mcp;
+using Repl.Remote;
 using Repl.Spectre;
 using Spectre.Console;
 
@@ -10,6 +11,25 @@ namespace DocsMcpSample.Hosting;
 
 internal static class Server
 {
+	internal static async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+	{
+		settings.Validate();
+		await Assets.VerifyAsync(settings.Assets, cancellationToken);
+
+		await using var app = Create(settings);
+		Log.InsecureAdministration(app.Logger, settings.AdminPort);
+		if (!IPAddress.IsLoopback(settings.AdminAddress)) { Log.RemoteAdministration(app.Logger, settings.AdminAddress.ToString()); }
+
+		var repl = app.Services.GetRequiredService<ReplApp>();
+		var sessions = app.Services.GetRequiredService<Sessions>();
+		var remote = new NamedPipeReplServer(settings.Pipe,
+			_ => ValueTask.FromResult(sessions.Track(new ReplAppRemoteBackend(repl, app.Services))),
+			error => Log.PipeFailure(app.Logger, error));
+
+		using var stopping = cancellationToken.Register(app.Lifetime.StopApplication);
+		return await ServerLifetime.RunAsync(app, remote);
+	}
+
 	internal static WebApplication Create(Settings settings, Action<IServiceCollection>? configureServices = null)
 	{
 		var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot") });
