@@ -137,6 +137,7 @@ try {
     native.stdin.end('stopped\n');
     const nativeResult = await Promise.race([nativeExit, delay(15_000).then(() => ({ code: -1 }))]);
     assert.equal(nativeResult.code, 0, nativeError + nativeOutput);
+    console.log(nativeOutput.trim());
     assert(docker(['logs', name]).includes('Administration sessions stopped.'));
 
     // A pipe override needs a matching exec-form health check, not shell expansion.

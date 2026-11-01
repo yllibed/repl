@@ -41,11 +41,10 @@ internal static class ContainerConsole
 		{
 			throw new InvalidOperationException("The driver did not confirm host shutdown.");
 		}
-		// Shutdown can reach the client as a terminal close, cancellation or transport failure.
-		if (await second.WaitForExitAsync(ct).ConfigureAwait(false) is not (0 or 1 or 130))
-		{
-			throw new InvalidOperationException("The attached console did not handle host shutdown.");
-		}
-		await Console.Out.WriteLineAsync("Native console interruption, detach, shared state and host shutdown passed.").ConfigureAwait(false);
+		// Docker exec lives only while PID 1 runs; teardown does not guarantee the client's exit code.
+		using var shutdownDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+		shutdownDeadline.CancelAfter(TimeSpan.FromSeconds(10));
+		var exitCode = await second.WaitForExitAsync(shutdownDeadline.Token).ConfigureAwait(false);
+		await Console.Out.WriteLineAsync($"Attached exec process terminated after container shutdown (exit {exitCode}).").ConfigureAwait(false);
 	}
 }

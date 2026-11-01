@@ -96,6 +96,8 @@ docker rm repl-hosting-remote
 
 With the sample's cooperative commands, shutdown cancels active sessions and exits `0`. Closing a client alone does not initiate this sequence.
 
+Docker exec processes live only while the container's PID 1 is running, so their termination status during teardown can differ from the server's. Check the container exit code and host logs to verify service shutdown. See [Docker's exec lifecycle](https://docs.docker.com/reference/cli/docker/container/exec/).
+
 ## Portainer console
 
 In Portainer, select **Containers**, the running container, then **Console**. Enable **Use custom command** and enter:
