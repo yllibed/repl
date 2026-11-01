@@ -34,7 +34,7 @@ internal static class ConsoleViews
 
 	internal sealed class Output(IOutputTransformer fallback, Func<IAnsiConsole> resolveConsole) : IOutputTransformer
 	{
-		public string Name => "docs";
+		public string Name => fallback.Name;
 		public bool SupportsInteractivePaging => true;
 		public async ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
 		{

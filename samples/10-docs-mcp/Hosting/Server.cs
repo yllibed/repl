@@ -56,8 +56,7 @@ internal static class Server
 			repl.Options(options =>
 			{
 				options.AmbientCommands.ExitCommandEnabled = true;
-				options.Output.AddTransformer("docs", new ConsoleViews.Output(options.Output.Transformers["spectre"], services.GetRequiredService<IAnsiConsole>));
-				options.Output.DefaultFormat = "docs";
+				options.Output.DecorateTransformer("spectre", fallback => new ConsoleViews.Output(fallback, services.GetRequiredService<IAnsiConsole>));
 			});
 			Commands.Map(repl);
 		});

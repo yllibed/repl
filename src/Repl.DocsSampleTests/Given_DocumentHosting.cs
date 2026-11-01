@@ -215,6 +215,12 @@ public sealed class Given_DocumentHosting
 	private static async Task AssertConsoleStatusAsync(ClientWebSocket socket, CancellationToken cancellationToken)
 	{
 		await ReadUntilAsync(socket, ">", cancellationToken).ConfigureAwait(false);
+		await socket.SendAsync(Encoding.UTF8.GetBytes("?\r"), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+		var help = await ReadUntilAsync(socket, "exit", cancellationToken).ConfigureAwait(false);
+		help.Should().Contain("Global Commands").And.NotContain("GeneratedAtUtc").And.NotContain("Name: docs");
+		await socket.SendAsync(Encoding.UTF8.GetBytes("help docs search\r"), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+		var commandHelp = await ReadUntilAsync(socket, "--count", cancellationToken).ConfigureAwait(false);
+		commandHelp.Should().Contain("Usage").And.Contain("docs search").And.NotContain("GeneratedAtUtc");
 		await socket.SendAsync(Encoding.UTF8.GetBytes("index status\r"), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
 		var output = await ReadUntilAsync(socket, "Serving", cancellationToken).ConfigureAwait(false);
 		output.Should().NotContain("Error:");
