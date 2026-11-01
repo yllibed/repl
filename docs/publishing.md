@@ -183,5 +183,44 @@ it six months later.
   by the release job.
 - `Publish to NuGet` runs after GitHub Release creation when the preceding step succeeds
   (`if: success()`).
-- The `NUGET_API_KEY` repository secret must remain configured. Do not expose its value or
-  attempt to validate it locally.
+- The release job exchanges GitHub's OIDC identity for a short-lived NuGet API key through
+  `NuGet/login`. Only this job has `id-token: write`; it uses the `nuget` environment.
+- The `NUGET_USER` GitHub Actions variable identifies the NuGet.org user who created the
+  trusted publishing policy. It is a profile name, not an email address or organization name.
+
+## Configure NuGet Trusted Publishing
+
+The workflow and NuGet policy must agree on the repository, workflow file and environment.
+See the [NuGet Trusted Publishing documentation](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing)
+for the token exchange and policy ownership rules.
+
+1. In GitHub repository settings, create an environment named `nuget`. Under deployment
+   branches and tags, select **Selected branches and tags** and add branch rules `main` and
+   `release/*`. Do not add a tag rule. These match the publishing branches used by this repo.
+2. Set the environment's Actions variable `NUGET_USER` to the NuGet.org username that creates
+   the policy (`carl.debilly` for this repository). The username is public; no secret is needed.
+3. Sign in to NuGet.org as that user and open **Trusted Publishing**. Create a GitHub policy
+   with these values:
+
+   | Field | Value |
+   |---|---|
+   | Package owner | The NuGet user or organization that owns the Repl packages |
+   | Repository owner | `yllibed` |
+   | Repository | `repl` |
+   | Workflow file | `ci.yml` |
+   | Environment | `nuget` |
+
+   Enter only `ci.yml`, not `.github/workflows/ci.yml`. Grant publishing of new packages and
+   versions. Add `Repl` and `Repl.*` as separate glob-pattern lines to cover the meta-package
+   and its companion packages. Unlisting is not needed by this workflow.
+4. Configure the policy and GitHub environment before merging the workflow change: merging
+   to `main` starts the normal prerelease publication. A PR build skips the release job and
+   cannot validate the OIDC exchange. The first publishing run must show successful
+   `Authenticate to NuGet` and `Publish to NuGet` steps.
+5. After the first successful OIDC publication, remove the old `NUGET_API_KEY` GitHub secret
+   and revoke its long-lived key on NuGet.org. The workflow has no API-key fallback.
+
+If NuGet marks the policy as pending full activation, complete a publication within its
+activation window. If authentication fails, check the username, package owner and the three
+policy identifiers above; the temporary key is issued only when the workflow identity matches.
+Do not print tokens or attempt the exchange from a local shell.

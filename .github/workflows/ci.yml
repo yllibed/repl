@@ -544,6 +544,10 @@ jobs:
     needs: [build-test-pack, lint-docs]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-latest
+    environment: nuget
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -553,6 +557,12 @@ jobs:
         with:
           name: packages
           path: packages
+
+      - name: Authenticate to NuGet
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        with:
+          user: ${{ vars.NUGET_USER }}
 
       - name: Create GitHub Release
         env:
@@ -633,7 +643,7 @@ jobs:
         if: success()
         shell: pwsh
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
           $source = 'https://api.nuget.org/v3/index.json'
           $apiKey = $env:NUGET_API_KEY
