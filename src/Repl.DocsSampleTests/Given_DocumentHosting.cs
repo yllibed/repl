@@ -50,7 +50,7 @@ public sealed class Given_DocumentHosting
 			await using var clientOwner = client.ConfigureAwait(false);
 
 			var tools = await client.ListToolsAsync(cancellationToken: deadline.Token).ConfigureAwait(false);
-			tools.Select(tool => tool.Name).Should().BeEquivalentTo("docs_search", "docs_fetch");
+			AssertPublicToolSchemas(tools);
 			var search = await client.CallToolAsync("docs_search", new Dictionary<string, object?>(StringComparer.Ordinal) { ["query"] = "console" }, cancellationToken: deadline.Token).ConfigureAwait(false);
 
 			search.IsError.Should().NotBeTrue();
@@ -111,6 +111,16 @@ public sealed class Given_DocumentHosting
 			fixture.Index.Generation()!.Id.Should().Be(generation.Id);
 		}
 		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	private static void AssertPublicToolSchemas(IEnumerable<McpClientTool> tools)
+	{
+		var catalog = tools.ToArray();
+		catalog.Select(tool => tool.Name).Should().BeEquivalentTo("docs_search", "docs_fetch");
+		catalog.Single(tool => string.Equals(tool.Name, "docs_search", StringComparison.Ordinal)).JsonSchema
+			.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("query", "count");
+		catalog.Single(tool => string.Equals(tool.Name, "docs_fetch", StringComparison.Ordinal)).JsonSchema
+			.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("id", "maxChars");
 	}
 
 	private static int AvailablePort()
