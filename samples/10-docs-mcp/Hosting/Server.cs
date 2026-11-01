@@ -55,6 +55,7 @@ internal static class Server
 			repl.WithDescription("Documentation index — search, inspect and administer one live process.");
 			repl.Options(options =>
 			{
+				options.AmbientCommands.ExitCommandEnabled = true;
 				options.Output.AddTransformer("docs", new ConsoleViews.Output(options.Output.Transformers["spectre"], services.GetRequiredService<IAnsiConsole>));
 				options.Output.DefaultFormat = "docs";
 			});

@@ -34,6 +34,8 @@ For a browser connection, [Endpoints.cs](../Hosting/Endpoints.cs) accepts the We
 
 The browser sends terminal metadata and keystrokes through the [shared terminal client](../../shared/terminal-client.js). Repl handles input, command binding and session cancellation. [ConsoleViews.cs](../ConsoleViews.cs) supplies the sample's Spectre layouts; JSON and MCP results remain structured data.
 
+The embedded-console profile disables `exit` by default. This sample explicitly enables it in [Server.cs](../Hosting/Server.cs): `exit` ends the attached session and closes its WebSocket, while the host, index and other sessions keep running. The browser can connect again to open a new session.
+
 The local attach client follows a different transport to the same graph: [ClientMode.cs](../Hosting/ClientMode.cs) connects to `NamedPipeReplServer`, whose backend is `ReplAppRemoteBackend`. Client mode runs before the web host is constructed, so an attachment cannot accidentally start another listener or load another model.
 
 ## How the search works

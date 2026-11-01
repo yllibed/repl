@@ -131,7 +131,7 @@ public sealed class Given_DocumentHosting
 	}
 
 	[TestMethod]
-	[Description("A foreign browser cannot attach or issue administration requests, while same-origin index actions remain independent of a live console watch.")]
+	[Description("A foreign browser cannot administer the host; trusted clients can interrupt a watch, exit their session and reconnect while the shared host keeps running.")]
 	public async Task When_AConsoleIsBusy_Then_AdminActionsStillUseTheSharedWorkerAndRejectForeignOrigins()
 	{
 		using var fixture = new TestCorpus();
@@ -165,9 +165,28 @@ public sealed class Given_DocumentHosting
 			await ReadUntilAsync(socket, "Alive", deadline.Token).ConfigureAwait(false);
 			await socket.SendAsync(Encoding.UTF8.GetBytes("sessions\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
 			await ReadUntilAsync(socket, "websocket", deadline.Token).ConfigureAwait(false);
-			socket.Abort();
+			await AssertConsoleExitAsync(socket, deadline.Token).ConfigureAwait(false);
+			using var reconnected = new ClientWebSocket();
+			await reconnected.ConnectAsync(new Uri($"ws://127.0.0.1:{settings.AdminPort}/ws/repl"), deadline.Token).ConfigureAwait(false);
+			await AssertConsoleStatusAsync(reconnected, deadline.Token).ConfigureAwait(false);
+			reconnected.Abort();
 		}
 		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	private static async Task AssertConsoleExitAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+	{
+		await socket.SendAsync(Encoding.UTF8.GetBytes("exit\r"), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
+		var buffer = new byte[4096];
+		WebSocketReceiveResult message;
+		do
+		{
+			message = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+			Encoding.UTF8.GetString(buffer, 0, message.Count).Should().NotContain("Error:");
+		} while (message.MessageType != WebSocketMessageType.Close);
+
+		message.CloseStatus.Should().Be(WebSocketCloseStatus.NormalClosure);
+		await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, cancellationToken).ConfigureAwait(false);
 	}
 
 	private static async Task AssertPublicIsolationAsync(HttpClient http, int adminPort, CancellationToken cancellationToken)
