@@ -42,6 +42,7 @@ async function healthy(container) {
 }
 async function terminal(url, signalR = false) {
     const socket = new WebSocket(url);
+    socket.binaryType = 'arraybuffer';
     sockets.push(socket);
     let text = '';
     let transcript = '';
@@ -50,8 +51,12 @@ async function terminal(url, signalR = false) {
     socket.addEventListener('error', () => {});
     let handshake = !signalR;
     let pending = '';
+    const decoder = new TextDecoder();
     socket.addEventListener('message', event => {
-        if (!signalR) { text += event.data; transcript += event.data; return; }
+        if (!signalR) {
+            const data = typeof event.data === 'string' ? event.data : decoder.decode(event.data, { stream: true });
+            text += data; transcript += data; return;
+        }
         pending += event.data;
         const records = pending.split('\x1e');
         pending = records.pop();
@@ -101,6 +106,10 @@ try {
     ws.send('settings set greeting browser-shared\r');
     await ws.expect("updated to 'browser-shared'");
     assert(JSON.stringify(probe(['settings', 'show', 'greeting'])).includes('browser-shared'));
+    const telnet = await terminal(`ws://${address}:${port}/ws/telnet`);
+    telnet.send('settings show greeting\r');
+    await telnet.expect('browser-shared');
+    await telnet.expect('>');
     hub.send('health\r');
     await hub.expect('ready');
     await hub.expect('>');
@@ -108,15 +117,19 @@ try {
     await ws.expect('Watching...');
     hub.send('watch\r');
     await hub.expect('Watching...');
+    telnet.send('watch\r');
+    await telnet.expect('Watching...');
     probe(['send', 'bus-marker']);
     await ws.expect('bus-marker');
     await hub.expect('bus-marker');
+    await telnet.expect('bus-marker');
     assert(JSON.stringify(probe(['log', 'host-only-marker'])).includes('Message written to host logs.'));
     assert(docker(['logs', name]).includes('Operator message: host-only-marker'));
     probe(['send', 'after-log-marker']);
     await ws.expect('after-log-marker');
     await hub.expect('after-log-marker');
-    assert(!ws.transcript().includes('host-only-marker') && !hub.transcript().includes('host-only-marker'));
+    await telnet.expect('after-log-marker');
+    assert([ws, hub, telnet].every(session => !session.transcript().includes('host-only-marker')));
 
     native = spawn('dotnet', [resolve(root, 'src/Repl.Remote.TestHost/bin/Release/net10.0/Repl.Remote.TestHost.dll'), 'container', name], { stdio: ['pipe', 'pipe', 'pipe'] });
     let nativeOutput = '';
@@ -133,7 +146,7 @@ try {
     const state = JSON.parse(docker(['inspect', '-f', '{{json .State}}', name]));
     assert.equal(state.ExitCode, 0, JSON.stringify(state));
     assert.equal(state.OOMKilled, false);
-    await until(() => ws.closed() && hub.closed(), 'browser sessions closed');
+    await until(() => ws.closed() && hub.closed() && telnet.closed(), 'browser sessions closed');
     native.stdin.end('stopped\n');
     const nativeResult = await Promise.race([nativeExit, delay(15_000).then(() => ({ code: -1 }))]);
     assert.equal(nativeResult.code, 0, nativeError + nativeOutput);

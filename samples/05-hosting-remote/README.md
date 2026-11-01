@@ -19,6 +19,11 @@ Browser terminal (xterm.js / VT-compatible, raw mode)
           -> ReplApp command graph (same handlers as local)
 ```
 
+Start with [Program.cs](Program.cs) for service registration, Repl configuration and host startup.
+[WebSocketEndpoints.cs](WebSocketEndpoints.cs) owns the raw WebSocket and Telnet session flow;
+[ReplHub.cs](ReplHub.cs) handles SignalR. Both use [TerminalMetadata.cs](TerminalMetadata.cs)
+to interpret terminal metadata. [HostingLifetime.cs](HostingLifetime.cs) coordinates shutdown.
+
 ## What It Shows
 
 | Area | Command(s) | Notes |

@@ -25,7 +25,10 @@ internal sealed class ReplHub(SignalRSessions sessions, SessionTracker tracker) 
 		};
 
 		tracker.Add(sessionName, transport: "signalr", host.RemotePeer);
-		ApplyInitialMetadataFromQuery(sessionName);
+		if (Context.GetHttpContext() is { } context)
+		{
+			TerminalMetadata.FromQuery(context.Request.Query).ApplyTo(tracker, sessionName);
+		}
 
 		try { sessions.Start(Context.ConnectionId, host, sessionName, options, Context.ConnectionAborted); }
 		catch
@@ -45,12 +48,7 @@ internal sealed class ReplHub(SignalRSessions sessions, SessionTracker tracker) 
 			if (TerminalControlProtocol.TryParse(text, out var controlMessage))
 			{
 				host.ApplyControlMessage(controlMessage);
-				tracker.UpdateMetadataByName(
-					sessionName,
-					terminal: controlMessage.TerminalIdentity,
-					screen: controlMessage.WindowSize is { } size ? $"{size.Width}x{size.Height}" : null,
-					capabilities: controlMessage.TerminalCapabilities,
-					ansiSupported: controlMessage.AnsiSupported);
+				TerminalMetadata.ApplyControlMessage(tracker, sessionName, controlMessage);
 				return;
 			}
 
@@ -77,67 +75,6 @@ internal sealed class ReplHub(SignalRSessions sessions, SessionTracker tracker) 
 
 		var endpoint = FormatRemoteEndpoint(address, port);
 		return $"{endpoint} ({Context.ConnectionId})";
-	}
-
-	private void ApplyInitialMetadataFromQuery(string sessionName)
-	{
-		var query = Context.GetHttpContext()?.Request.Query;
-		if (query is null)
-		{
-			return;
-		}
-
-		var terminal = query["terminal"].ToString();
-		var screen = BuildScreen(query["cols"].ToString(), query["rows"].ToString());
-		var ansiSupported = ParseBoolean(query["ansi"].ToString());
-		var capabilities = ParseCapabilities(query["capabilities"].ToString());
-
-		if (string.IsNullOrWhiteSpace(terminal)
-		    && screen is null
-		    && ansiSupported is null
-		    && capabilities is null)
-		{
-			return;
-		}
-
-		tracker.UpdateMetadataByName(
-			sessionName,
-			terminal: string.IsNullOrWhiteSpace(terminal) ? null : terminal,
-			screen: screen,
-			capabilities: capabilities,
-			ansiSupported: ansiSupported);
-	}
-
-	private static string? BuildScreen(string? colsRaw, string? rowsRaw)
-	{
-		var cols = ParsePositiveInt(colsRaw);
-		var rows = ParsePositiveInt(rowsRaw);
-		return cols is > 0 && rows is > 0 ? $"{cols}x{rows}" : null;
-	}
-
-	private static int? ParsePositiveInt(string? raw) =>
-		int.TryParse(raw, out var value) && value > 0 ? value : null;
-
-	private static bool? ParseBoolean(string? raw) =>
-		bool.TryParse(raw, out var value) ? value : null;
-
-	private static TerminalCapabilities? ParseCapabilities(string? raw)
-	{
-		if (string.IsNullOrWhiteSpace(raw))
-		{
-			return null;
-		}
-
-		var parsed = TerminalCapabilities.None;
-		foreach (var token in raw.Split([',', '|', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-		{
-			if (Enum.TryParse<TerminalCapabilities>(token, ignoreCase: true, out var capability))
-			{
-				parsed |= capability;
-			}
-		}
-
-		return parsed == TerminalCapabilities.None ? null : parsed;
 	}
 
 	private static string FormatRemoteEndpoint(string address, int port)
