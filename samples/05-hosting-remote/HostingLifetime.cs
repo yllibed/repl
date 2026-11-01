@@ -28,7 +28,8 @@ internal static class HostingLifetime
 #pragma warning restore CA1031
 		finally
 		{
-			try { await StopAsync(host, listener).WaitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false); }
+			// Arm the deadline before cleanup can enter synchronous application callbacks.
+			try { await Task.Run(() => StopAsync(host, listener)).WaitAsync(TimeSpan.FromSeconds(15)).ConfigureAwait(false); }
 #pragma warning disable CA1031 // Timed-out or failed cleanup cannot safely release shared providers used by active work.
 			catch (Exception error)
 			{

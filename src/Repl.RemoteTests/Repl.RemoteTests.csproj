@@ -9,6 +9,7 @@
 	<ItemGroup>
 		<PackageReference Include="AwesomeAssertions" />
 		<ProjectReference Include="../Repl.Remote.TestHost/Repl.Remote.TestHost.csproj" />
+		<ProjectReference Include="../Repl.Hosting.TestHost/Repl.Hosting.TestHost.csproj" />
 		<ProjectReference Include="../Repl.Remote.Defaults/Repl.Remote.Defaults.csproj" />
 		<ProjectReference Include="../../samples/05-hosting-remote/HostingRemoteSample.csproj" />
 	</ItemGroup>

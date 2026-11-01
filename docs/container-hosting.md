@@ -84,7 +84,7 @@ The sample follows this ownership order:
 
 See [startup callbacks](advanced-startup.md), [input hooks](advanced-input.md), and [remote CLI lifetimes](remote-cli.md) for the detailed framework order. The host's signal handling remains authoritative; an attached console never installs signal handling in the server process.
 
-The sample allows fifteen seconds for shutdown. If cleanup fails or exceeds that budget, it logs a critical failure and terminates with exit `1` instead of disposing shared services beneath work that may still be running. This does not make uncooperative handlers safe to stop individually. The remote listener also has its own bounded disposal contract, documented in the remote CLI guide.
+The sample allows fifteen seconds for shutdown. Browser session cancellation runs command callbacks asynchronously so they cannot block the host's stopping notification. The shutdown deadline is armed before cleanup runs, including any synchronous cancellation callbacks. If cleanup fails or exceeds that budget, it logs a critical failure and terminates with exit `1` instead of disposing shared services beneath work that may still be running. This does not make uncooperative handlers safe to stop individually. The remote listener also has its own bounded disposal contract, documented in the remote CLI guide.
 
 Give Docker twenty seconds before forced termination:
 

@@ -68,7 +68,7 @@ webApp.Map("/ws/repl", async (HttpContext context, ReplApp repl, SessionTracker 
 	}
 
 	using var socket = await context.WebSockets.AcceptWebSocketAsync();
-	using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, webApp.Lifetime.ApplicationStopping);
+	await using var sessionLifetime = new SessionLifetime(webApp.Lifetime.ApplicationStopping, context.RequestAborted);
 	var sessionName = $"ws-{Guid.NewGuid().ToString("N")[..8]}";
 	var remotePeer = FormatRemotePeer(context);
 	tracker.Add(sessionName, transport: "websocket", remotePeer);
@@ -120,7 +120,7 @@ webApp.Map("/ws/telnet", async (HttpContext context, ReplApp repl, SessionTracke
 	}
 
 	using var socket = await context.WebSockets.AcceptWebSocketAsync();
-	using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, webApp.Lifetime.ApplicationStopping);
+	await using var sessionLifetime = new SessionLifetime(webApp.Lifetime.ApplicationStopping, context.RequestAborted);
 	var sessionName = $"telnet-{Guid.NewGuid().ToString("N")[..8]}";
 	var remotePeer = FormatRemotePeer(context);
 	tracker.Add(sessionName, transport: "telnet", remotePeer);

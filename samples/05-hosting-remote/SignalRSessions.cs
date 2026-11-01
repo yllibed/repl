@@ -17,7 +17,7 @@ internal sealed class SignalRSessions(ReplApp app, IServiceProvider services, IH
 			{
 				throw new OperationCanceledException(lifetime.ApplicationStopping);
 			}
-			var cts = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping, disconnected);
+			var cts = new SessionLifetime(lifetime.ApplicationStopping, disconnected);
 			var session = new Session(host, cts, name);
 			_sessions.Add(id, session);
 			// Publish the run while holding the same lock used by shutdown and disconnect.
@@ -78,16 +78,19 @@ internal sealed class SignalRSessions(ReplApp app, IServiceProvider services, IH
 		}
 		finally
 		{
-			session.Lifetime.Dispose();
-			tracker.Remove(session.Name);
-			lock (_gate) { _sessions.Remove(id); }
+			try { await session.Lifetime.DisposeAsync().ConfigureAwait(false); }
+			finally
+			{
+				tracker.Remove(session.Name);
+				lock (_gate) { _sessions.Remove(id); }
+			}
 		}
 	}
 
-	private sealed class Session(StreamedReplHost host, CancellationTokenSource lifetime, string name)
+	private sealed class Session(StreamedReplHost host, SessionLifetime lifetime, string name)
 	{
 		internal StreamedReplHost Host { get; } = host;
-		internal CancellationTokenSource Lifetime { get; } = lifetime;
+		internal SessionLifetime Lifetime { get; } = lifetime;
 		internal string Name { get; } = name;
 		internal Task RunTask { get; set; } = Task.CompletedTask;
 		internal Task? CloseTask { get; set; }
