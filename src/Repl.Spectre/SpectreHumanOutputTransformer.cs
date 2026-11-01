@@ -337,7 +337,7 @@ internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTran
 
 	private bool TryRenderObject(object value, out string text)
 	{
-		var members = GetDisplayMembers(value.GetType());
+		var members = IsSimpleValue(value.GetType()) ? [] : GetDisplayMembers(value.GetType());
 		if (members.Length == 0)
 		{
 			text = string.Empty;
@@ -543,7 +543,7 @@ internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTran
 
 	private static bool TryRenderInlineObject(object value, out string text)
 	{
-		var members = GetDisplayMembers(value.GetType());
+		var members = IsSimpleValue(value.GetType()) ? [] : GetDisplayMembers(value.GetType());
 		if (members.Length == 0)
 		{
 			text = string.Empty;

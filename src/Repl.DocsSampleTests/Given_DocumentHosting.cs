@@ -153,6 +153,8 @@ public sealed class Given_DocumentHosting
 			await ReadUntilAsync(socket, ">", deadline.Token).ConfigureAwait(false);
 			await socket.SendAsync(Encoding.UTF8.GetBytes("health\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
 			await ReadUntilAsync(socket, "Alive", deadline.Token).ConfigureAwait(false);
+			await socket.SendAsync(Encoding.UTF8.GetBytes("sessions\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(socket, "websocket", deadline.Token).ConfigureAwait(false);
 			socket.Abort();
 		}
 		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
