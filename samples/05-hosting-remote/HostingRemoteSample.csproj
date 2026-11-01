@@ -11,5 +11,7 @@
 		<ProjectReference Include="..\..\src\Repl.Telnet\Repl.Telnet.csproj" />
 		<InternalsVisibleTo Include="Repl.RemoteTests" />
 		<InternalsVisibleTo Include="Repl.Hosting.TestHost" />
+		<Content Include="../shared/terminal-client.js" Link="wwwroot/terminal-client.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<Content Update="wwwroot/**" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 </Project>

@@ -1,0 +1,17 @@
+services:
+  docs-index:
+    container_name: docs-index
+    platform: linux/amd64
+    build:
+      context: ../..
+      dockerfile: samples/10-docs-mcp/Dockerfile
+    ports:
+      - "8080:8080"
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ./documents:/documents:ro
+      - index:/index
+    stop_grace_period: 20s
+
+volumes:
+  index:

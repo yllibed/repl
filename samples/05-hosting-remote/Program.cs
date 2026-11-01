@@ -11,7 +11,11 @@ if (args is ["--remote-console" or "--remote-exec", ..])
 	return await RemoteClientMode.RunAsync(args);
 }
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+	Args = args,
+	WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot"),
+});
 builder.Services.AddSignalR();
 
 // Shared services — available to both ASP.NET endpoints and the REPL module.
