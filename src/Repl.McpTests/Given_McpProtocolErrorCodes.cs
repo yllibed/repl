@@ -5,16 +5,17 @@ using Repl.Mcp;
 namespace Repl.McpTests;
 
 /// <summary>
-/// An unknown resource or prompt is a protocol error with a standard code, not an internal error:
-/// hosts branch on the code to tell "gone" from "broken" (SEP-2164). The codes follow the SDK's own
-/// handlers, so a Repl server answers exactly as a server built on the SDK alone would.
+/// The JSON-RPC error an unknown resource or prompt is answered with, on each protocol revision.
+/// <c>McpServerHandler.ReadResourceAsync</c> and <c>GetPromptAsync</c> explain the choice of codes.
 /// </summary>
 [TestClass]
 public sealed class Given_McpProtocolErrorCodes
 {
+	private const string UnknownResourceUri = "repl://missing";
+
 	[TestMethod]
 	[Description("An initialize-era client reading an unknown resource URI gets the legacy ResourceNotFound code (-32002), which is what the SDK's own resource handler returns on revisions before 2026-07-28. It used to get a code-less McpException, surfaced as InternalError (-32603).")]
-	public async Task When_ReadingUnknownResource_Then_ResourceNotFoundCodeIsReturned()
+	public async Task When_LegacyClientReadsAnUnknownResource_Then_ResourceNotFoundCodeIsReturned()
 	{
 		var error = await ReadUnknownResourceAsync(McpProtocolRevisions.LastWithSessions).ConfigureAwait(false);
 
@@ -23,11 +24,22 @@ public sealed class Given_McpProtocolErrorCodes
 
 	[TestMethod]
 	[Description("On 2026-07-28 an unresolvable resource URI is reported with the standard JSON-RPC InvalidParams (-32602), not the legacy ResourceNotFound — the SDK selects between the two by negotiated revision, and hard-coding the legacy code would answer a modern client with a code its revision no longer uses.")]
-	public async Task When_ReadingUnknownResourceOnTheSessionlessRevision_Then_InvalidParamsCodeIsReturned()
+	public async Task When_ModernClientReadsAnUnknownResource_Then_InvalidParamsCodeIsReturned()
 	{
 		var error = await ReadUnknownResourceAsync(McpProtocolRevisions.Sessionless).ConfigureAwait(false);
 
 		error.ErrorCode.Should().Be(McpErrorCode.InvalidParams);
+	}
+
+	[TestMethod]
+	[DataRow(McpProtocolRevisions.LastWithSessions)]
+	[DataRow(McpProtocolRevisions.Sessionless)]
+	[Description("SEP-2164 says the error's data SHOULD carry the URI that was not found, and both revisions' specifications show it there. The SDK client copies the data's properties into the exception's Data.")]
+	public async Task When_ReadingUnknownResource_Then_TheErrorDataNamesTheUri(string protocolVersion)
+	{
+		var error = await ReadUnknownResourceAsync(protocolVersion).ConfigureAwait(false);
+
+		error.Data["uri"].Should().Be(UnknownResourceUri);
 	}
 
 	[TestMethod]
@@ -49,7 +61,7 @@ public sealed class Given_McpProtocolErrorCodes
 		var fixture = await CreateFixtureAsync(protocolVersion).ConfigureAwait(false);
 		await using (fixture.ConfigureAwait(false))
 		{
-			var act = async () => await fixture.Client.ReadResourceAsync("repl://missing").ConfigureAwait(false);
+			var act = async () => await fixture.Client.ReadResourceAsync(UnknownResourceUri).ConfigureAwait(false);
 
 			return (await act.Should().ThrowAsync<McpProtocolException>().ConfigureAwait(false)).Which;
 		}
