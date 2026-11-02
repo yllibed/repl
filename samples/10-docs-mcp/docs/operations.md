@@ -93,6 +93,8 @@ The packaged native targets are Windows x64, Linux x64 and macOS Apple Silicon. 
 
 Asset acquisition requires network access. Serving after acquisition requires none: model inference is local, and xterm JavaScript/CSS are served from the application. Preserve `.assets` between native runs. For an offline deployment, fetch on a connected machine or build the container image first, then transfer the matching assets or image.
 
+Each download has a ten-minute deadline covering response headers, the complete body and checksum verification. A timeout removes its partial `.download` file and preserves any existing asset. Run `assets fetch` again to retry; files that already passed verification are reused. Ctrl+C cancels acquisition rather than being reported as a download timeout.
+
 The ONNX model and vocabulary are MIT-licensed; sqlite-vec is MIT/Apache-2.0; xterm and its fit addon are MIT-licensed. The manifest includes xterm license files. Consult the model card and the packages' licensing and notices when redistributing a deployment: [model](https://huggingface.co/intfloat/multilingual-e5-small), [sqlite-vec](https://github.com/asg017/sqlite-vec), [ONNX Runtime](https://github.com/microsoft/onnxruntime), [xterm.js](https://github.com/xtermjs/xterm.js).
 
 ## When something does not work

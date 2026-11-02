@@ -19,7 +19,7 @@ internal static class Assets
 
 	internal static async Task FetchAsync(string directory, string rid, CancellationToken cancellationToken)
 	{
-		using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+		using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
 		foreach (var asset in ForPlatform(rid))
 		{
 			var path = Path.Combine(directory, asset.Path);
@@ -27,16 +27,7 @@ internal static class Assets
 			if (!await MatchesAsync(path, asset.Sha256, cancellationToken))
 			{
 				Console.WriteLine($"Downloading {asset.Path}...");
-				var temporary = path + ".download";
-				try
-				{
-					using var response = await http.GetAsync(asset.Url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-					response.EnsureSuccessStatusCode();
-					await using (var file = File.Create(temporary)) { await response.Content.CopyToAsync(file, cancellationToken); }
-					if (!await MatchesAsync(temporary, asset.Sha256, cancellationToken)) { throw new IOException($"Checksum mismatch for {asset.Path}."); }
-					File.Move(temporary, path, overwrite: true);
-				}
-				finally { File.Delete(temporary); }
+				await DownloadAsync(http, asset.Url, path, asset.Sha256, TimeSpan.FromMinutes(10), cancellationToken);
 			}
 			if (asset.Extract is not null)
 			{
@@ -45,6 +36,27 @@ internal static class Assets
 			}
 		}
 		Console.WriteLine($"Verified assets for {rid} in {directory}");
+	}
+
+	internal static async Task DownloadAsync(HttpClient http, string url, string path, string sha256, TimeSpan timeout, CancellationToken cancellationToken)
+	{
+		using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		deadline.CancelAfter(timeout);
+		var temporary = path + ".download";
+		try
+		{
+			using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+			response.EnsureSuccessStatusCode();
+			await using (var file = File.Create(temporary)) { await response.Content.CopyToAsync(file, deadline.Token); }
+			if (!await MatchesAsync(temporary, sha256, deadline.Token)) { throw new IOException($"Checksum mismatch for {Path.GetFileName(path)}."); }
+			deadline.Token.ThrowIfCancellationRequested();
+			File.Move(temporary, path, overwrite: true);
+		}
+		catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+		{
+			throw new TimeoutException($"Download timed out for {Path.GetFileName(path)}. Run assets fetch to retry.");
+		}
+		finally { File.Delete(temporary); }
 	}
 
 	internal static async Task VerifyAsync(string directory, CancellationToken cancellationToken)
