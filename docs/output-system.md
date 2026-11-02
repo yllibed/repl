@@ -83,19 +83,31 @@ app.Configure<OutputOptions>(o =>
 
 The transformer receives the command result object and writes formatted output to the provided stream.
 
-To customize an existing format, use `DecorateTransformer` instead of registering a new format name:
+### Spectre views for application types
+
+Keep handlers returning data and register their console presentation with `Repl.Spectre`:
 
 ```csharp
-app.UseSpectreConsole();
-app.Configure<OutputOptions>(o =>
+app.UseSpectreConsole(spectre =>
 {
-    o.DecorateTransformer("spectre", fallback => new CustomConsoleOutput(fallback));
+    spectre.AddView<IndexStatus>(status =>
+        new Panel(new Text(status.Ready ? "Ready" : "Waiting")));
 });
 ```
 
-The decorator handles application-specific values and delegates other values to `fallback`.
-Keeping the format name preserves its aliases, banner eligibility and help factory, so Spectre still receives its rich help model.
-The wrapper must also expose the appropriate `IOutputTransformer` capabilities; these are not copied from the fallback.
+A view is a `Func<T, IRenderable>` using `Spectre.Console.Rendering.IRenderable`.
+It applies to the exact runtime type of a non-null command result, before the default
+object or collection rendering. Base-class and interface registrations do not match derived
+runtime types. Registering a type again replaces its view; configure views before running the app.
+
+Repl renders the returned view using the session's width, ANSI, color and Unicode settings,
+including terminal fallbacks. The view must return a renderable and must not write to a console.
+Help, result envelopes and pages retain their built-in rendering. Views do not apply to individual
+page items or nested object properties, and Repl does not infer repeated table headers from a custom view.
+JSON and MCP still receive the original result data.
+
+See the [documentation index sample](../samples/10-docs-mcp/README.md) for status,
+search comparison and document views.
 
 ### Custom aliases
 

@@ -69,6 +69,8 @@ internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTran
 		HelpRenderDocument help => RenderedPayload.Plain(RenderHelp(help)),
 		IReplPage page => RenderPageWithFooter(page),
 		IReplResult replResult => RenderReplResult(replResult),
+		_ when _spectreOptions?.TryGetView(value.GetType(), out var view) == true =>
+			RenderedPayload.Plain(RenderToString(view(value))),
 		string text => RenderedPayload.Plain(text),
 		// Before the enumerable arm: a JsonObject enumerates as key/value pairs, and reflecting over
 		// those walks JsonNode's Root and Parent, which point back at each other.

@@ -135,7 +135,6 @@ renderer set.
 ### OutputOptions Methods
 
 - `AddTransformer(name, transformer)` — Register a custom output transformer.
-- `DecorateTransformer(name, decorate)` — Wrap an existing transformer without changing its format registration.
 - `AddAlias(alias, format)` — Register a format alias.
 
 ## BindingOptions

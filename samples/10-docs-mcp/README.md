@@ -196,6 +196,11 @@ These commands run inside an attached console, or after `exec` in a one-shot cli
 
 Use `--help` for signatures and `--json` for structured command output. Use `index status` rather than `index watch` for one-shot automation. Spectre uses each session's terminal capabilities and falls back for limited terminals.
 
+The handlers return records; `UseSpectreConsole` registers their presentation with
+`AddView<T>`. [ConsoleViews.cs](ConsoleViews.cs) builds Spectre renderables without
+creating or writing to a console. Repl handles session rendering and the standard help
+and paging paths. Selecting JSON or calling through MCP keeps the original structured data.
+
 For example, `dotnet run -- exec docs list --result:page-size=20` returns items and `pageInfo`. Pass its `nextCursor` back with `--result:cursor=<value>` to continue; a null cursor means the list is complete. Pages read the currently published index, so a rebuild between requests can change their contents. Restart listing if you need a consistent traversal after a rebuild.
 
 ## Follow the code

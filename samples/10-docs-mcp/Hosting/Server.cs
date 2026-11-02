@@ -5,7 +5,6 @@ using Repl;
 using Repl.Mcp;
 using Repl.Remote;
 using Repl.Spectre;
-using Spectre.Console;
 
 namespace DocsMcpSample.Hosting;
 
@@ -51,12 +50,16 @@ internal static class Server
 		builder.Services.AddSpectreConsole();
 		builder.Services.AddRepl((services, repl) =>
 		{
-			repl.UseEmbeddedConsoleProfile().UseSpectreConsole();
+			repl.UseEmbeddedConsoleProfile().UseSpectreConsole(spectre =>
+			{
+				spectre.AddView<IndexStatus>(ConsoleViews.Status);
+				spectre.AddView<SearchComparison>(ConsoleViews.Comparison);
+				spectre.AddView<FetchedDocument>(ConsoleViews.Document);
+			});
 			repl.WithDescription("Documentation index — search, inspect and administer one live process.");
 			repl.Options(options =>
 			{
 				options.AmbientCommands.ExitCommandEnabled = true;
-				options.Output.DecorateTransformer("spectre", fallback => new ConsoleViews.Output(fallback, services.GetRequiredService<IAnsiConsole>));
 			});
 			Commands.Map(repl);
 		});

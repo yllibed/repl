@@ -1,6 +1,4 @@
-using System.Globalization;
 using DocsMcpSample.Search;
-using Repl;
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
@@ -32,39 +30,22 @@ internal static class ConsoleViews
 		return table;
 	}
 
-	internal sealed class Output(IOutputTransformer fallback, Func<IAnsiConsole> resolveConsole) : IOutputTransformer
+	internal static IRenderable Comparison(SearchComparison comparison) => new Columns(
+		Ranking("Keyword", comparison.Keyword),
+		Ranking("Vector", comparison.Vector),
+		Ranking("Hybrid · RRF", comparison.Hybrid));
+
+	internal static IRenderable Document(FetchedDocument document)
 	{
-		public string Name => fallback.Name;
-		public bool SupportsInteractivePaging => true;
-		public async ValueTask<string> TransformAsync(object? value, CancellationToken cancellationToken = default)
+		var sections = new List<IRenderable>
 		{
-			if (value is not (SearchComparison or IndexStatus or FetchedDocument)) { return await fallback.TransformAsync(value, cancellationToken); }
-			cancellationToken.ThrowIfCancellationRequested();
-			var session = resolveConsole();
-			using var writer = new StringWriter(CultureInfo.InvariantCulture);
-			var console = AnsiConsole.Create(new AnsiConsoleSettings
-			{
-				Out = new AnsiConsoleOutput(writer),
-				Ansi = session.Profile.Capabilities.Ansi ? AnsiSupport.Yes : AnsiSupport.No,
-				ColorSystem = session.Profile.Capabilities.Ansi ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors,
-				Interactive = InteractionSupport.No,
-				Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
-			});
-			console.Profile.Width = Math.Clamp(session.Profile.Width, 20, 240);
-			console.Profile.Capabilities.Unicode = session.Profile.Capabilities.Unicode;
-			if (value is IndexStatus status) { console.Write(Status(status)); }
-			else if (value is SearchComparison comparison)
-			{
-				var rankings = new[] { Ranking("Keyword", comparison.Keyword), Ranking("Vector", comparison.Vector), Ranking("Hybrid · RRF", comparison.Hybrid) };
-				console.Write(console.Profile.Width >= 110 ? new Columns(rankings) : new Rows(rankings));
-			}
-			else if (value is FetchedDocument document)
-			{
-				console.Write(new Rule(Markup.Escape(document.Source)));
-				console.Write(new Text(document.Text));
-				if (document.Truncated) { console.Write(new Text("\nTruncated; fetch a section for a focused extract.", new Style(Color.Yellow))); }
-			}
-			return writer.ToString();
+			new Rule(Markup.Escape(document.Source)),
+			new Text(document.Text),
+		};
+		if (document.Truncated)
+		{
+			sections.Add(new Text("\nTruncated; fetch a section for a focused extract.", new Style(Color.Yellow)));
 		}
+		return new Rows(sections);
 	}
 }

@@ -42,6 +42,29 @@ app.Map("list", (IContactStore store) => store.All());
 
 Column headers are derived from `[Display]` attributes. No rendering code needed.
 
+### Views for application types
+
+Keep command results independent of their presentation:
+
+```csharp
+app.UseSpectreConsole(spectre =>
+{
+    spectre.AddView<IndexStatus>(status =>
+        new Panel(new Text(status.Ready ? "Ready" : "Waiting")));
+});
+
+app.Map("status", () => new IndexStatus(Ready: true));
+```
+
+`AddView<T>` associates an exact runtime type with a function returning an
+`IRenderable` (`Spectre.Console.Rendering`). Repl renders the view with the session's
+terminal settings; the function does not create or write to a console. JSON and MCP
+keep the original record. Help and paging remain built in.
+
+See [Spectre views](../../docs/output-system.md#spectre-views-for-application-types)
+for matching rules and paging boundaries, and the
+[documentation index sample](../../samples/10-docs-mcp/ConsoleViews.cs) for complete views.
+
 ### Direct `IAnsiConsole` injection
 
 Inject `IAnsiConsole` to use any Spectre renderable:

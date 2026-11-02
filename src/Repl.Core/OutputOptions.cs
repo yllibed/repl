@@ -141,22 +141,6 @@ public sealed class OutputOptions
 	}
 
 	/// <summary>
-	/// Wraps a registered transformer while retaining its format's aliases, help factory and banner eligibility.
-	/// </summary>
-	/// <param name="name">Existing format name.</param>
-	/// <param name="decorate">Factory that receives the current transformer and returns its replacement.</param>
-	public void DecorateTransformer(string name, Func<IOutputTransformer, IOutputTransformer> decorate)
-	{
-		ArgumentException.ThrowIfNullOrWhiteSpace(name);
-		ArgumentNullException.ThrowIfNull(decorate);
-		if (!_transformers.TryGetValue(name, out var current))
-		{
-			throw new ArgumentException($"No transformer named '{name}' is registered.", nameof(name));
-		}
-		_transformers[name] = decorate(current) ?? throw new InvalidOperationException("The transformer decorator returned null.");
-	}
-
-	/// <summary>
 	/// Adds a flag alias mapped to an output format.
 	/// </summary>
 	/// <param name="alias">Alias name without prefix (for example: "markdown").</param>
