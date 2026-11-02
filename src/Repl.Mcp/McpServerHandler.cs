@@ -317,11 +317,8 @@ internal sealed class McpServerHandler
 		{
 			// Sent to this request's own server, not through _toolListChanged: that collection's SDK
 			// fan-out reaches every attached session, and only this one's catalog is about to change.
-			if (request.Server is { } server)
-			{
-				await server.SendNotificationAsync(NotificationMethods.ToolListChangedNotification, cancellationToken)
-					.ConfigureAwait(false);
-			}
+			await request.Server.SendNotificationAsync(NotificationMethods.ToolListChangedNotification, cancellationToken)
+				.ConfigureAwait(false);
 
 			return McpCacheHints.MarkPrivateToThisClient(request, new ListToolsResult
 			{

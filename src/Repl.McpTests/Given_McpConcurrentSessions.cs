@@ -1,5 +1,7 @@
-﻿using System.IO.Pipelines;
+﻿using System.Collections.Concurrent;
+using System.IO.Pipelines;
 using System.Text;
+using System.Threading.Channels;
 using System.Text.Json.Nodes;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -706,13 +708,22 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("The compatibility-shim transition is connection-local — each session claims its own intro — so its tools/list_changed must reach that session alone. It used to clear a handler-wide collection whose SDK fan-out notifies every attached session, sending a spurious list_changed to sessions whose catalog had not changed. A ping on the other session after the first session's own notification arrives is the ordering barrier: the SDK starts every session's send synchronously inside that one clear, so any notification bound for the other session is already queued ahead of the ping's response.")]
+	[Description("The compatibility-shim transition is connection-local — each session claims its own intro — so its tools/list_changed must reach that session alone, not every session attached to the handler. Each notification is recorded as the server hands it to that session's transport. SDK 2.2.0 reaches the transport from the send without an intervening await, the handler-wide fan-out included, so once a list returns, whatever it caused on any connection is already recorded; re-check that when the SDK changes. The client side cannot prove an absence: it dispatches each incoming message on its own task.")]
 	public async Task When_OneLegacySessionConsumesItsShimIntro_Then_NoOtherSessionIsNotified()
 	{
 		var app = ReplApp.Create();
 		app.UseMcpServer();
 		app.Map("alpha", () => "a");
-		var handler = CreateHandler(app, DynamicToolCompatibilityMode.DiscoverAndCallShim);
+		var transports = new ConcurrentQueue<RecordingTransport>();
+		var handler = CreateHandler(
+			app,
+			DynamicToolCompatibilityMode.DiscoverAndCallShim,
+			(serverName, io) =>
+			{
+				var transport = new RecordingTransport(McpTestFixture.PipeTransportFactory(serverName, io));
+				transports.Enqueue(transport);
+				return transport;
+			});
 		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
 
 		var legacy = new McpClientOptions { ProtocolVersion = McpProtocolRevisions.LastWithSessions };
@@ -721,36 +732,22 @@ public sealed class Given_McpConcurrentSessions
 		var sessionB = await StartSessionAsync(handler, legacy, cts.Token).ConfigureAwait(false);
 		await using var scopeB = sessionB.ConfigureAwait(false);
 
-		var notifiedA = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		await using var registrationA = sessionA.Client.RegisterNotificationHandler(
-			NotificationMethods.ToolListChangedNotification,
-			(_, _) =>
-			{
-				notifiedA.TrySetResult();
-				return ValueTask.CompletedTask;
-			}).ConfigureAwait(false);
-		var notificationsToB = 0;
-		var notifiedB = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-		await using var registrationB = sessionB.Client.RegisterNotificationHandler(
-			NotificationMethods.ToolListChangedNotification,
-			(_, _) =>
-			{
-				Interlocked.Increment(ref notificationsToB);
-				notifiedB.TrySetResult();
-				return ValueTask.CompletedTask;
-			}).ConfigureAwait(false);
+		// Each session's transport is built before its handshake completes, so they queue in start order.
+		transports.Should().HaveCount(2);
+		var (toA, toB) = (transports.First(), transports.Last());
 
-		(await sessionA.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false))
-			.Select(static tool => tool.Name).Should().BeEquivalentTo(["discover_tools", "call_tool"]);
-		await notifiedA.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-		await sessionB.Client.PingAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+		var firstListA = await sessionA.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
 
-		Volatile.Read(ref notificationsToB).Should().Be(0, "session A's transition changed nothing session B can see");
+		firstListA.Select(static tool => tool.Name).Should().BeEquivalentTo(["discover_tools", "call_tool"]);
+		toA.Count(NotificationMethods.ToolListChangedNotification).Should().Be(1);
+		toB.Count(NotificationMethods.ToolListChangedNotification).Should().Be(0, "session A's transition changed nothing session B can see");
 
-		// Positive control: B's own transition does reach B, so the handler above can observe one.
-		await sessionB.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
-		await notifiedB.Task.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-		Volatile.Read(ref notificationsToB).Should().Be(1);
+		// Positive control: B's own transition is recorded on B's transport, and on B's alone.
+		var firstListB = await sessionB.Client.ListToolsAsync(cancellationToken: cts.Token).ConfigureAwait(false);
+
+		firstListB.Select(static tool => tool.Name).Should().BeEquivalentTo(["discover_tools", "call_tool"]);
+		toB.Count(NotificationMethods.ToolListChangedNotification).Should().Be(1);
+		toA.Count(NotificationMethods.ToolListChangedNotification).Should().Be(1);
 	}
 
 	[TestMethod]
@@ -852,15 +849,44 @@ public sealed class Given_McpConcurrentSessions
 
 	private static McpServerHandler CreateHandler(
 		ReplApp app,
-		DynamicToolCompatibilityMode compatibility = DynamicToolCompatibilityMode.Disabled)
+		DynamicToolCompatibilityMode compatibility = DynamicToolCompatibilityMode.Disabled,
+		Func<string, IReplIoContext, ITransport>? transportFactory = null)
 	{
 		var options = new ReplMcpServerOptions
 		{
 			DynamicToolCompatibility = compatibility,
-			TransportFactory = McpTestFixture.PipeTransportFactory,
+			TransportFactory = transportFactory ?? McpTestFixture.PipeTransportFactory,
 		};
 
 		return new McpServerHandler(app.Core, options, McpTestFixture.EmptyServices);
+	}
+
+	/// <summary>
+	/// Records the method of every notification the server sends, before handing it to the inner transport,
+	/// so a send is recorded as soon as the server makes it rather than when the client dispatches it.
+	/// </summary>
+	private sealed class RecordingTransport(ITransport inner) : ITransport
+	{
+		private readonly ConcurrentQueue<string> _notifications = new();
+
+		public string? SessionId => inner.SessionId;
+
+		public ChannelReader<JsonRpcMessage> MessageReader => inner.MessageReader;
+
+		public int Count(string method) =>
+			_notifications.Count(sent => string.Equals(sent, method, StringComparison.Ordinal));
+
+		public Task SendMessageAsync(JsonRpcMessage message, CancellationToken cancellationToken = default)
+		{
+			if (message is JsonRpcNotification notification)
+			{
+				_notifications.Enqueue(notification.Method);
+			}
+
+			return inner.SendMessageAsync(message, cancellationToken);
+		}
+
+		public ValueTask DisposeAsync() => inner.DisposeAsync();
 	}
 
 	private sealed class RootsGatedModule : IReplModule
