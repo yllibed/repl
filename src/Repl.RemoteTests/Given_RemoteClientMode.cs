@@ -17,7 +17,7 @@ public sealed class Given_RemoteClientMode
 	{
 		var result = await RunAsync([mode, "--help"]).ConfigureAwait(false);
 
-		result.ExitCode.Should().Be(0);
+		result.ExitCode.Should().Be(0, "stdout: {0}; stderr: {1}", result.Output, result.Error);
 		result.Output.Should().Contain("pipe");
 		result.Error.Should().BeEmpty();
 	}
@@ -38,7 +38,7 @@ public sealed class Given_RemoteClientMode
 	[Description("The real executable forwards literal remote options and empty tokens while preserving output streams and the remote exit code.")]
 	public async Task When_ExecRuns_Then_OnlyTheDestinationInterpretsItsTokens()
 	{
-		var pipe = "sample-client-" + Guid.NewGuid().ToString("N");
+		var pipe = TestPipeName.Create();
 		var backend = new RecordingBackend();
 		await using var server = new NamedPipeReplServer(pipe, _ => ValueTask.FromResult<IRemoteReplBackend>(backend));
 		string[] tokens = ["echo", "", "a b", "a,b", "--help", "--output:unknown", "--", "x=y"];
