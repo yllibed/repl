@@ -97,13 +97,13 @@ Configuration is a startup snapshot: changing a JSON file or environment value r
 | `MCP_PORT` | `DOCS_MCP_PORT` | `8080` | MCP HTTP listener port |
 | `ADMIN_PORT` | `DOCS_ADMIN_PORT` | `8081` | Administration HTTP/WebSocket listener |
 | `ADMIN_ADDRESS` | `DOCS_ADMIN_ADDRESS` | `127.0.0.1` | Admin bind IP address |
-| `ADMIN_ORIGIN` | `DOCS_ADMIN_ORIGIN` | Unset | One additional exact browser origin |
+| `ADMIN_ORIGIN` | `DOCS_ADMIN_ORIGIN` | Unset | One additional exact browser origin and its admin hostname |
 
 The Dockerfile supplies container paths and binds both listeners to `0.0.0.0` **inside the container**. Compose publishes that port as `127.0.0.1:8081:8081` on the host. Do not change it to `8081:8081` on an untrusted host.
 
-Browser administration accepts local HTTP origins `localhost`, `127.0.0.1` and `[::1]` on the configured admin port. For a proxy or another hostname, set `DOCS_ADMIN_ORIGIN` to one exact HTTP(S) origin without a path or trailing slash, such as `https://docs-admin.example.com`. This only adds an allowed origin; it does not configure a proxy, TLS or authentication.
+Browser administration accepts local HTTP origins `localhost`, `127.0.0.1` and `[::1]` on the configured admin port. Administration also restricts the request hostname to these loopback names and the hostname from `DOCS_ADMIN_ORIGIN`, including requests without Origin. The actual local listener port still determines which audience a request can reach. For a proxy or another hostname, set `DOCS_ADMIN_ORIGIN` to one exact HTTP(S) origin without a path or trailing slash, such as `https://docs-admin.example.com`. This adds an allowed browser origin and admin hostname; it does not configure a proxy, TLS or authentication.
 
-Foreign and opaque (`null`) origins are rejected before admin HTTP actions or WebSocket acceptance. Native clients without an Origin header are allowed. This browser boundary is not authentication: a client can omit or forge headers.
+Foreign and opaque (`null`) origins are rejected before admin HTTP actions or WebSocket acceptance. Native clients without an Origin header are allowed when their hostname passes the same check. An unknown Host is rejected before serving dashboard assets, administration endpoints or WebSocket connections. This browser boundary is not authentication: a client can forge headers.
 
 ## Assets and offline execution
 

@@ -133,6 +133,15 @@ public sealed class Given_DocumentHosting
 		try
 		{
 			using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{settings.AdminPort}") };
+			using var rebound = new HttpRequestMessage(HttpMethod.Get, "/admin/status");
+			rebound.Headers.Host = "untrusted.example";
+			using var rejected = await http.SendAsync(rebound, deadline.Token).ConfigureAwait(false);
+			rejected.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+			using var proxy = new HttpRequestMessage(HttpMethod.Get, "/admin/status");
+			proxy.Headers.Host = "admin.example.com";
+			using var accepted = await http.SendAsync(proxy, deadline.Token).ConfigureAwait(false);
+			accepted.EnsureSuccessStatusCode();
+
 			http.DefaultRequestHeaders.Add("Origin", settings.AdminOrigin);
 			foreach (var (path, status) in new[]
 			{

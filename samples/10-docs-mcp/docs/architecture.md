@@ -36,7 +36,7 @@ A peer close or dropped connection cancels that session's token, so disconnectin
 
 The browser sends terminal metadata and keystrokes through the [shared terminal client](../../shared/terminal-client.js). Repl handles input, command binding and session cancellation. [ConsoleViews.cs](../ConsoleViews.cs) supplies the sample's Spectre layouts; JSON and MCP results remain structured data.
 
-The sample decorates the existing `spectre` transformer rather than creating another format. Its index, comparison and source views are custom; other values, including the rich help model for `help` and `?`, pass through to Spectre. Retaining the format also retains its help factory and banner settings.
+The sample registers its index, comparison and source views with `AddView<T>`. Handlers keep returning structured records; Spectre renders their registered views using the session's console capabilities. Built-in help, paging and result envelopes retain their native rendering, and JSON and MCP keep the original data.
 
 The embedded-console profile disables `exit` by default. This sample explicitly enables it in [Server.cs](../Hosting/Server.cs): `exit` ends the attached session and closes its WebSocket, while the host, index and other sessions keep running. The browser can connect again to open a new session.
 
