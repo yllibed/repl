@@ -22,6 +22,7 @@
     <Content Update="assets.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Update="wwwroot/**" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../shared/terminal-client.js" Link="wwwroot/terminal-client.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Compile Include="../05-hosting-remote/SessionLifetime.cs" Link="Hosting/SessionLifetime.cs" />
+    <Compile Include="../shared/SessionLifetime.cs" Link="Hosting/SessionLifetime.cs" />
+    <Compile Include="../shared/RemoteClient.cs" Link="Hosting/RemoteClient.cs" />
   </ItemGroup>
 </Project>

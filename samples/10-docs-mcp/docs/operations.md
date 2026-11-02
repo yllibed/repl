@@ -137,6 +137,13 @@ Start with the server's terminal or `docker compose logs`, then inspect `index s
 
 Model identity and schema version prevent serving an incompatible generation. If the existing schema is still usable, the worker rebuilds automatically. If opening the database itself fails, the worker reports the failure and can retry; do not remove a live database beneath active readers.
 
+A pipe connection has a five-second deadline. An absent server reports the pipe name and asks
+you to start it (`dotnet run -- serve`); an explicit caller cancellation remains cancellation.
+One-shot commands have a separate 30-second deadline after connection. Startup failures include
+their exception diagnostics on stderr without changing the command's exit-code policy.
+Malformed addresses and empty configured paths identify their configuration key instead of
+silently selecting another location.
+
 ## Verify your changes
 
 The [test project](../../../src/Repl.DocsSampleTests/) has pure chunking/ranking tests and opt-in native integration tests. After fetching assets, enable the complete sample suite:

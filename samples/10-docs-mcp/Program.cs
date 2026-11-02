@@ -23,6 +23,6 @@ catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
 }
 catch (Exception error)
 {
-	await Console.Error.WriteLineAsync(error.Message);
+	await Console.Error.WriteLineAsync(error.ToString());
 	return 1;
 }

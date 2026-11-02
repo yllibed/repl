@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using HostingRemoteSample;
+using Repl.Samples;
 using Microsoft.Extensions.Hosting;
 
 namespace Repl.RemoteTests;

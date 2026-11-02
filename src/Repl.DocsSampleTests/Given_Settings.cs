@@ -71,4 +71,20 @@ public sealed class Given_Settings
 
 		load.Should().Throw<InvalidOperationException>().WithMessage("*" + key + "*");
 	}
+
+	[TestMethod]
+	[DataRow("ADMIN_ADDRESS", "not-an-address")]
+	[DataRow("MCP_ADDRESS", "")]
+	[DataRow("DOCUMENTS", "")]
+	[DataRow("INDEX", " ")]
+	[DataRow("ASSETS", "")]
+	[Description("Explicit invalid configuration is rejected with its key; an empty path never falls back to another corpus or index.")]
+	public void When_APathOrAddressIsInvalid_Then_TheDiagnosticNamesItsKey(string key, string value)
+	{
+		using var configuration = new ConfigurationManager { [key] = value };
+
+		var load = () => Settings.FromConfiguration(configuration);
+
+		load.Should().Throw<ArgumentException>().WithMessage("*DOCS_" + key + "*");
+	}
 }

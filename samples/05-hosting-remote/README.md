@@ -74,7 +74,7 @@ dotnet run --no-launch-profile --project samples/05-hosting-remote -- --remote-e
 
 Console mode supports server-side editing, history, completion, resize and Ctrl+C interruption. Ctrl+D detaches. One-shot mode prints returned JSON and exits with the command's code, which makes `health` usable by a container probe.
 
-The sample limits connection establishment to five seconds and one-shot discovery/execution to thirty seconds. Cancellation, including expiry of those connection or execution deadlines, exits 130. Other client-side failures, including a terminal-close timeout, exit 1. A completed command returns its application-selected exit code. These client deadlines do not forcibly stop a server handler.
+The sample limits connection establishment to five seconds and one-shot discovery/execution to thirty seconds. Caller cancellation and expiry of the execution deadline exit 130. A connection timeout names the pipe and exits 1, as do other client-side failures such as a terminal-close timeout. A completed command returns its application-selected exit code. These client deadlines do not forcibly stop a server handler.
 
 The executable selects these client modes before constructing the ASP.NET host. They connect to the running process; they do not start a second web server. Connections must use the same OS user and compatible Windows elevation. Server configuration `Repl:PipeName` (environment variable `Repl__PipeName`) changes the endpoint; pass that name to clients too.
 

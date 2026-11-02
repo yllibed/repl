@@ -10,6 +10,8 @@ try
 	}
 	using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
 	var builder = WebApplication.CreateBuilder();
+	// Child-process assertions observe console logs; Windows Event Log requires unrelated machine permissions.
+	builder.Logging.ClearProviders().AddSimpleConsole();
 	builder.WebHost.UseUrls("http://127.0.0.1:0");
 	builder.Services.AddSingleton<SessionTracker>();
 	builder.Services.AddSingleton<SignalRSessions>();

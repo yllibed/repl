@@ -108,6 +108,36 @@ public sealed class Given_CommandLine
 		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
 	}
 
+	[TestMethod]
+	[Description("A serve failure retains its process exit code and framework message while also printing the full exception to stderr.")]
+	public async Task When_ServerStartupFails_Then_TheProcessReportsItsDiagnostic()
+	{
+		using var fixture = new TestCorpus();
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		var start = new ProcessStartInfo("dotnet")
+		{
+			UseShellExecute = false, CreateNoWindow = true,
+			RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+		};
+		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add("serve");
+		start.Environment["DOCS_DOCUMENTS"] = fixture.Settings.Documents;
+		start.Environment["DOCS_INDEX"] = fixture.Settings.Index;
+		start.Environment["DOCS_ASSETS"] = Path.Combine(fixture.Root, "missing-assets");
+		using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the sample launcher.");
+		var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+		var error = process.StandardError.ReadToEndAsync(deadline.Token);
+		try
+		{
+			await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+
+			process.ExitCode.Should().Be(1);
+			(await output.ConfigureAwait(false)).Should().Contain("Missing or modified asset");
+			(await error.ConfigureAwait(false)).Should().Contain("Assets.VerifyAsync").And.Contain("Exception");
+		}
+		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
+	}
+
 	private sealed class TextHost(TextWriter output) : IReplHost
 	{
 		public TextReader Input => TextReader.Null;

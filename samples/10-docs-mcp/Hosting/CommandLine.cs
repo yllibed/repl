@@ -14,6 +14,14 @@ internal static class CommandLine
 		{
 			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
 			options.Output.BannerEnabled = false;
+			options.ExitCodes.Resolver = outcome =>
+			{
+				if (outcome.Kind != ReplExecutionOutcomeKind.Cancelled && outcome.Exception is { } error)
+				{
+					Console.Error.WriteLine(error);
+				}
+				return outcome.ExitCode;
+			};
 		});
 		app.UseStartupHook((ReplStartupContext startup) =>
 			startup.RemainingArguments.Count == 0 && startup.Purpose is not (InputPurpose.Help or InputPurpose.Completion)

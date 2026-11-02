@@ -141,6 +141,12 @@ During the live Spectre view, the presenter captures Repl interaction events so 
 
 Framework contracts: [advanced input hooks](../../../docs/advanced-input.md), [MCP startup/request ordering](../../../docs/mcp-transports.md#startup-and-request-order), [Spectre screen ownership](../../../docs/interaction.md#spectre-and-screen-ownership) and [borrowed WebSocket services](../../../src/Repl.WebSocket/README.md).
 
+The two remote samples share [SessionLifetime.cs](../../shared/SessionLifetime.cs) for cancellation
+and callback draining, and [RemoteClient.cs](../../shared/RemoteClient.cs) for pipe connection and
+one-shot result forwarding. Their CLI policies, session registries and host coordinators remain
+local to each sample. The WebSocket endpoint owns its socket and registry entry; Repl owns the
+session's bounded close handshake before returning.
+
 ## Make it yours
 
 The network boundary lives in [HttpBoundary.cs](../Hosting/HttpBoundary.cs): it uses the accepted

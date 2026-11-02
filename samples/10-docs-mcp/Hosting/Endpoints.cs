@@ -1,6 +1,6 @@
 using System.Net.WebSockets;
 using DocsMcpSample.Search;
-using HostingRemoteSample;
+using Repl.Samples;
 using Repl;
 using Repl.WebSocket;
 using Repl.Remote;
@@ -48,13 +48,6 @@ internal static class Endpoints
 		finally
 		{
 			sessions.Remove(id);
-			using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-			try
-			{
-				if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived) { await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, null, deadline.Token); }
-			}
-			catch (OperationCanceledException) { socket.Abort(); }
-			catch (WebSocketException) { socket.Abort(); }
 		}
 	}
 }

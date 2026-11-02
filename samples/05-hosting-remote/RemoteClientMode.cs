@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Repl.Remote;
 
 namespace HostingRemoteSample;
@@ -17,21 +16,14 @@ internal static class RemoteClientMode
 		Console.CancelKeyPress += cancel;
 		try
 		{
-			using var connectionDeadline = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-			connectionDeadline.CancelAfter(TimeSpan.FromSeconds(5));
-			var client = await NamedPipeReplServer.ConnectAsync(args[1], connectionDeadline.Token).ConfigureAwait(false);
+			var client = await RemoteClient.ConnectAsync(args[1], lifetime.Token).ConfigureAwait(false);
 			await using var clientOwner = client.ConfigureAwait(false);
 			if (string.Equals(args[0], "--remote-console", StringComparison.Ordinal))
 			{
 				return await RemoteConsole.RunAsync(client, lifetime.Token).ConfigureAwait(false);
 			}
 			lifetime.CancelAfter(TimeSpan.FromSeconds(30));
-			await client.DiscoverAsync(lifetime.Token).ConfigureAwait(false);
-			var result = await client.ExecuteAsync(new() { Arguments = args[2..] }, lifetime.Token).ConfigureAwait(false);
-			await Console.Out.WriteAsync(result.StandardOutput).ConfigureAwait(false);
-			await Console.Error.WriteAsync(result.StandardError).ConfigureAwait(false);
-			if (result.Result is { } value) { await Console.Out.WriteLineAsync(JsonSerializer.Serialize(value)).ConfigureAwait(false); }
-			return result.ExitCode;
+			return await RemoteClient.ExecuteAsync(client, args[2..], Console.Out, Console.Error, lifetime.Token).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException)
 		{

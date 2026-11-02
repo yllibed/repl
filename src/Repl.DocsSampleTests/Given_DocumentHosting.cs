@@ -154,6 +154,43 @@ public sealed class Given_DocumentHosting
 		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
 	}
 
+	[TestMethod]
+	[Description("The production serve coordinator starts the real pipe and HTTP host, exposes one shared index, and drains its listener on shutdown.")]
+	public async Task When_TheProductionServerRuns_Then_LocalClientsUseItsIndexAndShutdownClosesThePipe()
+	{
+		using var fixture = new TestCorpus();
+		await fixture.WriteAsync("console.md", "# Console\n\nThe production server shares this index.").ConfigureAwait(false);
+		var settings = fixture.Settings with { McpPort = AvailablePort(), AdminPort = AvailablePort() };
+		using var stop = new CancellationTokenSource();
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var run = Server.RunAsync(settings, stop.Token, services => services.AddSingleton<ITextEmbedding>(fixture.Embedding));
+		try
+		{
+			var client = await Repl.Samples.RemoteClient.ConnectAsync(settings.Pipe, deadline.Token).ConfigureAwait(false);
+			await using var clientOwner = client.ConfigureAwait(false);
+			RemoteExecutionResult health;
+			do
+			{
+				health = await client.ExecuteAsync(new() { Arguments = ["health", "--ready"] }, deadline.Token).ConfigureAwait(false);
+				if (health.ExitCode != 0) { await Task.Delay(10, deadline.Token).ConfigureAwait(false); }
+			} while (health.ExitCode != 0);
+			var search = await client.ExecuteAsync(new() { Arguments = ["docs", "search", "--query", "console"] }, deadline.Token).ConfigureAwait(false);
+			search.ExitCode.Should().Be(0);
+			search.Result!.Value.GetRawText().Should().Contain("production server");
+			using var http = new HttpClient();
+			using var status = await http.GetAsync($"http://127.0.0.1:{settings.AdminPort}/admin/status", deadline.Token).ConfigureAwait(false);
+			status.EnsureSuccessStatusCode();
+		}
+		finally
+		{
+			await stop.CancelAsync().ConfigureAwait(false);
+			(await run.WaitAsync(deadline.Token).ConfigureAwait(false)).Should().Be(0);
+		}
+
+		var reconnect = () => Repl.Samples.RemoteClient.ConnectAsync(settings.Pipe, deadline.Token, TimeSpan.FromMilliseconds(30));
+		await reconnect.Should().ThrowAsync<TimeoutException>().ConfigureAwait(false);
+	}
+
 	private static void AssertPublicToolSchemas(IEnumerable<McpClientTool> tools)
 	{
 		var catalog = tools.ToArray();

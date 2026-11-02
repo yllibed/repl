@@ -9,14 +9,32 @@ internal sealed record Settings(string Documents, string Index, string Assets, s
 	internal IPAddress McpAddress { get; init; } = IPAddress.Loopback;
 
 	internal static Settings FromConfiguration(IConfiguration configuration) => new(
-		Path.GetFullPath(configuration["DOCUMENTS"] ?? "documents"),
-		Path.GetFullPath(configuration["INDEX"] ?? ".index"),
-		Path.GetFullPath(configuration["ASSETS"] ?? ".assets"),
+		ReadPath(configuration, "DOCUMENTS", "documents"),
+		ReadPath(configuration, "INDEX", ".index"),
+		ReadPath(configuration, "ASSETS", ".assets"),
 		configuration["PIPE"] ?? "repl-docs-index",
-		IPAddress.Parse(configuration["ADMIN_ADDRESS"] ?? "127.0.0.1"),
+		ReadAddress(configuration, "ADMIN_ADDRESS"),
 		configuration.GetValue("MCP_PORT", 8080),
 		configuration.GetValue("ADMIN_PORT", 8081))
-			{ AdminOrigin = configuration["ADMIN_ORIGIN"], McpAddress = IPAddress.Parse(configuration["MCP_ADDRESS"] ?? "127.0.0.1") };
+		{ AdminOrigin = configuration["ADMIN_ORIGIN"], McpAddress = ReadAddress(configuration, "MCP_ADDRESS") };
+
+	private static IPAddress ReadAddress(IConfiguration configuration, string key) =>
+		IPAddress.TryParse(configuration[key] ?? "127.0.0.1", out var address) ? address
+			: throw new ArgumentException($"{key} (DOCS_{key}) must be an IP address.", key);
+
+	private static string ReadPath(IConfiguration configuration, string key, string fallback)
+	{
+		var value = configuration[key] ?? fallback;
+		try
+		{
+			ArgumentException.ThrowIfNullOrWhiteSpace(value);
+			return Path.GetFullPath(value);
+		}
+		catch (Exception error) when (error is ArgumentException or NotSupportedException or PathTooLongException)
+		{
+			throw new ArgumentException($"{key} (DOCS_{key}) must be a valid nonempty path.", key, error);
+		}
+	}
 
 	internal void Validate()
 	{
@@ -28,7 +46,7 @@ internal sealed record Settings(string Documents, string Index, string Assets, s
 		}
 		if (McpPort is < 1 or > 65535 || AdminPort is < 1 or > 65535 || McpPort == AdminPort)
 		{
-			throw new ArgumentException("MCP and administration require different ports between 1 and 65535.");
+			throw new ArgumentException("MCP_PORT and ADMIN_PORT must be different ports between 1 and 65535.");
 		}
 		var relative = Path.GetRelativePath(Documents, Index);
 		if (relative == "." || (!Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)))

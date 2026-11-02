@@ -10,12 +10,12 @@ namespace DocsMcpSample.Hosting;
 
 internal static class Server
 {
-	internal static async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken)
+	internal static async Task<int> RunAsync(Settings settings, CancellationToken cancellationToken, Action<IServiceCollection>? configureServices = null)
 	{
 		settings.Validate();
 		await Assets.VerifyAsync(settings.Assets, cancellationToken);
 
-		await using var app = Create(settings);
+		await using var app = Create(settings, configureServices);
 		Log.InsecureAdministration(app.Logger, settings.AdminPort);
 		if (!IPAddress.IsLoopback(settings.AdminAddress)) { Log.RemoteAdministration(app.Logger, settings.AdminAddress.ToString()); }
 
