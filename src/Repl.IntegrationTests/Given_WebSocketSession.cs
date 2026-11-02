@@ -400,6 +400,38 @@ public sealed class Given_WebSocketSession
 	}
 
 	[TestMethod]
+	[DataRow(false, DisplayName = "Single message at 64 KiB")]
+	[DataRow(true, DisplayName = "Fragmented message at 64 KiB with split UTF-8")]
+	[Description("The inclusive message limit accepts exactly 65,536 bytes, dispatches its control payload and resets the budget for the next message.")]
+	public async Task When_AMessageExactlyFitsTheLimit_Then_ItIsDispatched(bool fragmented)
+	{
+		const string prefix = "@@repl:resize {\"cols\":120,\"rows\":40,\"padding\":\"é";
+		const string suffix = "\"}";
+		var bytes = Encoding.UTF8.GetBytes(prefix + new string('x', 65536 - Encoding.UTF8.GetByteCount(prefix + suffix)) + suffix);
+		var observed = new TaskCompletionSource<TerminalControlMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			var run = ReplWebSocketSession.RunAsync(CreateApp(), server, s_options,
+				onControlMessage: control => observed.TrySetResult(control), CancellationToken.None).AsTask();
+			if (fragmented)
+			{
+				var split = Array.IndexOf(bytes, (byte)0xc3) + 1;
+				await client.SendAsync(bytes.AsMemory(0, split), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+				await client.SendAsync(bytes.AsMemory(split), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			}
+			else { await client.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false); }
+
+			(await observed.Task.WaitAsync(Patience).ConfigureAwait(false)).WindowSize.Should().Be((120, 40));
+			await client.SendAsync(Encoding.UTF8.GetBytes("exit\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			(await run.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+			(await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure);
+		}
+	}
+
+	[TestMethod]
 	[Description("A multibyte character split across WebSocket fragments reaches the command intact rather than being replaced by invalid UTF-8 markers.")]
 	public async Task When_Utf8SpansFragments_Then_CommandArgumentsRemainIntact()
 	{

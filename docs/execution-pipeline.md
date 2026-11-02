@@ -306,6 +306,11 @@ which closes the cycle with an aborted mark and then propagates out of the loop,
 > saw the connection closed without a close handshake. It now closes it normally, waiting up to a second for the peer
 > to answer and aborting the connection if it does not, so `RunAsync` can return up to a second later. A session ended
 > by cancelling its token still aborts the connection at once.
+> Incoming messages are now limited to 64 KiB (65,536 bytes) across all fragments, including text
+> whose UTF-8 characters span fragments. Larger messages close with `MessageTooBig` (1009) and
+> interrupt the active command. Split larger pastes into separate messages. Ctrl+C interrupts
+> only the current command; peer closure or connection loss cancels the session even while a
+> command is not reading input. Cleanup remains awaited before borrowed services are released.
 >
 > **Changed in 0.12.** A cancellation of a hosted session's token while it detected the terminal (VT probe, Telnet
 > NAWS wait) used to propagate even with `ExitCodes.Cancelled` or a resolver set; it now goes through them too.

@@ -9,6 +9,7 @@ namespace DocsMcpSample.Search;
 internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding embedding, TimeProvider time)
 {
 	private const int SchemaVersion = 1;
+	private const int RrfRankOffset = 60;
 	private string DatabasePath => Path.Combine(settings.Index, "documents.db");
 	internal string ExtensionPath => Path.Combine(settings.Assets, "native", RuntimeInformation.RuntimeIdentifier,
 		OperatingSystem.IsWindows() ? "vec0.dll" : OperatingSystem.IsMacOS() ? "vec0.dylib" : "vec0.so");
@@ -95,8 +96,9 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 			using var publish = live.BeginTransaction();
 			Execute(live, "DELETE FROM documents; DELETE FROM sections; DELETE FROM keywords; DELETE FROM vectors; DELETE FROM metadata;");
 			Execute(live, """
-				INSERT INTO documents SELECT * FROM replacement.documents;
-				INSERT INTO sections SELECT * FROM replacement.sections;
+				INSERT INTO documents(id,source,title,body) SELECT id,source,title,body FROM replacement.documents;
+				INSERT INTO sections(rowid,id,document_id,source,title,heading,anchor,start_line,end_line,body)
+				 SELECT rowid,id,document_id,source,title,heading,anchor,start_line,end_line,body FROM replacement.sections;
 				INSERT INTO keywords(rowid,title,heading,body) SELECT rowid,title,heading,body FROM replacement.keywords;
 				INSERT INTO vectors(id,embedding) SELECT id,embedding FROM replacement.vectors;
 				""");
@@ -120,11 +122,13 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		var terms = SearchTerms().Matches(query).Select(match => "\"" + match.Value + "\"");
 		var expression = string.Join(" OR ", terms);
 		var keyword = expression.Length == 0 ? [] : ReadHits(connection, """
-			SELECT s.*,bm25(keywords,3,2,1) AS score FROM keywords JOIN sections s ON s.rowid=keywords.rowid
+			SELECT s.rowid,s.id,s.document_id,s.source,s.title,s.heading,s.anchor,s.start_line,s.end_line,s.body,
+			 bm25(keywords,3,2,1) AS score FROM keywords JOIN sections s ON s.rowid=keywords.rowid
 			WHERE keywords MATCH $query ORDER BY score,s.id LIMIT $count
 			""", expression, candidateCount);
 		var semantic = ReadHits(connection, """
-			SELECT s.*,v.distance AS score FROM (SELECT id,distance FROM vectors WHERE embedding MATCH $query AND k=$count) v
+			SELECT s.rowid,s.id,s.document_id,s.source,s.title,s.heading,s.anchor,s.start_line,s.end_line,s.body,
+			 v.distance AS score FROM (SELECT id,distance FROM vectors WHERE embedding MATCH $query AND k=$count) v
 			JOIN sections s ON s.rowid=v.id ORDER BY score,s.id
 			""", MemoryMarshal.AsBytes(vector.AsSpan()).ToArray(), candidateCount);
 		cancellationToken.ThrowIfCancellationRequested();
@@ -132,8 +136,8 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 	}
 
 	internal static IReadOnlyList<SearchHit> Fuse(IReadOnlyList<SearchHit> keyword, IReadOnlyList<SearchHit> vector, int count) =>
-		keyword.Select((hit, rank) => hit with { Score = 1d / (60 + rank + 1) })
-			.Concat(vector.Select((hit, rank) => hit with { Score = 1d / (60 + rank + 1) }))
+		keyword.Select((hit, rank) => hit with { Score = 1d / (RrfRankOffset + rank + 1) })
+			.Concat(vector.Select((hit, rank) => hit with { Score = 1d / (RrfRankOffset + rank + 1) }))
 			.GroupBy(hit => hit.Id, StringComparer.Ordinal)
 			.Select(group => group.First() with { Score = group.Sum(hit => hit.Score) })
 			.OrderByDescending(hit => hit.Score).ThenBy(hit => hit.Id, StringComparer.Ordinal).Take(count).ToArray();

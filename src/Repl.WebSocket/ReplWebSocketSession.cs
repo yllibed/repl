@@ -70,6 +70,8 @@ public static class ReplWebSocketSession
 	/// <param name="onControlMessage">Optional terminal metadata observer.</param>
 	/// <param name="cancellationToken">Session cancellation.</param>
 	/// <returns>Session exit code.</returns>
+	/// <exception cref="ArgumentNullException"><paramref name="app"/>, <paramref name="socket"/> or <paramref name="services"/> is null.</exception>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync(ReplApp, ReplRunOptions?, CancellationToken)" path="/exception"/>
 	public static ValueTask<int> RunWithServicesAsync(ReplApp app, System.Net.WebSockets.WebSocket socket,
 		IServiceProvider services, ReplRunOptions? options = null,
 		Action<TerminalControlMessage>? onControlMessage = null, CancellationToken cancellationToken = default)

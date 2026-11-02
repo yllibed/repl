@@ -60,7 +60,7 @@ public sealed class Given_DocumentIndex
 		File.Delete(Path.Combine(fixture.Settings.Documents, "one.md"));
 
 		var empty = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
-		var reopened = new DocumentIndex(fixture.Settings, fixture.Embedding, TimeProvider.System);
+		var reopened = new DocumentIndex(fixture.Settings, fixture.Embedding, fixture.Clock);
 
 		reopened.Generation()!.Id.Should().Be(empty.Id);
 		reopened.Search("console", 5, CancellationToken.None).Hybrid.Should().BeEmpty();
