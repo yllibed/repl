@@ -8,6 +8,7 @@ namespace DocsMcpSample.Search;
 
 internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding)
 {
+	private const int MaximumPassageCharacters = 8192;
 	private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAutoIdentifiers().Build();
 
 	internal IReadOnlyList<string> Files() => Directory.EnumerateFiles(settings.Documents, "*", new EnumerationOptions
@@ -44,10 +45,12 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		hash.AppendData(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 	}
 
-	internal SourceDocument Parse(string source, string markdown)
+	internal SourceDocument Parse(string source, string markdown, CancellationToken cancellationToken = default)
 	{
+		cancellationToken.ThrowIfCancellationRequested();
 		var documentId = "doc-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(source)))[..16];
 		var blocks = Markdown.Parse(markdown, Pipeline);
+		cancellationToken.ThrowIfCancellationRequested();
 		var title = Path.GetFileNameWithoutExtension(source);
 		var heading = title;
 		var anchor = "";
@@ -58,6 +61,7 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		var part = 0;
 		foreach (var block in blocks)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			if (block is HeadingBlock headingBlock)
 			{
 				Flush();
@@ -70,16 +74,18 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 
 			var text = markdown[block.Span.Start..(block.Span.End + 1)];
 			var consumed = 0;
+			var line = block.Line + 1;
 			while (consumed < text.Length)
 			{
-				if (pending.Length > 0 && embedding.CountPassageTokens(pending + "\n\n" + text[consumed..]) > E5Embedding.MaxTokens) { Flush(); }
-				var remaining = text[consumed..];
-				var length = FitPassagePrefix(remaining);
-				var line = block.Line + 1 + text.AsSpan(0, consumed).Count('\n');
+				cancellationToken.ThrowIfCancellationRequested();
+				if (pending.Length > 0 && (pending.Length + 2 + text.Length - consumed > MaximumPassageCharacters
+					|| embedding.CountPassageTokens(pending + "\n\n" + text[consumed..]) > E5Embedding.MaxTokens)) { Flush(); }
+				var length = FitPassagePrefix(text, consumed, cancellationToken);
 				if (pending.Length == 0) { startLine = line; }
 				else { pending.Append("\n\n"); }
-				pending.Append(remaining.AsSpan(0, length));
-				endLine = line + remaining.AsSpan(0, length).Count('\n');
+				pending.Append(text.AsSpan(consumed, length));
+				line += text.AsSpan(consumed, length).Count('\n');
+				endLine = line;
 				consumed += length;
 				if (consumed < text.Length) { Flush(); }
 			}
@@ -96,18 +102,20 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		}
 	}
 
-	private int FitPassagePrefix(string text)
+	private int FitPassagePrefix(string text, int offset, CancellationToken cancellationToken)
 	{
-		if (embedding.CountPassageTokens(text) <= E5Embedding.MaxTokens) { return text.Length; }
 		var low = 0;
-		var high = text.Length;
+		var high = Math.Min(text.Length - offset, MaximumPassageCharacters);
+		if (offset + high < text.Length && char.IsHighSurrogate(text[offset + high - 1])) { high--; }
+		if (embedding.CountPassageTokens(text.Substring(offset, high)) <= E5Embedding.MaxTokens) { return high; }
 		while (low < high)
 		{
+			cancellationToken.ThrowIfCancellationRequested();
 			var middle = (low + high + 1) / 2;
-			if (embedding.CountPassageTokens(text[..middle]) <= E5Embedding.MaxTokens) { low = middle; }
+			if (embedding.CountPassageTokens(text.Substring(offset, middle)) <= E5Embedding.MaxTokens) { low = middle; }
 			else { high = middle - 1; }
 		}
-		if (low > 0 && char.IsHighSurrogate(text[low - 1])) { low--; }
+		if (low > 0 && char.IsHighSurrogate(text[offset + low - 1])) { low--; }
 		if (low == 0) { throw new InvalidOperationException("The tokenizer cannot fit one character in a passage."); }
 		return low;
 	}

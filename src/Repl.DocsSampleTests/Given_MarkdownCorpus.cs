@@ -22,6 +22,40 @@ public sealed class Given_MarkdownCorpus
 	}
 
 	[TestMethod]
+	[Description("A long single block is chunked with bounded tokenizer probes instead of repeatedly tokenizing the entire remaining document.")]
+	public void When_ABlockIsLarge_Then_TokenizerWorkRemainsBounded()
+	{
+		using var fixture = new TestCorpus();
+		long characters = 0;
+		var largestProbe = 0;
+		fixture.Embedding.Counting = length => { characters += length; largestProbe = Math.Max(largestProbe, length); };
+		var text = new string('a', 65536);
+
+		var document = fixture.Corpus.Parse("large.md", text);
+
+		string.Concat(document.Sections.Select(section => section.Text)).Should().Be(text);
+		largestProbe.Should().BeLessThanOrEqualTo(8192);
+		characters.Should().BeLessThan(40L * text.Length);
+	}
+
+	[TestMethod]
+	[Description("Cancellation raised while probing a long block stops passage preparation before another tokenizer call.")]
+	public void When_ParsingIsCancelled_Then_TokenizerProbingStops()
+	{
+		using var fixture = new TestCorpus();
+		using var cancellation = new CancellationTokenSource();
+		var probes = 0;
+#pragma warning disable MA0045 // Token counting is synchronous; cancellation must be visible before the next probe.
+		fixture.Embedding.Counting = _ => { probes++; cancellation.Cancel(); };
+#pragma warning restore MA0045
+
+		var parse = () => fixture.Corpus.Parse("large.md", new string('a', 65536), cancellation.Token);
+
+		parse.Should().Throw<OperationCanceledException>();
+		probes.Should().Be(1);
+	}
+
+	[TestMethod]
 	[Description("Content hashes detect edits, removals and renames without relying on file timestamps.")]
 	public async Task When_CorpusChanges_Then_FingerprintChanges()
 	{

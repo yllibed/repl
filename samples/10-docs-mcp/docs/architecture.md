@@ -48,6 +48,8 @@ The local attach client follows a different transport to the same graph: [Client
 
 Markdig supplies heading structure and unique anchors. Headings become passage metadata. Paragraphs and other blocks are combined up to the model's token window; oversized blocks are split without cutting surrogate pairs. Every section retains its source path, heading, anchor and line range. The original page is also stored for whole-document fetch.
 
+Passages also have an 8,192-character ceiling. Tokenizer probes use at most that prefix, and parsing checks cancellation between blocks, chunks and probes. Long blocks are processed by offset, avoiding repeated copies or scans of the entire remaining suffix. Markdig's initial syntax parse is synchronous; cancellation is checked immediately before and after it.
+
 Document identifiers hash relative paths. Section identifiers add a bounded hash of the heading anchor and a part number. They are identifiers to fetch from the index, not filesystem paths. Editing the structure can change which passage an identifier describes; callers should retain source and generation information when citing results.
 
 ### Text becomes a local vector

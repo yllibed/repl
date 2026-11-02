@@ -69,7 +69,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 				foreach (var path in corpus.Files())
 				{
 					cancellationToken.ThrowIfCancellationRequested();
-					var document = corpus.Parse(corpus.RelativePath(path), await corpus.ReadAsync(path, cancellationToken));
+					var document = corpus.Parse(corpus.RelativePath(path), await corpus.ReadAsync(path, cancellationToken), cancellationToken);
 					MarkdownCorpus.AppendFingerprint(stagedContent, document.Source, document.Text);
 					Execute(staging, "INSERT INTO documents VALUES($1,$2,$3,$4)", document.Id, document.Source, document.Title, document.Text);
 					foreach (var section in document.Sections)
