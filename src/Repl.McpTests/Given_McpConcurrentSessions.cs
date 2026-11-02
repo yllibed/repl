@@ -898,7 +898,7 @@ public sealed class Given_McpConcurrentSessions
 	// Repl.Mcp until the SDK removes the surface (#51).
 #pragma warning disable MCP9005
 	[TestMethod]
-	[Description("Regression guard: one connection really can be served both eras, so the snapshot cache key has to carry the era. The SDK accepts a modern per-request _meta call and then an initialize handshake on the same pipe, and the two eras see different command graphs — a capability gate reads as supported during modern discovery and against the real client on legacy. Without the era in the key the second request is served the first one\u0027s catalog.")]
+	[Description("Regression guard: one connection really can be served both eras, so each era needs its own snapshot cache slot. The SDK accepts a modern per-request _meta call and then an initialize handshake on the same pipe, and the two eras see different command graphs — a capability gate reads as supported during modern discovery and against the real client on legacy. With one shared entry the second request is served the first one\u0027s catalog.")]
 	public async Task When_OneConnectionIsServedBothEras_Then_EachGetsItsOwnCatalog()
 	{
 		var app = ReplApp.Create();
@@ -956,16 +956,10 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("Publishing one era's catalog must not evict the other's. A connection is served modern requests, then an initialize and legacy ones — and a modern request accepted before initialize can still be in flight, since the SDK dispatches one connection's requests concurrently. With one slot, that late modern publication replaced the legacy entry the availability fallback reads, so a legacy build that then failed transiently found only an opposite-era catalog and failed closed.")]
+	[Description("Publishing one era's catalog must not evict the other's. A connection is served modern requests, then an initialize and legacy ones — and a modern request accepted before initialize can still be in flight, since the SDK dispatches one connection's requests concurrently. With one slot, that late modern publication replaced the legacy entry the availability fallback reads, so a legacy build that then failed transiently found only an opposite-era catalog and failed closed. That interleaving cannot be driven through the handler on demand, so this pins the storage; the handler's reads of each era's slot are pinned by Given_McpDiagnostics' stale-catalog tests (legacy fallback) and When_AModernProjectionFailsTransiently_Then_NoSessionServesItsOwnStaleCatalog.")]
 	public async Task When_BothErasPublishOnOneSession_Then_EachKeepsItsOwnEntry()
 	{
-		var app = ReplApp.Create();
-		var roots = new McpClientRootsService(
-			app.Core,
-			new McpRequestServerAccessor(),
-			McpRootsScope.Connection,
-			new McpLoggerDiagnostics(McpTestFixture.EmptyServices));
-		var context = new McpSessionContext(roots, McpTestFixture.EmptyServices, scope: null);
+		var context = CreateSessionContext();
 		await using var owner = context.ConfigureAwait(false);
 		var legacy = new McpServerHandler.McpGeneratedSnapshot(null!, [], [], []);
 		var modern = new McpServerHandler.McpGeneratedSnapshot(null!, [], [], []);
@@ -976,7 +970,34 @@ public sealed class Given_McpConcurrentSessions
 		var legacyEntry = context.GetSnapshotCache(sessionless: false);
 		legacyEntry.Should().NotBeNull("the modern publication must leave the legacy entry in place");
 		legacyEntry!.Snapshot.Should().BeSameAs(legacy);
-		context.GetSnapshotCache(sessionless: true)!.Snapshot.Should().BeSameAs(modern);
+		var modernEntry = context.GetSnapshotCache(sessionless: true);
+		modernEntry.Should().NotBeNull("the modern publication has its own slot");
+		modernEntry!.Snapshot.Should().BeSameAs(modern);
+	}
+
+	[TestMethod]
+	[Description("Only a legacy build can fall back, so only a legacy failure opens a catalog-failure episode, and only a legacy build can end it. A modern request accepted before initialize can still build after a legacy failure; its success says nothing about the legacy build, which sees the session's own capabilities and roots. Ending the episode then would log a recovery while the connection still serves its stale legacy catalog, and make the next legacy failure warn again.")]
+	public async Task When_TheModernEraEndsALegacyFailureEpisode_Then_TheEpisodeStaysOpen()
+	{
+		var context = CreateSessionContext();
+		await using var owner = context.ConfigureAwait(false);
+		context.TryMarkCatalogFailure(failingVersion: 2).Should().BeTrue();
+
+		context.TryClearCatalogFailure(sessionless: true).Should().BeFalse("a modern build cannot end a legacy episode");
+
+		context.TryMarkCatalogFailure(failingVersion: 2).Should().BeFalse("the episode is still the one already warned");
+		context.TryClearCatalogFailure(sessionless: false).Should().BeTrue("a legacy build ends it");
+	}
+
+	private static McpSessionContext CreateSessionContext()
+	{
+		var app = ReplApp.Create();
+		var roots = new McpClientRootsService(
+			app.Core,
+			new McpRequestServerAccessor(),
+			McpRootsScope.Connection,
+			new McpLoggerDiagnostics(McpTestFixture.EmptyServices));
+		return new McpSessionContext(roots, McpTestFixture.EmptyServices, scope: null);
 	}
 
 	private static async Task StopRawServerAsync(CancellationTokenSource cts, McpRawIo io, Task serverTask)

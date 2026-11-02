@@ -520,7 +520,7 @@ internal sealed class McpServerHandler
 			// Read back what was just published rather than trusting snapshotVersion: a build that raced a
 			// routing change is republished stale, and one that raced a retraction is rebuilt at a newer
 			// version. Only a current entry ends the episode, and it is logged at the version it was built.
-			if (context.GetSnapshotCache(sessionless) is { IsStale: false } published && context.TryClearCatalogFailure())
+			if (context.GetSnapshotCache(sessionless) is { IsStale: false } published && context.TryClearCatalogFailure(sessionless))
 			{
 				_diagnostics.CatalogRecovered(published.Version);
 			}
@@ -568,7 +568,7 @@ internal sealed class McpServerHandler
 				_diagnostics.StaleCatalogStillServed(ex, snapshotVersion);
 			}
 
-			context.PublishStaleSnapshot(fallback.Snapshot, fallback.Version, fallback.Sessionless);
+			context.PublishStaleSnapshot(fallback.Snapshot, fallback.Version, sessionless);
 			return fallback.Snapshot;
 		}
 	}
