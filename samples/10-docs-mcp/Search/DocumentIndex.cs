@@ -178,7 +178,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		return result.ToArray();
 	}
 
-	private IndexGeneration RequireGeneration(SqliteConnection connection) => Generation(connection) ?? throw new InvalidOperationException("The documentation index is not ready. Check index status for progress or failure details.");
+	private IndexGeneration RequireGeneration(SqliteConnection connection) => Generation(connection) ?? throw new IndexUnavailableException("The documentation index is not ready. Check index status for progress or failure details.");
 
 	private static List<SearchHit> ReadHits(SqliteConnection connection, string sql, object query, int count)
 	{

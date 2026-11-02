@@ -15,7 +15,7 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 	{
 		var status = Status;
 		if (status.Ready) { return; }
-		throw new InvalidOperationException(status.LastError is null
+		throw new IndexUnavailableException(status.LastError is null
 			? "No documentation index is ready yet. Indexing may be running or cancelled; ask the administrator to check index status."
 			: "The documentation index could not be built. Ask the administrator to check index status for the failure.");
 	}

@@ -93,12 +93,13 @@ Configuration is a startup snapshot: changing a JSON file or environment value r
 | `INDEX` | `DOCS_INDEX` | `.index` | Writable index directory, outside the source tree |
 | `ASSETS` | `DOCS_ASSETS` | `.assets` | Verified runtime assets |
 | `PIPE` | `DOCS_PIPE` | `repl-docs-index` | Shared server/client pipe name |
-| `MCP_PORT` | `DOCS_MCP_PORT` | `8080` | Public HTTP listener, bound to network interfaces |
+| `MCP_ADDRESS` | `DOCS_MCP_ADDRESS` | `127.0.0.1` | MCP bind IP address |
+| `MCP_PORT` | `DOCS_MCP_PORT` | `8080` | MCP HTTP listener port |
 | `ADMIN_PORT` | `DOCS_ADMIN_PORT` | `8081` | Administration HTTP/WebSocket listener |
 | `ADMIN_ADDRESS` | `DOCS_ADMIN_ADDRESS` | `127.0.0.1` | Admin bind IP address |
 | `ADMIN_ORIGIN` | `DOCS_ADMIN_ORIGIN` | Unset | One additional exact browser origin |
 
-The Dockerfile supplies container paths and binds administration to `0.0.0.0` **inside the container**. Compose publishes that port as `127.0.0.1:8081:8081` on the host. Do not change it to `8081:8081` on an untrusted host.
+The Dockerfile supplies container paths and binds both listeners to `0.0.0.0` **inside the container**. Compose publishes that port as `127.0.0.1:8081:8081` on the host. Do not change it to `8081:8081` on an untrusted host.
 
 Browser administration accepts local HTTP origins `localhost`, `127.0.0.1` and `[::1]` on the configured admin port. For a proxy or another hostname, set `DOCS_ADMIN_ORIGIN` to one exact HTTP(S) origin without a path or trailing slash, such as `https://docs-admin.example.com`. This only adds an allowed origin; it does not configure a proxy, TLS or authentication.
 
@@ -173,3 +174,13 @@ This is a usable reference for modest corpora, with deliberate limits:
 Search accepts up to 2,000 characters and 20 results; the model's 512-token input limit can reject a query before the character limit. Fetch returns up to 20,000 characters and reports truncation. Full rebuilds and exact vector search favor understandable code over scaling to a large collection.
 
 Only index content you intend to make available to the MCP audience. Local inference keeps model computation on the host; it does not make a public search endpoint private. The unauthenticated administration port grants much broader access and must remain a trusted surface.
+
+Native execution binds both listeners to `127.0.0.1` by default. Set `DOCS_MCP_ADDRESS`
+explicitly to expose MCP beyond the local machine. The Dockerfile sets both listener addresses
+to `0.0.0.0` inside its network namespace; published ports and firewall rules determine external access.
+
+Before deployment, choose authentication and authorization for both audiences, protect static
+administration assets as well as API routes, and configure TLS at the host or trusted proxy.
+Add rate/concurrency limits for public inference, restrict document/index volume permissions,
+and connect logging and metrics to your monitoring system. See the
+[extension points](architecture.md#make-it-yours) for where these policies attach.

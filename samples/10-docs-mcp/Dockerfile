@@ -11,7 +11,7 @@ WORKDIR /app
 COPY --from=build /out/ ./
 COPY --from=build /assets/ /assets/
 RUN mkdir /documents /index && chown "$APP_UID" /index
-ENV DOCS_DOCUMENTS=/documents DOCS_INDEX=/index DOCS_ASSETS=/assets DOCS_ADMIN_ADDRESS=0.0.0.0
+ENV DOCS_DOCUMENTS=/documents DOCS_INDEX=/index DOCS_ASSETS=/assets DOCS_ADMIN_ADDRESS=0.0.0.0 DOCS_MCP_ADDRESS=0.0.0.0
 EXPOSE 8080 8081
 USER $APP_UID
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \

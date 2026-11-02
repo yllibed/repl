@@ -20,6 +20,7 @@ public sealed class Given_Settings
 			["ASSETS"] = "configured-assets",
 			["PIPE"] = "configured-pipe",
 			["ADMIN_ADDRESS"] = "::1",
+			["MCP_ADDRESS"] = "0.0.0.0",
 			["MCP_PORT"] = "9100",
 			["ADMIN_PORT"] = "9101",
 			["ADMIN_ORIGIN"] = "https://admin.example.com",
@@ -34,7 +35,8 @@ public sealed class Given_Settings
 		settings.AdminAddress.Should().Be(IPAddress.IPv6Loopback);
 		settings.McpPort.Should().Be(9100);
 		settings.AdminPort.Should().Be(9101);
-		settings.AllowsOrigin("https://admin.example.com").Should().BeTrue();
+		settings.AdminOrigin.Should().Be("https://admin.example.com");
+		settings.McpAddress.Should().Be(IPAddress.Any);
 		Directory.Exists(indexPath).Should().BeFalse();
 	}
 
@@ -51,6 +53,7 @@ public sealed class Given_Settings
 		settings.Assets.Should().Be(Path.GetFullPath(".assets"));
 		settings.Pipe.Should().Be("repl-docs-index");
 		settings.AdminAddress.Should().Be(IPAddress.Loopback);
+		settings.McpAddress.Should().Be(IPAddress.Loopback);
 		settings.McpPort.Should().Be(8080);
 		settings.AdminPort.Should().Be(8081);
 		settings.AdminOrigin.Should().BeNull();

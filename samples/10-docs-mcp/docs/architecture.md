@@ -143,6 +143,24 @@ Framework contracts: [advanced input hooks](../../../docs/advanced-input.md), [M
 
 ## Make it yours
 
+The network boundary lives in [HttpBoundary.cs](../Hosting/HttpBoundary.cs): it uses the accepted
+connection's local port rather than the client-controlled Host header. Allowed administration
+origins are prepared once for the host. [AdministrationErrors.cs](../Hosting/AdministrationErrors.cs)
+maps invalid input to 400, missing identifiers to 404 and an unavailable index to 503.
+Unexpected failures produce a generic 500 response and an exception in the server log.
+
+For a deployment, attach authorization to the administration route group in
+[Endpoints.cs](../Hosting/Endpoints.cs), including the WebSocket upgrade. That group does not
+protect the dashboard's static files. Add authentication and authorization before static-file
+middleware **with a policy applicable to those files**, such as a fallback policy; middleware
+order alone does not enforce access. Apply the public audience's authorization and rate limits
+to the MCP endpoint separately. Keep its command allowlist explicit.
+
+The named pipe is a separate local trust boundary: use OS account and pipe permissions for its
+audience. Host telemetry belongs in the host's logging/metrics providers. Set storage permissions,
+backup and retention independently of HTTP access control. This sample does not install those
+deployment policies or an authentication scheme.
+
 Start by replacing the corpus; you do not need to change the transports. Then choose the seam that corresponds to your change:
 
 | Change | Start here | Keep in mind |

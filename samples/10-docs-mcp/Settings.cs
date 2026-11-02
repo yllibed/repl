@@ -6,10 +6,7 @@ namespace DocsMcpSample;
 internal sealed record Settings(string Documents, string Index, string Assets, string Pipe, IPAddress AdminAddress, int McpPort, int AdminPort)
 {
 	internal string? AdminOrigin { get; init; }
-	internal bool AllowsOrigin(string origin) => string.IsNullOrEmpty(origin) || new[]
-	{
-		$"http://localhost:{AdminPort}", $"http://127.0.0.1:{AdminPort}", $"http://[::1]:{AdminPort}", AdminOrigin,
-	}.Contains(origin, StringComparer.OrdinalIgnoreCase);
+	internal IPAddress McpAddress { get; init; } = IPAddress.Loopback;
 
 	internal static Settings FromConfiguration(IConfiguration configuration) => new(
 		Path.GetFullPath(configuration["DOCUMENTS"] ?? "documents"),
@@ -19,7 +16,7 @@ internal sealed record Settings(string Documents, string Index, string Assets, s
 		IPAddress.Parse(configuration["ADMIN_ADDRESS"] ?? "127.0.0.1"),
 		configuration.GetValue("MCP_PORT", 8080),
 		configuration.GetValue("ADMIN_PORT", 8081))
-		{ AdminOrigin = configuration["ADMIN_ORIGIN"] };
+			{ AdminOrigin = configuration["ADMIN_ORIGIN"], McpAddress = IPAddress.Parse(configuration["MCP_ADDRESS"] ?? "127.0.0.1") };
 
 	internal void Validate()
 	{

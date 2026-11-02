@@ -8,6 +8,8 @@ using DocsMcpSample;
 using DocsMcpSample.Hosting;
 using DocsMcpSample.Search;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -109,6 +111,45 @@ public sealed class Given_DocumentHosting
 			result.Result!.Value.GetRawText().Should().Contain("Shared process");
 			health.ExitCode.Should().Be(0);
 			fixture.Index.Generation()!.Id.Should().Be(generation.Id);
+		}
+		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	[TestMethod]
+	[Description("Administration distinguishes unavailable indexes, invalid queries, missing documents and unexpected defects without exposing internal exception details.")]
+	public async Task When_AdministrationFails_Then_ProblemDetailsDescribeTheCorrectFailureClass()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("sample.md", "# Sample\n\nSearchable documentation.").ConfigureAwait(false);
+		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		var settings = fixture.Settings with { McpPort = AvailablePort(), AdminPort = AvailablePort(), AdminOrigin = "https://admin.example.com" };
+		var host = Server.Create(settings, services => { services.AddSingleton<ITextEmbedding>(fixture.Embedding); services.AddSingleton(fixture.Index); });
+		await using var owner = host.ConfigureAwait(false);
+		host.MapGet("/test/unavailable", (Func<IResult>)(() => throw new IndexUnavailableException("Index unavailable.")));
+		host.MapGet("/test/failure", (Func<IResult>)(() => throw new InvalidOperationException("internal diagnostic sentinel")));
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		await host.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			using var http = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{settings.AdminPort}") };
+			http.DefaultRequestHeaders.Add("Origin", settings.AdminOrigin);
+			foreach (var (path, status) in new[]
+			{
+				("/admin/compare?query=", HttpStatusCode.BadRequest),
+				("/admin/fetch?id=missing", HttpStatusCode.NotFound),
+				("/test/unavailable", HttpStatusCode.ServiceUnavailable),
+				("/test/failure", HttpStatusCode.InternalServerError),
+			})
+			{
+				using var response = await http.GetAsync(path, deadline.Token).ConfigureAwait(false);
+				response.StatusCode.Should().Be(status);
+				response.Content.Headers.ContentType!.MediaType.Should().Be("application/problem+json");
+				var body = await response.Content.ReadAsStringAsync(deadline.Token).ConfigureAwait(false);
+				using var problem = JsonDocument.Parse(body);
+				problem.RootElement.GetProperty("status").GetInt32().Should().Be((int)status);
+				body.Should().NotContain("internal diagnostic sentinel");
+			}
 		}
 		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
 	}

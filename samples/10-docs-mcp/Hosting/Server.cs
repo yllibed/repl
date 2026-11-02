@@ -36,10 +36,12 @@ internal static class Server
 		builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning).AddFilter("ModelContextProtocol", LogLevel.Warning);
 		builder.WebHost.ConfigureKestrel(server =>
 		{
-			server.ListenAnyIP(settings.McpPort);
+			server.Listen(settings.McpAddress, settings.McpPort);
 			server.Listen(settings.AdminAddress, settings.AdminPort);
 		});
 		builder.Services.AddSingleton(settings);
+		builder.Services.AddProblemDetails();
+		builder.Services.AddExceptionHandler<AdministrationErrors>();
 		builder.Services.AddSingleton(TimeProvider.System);
 		builder.Services.AddSingleton<ITextEmbedding, E5Embedding>();
 		builder.Services.AddSingleton<MarkdownCorpus>();
@@ -80,24 +82,15 @@ internal static class Server
 		});
 		configureServices?.Invoke(builder.Services);
 		var app = builder.Build();
-		app.Use(async (context, next) =>
-		{
-			var admin = context.Connection.LocalPort == settings.AdminPort;
-			if (admin && !settings.AllowsOrigin(context.Request.Headers.Origin.ToString())) { context.Response.StatusCode = 403; return; }
-			if (app.Lifetime.ApplicationStopping.IsCancellationRequested) { context.Response.StatusCode = 503; return; }
-			if (!admin && context.Request.Path != "/mcp") { context.Response.StatusCode = 404; return; }
-			if (admin && context.Request.Path == "/mcp") { context.Response.StatusCode = 404; return; }
-			context.Response.Headers.XContentTypeOptions = "nosniff";
-			try { await next(context); }
-			catch (Exception error) when (admin && !context.Response.HasStarted && error is ArgumentException or InvalidOperationException or KeyNotFoundException)
-			{
-				await Microsoft.AspNetCore.Http.Results.Problem(error.Message, statusCode: error is ArgumentException ? 400 : error is KeyNotFoundException ? 404 : 503).ExecuteAsync(context);
-			}
-		});
+		app.UseMiddleware<HttpBoundary>();
+		// AdministrationErrors owns diagnostics for handled failures (.NET 10 suppresses them by default).
+		app.UseExceptionHandler();
 		app.UseWebSockets();
+		// Production authentication/authorization must also protect static files with an applicable policy.
 		app.UseDefaultFiles();
 		app.UseStaticFiles();
 		app.UseStaticFiles(new StaticFileOptions { RequestPath = "/vendor", FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(Path.Combine(settings.Assets, "web")) });
+		// Attach the public audience's authorization and rate-limit policies here; keep the graph allowlist above.
 		app.MapMcp("/mcp");
 		app.MapAdministration();
 

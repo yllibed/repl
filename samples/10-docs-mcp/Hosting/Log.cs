@@ -2,6 +2,8 @@ namespace DocsMcpSample.Hosting;
 
 internal static partial class Log
 {
+	[LoggerMessage(Level = LogLevel.Error, Message = "An unexpected administration request failure occurred.")]
+	internal static partial void HttpFailure(ILogger logger, Exception error);
 	[LoggerMessage(Level = LogLevel.Warning, Message = "Administration has no authentication. Keep port {Port} private; production requires access control and TLS.")]
 	internal static partial void InsecureAdministration(ILogger logger, int port);
 	[LoggerMessage(Level = LogLevel.Warning, Message = "Unauthenticated administration is listening on {Address}. Restrict access using the host network or a proxy.")]
