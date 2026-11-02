@@ -40,6 +40,8 @@ For Docker, edit the source side of `./documents:/documents:ro` in [compose.yaml
 
 Use local storage. SQLite WAL is not intended here for a network filesystem or multiple processes writing the same index. A bind mount used instead of the named index volume must be writable by the container's non-root application user. Allow space for both the published index and its staging replacement.
 
+Normal completion, cancellation and handled failures remove their temporary `build-<guid>.db` files. A forced termination or power loss can leave them behind; repeated interrupted rebuilds can consume disk space. With the server fully stopped, remove only files matching `build-*.db` from the configured index directory. For a Docker volume, stop its owning container before inspecting that volume with your volume-management tool. Preserve `documents.db`, `documents.db-wal` and `documents.db-shm`; never remove staging files while a rebuild might still be using them. Restart the server afterward; the published generation remains authoritative.
+
 ## Health and persistence
 
 The local health client invokes the running process through its pipe. It is not merely checking whether an executable can start or a port can accept a connection.

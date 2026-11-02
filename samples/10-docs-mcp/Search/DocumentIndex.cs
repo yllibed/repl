@@ -94,7 +94,12 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 			Execute(live, "ATTACH DATABASE $1 AS replacement", stagingPath);
 			using var publish = live.BeginTransaction();
 			Execute(live, "DELETE FROM documents; DELETE FROM sections; DELETE FROM keywords; DELETE FROM vectors; DELETE FROM metadata;");
-			Execute(live, "INSERT INTO documents SELECT * FROM replacement.documents; INSERT INTO sections SELECT * FROM replacement.sections; INSERT INTO keywords(rowid,title,heading,body) SELECT rowid,title,heading,body FROM replacement.keywords; INSERT INTO vectors(id,embedding) SELECT id,embedding FROM replacement.vectors;");
+			Execute(live, """
+				INSERT INTO documents SELECT * FROM replacement.documents;
+				INSERT INTO sections SELECT * FROM replacement.sections;
+				INSERT INTO keywords(rowid,title,heading,body) SELECT rowid,title,heading,body FROM replacement.keywords;
+				INSERT INTO vectors(id,embedding) SELECT id,embedding FROM replacement.vectors;
+				""");
 			Execute(live, "INSERT INTO metadata VALUES(1,$1,$2)", SchemaVersion, JsonSerializer.Serialize(generation));
 			cancellationToken.ThrowIfCancellationRequested();
 			publish.Commit();
@@ -151,9 +156,11 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		return new(id, reader.GetString(0), reader.GetString(1), text[..length], text.Length > length, generation.Id);
 	}
 
-	internal DocumentSummary[] List(int offset, int count)
+	internal DocumentSummary[] List(int offset, int count, CancellationToken cancellationToken = default)
 	{
-		if (offset < 0 || count is < 1 or > 100) { throw new ArgumentException("Use a nonnegative offset and a count between 1 and 100."); }
+		// Repl probes one row beyond its maximum 1,000-row page to detect a continuation.
+		if (offset < 0 || count is < 1 or > 1001) { throw new ArgumentException("Use a nonnegative offset and a count between 1 and 1,001."); }
+		cancellationToken.ThrowIfCancellationRequested();
 		using var connection = Open();
 		using var transaction = connection.BeginTransaction(deferred: true);
 		RequireGeneration(connection);
@@ -163,7 +170,11 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		command.Parameters.AddWithValue("$offset", offset);
 		using var reader = command.ExecuteReader();
 		var result = new List<DocumentSummary>();
-		while (reader.Read()) { result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2))); }
+		while (reader.Read())
+		{
+			cancellationToken.ThrowIfCancellationRequested();
+			result.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+		}
 		return result.ToArray();
 	}
 

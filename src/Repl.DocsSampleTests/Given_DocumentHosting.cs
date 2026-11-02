@@ -123,6 +123,72 @@ public sealed class Given_DocumentHosting
 			.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("id", "maxChars");
 	}
 
+	[TestMethod]
+	[Description("The document module uses bounded SQL pages with continuation metadata, including the extra row needed to detect a full page.")]
+	public async Task When_ListingMoreThanOnePage_Then_RemoteResultsContinueWithoutDuplicates()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		for (var i = 0; i < 103; i++) { await fixture.WriteAsync($"document-{i:D3}.md", $"# Document {i}").ConfigureAwait(false); }
+		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		var host = Server.Create(fixture.Settings, services => { services.AddSingleton<ITextEmbedding>(fixture.Embedding); services.AddSingleton(fixture.Index); });
+		await using var hostOwner = host.ConfigureAwait(false);
+		var backend = new ReplAppRemoteBackend(host.Services.GetRequiredService<ReplApp>(), host.Services);
+		await using var backendOwner = backend.ConfigureAwait(false);
+
+		var first = await backend.ExecuteAsync(new() { Arguments = ["docs", "list", "--result:page-size=100"] }, CancellationToken.None).ConfigureAwait(false);
+		first.ExitCode.Should().Be(0);
+		var page = first.Result!.Value.Deserialize<ReplPage<DocumentSummary>>(JsonSerializerOptions.Web)!;
+		page.Items.Should().HaveCount(100);
+		page.PageInfo.NextCursor.Should().Be("100");
+		var second = await backend.ExecuteAsync(new() { Arguments = ["docs", "list", "--result:page-size=100", "--result:cursor=" + page.PageInfo.NextCursor] }, CancellationToken.None).ConfigureAwait(false);
+		second.ExitCode.Should().Be(0);
+		var last = second.Result!.Value.Deserialize<ReplPage<DocumentSummary>>(JsonSerializerOptions.Web)!;
+		last.Items.Should().HaveCount(3);
+		last.PageInfo.HasMore.Should().BeFalse();
+		page.Items.Concat(last.Items).Select(item => item.Id).Should().OnlyHaveUniqueItems();
+	}
+
+	[TestMethod]
+	[Description("Two browser consoles navigate independent module contexts while root and qualified commands retain their routes.")]
+	public async Task When_ConsolesEnterContexts_Then_NavigationIsLocalToEachSession()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("console.md", "# Console\n\nShared process.").ConfigureAwait(false);
+		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		var settings = fixture.Settings with { McpPort = AvailablePort(), AdminPort = AvailablePort() };
+		var host = Server.Create(settings, services => { services.AddSingleton<ITextEmbedding>(fixture.Embedding); services.AddSingleton(fixture.Index); });
+		await using var hostOwner = host.ConfigureAwait(false);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		await host.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			var endpoint = new Uri($"ws://127.0.0.1:{settings.AdminPort}/ws/repl");
+			using var first = new ClientWebSocket();
+			using var second = new ClientWebSocket();
+			await first.ConnectAsync(endpoint, deadline.Token).ConfigureAwait(false);
+			await second.ConnectAsync(endpoint, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(first, ">", deadline.Token).ConfigureAwait(false);
+			await first.SendAsync(Encoding.UTF8.GetBytes("index\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(first, "[index]>", deadline.Token).ConfigureAwait(false);
+			await first.SendAsync(Encoding.UTF8.GetBytes("?\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			(await ReadUntilAsync(first, "[index]>", deadline.Token).ConfigureAwait(false)).Should().Contain("watch").And.Contain("status");
+			await first.SendAsync(Encoding.UTF8.GetBytes("status\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			(await ReadUntilAsync(first, "[index]>", deadline.Token).ConfigureAwait(false)).Should().Contain("Serving");
+			await AssertConsoleStatusAsync(second, deadline.Token).ConfigureAwait(false);
+			await first.SendAsync(Encoding.UTF8.GetBytes("..\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(first, ">", deadline.Token).ConfigureAwait(false);
+			await first.SendAsync(Encoding.UTF8.GetBytes("docs\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(first, "[docs]>", deadline.Token).ConfigureAwait(false);
+			await first.SendAsync(Encoding.UTF8.GetBytes("list\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			(await ReadUntilAsync(first, "[docs]>", deadline.Token).ConfigureAwait(false)).Should().Contain("console.md");
+			first.Abort();
+			second.Abort();
+		}
+		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
 	private static int AvailablePort()
 	{
 		using var listener = new TcpListener(IPAddress.Loopback, 0);

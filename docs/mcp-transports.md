@@ -6,6 +6,8 @@
 > **Prerequisite:** [MCP overview](mcp-overview.md)
 > **Related:** [Reference](mcp-reference.md) · [Advanced patterns](mcp-advanced.md)
 
+For a runnable HTTP application, see [sample 10 — Documentation MCP Server](../samples/10-docs-mcp/). It exposes search and fetch over stateless HTTP MCP while keeping index administration on a separate port. Its [architecture walkthrough](../samples/10-docs-mcp/docs/architecture.md) explains the command graph, request scopes and transport boundaries.
+
 ## Scenario A: Stdio-over-anything
 
 The MCP protocol is JSON-RPC over stdin/stdout. The `TransportFactory` option lets you replace the physical transport while keeping the same protocol.

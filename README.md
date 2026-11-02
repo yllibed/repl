@@ -131,9 +131,9 @@ For a complete container recipe, see [container hosting and live administration]
 ## Learn by example
 
 Progressive learning path — each sample builds on the previous.
-Each sample has a companion cookbook page with explanations and patterns.
+Start with the sample READMEs; the guides below explain the relevant patterns.
 
-| Sample | Cookbook |
+| Sample | Guide |
 |--------|---------|
 | **[Core Basics](samples/01-core-basics/)** — routing, constraints, help, output modes | [repl.yllibed.org/cookbook/core-basics/](https://repl.yllibed.org/cookbook/core-basics/) |
 | **[Scoped Contacts](samples/02-scoped-contacts/)** — dynamic scoping, `..` navigation | [repl.yllibed.org/cookbook/scoped-contexts/](https://repl.yllibed.org/cookbook/scoped-contexts/) |
@@ -143,6 +143,8 @@ Each sample has a companion cookbook page with explanations and patterns.
 | **[Testing](samples/06-testing/)** — multi-session typed assertions | [repl.yllibed.org/cookbook/testing/](https://repl.yllibed.org/cookbook/testing/) |
 | **[Spectre](samples/07-spectre/)** — Spectre.Console renderables, visualizations, rich prompts | [repl.yllibed.org/cookbook/spectre/](https://repl.yllibed.org/cookbook/spectre/) |
 | **[Build an MCP Server with Repl.Mcp](samples/08-mcp-server/)** — MCP tools, resources, prompts, and MCP Apps UI | [repl.yllibed.org/cookbook/mcp-server/](https://repl.yllibed.org/cookbook/mcp-server/) |
+| **[Advanced Input](samples/09-advanced-input/)** — legacy argument adaptation, validation, and invocation hooks | [Advanced input processing](docs/advanced-input.md) |
+| **[Documentation MCP Server](samples/10-docs-mcp/)** — local hybrid search, HTTP MCP, live administration, and Docker | [Guided tour](samples/10-docs-mcp/README.md#take-the-tour) · [Architecture](samples/10-docs-mcp/docs/architecture.md) · [Operations](samples/10-docs-mcp/docs/operations.md) |
 
 ## More documentation
 

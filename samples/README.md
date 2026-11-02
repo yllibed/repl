@@ -47,6 +47,8 @@ Replace the project path with the one you want:
 - `samples/09-advanced-input/AdvancedInputSample.csproj`
 - `samples/10-docs-mcp/DocsMcpSample.csproj`
 
+Sample 10 requires an initial model and browser asset download before starting the server. Follow its [native or Docker setup](10-docs-mcp/README.md#run-it), then take the [guided tour](10-docs-mcp/README.md#take-the-tour).
+
 ## Suggested reading (existing docs)
 
 - [Architecture blueprint](../docs/architecture.md)

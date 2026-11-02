@@ -111,6 +111,20 @@ docker exec -it docs-index /app/docs-index console
 
 Run `sessions` to see browser sessions and local CLI connections. `exit`, Ctrl+D in the local attach client, or browser disconnection detaches that session without stopping the server. The attach client uses a local named pipe: it loads neither another model nor another index.
 
+Try navigating instead of repeating command prefixes:
+
+```text
+index
+?
+status
+..
+docs
+list
+..
+```
+
+The prompt shows `[index]>` or `[docs]>`. Help and completion follow that session's context; another console keeps its own position. The full commands, such as `index status`, remain available from the root. Modules organize the code; contexts organize this interactive navigation.
+
 In Portainer, use `/app/docs-index console` as the custom console command instead of `/bin/sh`, under the container's normal application user. There is no third port, pipe mount or host-to-container pipe bridge.
 
 ### 5. Use the same connection for automation
@@ -121,6 +135,8 @@ One-shot client mode preserves the remote command's exit code, stdout and stderr
 dotnet run -- exec docs search --query "connect to a process" --count 3
 dotnet run -- health --ready
 ```
+
+Every token after `exec` belongs to the remote command, including `--help` and `--json`. Use `dotnet run -- --help exec` for the launcher's own help, or `dotnet run -- exec docs search --help` for help from the running server. Launcher help works before assets are downloaded or the server is started.
 
 Container equivalents:
 
@@ -169,7 +185,7 @@ These commands run inside an attached console, or after `exec` in a one-shot cli
 | --- | --- |
 | `docs search --query "remote console"` | Hybrid search; `--count` defaults to 5, maximum 20 |
 | `docs fetch --id <identifier>` | Read a document or section; `--max-chars` defaults to 20,000 |
-| `docs list` | Inspect document identifiers; page with `--offset` and `--count` |
+| `docs list` | Browse document identifiers with the console pager; one-shot callers use `--result:page-size` and `--result:cursor` |
 | `search compare --query "remote console"` | Compare the three rankings in Spectre tables |
 | `index status` | Generation, readiness, progress and last failure |
 | `index watch` | Live status in an attached terminal; Ctrl+C stops observing |
@@ -179,6 +195,8 @@ These commands run inside an attached console, or after `exec` in a one-shot cli
 | `health --ready` | Require a usable index as well as a running process |
 
 Use `--help` for signatures and `--json` for structured command output. Use `index status` rather than `index watch` for one-shot automation. Spectre uses each session's terminal capabilities and falls back for limited terminals.
+
+For example, `dotnet run -- exec docs list --result:page-size=20` returns items and `pageInfo`. Pass its `nextCursor` back with `--result:cursor=<value>` to continue; a null cursor means the list is complete. Pages read the currently published index, so a rebuild between requests can change their contents. Restart listing if you need a consistent traversal after a rebuild.
 
 ## Follow the code
 
@@ -197,9 +215,11 @@ Start with these files, in order:
 
 | Read | The question it answers |
 | --- | --- |
-| [Program.cs](Program.cs) | How does a process choose server, attach, one-shot or asset-setup mode? |
+| [Program.cs](Program.cs) | Who owns process cancellation and the final exit code? |
+| [Hosting/CommandLine.cs](Hosting/CommandLine.cs) | How do typed launcher commands and input hooks select a mode without starting another server? |
 | [Hosting/Server.cs](Hosting/Server.cs) | Where are services, listeners, Repl and MCP assembled? |
-| [Commands.cs](Commands.cs) | Which operations belong to the graph, and which services do they need? |
+| [Commands.cs](Commands.cs) | Where are the modules and root administration commands composed? |
+| [DocumentsModule.cs](DocumentsModule.cs) · [IndexModule.cs](IndexModule.cs) | How do modules define contexts, injected handlers, paging and live observation? |
 | [Search/DocumentIndex.cs](Search/DocumentIndex.cs) | How do keyword search, vector search and publication share one database? |
 | [IndexingWorker.cs](IndexingWorker.cs) | Who owns rebuilding, cancellation and readiness? |
 

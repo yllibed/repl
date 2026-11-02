@@ -21,7 +21,7 @@ The HTTP listener boundary uses the connection's actual local port. Changing a H
 Follow `docs_search` from an MCP client:
 
 1. [Server.cs](../Hosting/Server.cs) configures the MCP SDK's stateless HTTP transport. For each request, `ConfigureSessionOptions` projects the allowlisted commands using `HttpContext.RequestServices`.
-2. Repl binds the tool input to the `docs search` handler in [Commands.cs](../Commands.cs), resolving `DocumentIndex`, `IndexingWorker` and cancellation from the request context. Application dependencies carry `[FromServices]` so discovery does not present them as user arguments.
+2. Repl binds the tool input to the `docs search` handler in [DocumentsModule.cs](../DocumentsModule.cs), resolving `DocumentIndex`, `IndexingWorker` and cancellation from the request context. Application dependencies carry `[FromServices]` so discovery does not present them as user arguments.
 3. The handler checks readiness and calls [DocumentIndex.Search](../Search/DocumentIndex.cs). This is the same search used by the dashboard and `search compare`.
 4. The query becomes a local embedding. A SQLite read transaction collects keyword and vector candidates from one published generation, then fuses their ranks.
 5. The MCP projection returns the hybrid hits. The agent can call `docs_fetch` with a returned identifier to read the source.
@@ -41,6 +41,14 @@ The sample decorates the existing `spectre` transformer rather than creating ano
 The embedded-console profile disables `exit` by default. This sample explicitly enables it in [Server.cs](../Hosting/Server.cs): `exit` ends the attached session and closes its WebSocket, while the host, index and other sessions keep running. The browser can connect again to open a new session.
 
 The local attach client follows a different transport to the same graph: [ClientMode.cs](../Hosting/ClientMode.cs) connects to `NamedPipeReplServer`, whose backend is `ReplAppRemoteBackend`. Client mode runs before the web host is constructed, so an attachment cannot accidentally start another listener or load another model.
+
+### Modules, contexts and pages
+
+[Commands.cs](../Commands.cs) composes two `IReplModule` instances and keeps `health` and `sessions` at the root. [DocumentsModule.cs](../DocumentsModule.cs) owns document operations; [IndexModule.cs](../IndexModule.cs) owns reconstruction and live observation. These modules map into the same graph used by MCP and remote administration.
+
+Each module declares a static `Context`: `docs` or `index`. Entering one changes only that console's navigation, prompt, help and completion; `..` returns to the parent. Qualified paths remain `docs search`, `docs fetch` and `index status`, so the public MCP allowlist is unchanged. The comparison operation keeps its existing `search compare` path. No per-document dynamic context is needed for the current read-only operations.
+
+`docs list` returns `ReplPageSource.FromOffset<DocumentSummary>` over the existing SQL query. The framework owns page size, continuation metadata and the interactive pager. Its fetch delegate accepts cancellation and reads one extra row to detect a next page. SQL allows the framework's maximum 1,000 rows plus that probe; it never loads the whole corpus. Each fetch reads the currently published generation, not a snapshot pinned across separate requests.
 
 ## How the search works
 
@@ -103,20 +111,22 @@ flowchart LR
 
 Embedding work and replacement rows are prepared on disk outside the live database's writer transaction. The replacement fingerprint accumulates the exact ordered source paths and document text written to staging. Before publication, it is compared with a fresh corpus scan. A mismatch rejects the replacement and a later scan can retry, including when a file was edited and restored while its transient content was being embedded.
 
-Publication copies document, section, keyword and vector rows plus generation metadata in one transaction. SQLite WAL and read transactions let a search or fetch see a coherent generation. Cancellation before commit rolls back publication; staging files are removed when the operation unwinds.
+Publication copies document, section, keyword and vector rows plus generation metadata in one transaction. SQLite WAL and read transactions let a search or fetch see a coherent generation. Cancellation before commit rolls back publication; staging files are removed when the operation unwinds. A forced process termination can leave abandoned staging files; the [operations guide](operations.md#what-persists) explains their cleanup.
 
 The first build has no previous generation to serve. Once a generation exists, a failed or cancelled rebuild can leave the application ready on that generation, with the failure visible in `index status`. A compatible warm index becomes available while the worker checks for source changes.
 
 ## Startup, hooks and shutdown
 
-Read [Program.cs](../Program.cs), [Server.cs](../Hosting/Server.cs) and [ServerLifetime.cs](../Hosting/ServerLifetime.cs) together:
+Read [Program.cs](../Program.cs), [CommandLine.cs](../Hosting/CommandLine.cs), [Server.cs](../Hosting/Server.cs) and [ServerLifetime.cs](../Hosting/ServerLifetime.cs) together:
 
-1. Choose asset setup, attach, one-shot or server mode. Client modes exit before creating the host.
+1. `Program.cs` creates settings and owns Ctrl+C. A lightweight launcher Repl maps `serve`, `console`, `health`, `exec` and `assets fetch`; its startup hook selects `serve` for an empty invocation, while help and completion remain side-effect free. Only the `serve` handler constructs the web host. Client modes and help require neither the model nor the index.
 2. In server mode, validate paths and listener configuration, then verify the pinned assets.
 3. Register singleton search/index services, the hosted worker and a lazily configured Repl application. Resolving Repl applies its embedded profile, output format and static graph.
 4. Create the named-pipe listener, then start the host's HTTP listeners and worker. Liveness requires host startup to have completed; readiness also requires a published index.
 5. For MCP, configure the projection per HTTP request. For WebSockets, borrow the request scope for the connection. Pipe terminals get their scopes through the remote backend. Terminal negotiation supplies capabilities and dimensions before interactive use; ordinary invocation hooks surround command execution.
 6. On shutdown, reject new HTTP work and cancel active sessions. Stop pipe connections, the host and worker before disposing shared services. A 15-second outer cleanup deadline terminates the process on failure instead of disposing the model beneath active work.
+
+The launcher's `exec` boundary deliberately treats the remote suffix as data. An argument adapter reduces the local input to `exec` before local globals are parsed. A parsed invocation hook retrieves the untouched suffix from `OriginalRequest` and supplies it as a native `string[]` to the typed handler through `ReplInvocationRequest.ForCommand`. This preserves empty strings, spaces, `--help`, output flags and literal separators without shell quoting or allowing the local parser to consume remote options. Those hooks belong only to the launcher; the server's MCP and console graph does not inherit them. For launcher help, put `--help` before `exec`.
 
 Cancellation has distinct owners:
 
@@ -137,17 +147,17 @@ Start by replacing the corpus; you do not need to change the transports. Then ch
 
 | Change | Start here | Keep in mind |
 | --- | --- | --- |
-| Add an administrative command | [Commands.cs](../Commands.cs) | It remains outside MCP unless explicitly allowlisted |
+| Add an administrative command | [DocumentsModule.cs](../DocumentsModule.cs), [IndexModule.cs](../IndexModule.cs), or root [Commands.cs](../Commands.cs) | Keep the domain context and MCP allowlist explicit |
 | Expose an additional public operation | [Server.cs](../Hosting/Server.cs) MCP filter | Review both discovery and server-side invocation boundaries |
 | Change passage boundaries | [MarkdownCorpus.cs](../Search/MarkdownCorpus.cs) | Preserve token bounds, Unicode and source locations |
 | Try another embedding model | [ITextEmbedding](../Search/Models.cs), [E5Embedding.cs](../Search/E5Embedding.cs), [assets.json](../assets.json) | Change identity, dimensions and tokenization together; rebuild the index |
 | Change fusion or candidate selection | [DocumentIndex.cs](../Search/DocumentIndex.cs) | Keep the comparison view and ranking regressions aligned |
 | Customize terminal presentation | [ConsoleViews.cs](../ConsoleViews.cs) | Keep structured results independent of terminal rendering |
 
-For example, an administrator-only status shortcut can be added inside `Commands.Map`:
+For example, an administrator-only status shortcut can be added inside the `index` context in `IndexModule.Map`:
 
 ```csharp
-repl.Map("index generation", ([FromServices] IndexingWorker worker) => worker.Status.Generation?.Id)
+index.Map("generation", ([FromServices] IndexingWorker worker) => worker.Status.Generation?.Id)
     .WithDescription("Show the currently published generation identifier.")
     .ReadOnly();
 ```

@@ -1,0 +1,124 @@
+using System.Diagnostics;
+using System.Text.Json;
+using DocsMcpSample.Hosting;
+using Repl.Remote;
+
+namespace Repl.DocsSampleTests;
+
+[TestClass]
+public sealed class Given_CommandLine
+{
+	[TestMethod]
+	[DataRow("")]
+	[DataRow("serve")]
+	[DataRow("console")]
+	[DataRow("health")]
+	[DataRow("exec")]
+	[DataRow("assets fetch")]
+	[Description("Repl supplies launcher help without opening a pipe, downloading assets or constructing the indexing host.")]
+	public async Task When_HelpIsRequested_Then_ItWorksWithoutAssetsOrAServer(string command)
+	{
+		using var fixture = new TestCorpus();
+		using var output = new StringWriter();
+		var app = CommandLine.Create(fixture.Settings);
+		string[] arguments = ["--help", .. command.Split(' ', StringSplitOptions.RemoveEmptyEntries)];
+
+		var code = await app.RunAsync(arguments, new TextHost(output), new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.None }).ConfigureAwait(false);
+
+		code.Should().Be(0);
+		output.ToString().Should().Contain(command.Length == 0 ? "serve" : command);
+		File.Exists(Path.Combine(fixture.Settings.Index, "documents.db")).Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("The startup hook selects serve for an empty invocation before the normal command invocation pipeline.")]
+	public async Task When_NoCommandIsSupplied_Then_TheStartupHookSelectsServe()
+	{
+		using var fixture = new TestCorpus();
+		var app = CommandLine.Create(fixture.Settings);
+		string? selected = null;
+		app.UseInvocationHook((ReplInvocationContext invocation) =>
+		{
+			selected = invocation.Parsed.Command;
+			return ReplInvocationResult.Handled();
+		});
+
+		var code = await app.RunAsync([], new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.None }).ConfigureAwait(false);
+
+		code.Should().Be(0);
+		selected.Should().Be("serve");
+	}
+
+	[TestMethod]
+	[DataRow("serve", "--unexpected")]
+	[DataRow("console", "--unexpected")]
+	[DataRow("health", "--unknown")]
+	[DataRow("unknown", "command")]
+	[Description("Invalid launcher input is refused by Repl before any listener, connection or asset action.")]
+	public async Task When_LauncherInputIsInvalid_Then_ReplReturnsAUsageError(string first, string second)
+	{
+		using var fixture = new TestCorpus();
+		using var output = new StringWriter();
+
+		var code = await CommandLine.Create(fixture.Settings).RunAsync([first, second], new TextHost(output),
+			new ReplRunOptions { ProcessSignalHandling = ProcessSignalHandlingMode.None }).ConfigureAwait(false);
+
+		code.Should().Be(2);
+		File.Exists(Path.Combine(fixture.Settings.Index, "documents.db")).Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("The exec boundary preserves empty, spaced, option-like and invalid-local-global tokens, as well as remote output streams and exit codes.")]
+	public async Task When_ExecForwardsTokens_Then_OnlyTheRemoteProcessInterpretsThem()
+	{
+		using var fixture = new TestCorpus();
+		var backend = new RecordingBackend();
+		await using var listener = new NamedPipeReplServer(fixture.Settings.Pipe, _ => ValueTask.FromResult<IRemoteReplBackend>(backend));
+		string[] remote = ["docs", "search", "", "a b", "a,b", "--help", "--output:unknown", "--result:page-size=invalid", "--", "x=y"];
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+		var start = new ProcessStartInfo("dotnet")
+		{
+			RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
+			WorkingDirectory = fixture.Root,
+		};
+		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add("exec");
+		foreach (var token in remote) { start.ArgumentList.Add(token); }
+		start.Environment["DOCS_PIPE"] = fixture.Settings.Pipe;
+		using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the sample launcher.");
+		var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+		var error = process.StandardError.ReadToEndAsync(deadline.Token);
+
+		try
+		{
+			await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+
+			process.ExitCode.Should().Be(17);
+			backend.Arguments.Should().Equal(remote);
+			(await output.ConfigureAwait(false)).Should().Be("remote output\n{\"answer\":42}" + Environment.NewLine);
+			(await error.ConfigureAwait(false)).Should().Be("remote error\n");
+		}
+		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
+	}
+
+	private sealed class TextHost(TextWriter output) : IReplHost
+	{
+		public TextReader Input => TextReader.Null;
+		public TextWriter Output => output;
+	}
+
+	private sealed class RecordingBackend : IRemoteReplBackend
+	{
+		internal IReadOnlyList<string>? Arguments { get; private set; }
+		public ValueTask<RemoteCommandGraph> DescribeAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new RemoteCommandGraph("test", [], []));
+		public ValueTask<RemoteExecutionResult> ExecuteAsync(RemoteInvocationRequest request, CancellationToken cancellationToken)
+		{
+			Arguments = request.Arguments;
+			return ValueTask.FromResult(new RemoteExecutionResult(17, "application", JsonSerializer.SerializeToElement(new { Answer = 42 },
+				JsonSerializerOptions.Web), "remote output\n", "remote error\n"));
+		}
+		public ValueTask<IRemoteTerminalSession> OpenTerminalAsync(RemoteTerminalOptions options,
+			Func<string, CancellationToken, ValueTask> writeOutput, CancellationToken cancellationToken) => throw new NotSupportedException();
+		public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+	}
+}
