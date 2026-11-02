@@ -419,23 +419,7 @@ public sealed class Given_McpSessionScopes
 	private static Task<McpPipeSession> StartSharedAsync(
 		McpServerOptions mcpOptions,
 		CancellationToken cancellationToken) =>
-		McpPipeSession.StartAsync(
-			async (io, token) =>
-			{
-				var transport = new StreamServerTransport(io.InputStream, io.OutputStream, "shared-options-server");
-				var server = McpServer.Create(transport, mcpOptions);
-				try
-				{
-					await server.RunAsync(token).ConfigureAwait(false);
-				}
-				finally
-				{
-					await server.DisposeAsync().ConfigureAwait(false);
-					await transport.DisposeAsync().ConfigureAwait(false);
-				}
-			},
-			clientOptions: null,
-			cancellationToken);
+		McpPipeSession.StartAsync(mcpOptions, clientOptions: null, cancellationToken);
 
 	private static McpServerHandler CreateHandler(ReplApp app) =>
 		new(

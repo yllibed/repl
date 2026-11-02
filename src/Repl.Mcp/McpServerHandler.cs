@@ -1339,7 +1339,11 @@ internal sealed class McpServerHandler
 			prompts[registration.Name] = new McpExplicitPrompt(
 				McpServerPrompt.Create(
 					registration.Handler,
-					new McpServerPromptCreateOptions { Name = registration.Name, Services = services }),
+					new McpServerPromptCreateOptions
+					{
+						Name = registration.Name,
+						Services = new McpPromptParameterServices(services),
+					}),
 				services,
 				_requestServers);
 		}

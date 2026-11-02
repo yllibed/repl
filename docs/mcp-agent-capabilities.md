@@ -28,6 +28,21 @@ Repl provides three MCP-oriented injectable interfaces:
 
 They work like `IMcpClientRoots` — inject them into any command handler, check capability flags, and use them. They are automatically excluded from MCP tool schemas.
 
+A prompt registered with `o.Prompt(...)` can declare them too, and they are excluded from its arguments:
+
+```csharp
+app.UseMcpServer(o => o.Prompt("triage", (string ticket, IMcpSampling sampling) =>
+    sampling.IsSupported
+        ? $"Classify ticket {ticket}, then draft a reply."
+        : $"Classify ticket {ticket}."));
+```
+
+Such a prompt can also declare `IServiceProvider`. It receives the MCP SDK's request provider, which resolves these
+interfaces, the app's own services (keyed ones included), and the request's `McpServer`,
+`RequestContext<GetPromptRequestParams>`, `IProgress<ProgressNotificationValue>` and `ClaimsPrincipal`. A scope the
+handler creates itself through `IServiceScopeFactory` comes from the app's container and does not include these
+interfaces.
+
 > **Note:** These interfaces give your commands _direct_ access to MCP capabilities. This is different from `IReplInteractionChannel`, which uses sampling and elicitation _internally_ as part of its [interaction degradation](mcp-reference.md#interaction-in-mcp-mode) strategy and now maps user-facing notices/progress to MCP feedback automatically. Use `IReplInteractionChannel` when you want portable prompts and feedback that work across CLI, REPL, hosted sessions, and MCP. Use `IMcpSampling`, `IMcpElicitation`, or `IMcpFeedback` when you want behavior that only makes sense while an agent is connected.
 
 ## When to use these

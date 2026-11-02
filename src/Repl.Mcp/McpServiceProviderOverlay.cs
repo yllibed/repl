@@ -11,16 +11,21 @@ namespace Repl.Mcp;
 /// see what this overlay adds. The MCP SDK does exactly that when it decides whether a handler
 /// parameter is a dependency or a client-supplied argument, so without this a prompt declaring
 /// <c>IMcpFeedback</c> is classified as taking an argument named "feedback" and cannot be invoked at
-/// all.
+/// all. For an explicitly registered prompt the SDK asks through <see cref="McpPromptParameterServices"/>,
+/// which answers as this overlay does except for <see cref="IServiceProvider"/>.
 /// <para>
-/// It answers <see cref="IServiceProvider"/> with itself for the same reason. Handing back the provider
-/// it wraps would give a caller that asks for the provider — a prompt handler declaring
-/// <see cref="IServiceProvider"/>, say — a container that has never heard of the services added here.
+/// It answers <see cref="IServiceProvider"/> with itself, since handing back the provider it wraps
+/// would give a caller that asks for the provider a container that has never heard of the services
+/// added here.
+/// </para>
+/// <para>
+/// Keyed lookups go to the wrapped provider, since nothing here is keyed. Without that, a container that
+/// supports keyed services would look, through the overlay, as if it did not.
 /// </para>
 /// </remarks>
 internal sealed class McpServiceProviderOverlay(
 	IServiceProvider inner,
-	IReadOnlyDictionary<Type, object> overrides) : IServiceProvider, IServiceProviderIsService
+	IReadOnlyDictionary<Type, object> overrides) : IServiceProvider, IKeyedServiceProvider, IServiceProviderIsService
 {
 	public object? GetService(Type serviceType)
 	{
@@ -36,6 +41,15 @@ internal sealed class McpServiceProviderOverlay(
 
 		return inner.GetService(serviceType);
 	}
+
+	public object? GetKeyedService(Type serviceType, object? serviceKey) =>
+		serviceKey is null
+			? GetService(serviceType)
+			: (inner as IKeyedServiceProvider)?.GetKeyedService(serviceType, serviceKey);
+
+	public object GetRequiredKeyedService(Type serviceType, object? serviceKey) =>
+		GetKeyedService(serviceType, serviceKey)
+		?? throw new InvalidOperationException($"No service of type '{serviceType}' with key '{serviceKey}' is registered.");
 
 	// Kept in step with GetService, as the IServiceProviderIsService contract requires: what this overlay
 	// answers itself counts, whatever the wrapped provider says about it.
