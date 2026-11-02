@@ -78,6 +78,8 @@ The sample limits connection establishment to five seconds and one-shot discover
 
 The executable selects these client modes before constructing the ASP.NET host. They connect to the running process; they do not start a second web server. Connections must use the same OS user and compatible Windows elevation. Server configuration `Repl:PipeName` (environment variable `Repl__PipeName`) changes the endpoint; pass that name to clients too.
 
+Repl parses the client commands and pipe parameter. Use `--remote-console --help` or `--remote-exec --help` for local help without starting a server. Input hooks adapt the legacy mode switches and preserve the remote command suffix: after `--remote-exec <pipe>`, every token belongs to the destination, including `--help` and output options.
+
 These are advanced embedding features. See [the remote CLI guide](../../docs/remote-cli.md) for package boundaries, stream ownership, startup/callback order and the experimental JSON-RPC profile. Browser transports and the native pipe share the same settings and message bus. The `who`/`sessions` tracker currently lists browser sessions only; the native terminal's `status` command still exposes its own session metadata.
 
 ## Container
