@@ -10,6 +10,8 @@ The page is English, matching the samples. Search accepts multilingual text. Dat
 
 `app.js` owns search cancellation, source selection, status polling and feedback. `samples/shared/terminal-client.js` owns raw WebSocket terminal transport. xterm owns terminal input and rendering. Search is explicitly submitted; no background query on every keystroke. Clearing cancels pending work. Source selection cancels the previous fetch. A failed status poll retains the last snapshot and labels it stale.
 
+xterm's `screenReaderMode` is enabled for every console session. Its accessibility tree exposes terminal rows and its live region announces command output; this remains enabled after disconnecting and reconnecting. Verify help, results and errors through the accessibility tree as well as visually, and include a real screen-reader check before claiming assistive-technology compatibility.
+
 Administration is deliberately unauthenticated. The warning remains visible above the workspace. Index actions use the same Repl invocation pipeline through a restricted admin endpoint and show their outcome beside the buttons. They work independently of an occupied or detached terminal. Console command helpers copy text rather than injecting it into a potentially active prompt. Disconnect and Ctrl+C never stop the indexing worker.
 
 ## Canonical UI Map

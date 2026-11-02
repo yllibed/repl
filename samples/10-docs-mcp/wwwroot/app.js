@@ -133,7 +133,7 @@ byId('clear-search').addEventListener('click', () => {
 });
 byId('close-source').addEventListener('click', () => { sourceRequest?.abort(); byId('source').hidden = true; query.focus(); });
 
-const terminal = new Terminal({ cursorBlink: true, fontSize: 13, fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace', theme: { background: '#142936', foreground: '#e1edf3', cursor: '#64d4cb', selectionBackground: '#315969' } });
+const terminal = new Terminal({ screenReaderMode: true, cursorBlink: true, fontSize: 13, fontFamily: '"Cascadia Code", "SFMono-Regular", Consolas, monospace', theme: { background: '#142936', foreground: '#e1edf3', cursor: '#64d4cb', selectionBackground: '#315969' } });
 const fit = new FitAddon.FitAddon();
 terminal.loadAddon(fit);
 terminal.open(byId('terminal'));
