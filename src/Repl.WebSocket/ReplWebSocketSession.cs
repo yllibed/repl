@@ -85,7 +85,8 @@ public static class ReplWebSocketSession
 		ArgumentNullException.ThrowIfNull(app);
 		ArgumentNullException.ThrowIfNull(socket);
 
-		var writer = new WebSocketTextWriter(socket, cancellationToken);
+		using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		var writer = new WebSocketTextWriter(socket, sessionCts.Token);
 		var host = new StreamedReplHost(writer) { TransportName = "websocket" };
 		host.UpdateTerminalCapabilities(TerminalCapabilities.VtInput);
 		using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -98,36 +99,24 @@ public static class ReplWebSocketSession
 		{
 			if (Interlocked.Exchange(ref closeStarted, 1) == 0) { receiveCts.CancelAfter(CloseTimeout); }
 		}
+		Task EndSessionAsync()
+		{
+			BeginClose();
+			return sessionCts.CancelAsync();
+		}
 
 		try
 		{
-			var receiveTask = ReceiveLoopAsync(socket, host, onControlMessage, BeginClose, receiveCts.Token);
+			var receiveTask = ReceiveLoopAsync(socket, host, onControlMessage, BeginClose, EndSessionAsync, receiveCts.Token);
 
 			int exitCode;
 			try
 			{
-				exitCode = services is null
-					? await host.RunSessionAsync(app, options, cancellationToken).ConfigureAwait(false)
-					: await host.RunSessionAsync(app, services, options, cancellationToken).ConfigureAwait(false);
+				exitCode = await RunInteractiveAsync(host, app, services, options, sessionCts.Token, cancellationToken).ConfigureAwait(false);
 			}
 			finally
 			{
-				if (cancellationToken.IsCancellationRequested)
-				{
-					// A cancelled session aborts the connection, whether or not its receive ever started.
-					socket.Abort();
-				}
-				else
-				{
-					// A WebSocket aborts a receive that is cancelled, so a pending receive is ended by closing the
-					// connection, or by answering the peer's own close; one deadline covers the whole handshake.
-					BeginClose();
-					if (!receiveTask.IsCompleted)
-					{
-						await SendCloseAsync(socket, receiveCts.Token).ConfigureAwait(false);
-					}
-				}
-
+				await StartConnectionCloseAsync(socket, receiveTask.IsCompleted, BeginClose, receiveCts.Token, cancellationToken).ConfigureAwait(false);
 				await receiveTask.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
 				await FinishCloseAsync(socket, receiveCts.Token).ConfigureAwait(false);
 				// A failed receive surfaces only once the connection is settled.
@@ -139,6 +128,37 @@ public static class ReplWebSocketSession
 		finally
 		{
 			await host.DisposeAsync().ConfigureAwait(false);
+		}
+	}
+
+	private static async Task StartConnectionCloseAsync(System.Net.WebSockets.WebSocket socket, bool receiveCompleted,
+		Action beginClose, CancellationToken deadline, CancellationToken callerToken)
+	{
+		if (callerToken.IsCancellationRequested)
+		{
+			// A cancelled session aborts the connection, whether or not its receive ever started.
+			socket.Abort();
+		}
+		else
+		{
+			// A pending receive ends with the close handshake; cancelling it first would abort the socket.
+			beginClose();
+			if (!receiveCompleted) { await SendCloseAsync(socket, deadline).ConfigureAwait(false); }
+		}
+	}
+
+	private static async ValueTask<int> RunInteractiveAsync(StreamedReplHost host, ReplApp app, IServiceProvider? services,
+		ReplRunOptions? options, CancellationToken sessionToken, CancellationToken callerToken)
+	{
+		try
+		{
+			return services is null
+				? await host.RunSessionAsync(app, options, sessionToken).ConfigureAwait(false)
+				: await host.RunSessionAsync(app, services, options, sessionToken).ConfigureAwait(false);
+		}
+		catch (OperationCanceledException) when (sessionToken.IsCancellationRequested && !callerToken.IsCancellationRequested)
+		{
+			return 0;
 		}
 	}
 
@@ -199,6 +219,7 @@ public static class ReplWebSocketSession
 		StreamedReplHost host,
 		Action<TerminalControlMessage>? onControlMessage,
 		Action beginClose,
+		Func<Task> endSession,
 		CancellationToken cancellationToken)
 	{
 		var buffer = new byte[4096];
@@ -215,6 +236,8 @@ public static class ReplWebSocketSession
 				var result = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
 				if (result.MessageType == WebSocketMessageType.Close)
 				{
+					beginClose();
+					await FinishCloseAsync(socket, cancellationToken).ConfigureAwait(false);
 					break;
 				}
 
@@ -249,6 +272,7 @@ public static class ReplWebSocketSession
 		finally
 		{
 			host.Complete();
+			await endSession().ConfigureAwait(false);
 		}
 	}
 

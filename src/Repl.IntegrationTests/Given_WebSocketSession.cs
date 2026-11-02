@@ -87,6 +87,40 @@ public sealed class Given_WebSocketSession
 	}
 
 	[TestMethod]
+	[DataRow(false, DisplayName = "Peer sends a normal close frame")]
+	[DataRow(true, DisplayName = "Peer drops the connection")]
+	[Description("A disconnected peer cancels an active command and lets the session finish without cancelling its embedding host.")]
+	public async Task When_ThePeerDisconnectsDuringACommand_Then_TheCommandAndSessionEnd(bool abort)
+	{
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var cleaned = false;
+		var app = CreateApp();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally { cleaned = true; }
+		});
+		using var caller = new CancellationTokenSource();
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options, caller.Token).AsTask();
+			await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+
+			if (abort) { client.Abort(); }
+			else { await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None).ConfigureAwait(false); }
+
+			(await run.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+			cleaned.Should().BeTrue();
+			caller.IsCancellationRequested.Should().BeFalse();
+			if (!abort) { (await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure); }
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies the caller cancelling a WebSocket session at its prompt still propagates the cancellation, rather than ending as if the user had exited.")]
 	public async Task When_TheCallerCancelsAtThePrompt_Then_TheCancellationPropagates()
 	{

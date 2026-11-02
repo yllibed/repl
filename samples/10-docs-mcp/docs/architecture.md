@@ -32,6 +32,8 @@ The two tool calls are independent requests. A rebuild can publish between searc
 
 For a browser connection, [Endpoints.cs](../Hosting/Endpoints.cs) accepts the WebSocket and lends the ASP.NET request's services to `ReplWebSocketSession.RunWithServicesAsync`. `SessionScopeBehavior.CallerOwned` keeps Repl from disposing or replacing that connection scope. The host still owns the singleton index and worker.
 
+A peer close or dropped connection cancels that session's token, so disconnecting also stops an active `index watch`. Repl awaits command cleanup before the endpoint removes its session registration and ASP.NET releases the request scope. The host token, index and other sessions are independent.
+
 The browser sends terminal metadata and keystrokes through the [shared terminal client](../../shared/terminal-client.js). Repl handles input, command binding and session cancellation. [ConsoleViews.cs](../ConsoleViews.cs) supplies the sample's Spectre layouts; JSON and MCP results remain structured data.
 
 The sample decorates the existing `spectre` transformer rather than creating another format. Its index, comparison and source views are custom; other values, including the rich help model for `help` and `?`, pass through to Spectre. Retaining the format also retains its help factory and banner settings.

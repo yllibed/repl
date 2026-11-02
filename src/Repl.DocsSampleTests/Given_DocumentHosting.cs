@@ -174,6 +174,42 @@ public sealed class Given_DocumentHosting
 		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
 	}
 
+	[TestMethod]
+	[Description("Disconnecting during index watch removes the browser session and its request scope while the index and host remain available for another connection.")]
+	public async Task When_AWatchingClientDisconnects_Then_TheSessionIsRemovedAndTheHostKeepsServing()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("console.md", "# Console\n\nShared console.").ConfigureAwait(false);
+		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		var settings = fixture.Settings with { McpPort = AvailablePort(), AdminPort = AvailablePort() };
+		var host = Server.Create(settings, services => { services.AddSingleton<ITextEmbedding>(fixture.Embedding); services.AddSingleton(fixture.Index); });
+		await using var hostOwner = host.ConfigureAwait(false);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		await host.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			using var socket = new ClientWebSocket();
+			var endpoint = new Uri($"ws://127.0.0.1:{settings.AdminPort}/ws/repl");
+			await socket.ConnectAsync(endpoint, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(socket, ">", deadline.Token).ConfigureAwait(false);
+			await socket.SendAsync(Encoding.UTF8.GetBytes("index watch\r"), WebSocketMessageType.Text, endOfMessage: true, deadline.Token).ConfigureAwait(false);
+			await ReadUntilAsync(socket, "Serving", deadline.Token).ConfigureAwait(false);
+
+			await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, deadline.Token).ConfigureAwait(false);
+
+			var sessions = host.Services.GetRequiredService<Sessions>();
+			while (sessions.List().Length > 0) { await Task.Delay(10, deadline.Token).ConfigureAwait(false); }
+			host.Lifetime.ApplicationStopping.IsCancellationRequested.Should().BeFalse();
+			host.Services.GetRequiredService<IndexingWorker>().Status.Ready.Should().BeTrue();
+			using var next = new ClientWebSocket();
+			await next.ConnectAsync(endpoint, deadline.Token).ConfigureAwait(false);
+			await AssertConsoleStatusAsync(next, deadline.Token).ConfigureAwait(false);
+			next.Abort();
+		}
+		finally { await host.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
 	private static async Task AssertConsoleExitAsync(ClientWebSocket socket, CancellationToken cancellationToken)
 	{
 		await socket.SendAsync(Encoding.UTF8.GetBytes("exit\r"), WebSocketMessageType.Text, endOfMessage: true, cancellationToken).ConfigureAwait(false);
