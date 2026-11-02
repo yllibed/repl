@@ -38,7 +38,8 @@
         <div class="index-actions"><button type="button" data-index-action="rebuild" disabled>Rebuild index <span aria-hidden="true">↗</span></button><button class="quiet" type="button" data-index-action="cancel" disabled>Cancel rebuild</button></div>
         <p class="caption" id="index-action-status" role="status">Actions use the Repl command pipeline. A rebuild keeps the published index available.</p>
         <div class="access-note"><span class="eyebrow">Two tools. One public endpoint.</span><p><code>docs_search</code> finds sections.<br><code>docs_fetch</code> reads their source.</p><p>Administrative commands stay here.</p></div>
-        <p class="caption" id="refresh-status" role="status">Connecting to index…</p>
+        <p class="sr-only" id="index-status" role="status">Connecting to index…</p>
+        <p class="caption" id="refresh-status"></p>
       </aside>
       <section class="search-panel" aria-labelledby="search-title">
         <div class="section-heading"><h2 id="search-title">A different angle on the same question</h2><span class="small-label">Keyword + vector → hybrid</span></div>

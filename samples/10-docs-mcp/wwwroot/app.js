@@ -14,6 +14,11 @@ async function getJson(url, signal) {
   return body;
 }
 
+function announceIndexStatus(message) {
+  const status = byId('index-status');
+  if (status.textContent !== message) status.textContent = message;
+}
+
 async function refreshStatus() {
   if (document.hidden || refreshing) return;
   refreshing = true;
@@ -27,7 +32,9 @@ async function refreshStatus() {
     byId('generation').textContent = index.generation?.id ?? 'No published generation';
     byId('published').textContent = index.generation ? new Date(index.generation.publishedAt).toLocaleString() : '—';
     byId('activity').classList.toggle('busy', index.rebuilding);
-    byId('progress').textContent = index.rebuilding
+    byId('progress').textContent = index.nextRetryAt
+      ? `Automatic retry after ${new Date(index.nextRetryAt).toLocaleString()}. You can request a rebuild now.`
+      : index.rebuilding
       ? `${index.documentsProcessed} documents and ${index.sectionsProcessed} sections prepared. The previous generation stays available.`
       : index.ready ? 'Published index available. Documents are checked every 60 seconds.' : 'Search becomes available after the first successful build.';
     byId('index-error').hidden = !index.lastError;
@@ -36,8 +43,10 @@ async function refreshStatus() {
     document.querySelector('[data-index-action="cancel"]').disabled = !index.rebuilding || indexActionPending;
     byId('session-count').textContent = `${sessions.length} connection${sessions.length === 1 ? '' : 's'}`;
     byId('refresh-status').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    announceIndexStatus(`${index.ready ? 'Index ready.' : 'Index not ready.'} ${index.generation ? `Generation ${index.generation.id}.` : 'No published generation.'}${index.rebuilding ? ' Rebuild in progress.' : ''}${index.lastError ? ` Last indexing failure: ${index.lastError}` : ''}`);
   } catch (error) {
     byId('refresh-status').textContent = `Connection lost. Displayed state may be stale. ${error.message}`;
+    announceIndexStatus('Connection lost. Displayed state may be stale.');
     document.querySelectorAll('[data-index-action]').forEach(button => { button.disabled = true; });
   } finally { refreshing = false; }
 }
@@ -62,7 +71,8 @@ function renderRanking(name, hits) {
     button.textContent = hit.heading === hit.title ? hit.title : `${hit.title} · ${hit.heading}`;
     button.addEventListener('click', () => openSource(hit));
     const excerpt = document.createElement('p');
-    excerpt.textContent = Array.from(hit.excerpt).slice(0, 180).join('');
+    const characters = Array.from(hit.excerpt);
+    excerpt.textContent = characters.slice(0, 180).join('') + (characters.length > 180 ? '…' : '');
     const path = document.createElement('p');
     path.className = 'source-path';
     path.textContent = `${hit.source}:${hit.startLine}`;
@@ -159,7 +169,7 @@ function connect() {
     hello: `@@repl:hello ${JSON.stringify({ terminal: 'xterm-256color', cols: terminal.cols, rows: terminal.rows, ansi: true, capabilities: 'Ansi,VtInput,ResizeReporting' })}`,
     onOpen: () => setConnected(true),
     onOutput: text => terminal.write(text),
-    onClose: () => { setConnected(false); terminal.writeln('\r\n[Detached. The server keeps running.]'); }
+    onClose: () => { setConnected(false); terminal.writeln('\r\n[Session closed.]'); }
   });
 }
 
