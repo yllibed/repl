@@ -136,7 +136,7 @@ public sealed class TelnetFraming : IAsyncDisposable
 	// Ends the output and the VT input, then waits for what was already written to be sent.
 	private async Task EndOutputAsync()
 	{
-		_outChannel.Writer.TryComplete();
+		_vtOutput.Complete();
 		_vtInput.Complete();
 		Task sending;
 		lock (_gate)
@@ -511,10 +511,22 @@ public sealed class TelnetFraming : IAsyncDisposable
 	/// </summary>
 	private sealed class TelnetTextWriter(Channel<byte[]> outChannel) : TextWriter
 	{
+		// Stateful, so a surrogate pair handed over in two writes, as Write(char) and the base TextWriter's char[] and
+		// async overloads do, is encoded as one character rather than as two replacement characters. The lock keeps
+		// the encoder's state, the order of the writes in the channel, and the end of the output together.
+		private readonly Encoder _encoder = Encoding.UTF8.GetEncoder();
+		private readonly Lock _encoding = new();
+
 		public override Encoding Encoding => Encoding.UTF8;
 
 		public override void Write(char value) =>
 			Write(new ReadOnlySpan<char>(in value));
+
+		public override void Write(char[] buffer, int index, int count)
+		{
+			ArgumentNullException.ThrowIfNull(buffer);
+			Write(buffer.AsSpan(index, count));
+		}
 
 		public override void Write(string? value)
 		{
@@ -525,8 +537,80 @@ public sealed class TelnetFraming : IAsyncDisposable
 		public override void Write(ReadOnlySpan<char> buffer)
 		{
 			if (buffer.IsEmpty) return;
-			var bytes = Encoding.UTF8.GetBytes(buffer.ToArray());
-			outChannel.Writer.TryWrite(EscapeIac(bytes));
+			Encode(buffer, flush: false);
+		}
+
+		public override Task WriteAsync(char value)
+		{
+			Write(value);
+			return Task.CompletedTask;
+		}
+
+		public override Task WriteAsync(char[] buffer, int index, int count)
+		{
+			Write(buffer, index, count);
+			return Task.CompletedTask;
+		}
+
+		public override Task WriteAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
+		{
+			if (cancellationToken.IsCancellationRequested)
+			{
+				return Task.FromCanceled(cancellationToken);
+			}
+
+			Write(buffer.Span);
+			return Task.CompletedTask;
+		}
+
+		public override Task WriteLineAsync(char value)
+		{
+			WriteLine(value);
+			return Task.CompletedTask;
+		}
+
+		public override Task WriteLineAsync(char[] buffer, int index, int count)
+		{
+			WriteLine(buffer, index, count);
+			return Task.CompletedTask;
+		}
+
+		public override Task WriteLineAsync(ReadOnlyMemory<char> buffer, CancellationToken cancellationToken = default)
+		{
+			if (cancellationToken.IsCancellationRequested)
+			{
+				return Task.FromCanceled(cancellationToken);
+			}
+
+			WriteLine(buffer.Span);
+			return Task.CompletedTask;
+		}
+
+		// Ends the output: a high surrogate still waiting for its pair goes out as a replacement character, and a later
+		// write sends nothing. Under the lock, so no write lands between the two and leaves a surrogate behind.
+		public void Complete()
+		{
+			lock (_encoding)
+			{
+				Encode([], flush: true);
+				outChannel.Writer.TryComplete();
+			}
+		}
+
+		private void Encode(ReadOnlySpan<char> chars, bool flush)
+		{
+			lock (_encoding)
+			{
+				var count = _encoder.GetByteCount(chars, flush);
+				// Called even with nothing to send: GetByteCount leaves the encoder as it was, and only GetBytes keeps
+				// a high surrogate for the next write.
+				var bytes = count == 0 ? [] : new byte[count];
+				_encoder.GetBytes(chars, bytes, flush);
+				if (count > 0)
+				{
+					outChannel.Writer.TryWrite(EscapeIac(bytes));
+				}
+			}
 		}
 
 		public override void WriteLine(string? value)
