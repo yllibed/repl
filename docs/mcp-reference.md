@@ -534,6 +534,40 @@ Command-backed resources expose the rendered handler return value as the
 resource body. Low-level writes to `IReplIoContext.Output` are treated as
 side-channel command output and are not included in `resources/read` bodies.
 
+## Operator diagnostics
+
+Some failures are hidden from the MCP client on purpose. `Repl.Mcp` records them for the operator
+through `Microsoft.Extensions.Logging`, under the category `Repl.Mcp`:
+
+| Event | Level | When |
+|---|---|---|
+| 2001 | Error | A tool or resource failed with a detail that is not meant for a remote caller, such as an unhandled exception's message. The client gets `Command failed with exit code N.`; the log gets the tool or resource name, the exception and the command's captured output, including the rendered error. |
+| 2002 | Warning | A catalog rebuild failed on an initialize-era connection. That connection keeps its previous catalog until a rebuild succeeds. A command hidden at runtime meanwhile withdraws that catalog, which still lists it, and requests fail until a rebuild succeeds. |
+| 2003 | Warning | Fetching the client's roots before a command ran failed. The command still ran. |
+| 2004 | Debug | 2002 again for the same routing version. |
+| 2005 | Information | A rebuild succeeded after a 2002. |
+| 2006 | Debug | 2003 again before a fetch succeeded. |
+| 2007 | Information | A roots fetch succeeded after a 2003. |
+
+The routing version goes up by one on every routing change, such as a call to `InvalidateRouting()`.
+A failure that can repeat on every request warns once and logs its repeats at Debug, so a client that
+keeps asking cannot flood the log. That count is kept per connection, and for 2002 per routing version
+too: with several clients connected, one failing rebuild warns once on each of them, and a routing
+change during the failure warns again. 2005 and 2007 mark the end of a failure, so the next one warns
+again.
+
+`ReplApp` registers logging by default, but it stays silent until the app adds a provider. Under
+`mcp serve` on stdio, standard output carries the protocol, so send logs to standard error or a file.
+With the console provider, from the `Microsoft.Extensions.Logging.Console` package, every level goes to
+standard error once `LogToStandardErrorThreshold` is `LogLevel.Trace`. That setting routes entries, it
+does not filter them: the Debug repeats appear only with a minimum level of `LogLevel.Debug`.
+
+```csharp
+var app = ReplApp.Create(services => services.AddLogging(logging => logging
+    .SetMinimumLevel(LogLevel.Debug)
+    .AddConsole(console => console.LogToStandardErrorThreshold = LogLevel.Trace)));
+```
+
 ## Client compatibility
 
 Feature support varies across agents. Check [mcp-availability.com](https://mcp-availability.com/) for current data.

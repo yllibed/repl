@@ -18,6 +18,10 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	private readonly ICoreReplApp _app;
 	private readonly McpRequestServerAccessor _servers;
 	private readonly McpRootsScope _scope;
+	private readonly McpLoggerDiagnostics _diagnostics;
+	// 1 while a failure to prime is being reported at Debug instead of Warning; reset by a successful
+	// prime. Interlocked, since concurrent tool calls on one connection prime concurrently.
+	private int _primeFailureReported;
 	private readonly Lock _syncRoot = new();
 	// Bounds the one outbound call this type makes. Request scope pays it per request rather than once
 	// per connection, so a client that never answers roots/list would otherwise hold every tool call
@@ -55,11 +59,16 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	// When the eager prime last failed, so it can stop paying the full budget on every execution.
 	private long? _primeFailedAt;
 
-	public McpClientRootsService(ICoreReplApp app, McpRequestServerAccessor servers, McpRootsScope scope)
+	public McpClientRootsService(
+		ICoreReplApp app,
+		McpRequestServerAccessor servers,
+		McpRootsScope scope,
+		McpLoggerDiagnostics diagnostics)
 	{
 		_app = app;
 		_servers = servers;
 		_scope = scope;
+		_diagnostics = diagnostics;
 	}
 
 	public bool IsSupported => _servers.Effective?.ClientCapabilities?.Roots is not null;
@@ -119,11 +128,16 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	/// <see cref="Current"/> is documented as only what this request already resolved, and an eager fetch
 	/// would add a round-trip to every request rather than to every connection.
 	/// </remarks>
-	internal async ValueTask PrimeCurrentAsync(CancellationToken cancellationToken)
+	/// <returns>
+	/// <see langword="true"/> when this connection now holds the client's roots, fetched by this call or
+	/// already cached; <see langword="false"/> when the prime did not ask at all — outside connection
+	/// scope, without client support, or standing down.
+	/// </returns>
+	internal async ValueTask<bool> PrimeCurrentAsync(CancellationToken cancellationToken)
 	{
 		if (_scope is not McpRootsScope.Connection || !IsSupported)
 		{
-			return;
+			return false;
 		}
 
 		lock (_syncRoot)
@@ -134,7 +148,7 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 				&& _primeFailedAt is { } failedAt
 				&& Stopwatch.GetElapsedTime(failedAt) < PrimeRetryCooldown)
 			{
-				return;
+				return false;
 			}
 		}
 
@@ -175,6 +189,8 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 		{
 			_primeFailedAt = null;
 		}
+
+		return true;
 	}
 
 	public async ValueTask<IReadOnlyList<McpClientRoot>> GetAsync(CancellationToken cancellationToken = default)
@@ -384,33 +400,55 @@ internal sealed class McpClientRootsService : IMcpClientRoots
 	}
 
 	/// <summary>
-	/// Primes the connection's native roots from <paramref name="services"/>, swallowing a failure.
+	/// Primes the connection's native roots from <paramref name="services"/>, logging and swallowing a
+	/// failure.
 	/// </summary>
 	/// <remarks>
 	/// Called from every execution entry point. A handler that never reads roots must not fail because
 	/// the client could not answer, and one that does read them surfaces the error from its own
 	/// <see cref="GetAsync"/>. Cancellation is the caller's and propagates.
 	/// </remarks>
-	internal static async ValueTask PrimeFromServicesAsync(
+	internal static ValueTask PrimeFromServicesAsync(
 		IServiceProvider services,
-		CancellationToken cancellationToken)
-	{
-		if (services.GetService(typeof(IMcpClientRoots)) is not McpClientRootsService roots)
-		{
-			return;
-		}
+		CancellationToken cancellationToken) =>
+		services.GetService(typeof(IMcpClientRoots)) is McpClientRootsService roots
+			? roots.PrimeAndReportAsync(cancellationToken)
+			: ValueTask.CompletedTask;
 
+	/// <summary>
+	/// <see cref="PrimeCurrentAsync"/>, with its failure swallowed for the command and reported to the
+	/// operator once per episode.
+	/// </summary>
+	/// <remarks>
+	/// A fast failure is retried on every tool call, where the stand-down only covers one that spent at
+	/// least half its budget, so only the failure that opens an episode warns and the rest go to Debug. Only a prime
+	/// that holds the roots ends the episode: one skipped while standing down says nothing about whether
+	/// the client can answer yet. Ending it is logged too, or a quiet log would read as "still failing".
+	/// </remarks>
+	private async ValueTask PrimeAndReportAsync(CancellationToken cancellationToken)
+	{
 		try
 		{
-			await roots.PrimeCurrentAsync(cancellationToken).ConfigureAwait(false);
+			if (await PrimeCurrentAsync(cancellationToken).ConfigureAwait(false)
+				&& Interlocked.Exchange(ref _primeFailureReported, 0) == 1)
+			{
+				_diagnostics.RootsPrimeRecovered();
+			}
 		}
 		catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
 		{
 			throw;
 		}
-		catch (Exception)
+		catch (Exception ex)
 		{
-			// Swallowed: see the remarks above.
+			if (Interlocked.Exchange(ref _primeFailureReported, 1) == 0)
+			{
+				_diagnostics.RootsPrimeFailed(ex);
+			}
+			else
+			{
+				_diagnostics.RootsPrimeStillFailing(ex);
+			}
 		}
 	}
 

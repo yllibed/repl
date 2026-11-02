@@ -22,6 +22,9 @@ internal sealed class McpSessionContext : IAsyncDisposable
 {
 	private SnapshotCacheEntry? _snapshotCache;
 	private int _compatibilityIntroServed;
+	// The routing version whose build last failed onto the availability fallback, or 0 for none —
+	// versions start at 1. Interlocked, like the intro flag, so no caller has to hold a lock.
+	private long _catalogFailureVersion;
 
 	private readonly AsyncServiceScope? _scope;
 
@@ -66,6 +69,19 @@ internal sealed class McpSessionContext : IAsyncDisposable
 		long version,
 		bool sessionless) =>
 		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, version, IsStale: true, sessionless));
+
+	/// <summary>
+	/// Records that the build for <paramref name="failingVersion"/> failed onto the fallback;
+	/// <see langword="true"/> the first time for that version, so the failure warns once rather than
+	/// on every request that retries it.
+	/// </summary>
+	public bool TryMarkCatalogFailure(long failingVersion) =>
+		Interlocked.Exchange(ref _catalogFailureVersion, failingVersion) != failingVersion;
+
+	/// <summary>
+	/// Ends a failure episode after a successful build; <see langword="true"/> if one was in progress.
+	/// </summary>
+	public bool TryClearCatalogFailure() => Interlocked.Exchange(ref _catalogFailureVersion, 0) != 0;
 
 	/// <summary>
 	/// Claims this session's one-time compatibility-shim intro; <see langword="true"/> for the first
