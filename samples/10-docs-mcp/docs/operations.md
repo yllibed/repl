@@ -68,18 +68,35 @@ After the restart completes, the generation identifier should match if the corpu
 
 ## Configuration
 
-[Settings.cs](../Settings.cs) reads environment variables. Paths are resolved relative to the process's current directory; absolute paths make scripted deployments less surprising.
+[Program.cs](../Program.cs) builds a .NET `ConfigurationManager` before selecting a launcher command. It loads an optional `appsettings.json` from the current working directory, then environment variables with the `DOCS_` prefix. Environment values take priority; the provider strips that prefix, so `DOCS_MCP_PORT` supplies the configuration key `MCP_PORT`. Repl owns the command-line arguments; they are not also parsed as .NET configuration switches.
 
-| Variable | Native default | Purpose |
-| --- | --- | --- |
-| `DOCS_DOCUMENTS` | `documents` | Markdown source directory |
-| `DOCS_INDEX` | `.index` | Writable index directory, outside the source tree |
-| `DOCS_ASSETS` | `.assets` | Verified runtime assets |
-| `DOCS_PIPE` | `repl-docs-index` | Shared server/client pipe name |
-| `DOCS_MCP_PORT` | `8080` | Public HTTP listener, bound to network interfaces |
-| `DOCS_ADMIN_PORT` | `8081` | Administration HTTP/WebSocket listener |
-| `DOCS_ADMIN_ADDRESS` | `127.0.0.1` | Admin bind IP address |
-| `DOCS_ADMIN_ORIGIN` | Unset | One additional exact browser origin |
+For example, create `appsettings.json` in the sample directory:
+
+```json
+{
+  "DOCUMENTS": "../my-documents",
+  "INDEX": ".my-index",
+  "MCP_PORT": 9080,
+  "ADMIN_PORT": 9081
+}
+```
+
+Then run `dotnet run -- serve` as usual. Set `DOCS_MCP_PORT` to override just the public port without editing the file. The same file is read by local clients, so they can share a `PIPE` setting with the server. Inside a container, mount a file at `/app/appsettings.json` to use it there; Docker's `DOCS_*` environment values still take priority.
+
+[Settings.cs](../Settings.cs) converts `IConfiguration` into the application's typed, immutable settings, using the defaults below for omitted keys. Paths are resolved relative to the process's current directory; absolute paths make scripted deployments less surprising. Port conversion reports malformed values before host construction. Server-side validation still checks the configured directories, addresses, origins and listener ports before opening the service.
+
+Configuration is a startup snapshot: changing a JSON file or environment value requires restarting the affected server or client. Automatic reload and `IOptionsMonitor` are deliberately unnecessary here because the model, index and listeners are constructed from one consistent set of settings.
+
+| Configuration key | Environment variable | Native default | Purpose |
+| --- | --- | --- | --- |
+| `DOCUMENTS` | `DOCS_DOCUMENTS` | `documents` | Markdown source directory |
+| `INDEX` | `DOCS_INDEX` | `.index` | Writable index directory, outside the source tree |
+| `ASSETS` | `DOCS_ASSETS` | `.assets` | Verified runtime assets |
+| `PIPE` | `DOCS_PIPE` | `repl-docs-index` | Shared server/client pipe name |
+| `MCP_PORT` | `DOCS_MCP_PORT` | `8080` | Public HTTP listener, bound to network interfaces |
+| `ADMIN_PORT` | `DOCS_ADMIN_PORT` | `8081` | Administration HTTP/WebSocket listener |
+| `ADMIN_ADDRESS` | `DOCS_ADMIN_ADDRESS` | `127.0.0.1` | Admin bind IP address |
+| `ADMIN_ORIGIN` | `DOCS_ADMIN_ORIGIN` | Unset | One additional exact browser origin |
 
 The Dockerfile supplies container paths and binds administration to `0.0.0.0` **inside the container**. Compose publishes that port as `127.0.0.1:8081:8081` on the host. Do not change it to `8081:8081` on an untrusted host.
 

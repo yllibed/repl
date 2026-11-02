@@ -53,7 +53,7 @@ docker compose logs -f
 
 The image includes the model and browser assets. Compose mounts `./documents` read-only at `/documents`, keeps `/index` in a named volume, and publishes administration on host loopback only. Open the same [dashboard](http://127.0.0.1:8081). Ctrl+C leaves the log viewer; the detached container keeps running.
 
-Choose either native or container execution: their default ports are the same. See [operating the sample](docs/operations.md) for storage, configuration and troubleshooting.
+Choose either native or container execution: their default ports are the same. Configure an optional `appsettings.json` or override it with `DOCS_*` environment variables; see [configuration](docs/operations.md#configuration). See [operating the sample](docs/operations.md) for storage and troubleshooting.
 
 ## Take the tour
 

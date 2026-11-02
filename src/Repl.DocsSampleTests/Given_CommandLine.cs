@@ -68,12 +68,18 @@ public sealed class Given_CommandLine
 	}
 
 	[TestMethod]
-	[Description("The exec boundary preserves empty, spaced, option-like and invalid-local-global tokens, as well as remote output streams and exit codes.")]
-	public async Task When_ExecForwardsTokens_Then_OnlyTheRemoteProcessInterpretsThem()
+	[DataRow(false, DisplayName = "JSON supplies the pipe setting")]
+	[DataRow(true, DisplayName = "Environment overrides the JSON pipe setting")]
+	[Description("Real launcher configuration selects the pipe from JSON or its environment override while remote tokens, streams and exit codes remain intact.")]
+	public async Task When_ExecForwardsTokens_Then_OnlyTheRemoteProcessInterpretsThem(bool environmentOverridesFile)
 	{
 		using var fixture = new TestCorpus();
 		var backend = new RecordingBackend();
 		await using var listener = new NamedPipeReplServer(fixture.Settings.Pipe, _ => ValueTask.FromResult<IRemoteReplBackend>(backend));
+		await File.WriteAllTextAsync(Path.Combine(fixture.Root, "appsettings.json"), JsonSerializer.Serialize(new
+		{
+			PIPE = environmentOverridesFile ? "unused-" + Guid.NewGuid().ToString("N") : fixture.Settings.Pipe,
+		})).ConfigureAwait(false);
 		string[] remote = ["docs", "search", "", "a b", "a,b", "--help", "--output:unknown", "--result:page-size=invalid", "--", "x=y"];
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 		var start = new ProcessStartInfo("dotnet")
@@ -84,7 +90,8 @@ public sealed class Given_CommandLine
 		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
 		start.ArgumentList.Add("exec");
 		foreach (var token in remote) { start.ArgumentList.Add(token); }
-		start.Environment["DOCS_PIPE"] = fixture.Settings.Pipe;
+		start.Environment.Remove("DOCS_PIPE");
+		if (environmentOverridesFile) { start.Environment["DOCS_PIPE"] = fixture.Settings.Pipe; }
 		using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the sample launcher.");
 		var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
 		var error = process.StandardError.ReadToEndAsync(deadline.Token);

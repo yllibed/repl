@@ -1,4 +1,5 @@
 using System.Net;
+using Microsoft.Extensions.Configuration;
 
 namespace DocsMcpSample;
 
@@ -10,15 +11,15 @@ internal sealed record Settings(string Documents, string Index, string Assets, s
 		$"http://localhost:{AdminPort}", $"http://127.0.0.1:{AdminPort}", $"http://[::1]:{AdminPort}", AdminOrigin,
 	}.Contains(origin, StringComparer.OrdinalIgnoreCase);
 
-	internal static Settings FromEnvironment() => new(
-		Path.GetFullPath(Environment.GetEnvironmentVariable("DOCS_DOCUMENTS") ?? "documents"),
-		Path.GetFullPath(Environment.GetEnvironmentVariable("DOCS_INDEX") ?? ".index"),
-		Path.GetFullPath(Environment.GetEnvironmentVariable("DOCS_ASSETS") ?? ".assets"),
-		Environment.GetEnvironmentVariable("DOCS_PIPE") ?? "repl-docs-index",
-		IPAddress.Parse(Environment.GetEnvironmentVariable("DOCS_ADMIN_ADDRESS") ?? "127.0.0.1"),
-		int.Parse(Environment.GetEnvironmentVariable("DOCS_MCP_PORT") ?? "8080", System.Globalization.CultureInfo.InvariantCulture),
-		int.Parse(Environment.GetEnvironmentVariable("DOCS_ADMIN_PORT") ?? "8081", System.Globalization.CultureInfo.InvariantCulture))
-		{ AdminOrigin = Environment.GetEnvironmentVariable("DOCS_ADMIN_ORIGIN") };
+	internal static Settings FromConfiguration(IConfiguration configuration) => new(
+		Path.GetFullPath(configuration["DOCUMENTS"] ?? "documents"),
+		Path.GetFullPath(configuration["INDEX"] ?? ".index"),
+		Path.GetFullPath(configuration["ASSETS"] ?? ".assets"),
+		configuration["PIPE"] ?? "repl-docs-index",
+		IPAddress.Parse(configuration["ADMIN_ADDRESS"] ?? "127.0.0.1"),
+		configuration.GetValue("MCP_PORT", 8080),
+		configuration.GetValue("ADMIN_PORT", 8081))
+		{ AdminOrigin = configuration["ADMIN_ORIGIN"] };
 
 	internal void Validate()
 	{
