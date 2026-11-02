@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
 using AwesomeAssertions;
-using HostingRemoteSample;
 using Repl.Remote;
 
 namespace Repl.RemoteTests;
@@ -80,7 +79,7 @@ public sealed class Given_RemoteClientMode
 			UseShellExecute = false, CreateNoWindow = true,
 			RedirectStandardOutput = true, RedirectStandardError = true,
 		};
-		start.ArgumentList.Add(typeof(RemoteClientMode).Assembly.Location);
+		start.ArgumentList.Add(HostingSample.AssemblyPath);
 		foreach (var argument in arguments) { start.ArgumentList.Add(argument); }
 		using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the remote client sample.");
 		var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
