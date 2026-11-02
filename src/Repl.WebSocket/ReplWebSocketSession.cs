@@ -11,6 +11,7 @@ public static class ReplWebSocketSession
 	// How long a peer has to answer the session's close before its connection is aborted; the change note in
 	// docs/execution-pipeline.md states it too.
 	private static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(1);
+	private const int MaximumMessageBytes = 64 * 1024;
 
 	/// <summary>
 	/// Runs a REPL app session over a WebSocket-backed host.
@@ -195,6 +196,7 @@ public static class ReplWebSocketSession
 		var characters = new char[Encoding.UTF8.GetMaxCharCount(buffer.Length)];
 		var decoder = Encoding.UTF8.GetDecoder();
 		var message = new StringBuilder();
+		var messageBytes = 0;
 		try
 		{
 			// Reading goes on after the session's own close, until the peer answers it.
@@ -210,24 +212,26 @@ public static class ReplWebSocketSession
 				// Once the session's close is sent, the session has ended: what the peer still sends is not applied.
 				if ((result.Count > 0 || result.EndOfMessage) && socket.State is not WebSocketState.CloseSent)
 				{
+					if (result.Count > MaximumMessageBytes - messageBytes)
+					{
+						using var closing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+						// Keep the socket deadline active while application cancellation callbacks unwind.
+						using var abort = closing.Token.Register(() =>
+						{
+							if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted)) { socket.Abort(); }
+						});
+						closing.CancelAfter(CloseTimeout);
+						try { await socket.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "Messages must not exceed 64 KiB.", closing.Token).ConfigureAwait(false); }
+						finally { host.Interrupt(); }
+						break;
+					}
+					messageBytes += result.Count;
 					message.Append(characters, 0, decoder.GetChars(buffer, 0, result.Count, characters, 0, flush: result.EndOfMessage));
 					if (!result.EndOfMessage) { continue; }
 					var payload = message.ToString();
 					message.Clear();
-					if (result.MessageType == WebSocketMessageType.Text
-					    && TerminalControlProtocol.TryParse(payload, out var controlMessage))
-					{
-						host.ApplyControlMessage(controlMessage);
-						onControlMessage?.Invoke(controlMessage);
-						continue;
-					}
-
-					var segments = payload.Split('\u0003');
-					for (var i = 0; i < segments.Length; i++)
-					{
-						if (segments[i].Length > 0) { host.EnqueueInput(segments[i]); }
-						if (i < segments.Length - 1) { host.Interrupt(); }
-					}
+					messageBytes = 0;
+					DispatchInput(host, payload, result.MessageType, onControlMessage);
 				}
 			}
 		}
@@ -242,6 +246,22 @@ public static class ReplWebSocketSession
 		finally
 		{
 			host.Complete();
+		}
+	}
+
+	private static void DispatchInput(StreamedReplHost host, string payload, WebSocketMessageType type, Action<TerminalControlMessage>? onControlMessage)
+	{
+		if (type == WebSocketMessageType.Text && TerminalControlProtocol.TryParse(payload, out var controlMessage))
+		{
+			host.ApplyControlMessage(controlMessage);
+			onControlMessage?.Invoke(controlMessage);
+			return;
+		}
+		var segments = payload.Split('\u0003');
+		for (var i = 0; i < segments.Length; i++)
+		{
+			if (segments[i].Length > 0) { host.EnqueueInput(segments[i]); }
+			if (i < segments.Length - 1) { host.Interrupt(); }
 		}
 	}
 }
