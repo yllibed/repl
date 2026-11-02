@@ -14,6 +14,7 @@ internal static class ConsoleViews
 		table.AddRow("Published corpus", $"{status.Generation?.Documents ?? 0} documents / {status.Generation?.Sections ?? 0} sections");
 		table.AddRow(new Text(status.Phase), new Text(status.Rebuilding ? $"{status.DocumentsProcessed} documents / {status.SectionsProcessed} sections prepared" : ""));
 		if (status.LastError is { } error) { table.AddRow(new Text("Last failure", new Style(Color.Red)), new Text(error)); }
+		if (status.NextRetryAt is { } retry) { table.AddRow(new Text("Automatic retry"), new Text(retry.ToString("u"))); }
 		return table;
 	}
 

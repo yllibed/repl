@@ -3,12 +3,19 @@ using DocsMcpSample.Search;
 
 namespace DocsMcpSample;
 
-internal sealed record IndexStatus(bool Ready, IndexGeneration? Generation, string Phase, bool Rebuilding, int DocumentsProcessed, int SectionsProcessed, DateTimeOffset? StartedAt, string? LastError);
+internal sealed record IndexStatus(bool Ready, IndexGeneration? Generation, string Phase, bool Rebuilding, int DocumentsProcessed, int SectionsProcessed, DateTimeOffset? StartedAt, string? LastError)
+{
+	public DateTimeOffset? NextRetryAt { get; init; }
+}
 
 internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus, ILogger<IndexingWorker> logger, TimeProvider time) : BackgroundService
 {
 	private sealed record WorkerState(IndexStatus Status, Func<Task>? Cancel = null);
 	private readonly Channel<bool> _requests = Channel.CreateBounded<bool>(1);
+	private static readonly TimeSpan ScanInterval = TimeSpan.FromMinutes(1);
+	private int _failures;
+	private string? _failedFingerprint;
+	private DateTimeOffset _retryAt;
 	private WorkerState _state = new(new(false, null, "Starting", false, 0, 0, null, null));
 	internal IndexStatus Status => Volatile.Read(ref _state).Status;
 	internal void RequireReady()
@@ -37,8 +44,8 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 		while (!stoppingToken.IsCancellationRequested)
 		{
 			await RefreshAsync(force, stoppingToken);
-			using var scan = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-			scan.CancelAfter(TimeSpan.FromSeconds(60));
+			using var timeout = new CancellationTokenSource(ScanInterval, time);
+			using var scan = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeout.Token);
 			try { force = await _requests.Reader.ReadAsync(scan.Token); }
 			catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested) { force = false; }
 		}
@@ -46,28 +53,49 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 
 	private async Task RefreshAsync(bool force, CancellationToken stoppingToken)
 	{
+		string? fingerprint = null;
+		if (!force && _failures > 0 && _failedFingerprint is null && time.GetUtcNow() < _retryAt) { return; }
 		try
 		{
 			index.Initialize();
 			var published = index.Generation();
 			SetStatus(Status with { Ready = published is not null, Generation = published, Phase = "Checking documents" });
-			var fingerprint = await corpus.FingerprintAsync(stoppingToken);
+			fingerprint = await corpus.FingerprintAsync(stoppingToken);
 			if (!force && Status.Generation?.Fingerprint == fingerprint)
 			{
+				ClearRetry();
 				SetStatus(Status with { Phase = "Up to date" });
 				return;
 			}
+			if (!force && _failures > 0 && fingerprint == _failedFingerprint && time.GetUtcNow() < _retryAt)
+			{
+				SetStatus(Status with { Phase = "Retry scheduled" });
+				return;
+			}
 			await RebuildAsync(stoppingToken);
+			ClearRetry();
 		}
 		catch (OperationCanceledException) when (!stoppingToken.IsCancellationRequested)
 		{
+			Hosting.Log.IndexCancelled(logger);
 			SetStatus(Status with { Phase = "Rebuild cancelled" });
+			ClearRetry();
 		}
 		catch (Exception error) when (error is not OperationCanceledException)
 		{
-			Hosting.Log.IndexFailure(logger, error);
-			SetStatus(Status with { Phase = "Indexing failed", LastError = error.Message });
+			_failures = Math.Min(_failures + 1, 5);
+			_failedFingerprint = fingerprint;
+			_retryAt = time.GetUtcNow() + TimeSpan.FromSeconds(Math.Min(60 * (1 << (_failures - 1)), 900));
+			Hosting.Log.IndexFailure(logger, error, _retryAt);
+			SetStatus(Status with { Phase = "Indexing failed", LastError = error.Message, NextRetryAt = _retryAt });
 		}
+	}
+
+	private void ClearRetry()
+	{
+		_failures = 0;
+		_failedFingerprint = null;
+		SetStatus(Status with { NextRetryAt = null });
 	}
 
 	private async Task RebuildAsync(CancellationToken stoppingToken)
@@ -87,8 +115,10 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 			DocumentsProcessed = 0,
 			SectionsProcessed = 0,
 			StartedAt = time.GetUtcNow(),
+			NextRetryAt = null,
 		};
 		Volatile.Write(ref _state, new(rebuilding, CancelAsync));
+		Hosting.Log.IndexStarted(logger);
 		try
 		{
 			var generation = await index.RebuildAsync(corpus, (documents, sections) =>
@@ -96,6 +126,7 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 				SetStatus(Status with { DocumentsProcessed = documents, SectionsProcessed = sections });
 			}, build.Token);
 			SetStatus(Status with { Ready = true, Generation = generation, Phase = "Up to date", LastError = null });
+			Hosting.Log.IndexPublished(logger, generation.Id, generation.Documents, generation.Sections);
 		}
 		finally
 		{

@@ -5,7 +5,7 @@ namespace DocsMcpSample.Search;
 
 internal sealed class E5Embedding : ITextEmbedding, IDisposable
 {
-	internal const int MaxTokens = 512;
+	public int MaxTokens => 512;
 	private readonly SentencePieceTokenizer _tokenizer;
 	private readonly InferenceSession _model;
 	private readonly Lock _tokenizerGate = new();

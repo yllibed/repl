@@ -137,6 +137,12 @@ Start with the server's terminal or `docker compose logs`, then inspect `index s
 
 Model identity and schema version prevent serving an incompatible generation. If the existing schema is still usable, the worker rebuilds automatically. If opening the database itself fails, the worker reports the failure and can retry; do not remove a live database beneath active readers.
 
+After repeated failures, automatic rebuild attempts for the same corpus wait 1, 2, 4, 8,
+then at most 15 minutes. Scans still check for changed documents every minute when the
+index can be opened. A changed corpus can bypass the delay; a manual `index rebuild`
+bypasses it immediately. Success resets the delay, and cancellation is not recorded as a
+failure. `index status` reports the next scheduled retry alongside the last error.
+
 A pipe connection has a five-second deadline. An absent server reports the pipe name and asks
 you to start it (`dotnet run -- serve`); an explicit caller cancellation remains cancellation.
 One-shot commands have a separate 30-second deadline after connection. Startup failures include

@@ -6,6 +6,23 @@ namespace Repl.DocsSampleTests;
 public sealed class Given_MarkdownCorpus
 {
 	[TestMethod]
+	[DataRow(32)]
+	[DataRow(1024)]
+	[Description("Passage preparation follows the selected model's token window, including windows smaller and larger than the bundled model's.")]
+	public void When_TheModelWindowChanges_Then_ChunksUseThatWindow(int window)
+	{
+		using var fixture = new TestCorpus();
+		var embedding = new TestEmbedding { MaxTokens = window };
+		var corpus = new MarkdownCorpus(fixture.Settings, embedding);
+		var text = new string('a', 1500) + "😀";
+
+		var document = corpus.Parse("guide.md", text);
+
+		document.Sections.Should().OnlyContain(section => embedding.CountPassageTokens(section.Text) <= window);
+		document.Sections.Max(section => embedding.CountPassageTokens(section.Text)).Should().Be(window);
+		string.Concat(document.Sections.Select(section => section.Text)).Should().Be(text);
+	}
+	[TestMethod]
 	[Description("Each chunk fits the actual embedding window while retaining source references and duplicate-heading identity.")]
 	public void When_HeadingsRepeatAndParagraphsAreLong_Then_ChunksRemainBoundedAndAddressable()
 	{
@@ -14,7 +31,7 @@ public sealed class Given_MarkdownCorpus
 
 		var document = fixture.Corpus.Parse("guide.md", text);
 
-		document.Sections.Should().OnlyContain(section => fixture.Embedding.CountPassageTokens(section.Text) <= E5Embedding.MaxTokens);
+		document.Sections.Should().OnlyContain(section => fixture.Embedding.CountPassageTokens(section.Text) <= fixture.Embedding.MaxTokens);
 		document.Sections.Select(section => section.Id).Should().OnlyHaveUniqueItems();
 		document.Sections.Should().Contain(section => section.Anchor == "console-1");
 		document.Sections.Should().OnlyContain(section => section.StartLine > 0 && section.EndLine >= section.StartLine && section.Source == "guide.md");

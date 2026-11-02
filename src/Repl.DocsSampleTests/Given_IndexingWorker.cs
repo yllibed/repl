@@ -8,6 +8,134 @@ namespace Repl.DocsSampleTests;
 public sealed class Given_IndexingWorker
 {
 	[TestMethod]
+	[Description("Repeated failures delay automatic rebuilds; manual requests and changed documents bypass the delay, and a successful build resets it.")]
+	public async Task When_RebuildsKeepFailing_Then_RetriesBackOffWithoutBlockingRecovery()
+	{
+		using var fixture = new TestCorpus();
+		await fixture.WriteAsync("guide.md", "# Guide\n\nOriginal.").ConfigureAwait(false);
+		var attempts = 0;
+		var fail = 1;
+		fixture.Embedding.BeforeEmbedding = () =>
+		{
+			Interlocked.Increment(ref attempts);
+			if (Volatile.Read(ref fail) == 1) { throw new IOException("Temporary storage failure."); }
+		};
+		var clock = new ObservedTimeProvider(fixture.Clock);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, clock);
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await WaitForAsync(() => clock.Timers >= 1, deadline.Token).ConfigureAwait(false);
+			Volatile.Read(ref attempts).Should().Be(1);
+
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers >= 2, deadline.Token).ConfigureAwait(false);
+			Volatile.Read(ref attempts).Should().Be(2);
+
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers >= 3, deadline.Token).ConfigureAwait(false);
+			Volatile.Read(ref attempts).Should().Be(2, because: "the second failure waits two minutes before rebuilding the same corpus");
+
+			worker.RequestRebuild();
+			await WaitForAsync(() => clock.Timers >= 4, deadline.Token).ConfigureAwait(false);
+			Volatile.Read(ref attempts).Should().Be(3);
+			Interlocked.Exchange(ref fail, 0);
+			await fixture.WriteAsync("guide.md", "# Guide\n\nChanged during the retry delay.").ConfigureAwait(false);
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers >= 5, deadline.Token).ConfigureAwait(false);
+			worker.Status.Ready.Should().BeTrue();
+			worker.Status.LastError.Should().BeNull();
+			Volatile.Read(ref attempts).Should().Be(4);
+
+			Interlocked.Exchange(ref fail, 1);
+			await fixture.WriteAsync("guide.md", "# Guide\n\nAnother replacement.").ConfigureAwait(false);
+			worker.RequestRebuild();
+			await WaitForAsync(() => clock.Timers >= 6, deadline.Token).ConfigureAwait(false);
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers >= 7, deadline.Token).ConfigureAwait(false);
+			Volatile.Read(ref attempts).Should().Be(6, because: "success resets the next failure's retry delay to one minute");
+			worker.Status.Ready.Should().BeTrue();
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	[TestMethod]
+	[Description("A persistent failure continues to receive automatic attempts within the maximum retry delay instead of being blacklisted indefinitely.")]
+	public async Task When_AFailurePersists_Then_TheAutomaticRetryDelayRemainsCapped()
+	{
+		using var fixture = new TestCorpus();
+		await fixture.WriteAsync("guide.md", "# Guide\n\nCannot currently be embedded.").ConfigureAwait(false);
+		var attempts = 0;
+		fixture.Embedding.BeforeEmbedding = () => { Interlocked.Increment(ref attempts); throw new IOException("Temporary failure."); };
+		var clock = new ObservedTimeProvider(fixture.Clock);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, clock);
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await WaitForAsync(() => clock.Timers >= 1, deadline.Token).ConfigureAwait(false);
+			for (var retry = 0; retry < 8; retry++)
+			{
+				var timers = clock.Timers;
+				fixture.Clock.Advance(TimeSpan.FromMinutes(15));
+				await WaitForAsync(() => clock.Timers > timers, deadline.Token).ConfigureAwait(false);
+				Volatile.Read(ref attempts).Should().Be(2 + retry);
+			}
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	[TestMethod]
+	[Description("Restoring the published corpus after a failed replacement clears an obsolete retry and resets the delay for a later unrelated failure.")]
+	public async Task When_TheCorpusIsRestored_Then_ObsoleteRetryStateIsCleared()
+	{
+		using var fixture = new TestCorpus();
+		const string original = "# Guide\n\nPublished content.";
+		await fixture.WriteAsync("guide.md", original).ConfigureAwait(false);
+		fixture.Index.Initialize();
+		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		fixture.Embedding.BeforeEmbedding = () => throw new IOException("Temporary failure.");
+		var clock = new ObservedTimeProvider(fixture.Clock);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, clock);
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await WaitForAsync(() => clock.Timers >= 1, deadline.Token).ConfigureAwait(false);
+			await fixture.WriteAsync("guide.md", "# Guide\n\nFailed replacement.").ConfigureAwait(false);
+			worker.RequestRebuild();
+			await WaitForAsync(() => clock.Timers >= 2, deadline.Token).ConfigureAwait(false);
+			worker.Status.NextRetryAt.Should().NotBeNull();
+
+			await fixture.WriteAsync("guide.md", original).ConfigureAwait(false);
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers >= 3, deadline.Token).ConfigureAwait(false);
+			worker.Status.Phase.Should().Be("Up to date");
+			worker.Status.NextRetryAt.Should().BeNull();
+
+			await fixture.WriteAsync("guide.md", "# Guide\n\nAnother failure.").ConfigureAwait(false);
+			worker.RequestRebuild();
+			await WaitForAsync(() => clock.Timers >= 4, deadline.Token).ConfigureAwait(false);
+			worker.Status.NextRetryAt.Should().Be(fixture.Clock.GetUtcNow() + TimeSpan.FromMinutes(1));
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	private sealed class ObservedTimeProvider(TimeProvider inner) : TimeProvider
+	{
+		private int _timers;
+		internal int Timers => Volatile.Read(ref _timers);
+		public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+		public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+		{
+			var timer = inner.CreateTimer(callback, state, dueTime, period);
+			Interlocked.Increment(ref _timers);
+			return timer;
+		}
+	}
+
+	[TestMethod]
 	[Description("Concurrent readers and administration requests cancel a paused replacement without losing the published snapshot, then allow another build to succeed.")]
 	public async Task When_ARequestedBuildIsCancelled_Then_AnotherRequestCanPublish()
 	{

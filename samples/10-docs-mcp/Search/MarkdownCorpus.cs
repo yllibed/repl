@@ -79,7 +79,7 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 			{
 				cancellationToken.ThrowIfCancellationRequested();
 				if (pending.Length > 0 && (pending.Length + 2 + text.Length - consumed > MaximumPassageCharacters
-					|| embedding.CountPassageTokens(pending + "\n\n" + text[consumed..]) > E5Embedding.MaxTokens)) { Flush(); }
+					|| embedding.CountPassageTokens(pending + "\n\n" + text[consumed..]) > embedding.MaxTokens)) { Flush(); }
 				var length = FitPassagePrefix(text, consumed, cancellationToken);
 				if (pending.Length == 0) { startLine = line; }
 				else { pending.Append("\n\n"); }
@@ -107,12 +107,12 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		var low = 0;
 		var high = Math.Min(text.Length - offset, MaximumPassageCharacters);
 		if (offset + high < text.Length && char.IsHighSurrogate(text[offset + high - 1])) { high--; }
-		if (embedding.CountPassageTokens(text.Substring(offset, high)) <= E5Embedding.MaxTokens) { return high; }
+		if (embedding.CountPassageTokens(text.Substring(offset, high)) <= embedding.MaxTokens) { return high; }
 		while (low < high)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
 			var middle = (low + high + 1) / 2;
-			if (embedding.CountPassageTokens(text.Substring(offset, middle)) <= E5Embedding.MaxTokens) { low = middle; }
+			if (embedding.CountPassageTokens(text.Substring(offset, middle)) <= embedding.MaxTokens) { low = middle; }
 			else { high = middle - 1; }
 		}
 		if (low > 0 && char.IsHighSurrogate(text[offset + low - 1])) { low--; }

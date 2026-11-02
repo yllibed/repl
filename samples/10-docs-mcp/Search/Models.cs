@@ -12,6 +12,7 @@ internal interface ITextEmbedding
 {
 	string Identity { get; }
 	int Dimensions { get; }
+	int MaxTokens { get; }
 	int CountPassageTokens(string text);
 	float[] Embed(string text, bool query, CancellationToken cancellationToken);
 }

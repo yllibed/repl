@@ -169,6 +169,11 @@ deployment policies or an authentication scheme.
 
 Start by replacing the corpus; you do not need to change the transports. Then choose the seam that corresponds to your change:
 
+`ITextEmbedding.MaxTokens` is the passage budget used by the chunker. A replacement model
+supplies that budget along with its tokenizer, vector dimensions and identity; the corpus
+does not refer to E5-specific constants. `CountPassageTokens` must include the model's passage
+prefix and special tokens. The worker's scan and retry deadlines use its injected `TimeProvider`.
+
 | Change | Start here | Keep in mind |
 | --- | --- | --- |
 | Add an administrative command | [DocumentsModule.cs](../DocumentsModule.cs), [IndexModule.cs](../IndexModule.cs), or root [Commands.cs](../Commands.cs) | Keep the domain context and MCP allowlist explicit |
