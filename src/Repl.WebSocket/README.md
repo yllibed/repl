@@ -39,6 +39,7 @@ await ReplWebSocketSession.RunWithServicesAsync(app, socket, context.RequestServ
 - Supports in-band terminal control messages (`@@repl:*`) for terminal/session metadata.
 - Reassembles fragmented messages before decoding terminal controls and preserves UTF-8 characters split across reads.
 - Limits each incoming message to 64 KiB across all its fragments. Oversized messages close the session with `MessageTooBig` (1009), interrupting its active command; a peer that ignores the close is aborted after the close deadline. Clients sending larger pastes must split them into separate messages.
+- The one-second close deadline starts once and remains active during synchronous cancellation callbacks and asynchronous command cleanup. The connection can be aborted while cleanup is pending; the session still waits for that cleanup before releasing its host and borrowed services.
 - A terminal Ctrl+C interrupts the active command in that session; it does not stop the host.
 
 ## Docs

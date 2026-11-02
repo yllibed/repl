@@ -88,11 +88,20 @@ public static class ReplWebSocketSession
 		var writer = new WebSocketTextWriter(socket, cancellationToken);
 		var host = new StreamedReplHost(writer) { TransportName = "websocket" };
 		host.UpdateTerminalCapabilities(TerminalCapabilities.VtInput);
-		var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		using var receiveCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+		using var abort = receiveCts.Token.Register(() =>
+		{
+			if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted)) { socket.Abort(); }
+		});
+		var closeStarted = 0;
+		void BeginClose()
+		{
+			if (Interlocked.Exchange(ref closeStarted, 1) == 0) { receiveCts.CancelAfter(CloseTimeout); }
+		}
 
 		try
 		{
-			var receiveTask = ReceiveLoopAsync(socket, host, onControlMessage, receiveCts.Token);
+			var receiveTask = ReceiveLoopAsync(socket, host, onControlMessage, BeginClose, receiveCts.Token);
 
 			int exitCode;
 			try
@@ -112,7 +121,7 @@ public static class ReplWebSocketSession
 				{
 					// A WebSocket aborts a receive that is cancelled, so a pending receive is ended by closing the
 					// connection, or by answering the peer's own close; one deadline covers the whole handshake.
-					receiveCts.CancelAfter(CloseTimeout);
+					BeginClose();
 					if (!receiveTask.IsCompleted)
 					{
 						await SendCloseAsync(socket, receiveCts.Token).ConfigureAwait(false);
@@ -130,7 +139,6 @@ public static class ReplWebSocketSession
 		finally
 		{
 			await host.DisposeAsync().ConfigureAwait(false);
-			receiveCts.Dispose();
 		}
 	}
 
@@ -190,6 +198,7 @@ public static class ReplWebSocketSession
 		System.Net.WebSockets.WebSocket socket,
 		StreamedReplHost host,
 		Action<TerminalControlMessage>? onControlMessage,
+		Action beginClose,
 		CancellationToken cancellationToken)
 	{
 		var buffer = new byte[4096];
@@ -214,14 +223,8 @@ public static class ReplWebSocketSession
 				{
 					if (result.Count > MaximumMessageBytes - messageBytes)
 					{
-						using var closing = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-						// Keep the socket deadline active while application cancellation callbacks unwind.
-						using var abort = closing.Token.Register(() =>
-						{
-							if (socket.State is not (WebSocketState.Closed or WebSocketState.Aborted)) { socket.Abort(); }
-						});
-						closing.CancelAfter(CloseTimeout);
-						try { await socket.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "Messages must not exceed 64 KiB.", closing.Token).ConfigureAwait(false); }
+						beginClose();
+						try { await socket.CloseOutputAsync(WebSocketCloseStatus.MessageTooBig, "Messages must not exceed 64 KiB.", cancellationToken).ConfigureAwait(false); }
 						finally { host.Interrupt(); }
 						break;
 					}

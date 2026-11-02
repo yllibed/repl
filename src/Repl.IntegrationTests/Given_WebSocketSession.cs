@@ -205,6 +205,49 @@ public sealed class Given_WebSocketSession
 	}
 
 	[TestMethod]
+	[Description("An ignored size rejection still aborts the connection while asynchronous command cleanup is pending, without disposing the command's session prematurely.")]
+	public async Task When_AsyncCleanupOutlivesTheSizeRejection_Then_TheConnectionDeadlineRemainsActive()
+	{
+		using var deadline = new CancellationTokenSource(Patience);
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var cleaning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = CreateApp();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally
+			{
+				cleaning.TrySetResult();
+#pragma warning disable VSTHRD003 // The test owns the gate that deliberately holds asynchronous cleanup open.
+				await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+			}
+		});
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var rejection = InMemoryWebSocketPair.ReceiveTheCloseAsync(client);
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+			try
+			{
+				await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+				await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+				await client.SendAsync(new byte[65537], WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+
+				(await rejection.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.MessageTooBig);
+				await cleaning.Task.WaitAsync(Patience).ConfigureAwait(false);
+				while (server.State != WebSocketState.Aborted) { await Task.Delay(10, deadline.Token).ConfigureAwait(false); }
+				run.IsCompleted.Should().BeFalse();
+			}
+			finally { release.TrySetResult(); }
+			await run.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
 	[Description("A failed rejection frame still cancels the active command, allowing the session to unwind instead of waiting forever for its token.")]
 	public async Task When_TheSizeRejectionCannotBeSent_Then_TheActiveCommandStillStops()
 	{
