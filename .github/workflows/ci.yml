@@ -647,14 +647,15 @@ jobs:
         run: |
           $source = 'https://api.nuget.org/v3/index.json'
           $apiKey = $env:NUGET_API_KEY
-          $failed = @()
+          $failedPackages = @()
+          $failedSymbols = @()
 
           foreach ($pkg in Get-ChildItem packages/*.nupkg) {
             Write-Host "Pushing $($pkg.Name)..."
             dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
-              $failed += $pkg.Name
+              $failedPackages += $pkg.Name
             }
           }
 
@@ -663,7 +664,7 @@ jobs:
             dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
-              $failed += $pkg.Name
+              $failedSymbols += $pkg.Name
             }
           }
 
@@ -672,8 +673,6 @@ jobs:
           # restore some packages of the version and not others. Re-running this workflow is the
           # recovery: --skip-duplicate passes over what was published and retries the rest.
           # A missing symbol package (.snupkg) degrades debugging only, so it stays a warning.
-          $failedPackages = @($failed | Where-Object { $_ -like '*.nupkg' })
-          $failedSymbols = @($failed | Where-Object { $_ -like '*.snupkg' })
           if ($failedSymbols.Count -gt 0) {
             Write-Warning "These symbol packages failed to publish: $($failedSymbols -join ', ')"
           }
@@ -681,6 +680,9 @@ jobs:
             Write-Host "::error title=NuGet publish incomplete::$($failedPackages.Count) package(s) failed to publish: $($failedPackages -join ', '). Re-run this workflow to push them; published packages are skipped."
             exit 1
           }
+          # GitHub ends a pwsh step with the last native command's exit code, so a failed symbol push
+          # that ran last would otherwise fail the job despite the warning above.
+          exit 0
 
   container-hosting:
     name: Container Hosting Smoke
