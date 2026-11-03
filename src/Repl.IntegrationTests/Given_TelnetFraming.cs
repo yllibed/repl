@@ -289,6 +289,90 @@ public sealed class Given_TelnetFraming
 		output.Flushes[1].Should().Be(firstWrite, "the first write ends just before the character the slice size falls in");
 	}
 
+	[TestMethod]
+	[DataRow("span")]
+	[DataRow("char array")]
+	[DataRow("char by char")]
+	[DataRow("char by char, async")]
+	[DataRow("char array, async")]
+	[DataRow("string memory, async")]
+	[DataRow("array memory, async")]
+	[Description("Verifies a character outside the Basic Multilingual Plane reaches the peer whole whichever TextWriter overload writes it, including those that hand it over one UTF-16 unit at a time, rather than as two replacement characters.")]
+	public async Task When_ASurrogatePairIsWrittenThroughAnyOverload_Then_ThePeerReceivesTheCharacter(string overload)
+	{
+		const string text = "a\U0001F600b";
+
+		var received = await SendThroughOverloadAsync(text, overload).ConfigureAwait(false);
+
+		received.Should().Be(text);
+	}
+
+	[TestMethod]
+	[Description("Verifies a high surrogate still waiting for its pair when the output ends reaches the peer as a replacement character, as a lone surrogate written on its own always did, rather than being dropped.")]
+	public async Task When_TheOutputEndsAfterAHighSurrogate_Then_ThePeerReceivesAReplacementCharacter()
+	{
+		var received = await SendThroughOverloadAsync("a\uD83D", "char by char").ConfigureAwait(false);
+
+		received.Should().Be("a\uFFFD");
+	}
+
+	// Writes the text through one TextWriter overload, disposes the framing, and decodes what the peer received after
+	// the negotiation.
+	private static async Task<string> SendThroughOverloadAsync(string text, string overload)
+	{
+		var toPeer = new Pipe();
+		var output = new FlushRecordingPipeWriter(toPeer.Writer);
+		var framing = new TelnetFraming(new DuplexPipe(new Pipe().Reader, output));
+		var run = framing.RunAsync(CancellationToken.None);
+		var writer = framing.Output;
+#pragma warning disable VSTHRD103 // The synchronous overloads are among those under test.
+		switch (overload)
+		{
+			case "span":
+				writer.Write(text.AsSpan());
+				break;
+			case "char array":
+				writer.Write(text.ToCharArray(), 0, text.Length);
+				break;
+			case "char by char":
+				foreach (var unit in text)
+				{
+					writer.Write(unit);
+				}
+
+				break;
+			case "char by char, async":
+				foreach (var unit in text)
+				{
+					await writer.WriteAsync(unit).ConfigureAwait(false);
+				}
+
+				break;
+			case "char array, async":
+				await writer.WriteAsync(text.ToCharArray(), 0, text.Length).ConfigureAwait(false);
+				break;
+			case "string memory, async":
+				await writer.WriteAsync(text.AsMemory()).ConfigureAwait(false);
+				break;
+			case "array memory, async":
+				await writer.WriteAsync(text.ToCharArray().AsMemory()).ConfigureAwait(false);
+				break;
+			default:
+				throw new ArgumentOutOfRangeException(nameof(overload), overload, message: null);
+		}
+#pragma warning restore VSTHRD103
+
+		await framing.DisposeAsync().AsTask().WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+
+		toPeer.Reader.TryRead(out var sent).Should().BeTrue();
+		var bytes = System.Buffers.BuffersExtensions.ToArray(sent.Buffer);
+		var negotiation = (int)output.Flushes[0];
+		// Strict, so a malformed sequence fails here rather than decoding to the replacement character a test expects.
+		var strict = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+		return strict.GetString(bytes, negotiation, bytes.Length - negotiation);
+	}
+
 	// A pipe writer that records how many bytes each flush sends.
 	private sealed class FlushRecordingPipeWriter(PipeWriter inner) : PipeWriter
 	{
