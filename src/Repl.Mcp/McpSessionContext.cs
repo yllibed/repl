@@ -20,7 +20,15 @@ namespace Repl.Mcp;
 /// </remarks>
 internal sealed class McpSessionContext : IAsyncDisposable
 {
-	private SnapshotCacheEntry? _snapshotCache;
+	// One entry per protocol era, since the two eras see different command graphs: a modern build answers
+	// every capability question "supported" so the advertised set cannot vary per connection, while a
+	// legacy build reflects the session's own capabilities. One connection really is served both: modern
+	// requests, then an initialize and legacy ones (see
+	// When_OneConnectionIsServedBothEras_Then_EachGetsItsOwnCatalog). A modern request accepted before
+	// initialize can still publish after the legacy one — the SDK dispatches a connection's requests
+	// concurrently — so one shared slot would let it evict the legacy entry the availability fallback reads.
+	private SnapshotCacheEntry? _legacySnapshot;
+	private SnapshotCacheEntry? _modernSnapshot;
 	private int _compatibilityIntroServed;
 	// The routing version whose build last failed onto the availability fallback, or 0 for none —
 	// versions start at 1. Interlocked, like the intro flag, so no caller has to hold a lock.
@@ -48,17 +56,21 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	public SemaphoreSlim SnapshotGate { get; } = new(initialCount: 1, maxCount: 1);
 
 	/// <summary>
-	/// Cached snapshot paired with the routing version it was built at, or <see langword="null"/>
-	/// before this session's first build.
+	/// This session's cached snapshot for the <paramref name="sessionless"/> era, paired with the routing
+	/// version it was built at, or <see langword="null"/> before that era's first build.
 	/// </summary>
-	public SnapshotCacheEntry? SnapshotCache => Volatile.Read(ref _snapshotCache);
+	public SnapshotCacheEntry? GetSnapshotCache(bool sessionless) => Volatile.Read(ref Slot(sessionless));
+
+	/// <summary>Whether any catalog, of either era, has been published on this session.</summary>
+	public bool HasServedSnapshot =>
+		Volatile.Read(ref _legacySnapshot) is not null || Volatile.Read(ref _modernSnapshot) is not null;
 
 	/// <summary>Publishes <paramref name="snapshot"/> as current for <paramref name="version"/>.</summary>
 	public void PublishSnapshot(
 		McpServerHandler.McpGeneratedSnapshot snapshot,
 		long version,
 		bool sessionless) =>
-		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, version, IsStale: false, sessionless));
+		Volatile.Write(ref Slot(sessionless), new SnapshotCacheEntry(snapshot, version, IsStale: false));
 
 	/// <summary>
 	/// Publishes <paramref name="snapshot"/>, built at <paramref name="version"/>, as serve-able but
@@ -68,7 +80,11 @@ internal sealed class McpSessionContext : IAsyncDisposable
 		McpServerHandler.McpGeneratedSnapshot snapshot,
 		long version,
 		bool sessionless) =>
-		Volatile.Write(ref _snapshotCache, new SnapshotCacheEntry(snapshot, version, IsStale: true, sessionless));
+		Volatile.Write(ref Slot(sessionless), new SnapshotCacheEntry(snapshot, version, IsStale: true));
+
+	// By reference, because Volatile.Read and Volatile.Write need the field itself, not a copy of it.
+	private ref SnapshotCacheEntry? Slot(bool sessionless) =>
+		ref sessionless ? ref _modernSnapshot : ref _legacySnapshot;
 
 	/// <summary>
 	/// Records that the build for <paramref name="failingVersion"/> failed onto the fallback;
@@ -79,9 +95,16 @@ internal sealed class McpSessionContext : IAsyncDisposable
 		Interlocked.Exchange(ref _catalogFailureVersion, failingVersion) != failingVersion;
 
 	/// <summary>
-	/// Ends a failure episode after a successful build; <see langword="true"/> if one was in progress.
+	/// Ends a failure episode after a successful build of the <paramref name="sessionless"/> era;
+	/// <see langword="true"/> if one was in progress.
 	/// </summary>
-	public bool TryClearCatalogFailure() => Interlocked.Exchange(ref _catalogFailureVersion, 0) != 0;
+	/// <remarks>
+	/// Only a legacy build falls back, so only a legacy failure opens an episode, and only a legacy build can
+	/// end it: a modern build sees a different command graph, and its success says nothing about the legacy one.
+	/// The era rule is <see cref="McpServerHandler"/>'s <c>IsFallbackEligible</c>; the two must change together.
+	/// </remarks>
+	public bool TryClearCatalogFailure(bool sessionless) =>
+		!sessionless && Interlocked.Exchange(ref _catalogFailureVersion, 0) != 0;
 
 	/// <summary>
 	/// Claims this session's one-time compatibility-shim intro; <see langword="true"/> for the first
@@ -120,19 +143,8 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	/// <param name="Snapshot">The generated tool, resource and prompt graph.</param>
 	/// <param name="Version">The routing version this snapshot was built at.</param>
 	/// <param name="IsStale">Whether the next request must rebuild rather than serve this again.</param>
-	/// <param name="Sessionless">
-	/// The protocol era this snapshot was built for. It is part of the key rather than an attribute,
-	/// because the two eras see different command graphs: a modern build answers every capability
-	/// question "supported" so the advertised set cannot vary per connection, while a legacy build
-	/// reflects the session's own capabilities. One connection really does reach this cache with both:
-	/// the SDK accepts a modern per-request call and then an <c>initialize</c> handshake on the same
-	/// pipe, which is what the specification means by a dual-era server. Without the era in the key the
-	/// second request is served the first one's catalog — see
-	/// <c>When_OneConnectionIsServedBothEras_Then_EachGetsItsOwnCatalog</c>.
-	/// </param>
 	internal sealed record SnapshotCacheEntry(
 		McpServerHandler.McpGeneratedSnapshot Snapshot,
 		long Version,
-		bool IsStale,
-		bool Sessionless);
+		bool IsStale);
 }
