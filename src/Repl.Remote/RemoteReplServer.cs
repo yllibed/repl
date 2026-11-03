@@ -13,7 +13,10 @@ public static class RemoteReplServer
 	/// <summary>Serves a duplex stream until disconnection or cancellation, reporting failures the client sees only as a sanitized error.</summary>
 	/// <param name="stream">The duplex stream to serve.</param>
 	/// <param name="backend">The backend that handles requests.</param>
-	/// <param name="onError">Receives the detail of each failure the client sees only as a sanitized error.</param>
+	/// <param name="onError">
+	/// Receives the detail of each failure the client sees only as a sanitized error. It runs on the failing path, so it
+	/// should only record the error; an exception it throws is traced and otherwise ignored.
+	/// </param>
 	/// <param name="cancellationToken">Stops serving.</param>
 	public static Task RunAsync(Stream stream, IRemoteReplBackend backend, Action<Exception>? onError,
 		CancellationToken cancellationToken = default) =>
@@ -28,7 +31,10 @@ public static class RemoteReplServer
 	/// <param name="input">The stream requests are read from.</param>
 	/// <param name="output">The stream responses and notifications are written to.</param>
 	/// <param name="backend">The backend that handles requests.</param>
-	/// <param name="onError">Receives the detail of each failure the client sees only as a sanitized error.</param>
+	/// <param name="onError">
+	/// Receives the detail of each failure the client sees only as a sanitized error. It runs on the failing path, so it
+	/// should only record the error; an exception it throws is traced and otherwise ignored.
+	/// </param>
 	/// <param name="cancellationToken">Stops serving.</param>
 	public static async Task RunAsync(Stream input, Stream output, IRemoteReplBackend backend, Action<Exception>? onError,
 		CancellationToken cancellationToken = default)

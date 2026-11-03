@@ -61,9 +61,9 @@ webApp.MapWebSocketTerminals();
 webApp.MapHub<ReplHub>("/hub/repl");
 
 var repl = webApp.Services.GetRequiredService<ReplApp>();
-var connectionFailed = LoggerMessage.Define(LogLevel.Warning, eventId: default, "Remote CLI connection failed");
+var remoteFailed = LoggerMessage.Define(LogLevel.Warning, eventId: default, "Remote CLI failure");
 var pipeName = webApp.Configuration["Repl:PipeName"] ?? "repl-hosting-sample";
 var remote = new NamedPipeReplServer(pipeName,
 	_ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(repl, webApp.Services)),
-	error => connectionFailed(webApp.Logger, error));
+	error => remoteFailed(webApp.Logger, error));
 return await HostingLifetime.RunAsync(webApp, remote);

@@ -57,6 +57,30 @@ public sealed class Given_RemoteDiagnostics
 	}
 
 	[TestMethod]
+	[Description("A connection whose backend cannot be created reports that failure to the listener's callback, and the endpoint keeps serving the next connection.")]
+	public async Task When_ABackendCannotBeCreated_Then_TheListenerReportsItAndKeepsServing()
+	{
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+		var failure = new InvalidOperationException("The backend's database is unavailable.");
+		var reported = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+		var attempts = 0;
+		var name = TestPipeName.Create();
+		await using var server = new NamedPipeReplServer(name,
+			_ => Interlocked.Increment(ref attempts) == 1
+				? ValueTask.FromException<IRemoteReplBackend>(failure)
+				: ValueTask.FromResult<IRemoteReplBackend>(new FailingBackend()),
+			error => reported.TrySetResult(error));
+
+		await using (await NamedPipeReplServer.ConnectAsync(name, deadline.Token))
+		{
+			(await reported.Task.WaitAsync(deadline.Token)).Should().BeSameAs(failure);
+		}
+		await using var next = await NamedPipeReplServer.ConnectAsync(name, deadline.Token);
+
+		(await next.DescribeAsync(deadline.Token)).Name.Should().Be("failing");
+	}
+
+	[TestMethod]
 	[Description("An error callback that throws is contained: the client still gets the sanitized error and the connection keeps serving.")]
 	public async Task When_TheErrorCallbackThrows_Then_TheConnectionKeepsServing()
 	{

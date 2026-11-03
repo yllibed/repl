@@ -13,34 +13,35 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 	private NamedPipeServerStream? _accepting;
 	private readonly string _pipeName;
 	private readonly Func<CancellationToken, ValueTask<IRemoteReplBackend>> _backendFactory;
-	private readonly Action<Exception>? _onConnectionError;
+	private readonly Action<Exception>? _onError;
 	private long _nextId;
 	private int _disposed;
 
 	/// <summary>Starts accepting connections. An already-owned endpoint causes construction to fail.</summary>
 	/// <param name="pipeName">The local endpoint name.</param>
 	/// <param name="backendFactory">Creates the backend that owns one connection.</param>
-	/// <param name="onConnectionError">
+	/// <param name="onError">
 	/// Receives the detail of every failure the client sees only as a sanitized error or a dropped connection:
-	/// a backend method or terminal failure, a connection that failed, and a fault that stops the endpoint
-	/// accepting. It runs on the failing path, so it should only record the error; an exception it throws is
-	/// traced and otherwise ignored.
+	/// a backend method or terminal failure, a connection that failed, a fault that stops the endpoint
+	/// accepting, and a cleanup failure after <see cref="DisposeAsync"/> timed out. It runs on the failing path,
+	/// possibly for several connections at once, so it should only record the error and be thread-safe; an
+	/// exception it throws is traced and otherwise ignored.
 	/// </param>
 	public NamedPipeReplServer(string pipeName, Func<CancellationToken, ValueTask<IRemoteReplBackend>> backendFactory,
-		Action<Exception>? onConnectionError = null)
+		Action<Exception>? onError = null)
 	{
 		ArgumentException.ThrowIfNullOrWhiteSpace(pipeName);
 		ArgumentNullException.ThrowIfNull(backendFactory);
 		_pipeName = pipeName;
 		_backendFactory = backendFactory;
-		_onConnectionError = onConnectionError;
+		_onError = onError;
 		_first = CreatePipe(first: true);
 		Completion = AcceptAsync();
 	}
 
 	/// <summary>
 	/// Gets the accept loop; a fault means the endpoint is no longer being served. The fault is also reported
-	/// to the connection error callback, but a host should observe this task to stop or restart in response.
+	/// to the error callback, but a host should observe this task to stop or restart in response.
 	/// </summary>
 	public Task Completion { get; }
 
@@ -85,7 +86,7 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		catch (Exception ex)
 		{
 			// Completion carries the fault, but a host that never awaits it would lose the endpoint silently.
-			RemoteProtocol.ReportFailure(_onConnectionError, "Remote CLI endpoint stopped accepting: {0}", ex);
+			RemoteProtocol.ReportFailure(_onError, "Remote CLI endpoint stopped accepting: {0}", ex);
 			throw;
 		}
 		finally
@@ -101,12 +102,12 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		{
 			var backend = await _backendFactory(_lifetime.Token).ConfigureAwait(false);
 			await using var backendScope = backend.ConfigureAwait(false);
-			await RemoteReplServer.RunAsync(pipe, backend, _onConnectionError, _lifetime.Token).ConfigureAwait(false);
+			await RemoteReplServer.RunAsync(pipe, backend, _onError, _lifetime.Token).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
 		catch (Exception ex)
 		{
-			RemoteProtocol.ReportFailure(_onConnectionError, "Remote CLI connection failed: {0}", ex);
+			RemoteProtocol.ReportFailure(_onError, "Remote CLI connection failed: {0}", ex);
 		}
 		finally
 		{
@@ -129,6 +130,10 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 	}
 
 	/// <summary>Stops accepting and closes owned pipes, waiting up to five seconds for cancellation callbacks and in-flight sessions.</summary>
+	/// <remarks>
+	/// A fault that already stopped the endpoint accepting is not rethrown: <see cref="Completion"/> carries it and
+	/// the error callback received it, so a host reacting to that fault can still shut down cleanly.
+	/// </remarks>
 	public async ValueTask DisposeAsync()
 	{
 		if (Interlocked.Exchange(ref _disposed, 1) != 0) { return; }
@@ -162,18 +167,19 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 	private async Task DrainConnectionsAsync()
 	{
 #pragma warning disable VSTHRD003 // Acceptance must stop before taking the final snapshot of connection tasks.
-		try { await Completion.ConfigureAwait(false); }
+		// An accept fault was reported when it happened and stays on Completion; it is not a shutdown failure.
+		try { await Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing); }
 #pragma warning restore VSTHRD003
 		finally { await Task.WhenAll(_connections.Values).ConfigureAwait(false); }
 	}
 
-	private static async Task ObserveShutdownAsync(Task shutdown)
+	private async Task ObserveShutdownAsync(Task shutdown)
 	{
 #pragma warning disable VSTHRD003 // Deferred shutdown outlives the caller's deadline and has no thread affinity.
 		try { await shutdown.ConfigureAwait(false); }
 #pragma warning restore VSTHRD003
 #pragma warning disable CA1031 // A timed-out caller cannot observe later cleanup failures; retain diagnostics without an unobserved task.
-		catch (Exception ex) { System.Diagnostics.Trace.TraceError("Remote CLI deferred shutdown failed: {0}", ex); }
+		catch (Exception ex) { RemoteProtocol.ReportFailure(_onError, "Remote CLI deferred shutdown failed: {0}", ex); }
 #pragma warning restore CA1031
 	}
 }

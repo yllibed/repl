@@ -38,9 +38,9 @@ public static class RemoteProtocol
 	}
 
 	/// <summary>
-	/// Hands a failure the client sees only as a sanitized error to the operator. The trace keeps a record
-	/// when no callback is supplied; the callback is application code, so its own failure is contained here
-	/// rather than replacing the error the client is owed or faulting the connection.
+	/// Hands a failure the client sees only as a sanitized error to the operator. It is always traced, which is
+	/// the only record when no callback is supplied; the callback is application code, so its own failure is
+	/// contained here rather than replacing the error the client is owed or faulting the connection.
 	/// </summary>
 	internal static void ReportFailure(Action<Exception>? onError, string message, Exception exception)
 	{
