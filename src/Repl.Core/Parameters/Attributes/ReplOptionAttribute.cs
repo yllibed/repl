@@ -97,6 +97,9 @@ public sealed class ReplOptionAttribute : Attribute
 	/// Only an explicit assignment overrides the arity inferred from the parameter shape; when
 	/// unset, the getter returns the enum default and does not reflect the effective arity — read
 	/// <see cref="ArityOverride"/> to distinguish unset from an explicit value.
+	/// An explicit <see cref="ReplArity.ExactlyOne"/> or <see cref="ReplArity.OneOrMore"/> requires a value,
+	/// so mapping a command fails when a handler parameter also declares a default value, which could never
+	/// apply. An options-group property's initializer cannot be detected and is not used under such an arity.
 	/// </summary>
 	public ReplArity Arity
 	{

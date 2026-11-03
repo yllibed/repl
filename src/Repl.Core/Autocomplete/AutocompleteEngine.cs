@@ -1309,11 +1309,9 @@ internal sealed partial class AutocompleteEngine(CoreReplApp app)
 		// ALSO an option honors that option's explicit case sensitivity; a pure positional segment
 		// falls back to the parsing default. Passing enumIgnoreCase:true unconditionally broke
 		// candidate-to-execution parity for enum values under case-sensitive parsing.
-		var effectiveCaseSensitivity =
-			(route.OptionSchema.TryGetParameter(segmentName, out var schemaParameter)
-				? schemaParameter.CaseSensitivity
-				: null)
-			?? optionCaseSensitivity;
+		var effectiveCaseSensitivity = route.OptionSchema.TryGetParameter(segmentName, out var schemaParameter)
+			? schemaParameter.EffectiveCaseSensitivity(optionCaseSensitivity)
+			: optionCaseSensitivity;
 		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 
 		// A route segment binds its single value via ConvertSingle against the WHOLE parameter
@@ -1668,8 +1666,9 @@ internal sealed partial class AutocompleteEngine(CoreReplApp app)
 		var hasParameter = match.Route.OptionSchema.TryGetParameter(entry.ParameterName, out var optionParameter);
 		var optionType = hasParameter ? optionParameter.ParameterType : typeof(string);
 		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? CultureInfo.InvariantCulture;
-		var effectiveCaseSensitivity = (hasParameter ? optionParameter.CaseSensitivity : null)
-			?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
+		var effectiveCaseSensitivity = hasParameter
+			? optionParameter.EffectiveCaseSensitivity(app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
+			: app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
 		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 		return provided
 			.Where(item => !string.IsNullOrWhiteSpace(item)
@@ -1705,7 +1704,7 @@ internal sealed partial class AutocompleteEngine(CoreReplApp app)
 			return false;
 		}
 
-		var comparison = (parameter.CaseSensitivity ?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
+		var comparison = parameter.EffectiveCaseSensitivity(app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
 			.ToStringComparison();
 		// Dedupe by the enum's EFFECTIVE case sensitivity, not the UI comparer: C# enums may have
 		// case-distinct members (e.g. Prod/prod), but under case-insensitive parsing execution

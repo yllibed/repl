@@ -212,16 +212,19 @@ public sealed class Given_OptionAttributeOverrides
 	}
 
 	[TestMethod]
-	[Description("Guards execution parity for enum duplicate detection: with an explicit ZeroOrMore arity (reachable only through the now-settable override), repeated enum values differing only by casing are distinct under the global CaseSensitive default and must be reported as conflicting — the validator previously hardcoded case-insensitive comparison when no per-option override was set.")]
-	public void When_RepeatedEnumValuesDifferByCaseUnderGlobalCaseSensitive_Then_ConflictIsReported()
+	[Description("A scalar enum takes one value, so repeating the option under an explicit ZeroOrMore arity is an enum conflict, whether the values differ only by casing or are the same value again. Equal duplicates used to pass the enum check and then fail binding with 'does not support repeated occurrences', a message about a different rule.")]
+	[DataRow("Ga", "GA", DisplayName = "Values that differ by casing")]
+	[DataRow("Ga", "Ga", DisplayName = "The same value again")]
+	public void When_AScalarEnumOptionIsRepeated_Then_TheEnumConflictIsReported(string first, string second)
 	{
 		var sut = ReplApp.Create();
 		sut.Map("say", ([ReplOption(Arity = ReplArity.ZeroOrMore)] ShadockSyllable syllable = ShadockSyllable.None) => syllable.ToString());
 
-		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["say", "--syllable", "Ga", "--syllable", "GA", "--no-logo"]));
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["say", "--syllable", first, "--syllable", second, "--no-logo"]));
 
 		output.ExitCode.Should().Be(2);
-		output.Text.Should().Contain("received multiple enum values");
+		output.Text.Should().Contain("accepts a single enum value");
+		output.Text.Should().NotContain("repeated occurrences");
 	}
 
 	[TestMethod]
@@ -332,12 +335,52 @@ public sealed class Given_OptionAttributeOverrides
 	public void When_ExplicitExactlyOneArityOptionIsAbsent_Then_BindingFails()
 	{
 		var sut = ReplApp.Create();
-		sut.Map("echo", ([ReplOption(Arity = ReplArity.ExactlyOne)] string? channel = null) => channel ?? "none");
+		sut.Map("echo", ([ReplOption(Arity = ReplArity.ExactlyOne)] string? channel) => channel ?? "none");
 
 		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "--no-logo"]));
 
 		output.ExitCode.Should().Be(2);
 		output.Text.Should().Contain("requires exactly one value");
+	}
+
+	[TestMethod]
+	[Description("An explicit arity that requires a value makes the parameter's C# default value unreachable: the binder rejects absence before it would fall back to the default. Declaring both is a contradiction, so mapping the command must fail instead of keeping a default that can never apply.")]
+	[DataRow("items", "OneOrMore", "ZeroOrMore", DisplayName = "OneOrMore option")]
+	[DataRow("channel", "ExactlyOne", "ZeroOrOne", DisplayName = "ExactlyOne option")]
+	[DataRow("files", "OneOrMore", "ZeroOrMore", DisplayName = "OneOrMore argument")]
+	public void When_AnExplicitLowerBoundArityHasADefaultValue_Then_MapFails(string parameterName, string arity, string optionalArity)
+	{
+		var sut = ReplApp.Create();
+
+		Action map = parameterName switch
+		{
+			"items" => () => sut.Map(
+				"echo",
+				([ReplOption(Arity = ReplArity.OneOrMore)] string[]? items = null) => items?.Length ?? 0),
+			"channel" => () => sut.Map(
+				"echo",
+				([ReplOption(Arity = ReplArity.ExactlyOne)] string channel = "stdout") => channel),
+			"files" => () => sut.Map(
+				"echo",
+				([ReplOption(Mode = ReplParameterMode.ArgumentOnly, Arity = ReplArity.OneOrMore)] string[]? files = null) => files?.Length ?? 0),
+			_ => throw new ArgumentOutOfRangeException(nameof(parameterName), parameterName, message: null),
+		};
+
+		map.Should().Throw<InvalidOperationException>()
+			.WithMessage($"Parameter '{parameterName}' declares Arity {arity}*Remove the default value, or use ReplArity.{optionalArity}*");
+	}
+
+	[TestMethod]
+	[Description("The arity the refusal suggests must keep working with a default value: an explicit ZeroOrOne lets the option be left out, so the default applies.")]
+	public void When_AnExplicitZeroOrOneArityHasADefaultValue_Then_TheDefaultApplies()
+	{
+		var sut = ReplApp.Create();
+		sut.Map("echo", ([ReplOption(Arity = ReplArity.ZeroOrOne)] string channel = "stdout") => channel);
+
+		var output = ConsoleCaptureHelper.Capture(() => sut.Run(["echo", "--no-logo"]));
+
+		output.ExitCode.Should().Be(0);
+		output.Text.Should().Contain("stdout");
 	}
 
 	[TestMethod]

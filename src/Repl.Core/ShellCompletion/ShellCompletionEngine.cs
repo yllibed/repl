@@ -571,8 +571,9 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 		var numericFormatProvider = app.OptionsSnapshot.Parsing.NumericFormatProvider ?? System.Globalization.CultureInfo.InvariantCulture;
 		// Honor the option's effective case sensitivity so an enum value the parser would reject
 		// ('prod' for member 'Prod' under case-sensitive parsing) is not offered.
-		var effectiveCaseSensitivity = (hasParameter ? optionParameter.CaseSensitivity : null)
-			?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
+		var effectiveCaseSensitivity = hasParameter
+			? optionParameter.EffectiveCaseSensitivity(app.OptionsSnapshot.Parsing.OptionCaseSensitivity)
+			: app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
 		var enumIgnoreCase = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 
 		// Option VALUES dedupe case-sensitively: a string option value is case-significant at
@@ -730,7 +731,7 @@ internal sealed class ShellCompletionEngine(CoreReplApp app)
 			return false;
 		}
 
-		var effectiveCaseSensitivity = parameter.CaseSensitivity ?? app.OptionsSnapshot.Parsing.OptionCaseSensitivity;
+		var effectiveCaseSensitivity = parameter.EffectiveCaseSensitivity(app.OptionsSnapshot.Parsing.OptionCaseSensitivity);
 		var comparison = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
 			? StringComparison.OrdinalIgnoreCase
 			: StringComparison.Ordinal;

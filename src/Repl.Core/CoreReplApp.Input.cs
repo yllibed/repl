@@ -420,7 +420,7 @@ public sealed partial class CoreReplApp
 				{
 					HandlerArgumentBinder.ValidateNativeArity(match.Route.OptionSchema, parameter.Name, native.Values[parameter.Name]);
 					AddTypedInputValue(input, parameter.Name, [], parameter.ParameterType, values, checks,
-						(parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive);
+						parameter.EffectiveCaseSensitivity(_options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive);
 					continue;
 				}
 				if (InputValueSelector.TrySelectNamed(parameter.Name, parameter.Mode, parsed.NamedOptions,
@@ -471,7 +471,7 @@ public sealed partial class CoreReplApp
 				continue;
 			}
 			AddTypedInputValue(input, parameter.Name, raw, parameter.ParameterType, values, checks,
-				(parameter.CaseSensitivity ?? _options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive, rawStart, rawCount);
+				parameter.EffectiveCaseSensitivity(_options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive, rawStart, rawCount);
 		}
 	}
 

@@ -639,7 +639,7 @@ internal static class HandlerArgumentBinder
 			return context.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 		}
 
-		var effectiveCaseSensitivity = schemaParameter.CaseSensitivity ?? context.OptionCaseSensitivity;
+		var effectiveCaseSensitivity = schemaParameter.EffectiveCaseSensitivity(context.OptionCaseSensitivity);
 		return effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive;
 	}
 
@@ -750,7 +750,7 @@ internal static class HandlerArgumentBinder
 			&& context.NamedOptions.TryGetValue(propertyName, out var namedValues))
 		{
 			if (bindingMode == ReplParameterMode.OptionAndPositional
-				&& CanConsumePositionalForProperty(property, context.PositionalArguments, positionalIndex))
+				&& positionalIndex < context.PositionalArguments.Count)
 			{
 				throw new InvalidOperationException(
 					$"Property '{propertyName}' cannot receive both named and positional values in the same invocation.");
@@ -883,18 +883,5 @@ internal static class HandlerArgumentBinder
 			enumIgnoreCase);
 		positionalIndex++;
 		return true;
-	}
-
-	private static bool CanConsumePositionalForProperty(
-		PropertyInfo property,
-		IReadOnlyList<string> positionalArguments,
-		int positionalIndex)
-	{
-		if (TryGetCollectionElementType(property.PropertyType, out _))
-		{
-			return positionalIndex < positionalArguments.Count;
-		}
-
-		return positionalIndex < positionalArguments.Count;
 	}
 }

@@ -205,7 +205,7 @@ internal static class InvocationOptionParser
 				diagnostics);
 		}
 
-		ValidateArityAndConflicts(schema, namedOptions, options.OptionCaseSensitivity, diagnostics);
+		ValidateArityAndConflicts(schema, namedOptions, diagnostics);
 		var readonlyNamedOptions = namedOptions.ToDictionary(
 			pair => pair.Key,
 			pair => (IReadOnlyList<string>)pair.Value,
@@ -325,7 +325,7 @@ internal static class InvocationOptionParser
 		{
 			var explicitlySensitive = knownParameter.CaseSensitivity == ReplCaseSensitivity.CaseSensitive;
 			var effectivelySensitive =
-				(knownParameter.CaseSensitivity ?? options.OptionCaseSensitivity) == ReplCaseSensitivity.CaseSensitive;
+				knownParameter.EffectiveCaseSensitivity(options.OptionCaseSensitivity) == ReplCaseSensitivity.CaseSensitive;
 			var matchesClrName = string.Equals(knownParameter.Name, optionName, StringComparison.Ordinal);
 			if (explicitlySensitive || (effectivelySensitive && !matchesClrName))
 			{
@@ -473,7 +473,6 @@ internal static class InvocationOptionParser
 	private static void ValidateArityAndConflicts(
 		OptionSchema schema,
 		Dictionary<string, List<string>> namedOptions,
-		ReplCaseSensitivity globalCaseSensitivity,
 		List<ParseDiagnostic> diagnostics)
 	{
 		foreach (var parameter in schema.Parameters.Values)
@@ -485,7 +484,7 @@ internal static class InvocationOptionParser
 
 			ValidateTooManyValues(schema, parameter, values, diagnostics);
 			ValidateBooleanConflicts(parameter, values, diagnostics);
-			ValidateEnumConflicts(parameter, values, globalCaseSensitivity, diagnostics);
+			ValidateEnumConflicts(parameter, values, diagnostics);
 		}
 	}
 
@@ -495,7 +494,7 @@ internal static class InvocationOptionParser
 		List<string> values,
 		List<ParseDiagnostic> diagnostics)
 	{
-		var arity = ResolveParameterArity(schema, parameter.Name);
+		var arity = schema.ResolveParameterArity(parameter.Name);
 		if (arity == ReplArity.ZeroOrOne && values.Count > 1)
 		{
 			diagnostics.Add(new ParseDiagnostic(
@@ -535,10 +534,11 @@ internal static class InvocationOptionParser
 			$"Option '--{parameter.Name}' cannot receive both positive and reverse values in the same invocation."));
 	}
 
+	// A scalar enum takes one value, so a repeat is a conflict even when it names the same value again:
+	// binding would reject it anyway, with a message about repeated occurrences rather than enum values.
 	private static void ValidateEnumConflicts(
 		OptionSchemaParameter parameter,
 		List<string> values,
-		ReplCaseSensitivity globalCaseSensitivity,
 		List<ParseDiagnostic> diagnostics)
 	{
 		var effectiveType = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
@@ -547,23 +547,10 @@ internal static class InvocationOptionParser
 			return;
 		}
 
-		// Unset per-option override falls back to the global default, matching every other
-		// effective-case resolution site (OptionSchema.ResolveToken, HandlerArgumentBinder, ...).
-		var comparer = (parameter.CaseSensitivity ?? globalCaseSensitivity) == ReplCaseSensitivity.CaseSensitive
-			? StringComparer.Ordinal
-			: StringComparer.OrdinalIgnoreCase;
-		if (!values.Distinct(comparer).Skip(1).Any())
-		{
-			return;
-		}
-
 		diagnostics.Add(new ParseDiagnostic(
 			ParseDiagnosticSeverity.Error,
-			$"Option '--{parameter.Name}' received multiple enum values in a single invocation."));
+			$"Option '--{parameter.Name}' accepts a single enum value per invocation."));
 	}
-
-	private static ReplArity ResolveParameterArity(OptionSchema schema, string parameterName) =>
-		schema.ResolveParameterArity(parameterName);
 
 	private static List<string> ExpandResponseFiles(
 		IReadOnlyList<string> tokens,

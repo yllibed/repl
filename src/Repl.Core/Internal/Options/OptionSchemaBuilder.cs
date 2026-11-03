@@ -141,6 +141,7 @@ internal static class OptionSchemaBuilder
 				$"Duplicate parameter name '{parameter.Name}' in the command signature.");
 		}
 
+		ValidateExplicitLowerBoundHasNoDefault(parameter, optionAttribute);
 		parameters[parameter.Name!] = new OptionSchemaParameter(
 			parameter.Name!,
 			parameter.ParameterType,
@@ -455,6 +456,22 @@ internal static class OptionSchemaBuilder
 	private static string DescribeAttribute(ReplOptionAttribute? optionAttribute) =>
 		optionAttribute is not null ? "ReplOption" : "ReplArgument";
 
+	// The binder enforces an explicit lower bound before it would fall back to the parameter's default,
+	// so a default declared next to one could never apply. Options-group properties cannot be checked:
+	// PropertyInfo does not expose an initializer.
+	private static void ValidateExplicitLowerBoundHasNoDefault(ParameterInfo parameter, ReplOptionAttribute? optionAttribute)
+	{
+		if (parameter.HasDefaultValue
+			&& optionAttribute?.ArityOverride is { } arity and (ReplArity.OneOrMore or ReplArity.ExactlyOne))
+		{
+			var optionalArity = arity == ReplArity.OneOrMore ? ReplArity.ZeroOrMore : ReplArity.ZeroOrOne;
+			throw new InvalidOperationException(
+				$"Parameter '{parameter.Name}' declares Arity {arity} together with a default value, which can never "
+				+ $"apply because that arity requires a value. Remove the default value, or use ReplArity.{optionalArity} "
+				+ "if the option may be left out.");
+		}
+	}
+
 	// Mirrors the requiredness rule the documentation model reports: a value type with no default and
 	// no nullable wrapper has nothing to bind from when the option is absent, so the binder rejects
 	// it. Options-group properties always carry the default instance's value and so are never
@@ -680,8 +697,8 @@ internal static class OptionSchemaBuilder
 			{
 				var ordinalEqual = string.Equals(existing.Token, entry.Token, StringComparison.Ordinal);
 				var bothInsensitive =
-					(existing.CaseSensitivity ?? globalCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive
-					&& (entry.CaseSensitivity ?? globalCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive;
+					existing.EffectiveCaseSensitivity(globalCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive
+					&& entry.EffectiveCaseSensitivity(globalCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive;
 				if (!ordinalEqual && !bothInsensitive)
 				{
 					continue;
