@@ -10,8 +10,9 @@ namespace Repl.Mcp;
 /// </summary>
 /// <remarks>
 /// Event ids 2000-2999 belong to this package; <c>Repl.Logging</c> uses the 1000 range. A failure that
-/// can repeat on every request warns once per episode and logs its repeats at Debug, so a client that
-/// keeps asking cannot flood the operator's log with the same exception.
+/// can repeat on every request is logged above Debug once per episode, and its repeats at Debug, so a
+/// client that keeps asking cannot flood the operator's log with the same exception. A hidden required
+/// option counts per routing version instead; see <c>McpServerHandler.WithholdHiddenRequiredOption</c>.
 /// </remarks>
 internal sealed partial class McpLoggerDiagnostics
 {
@@ -46,4 +47,10 @@ internal sealed partial class McpLoggerDiagnostics
 
 	[LoggerMessage(EventId = 2007, Level = LogLevel.Information, Message = "Fetching the MCP client's roots succeeded after a failure; the next failure warns again.")]
 	public partial void RootsPrimeRecovered();
+
+	[LoggerMessage(EventId = 2008, Level = LogLevel.Error, Message = "Building the MCP catalog at routing version {Version} failed because the app hides an option it also requires; the client received a generic message instead of this detail: {Detail} Repeats are logged at Debug.")]
+	public partial void HiddenRequiredOptionWithheld(Exception exception, long version, string detail);
+
+	[LoggerMessage(EventId = 2009, Level = LogLevel.Debug, Message = "Building the MCP catalog at routing version {Version} failed because the app hides an option it also requires; this version or a newer one was already reported.")]
+	public partial void HiddenRequiredOptionStillWithheld(Exception exception, long version);
 }

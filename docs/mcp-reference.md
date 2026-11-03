@@ -548,13 +548,16 @@ through `Microsoft.Extensions.Logging`, under the category `Repl.Mcp`:
 | 2005 | Information | A rebuild succeeded after a 2002. |
 | 2006 | Debug | 2003 again before a fetch succeeded. |
 | 2007 | Information | A roots fetch succeeded after a 2003. |
+| 2008 | Error | A catalog build failed because the app hides an option it also requires, and no provider can supply it. The client gets `The server's MCP catalog is unavailable because of a server configuration error.`; the log gets the option's target, rendered token and route. |
+| 2009 | Debug | 2008 again, at a routing version already reported or an older one. A route that only some sessions expose can fail on another connection at a version already reported: its detail is then here. |
 
 The routing version goes up by one on every routing change, such as a call to `InvalidateRouting()`.
 A failure that can repeat on every request warns once and logs its repeats at Debug, so a client that
 keeps asking cannot flood the log. That count is kept per connection, and for 2002 per routing version
 too: with several clients connected, one failing rebuild warns once on each of them, and a routing
 change during the failure warns again. 2005 and 2007 mark the end of a failure, so the next one warns
-again.
+again. 2008 is the exception: the misconfiguration usually belongs to the app rather than to a connection,
+so it is logged once per routing version for the whole server, whichever client hits it first.
 
 `ReplApp` registers logging by default, but it stays silent until the app adds a provider. Under
 `mcp serve` on stdio, standard output carries the protocol, so send logs to standard error or a file.
