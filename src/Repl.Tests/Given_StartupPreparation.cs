@@ -416,7 +416,7 @@ public sealed class Given_StartupPreparation
 	}
 
 	[TestMethod]
-	[Description("A run nested in a handler of a prepared run dispatches its own arguments, not the outer run's prepared input, and the outer run's input is restored afterwards.")]
+	[Description("A run nested in a handler of a prepared run dispatches its own arguments, not the outer run's prepared input, and later runs dispatch theirs.")]
 	public async Task When_AHandlerOfAPreparedRunStartsAnotherRun_Then_ItDoesNotReplayThePreparedInput()
 	{
 		var calls = new List<string>();
