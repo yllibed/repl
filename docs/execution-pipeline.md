@@ -329,6 +329,10 @@ refusal alike — so a headless run's stdout carries the command payload alone. 
 follows it there whenever the payload is for a program (a machine-readable format, or a redirected
 stdout); see [Progress](progress.md#which-stream-receives-progress).
 
+> **Changed in 0.12.** Both diagnostics used to go to stdout, and a usage or binding refusal used to exit
+> `1` like a handler failure; it now exits `2`. See [Restoring the pre-policy
+> codes](configuration-reference.md#restoring-the-pre-policy-codes) for the codes and what cannot be restored.
+
 Exit codes should stay within `0`-`255`: POSIX `wait` exposes only the low eight bits to the parent
 process, so `Help = 300` reaches a shell as `44`. Repl does not clamp — a code outside the range is
 passed through as configured.

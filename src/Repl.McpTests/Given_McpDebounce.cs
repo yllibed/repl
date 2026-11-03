@@ -1,4 +1,4 @@
-﻿using System.IO.Pipelines;
+using System.IO.Pipelines;
 using Microsoft.Extensions.Time.Testing;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;

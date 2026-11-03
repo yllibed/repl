@@ -559,6 +559,11 @@ change during the failure warns again. 2005 and 2007 mark the end of a failure, 
 again. 2008 is the exception: the misconfiguration usually belongs to the app rather than to a connection,
 so it is logged once per routing version for the whole server, whichever client hits it first.
 
+> **Changed in 0.12.** Events 2001-2009 are new in this release.
+> For 2008, a client used to receive `An error occurred.` on a connection that had never listed tools,
+> and `Tool discovery is temporarily unavailable due to a server configuration error.` on one that had.
+> Every connection now receives the message in the table.
+
 `ReplApp` registers logging by default, but it stays silent until the app adds a provider. Under
 `mcp serve` on stdio, standard output carries the protocol, so send logs to standard error or a file.
 With the console provider, from the `Microsoft.Extensions.Logging.Console` package, every level goes to
@@ -584,6 +589,9 @@ Feature support varies across agents. Check [mcp-availability.com](https://mcp-a
 - **MCP Tasks**: the SDK reorganized Tasks into `ModelContextProtocol.Extensions.Tasks` and dropped the per-tool execution augmentation (`Tool.Execution`) from the protocol surface, so `.LongRunning()` commands no longer advertise task support at the protocol level. The annotation stays in Repl's own model (help/docs); protocol-level task support can return once Repl integrates the Tasks extension, store, and get/update/cancel lifecycle (tracked in issue #72).
 
 ### Upgrading from the 1.x SDK
+
+> **Changed in 0.12.** `Repl.Mcp` requires the `ModelContextProtocol` SDK 2.x; this section lists what that
+> changes.
 
 Eight things change for an application that already references `Repl.Mcp`. The first two are build
 breaks; the rest are behaviour a consumer meets at runtime.

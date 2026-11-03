@@ -153,6 +153,14 @@ hide the caller's scoped instances so much as duplicate them: a second unit of w
 live one. `SessionScopeBehavior` governs the `Run*` family only; MCP's connection-scoped DI is unconditional
 and has no equivalent opt-out.
 
+> **Changed in 0.12.** Repl used to open no scope at all: `Scoped` services resolved from the root provider,
+> so one instance served every command and every hosted session, MCP included, until the process ended.
+> Each `Run*` call now opens one, and each MCP client connection its own. Three things follow on upgrade.
+> A `Scoped` disposable is disposed when its session ends, so a reference kept beyond it throws
+> `ObjectDisposedException`. A singleton that injects a `Scoped` service captures the first session's
+> instance, as described above. And under MCP, `Scoped` state no longer crosses client connections. Set
+> `SessionScope = SessionScopeBehavior.CallerOwned` when the caller's provider already is the session.
+
 ## Group related options with `[ReplOptionsGroup]`
 
 When a command has many options, group them into a class instead of listing them all as handler parameters. This keeps handlers clean and makes option sets reusable across commands.

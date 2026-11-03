@@ -432,6 +432,27 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Live analysis names an option by the token the user types, as the binder's refusals do, never by the C# parameter name.")]
+	[DataRow("deploy", "Supply a value for '--retryCount'.", DisplayName = "Missing value")]
+	[DataRow("deploy --retryCount many", "Invalid value for '--retryCount':", DisplayName = "Invalid value")]
+	[DataRow("renamed", "Supply a value for '--retries'.", DisplayName = "Missing value of a renamed option")]
+	[DataRow("renamed --retries many", "Invalid value for '--retries':", DisplayName = "Invalid value of a renamed option")]
+	[DataRow("copy", "Supply a value for 'count'.", DisplayName = "Missing argument keeps its name")]
+	[DataRow("copy many", "Invalid value for 'count':", DisplayName = "Invalid argument keeps its name")]
+	public async Task When_AnOptionValueIsMissingOrInvalid_Then_LiveAnalysisNamesItsToken(string text, string message)
+	{
+		var app = CoreReplApp.Create();
+		app.Map("deploy", (int retryCount) => retryCount);
+		app.Map("renamed", ([Repl.Parameters.ReplOption(Name = "retries")] int retryCount) => retryCount);
+		app.Map("copy", ([Repl.Parameters.ReplArgument(Mode = Repl.Parameters.ReplParameterMode.ArgumentOnly)] int count) => count);
+
+		var analysis = await AnalyzeAsync(app, text);
+
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().ContainSingle(item => item.StartsWith(message, StringComparison.Ordinal));
+	}
+
+	[TestMethod]
 	[Description("Incomplete application checks must stop submitted execution as well as inform live analysis.")]
 	public async Task When_TypedValidationReturnsIncomplete_Then_SubmissionIsRefused()
 	{

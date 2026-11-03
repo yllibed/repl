@@ -92,6 +92,50 @@ public sealed class Given_WebSocketStream
 	}
 
 	[TestMethod]
+	[Description("Verifies a write once the WebSocket is closing, closed or aborted completes without sending and without failing, as its documentation states, so finishing a session whose peer is gone does not fail.")]
+	[DataRow(WebSocketState.CloseSent)]
+	[DataRow(WebSocketState.Closed)]
+	[DataRow(WebSocketState.Aborted)]
+	public async Task When_TheConnectionIsNoLongerOpen_Then_WritingIsDiscardedSilently(WebSocketState state)
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var stream = new TelnetWebSocketStream(server);
+			await using (stream.ConfigureAwait(false))
+			{
+				await BringToStateAsync(server, client, state).WaitAsync(Patience).ConfigureAwait(false);
+				server.State.Should().Be(state);
+
+				var act = async () => await stream.WriteAsync(new byte[] { 1, 2, 3 }).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+				await act.Should().NotThrowAsync().ConfigureAwait(false);
+			}
+		}
+	}
+
+	private static async Task BringToStateAsync(WebSocket server, WebSocket client, WebSocketState state)
+	{
+		switch (state)
+		{
+			case WebSocketState.CloseSent:
+				await server.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+					.ConfigureAwait(false);
+				break;
+			case WebSocketState.Closed:
+				var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+				await server.CloseAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None)
+					.ConfigureAwait(false);
+				await peer.ConfigureAwait(false);
+				break;
+			default:
+				server.Abort();
+				break;
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies a cancelled read whose close the peer never answers still ends once the stream is disposed, aborting the connection after the close's grace period rather than leaving the read pending.")]
 	public async Task When_ACancelledReadIsFollowedByDisposal_Then_AnUnansweredCloseStillEndsTheRead()
 	{

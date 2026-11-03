@@ -100,6 +100,11 @@ intervention. Two things follow. A repeat run is not guaranteed to publish nothi
 publishes precisely what NuGet lacks. And such a recovery uploads from the *current* commit, while
 the release's assets and tag stay on the one that created them.
 
+**A package that fails to push fails the job.** The release exists by then, so a green run would
+hide that consumers can restore some packages of the version and not others. The error names the
+packages that did not reach NuGet; re-running the workflow is the recovery described above. A symbol
+package (`.snupkg`) that fails only degrades debugging, so it stays a warning.
+
 **So a change meant for consumers needs a new version.** Under a number already released, the release
 assets will not be updated and NuGet will accept only what it does not yet have — which is never the
 changed build of a package it already holds. The job says so through a workflow warning and a

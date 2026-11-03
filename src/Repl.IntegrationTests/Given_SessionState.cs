@@ -1,4 +1,4 @@
-﻿namespace Repl.IntegrationTests;
+namespace Repl.IntegrationTests;
 
 [TestClass]
 [DoNotParallelize]

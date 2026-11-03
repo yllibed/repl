@@ -119,7 +119,7 @@ The first build has no previous generation to serve. Once a generation exists, a
 
 Read [Program.cs](../Program.cs), [CommandLine.cs](../Hosting/CommandLine.cs), [Server.cs](../Hosting/Server.cs) and [ServerLifetime.cs](../Hosting/ServerLifetime.cs) together:
 
-1. `Program.cs` loads optional JSON configuration and prefixed environment values through .NET's configuration providers, creates an immutable settings snapshot and owns Ctrl+C. A lightweight launcher Repl maps `serve`, `console`, `health`, `exec` and `assets fetch`; its startup hook selects `serve` for an empty invocation, while help and completion remain side-effect free. Only the `serve` handler constructs the web host. Client modes and help require neither the model nor the index.
+1. `Program.cs` loads optional JSON configuration and prefixed environment values through .NET's configuration providers, and creates an immutable settings snapshot. A lightweight launcher Repl maps `serve`, `console`, `health`, `exec` and `assets fetch`; its startup hook selects `serve` for an empty invocation, while help and completion remain side-effect free. Only the `serve` handler constructs the web host. Client modes and help require neither the model nor the index. The launcher's CLI profile lets Repl own process signals; the cancellation table below says what each one stops.
 2. In server mode, validate paths and listener configuration, then verify the pinned assets.
 3. Register singleton search/index services, the hosted worker and a lazily configured Repl application. Resolving Repl applies its embedded profile, output format and static graph.
 4. Create the named-pipe listener, then start the host's HTTP listeners and worker. Liveness requires host startup to have completed; readiness also requires a published index.
@@ -135,7 +135,7 @@ Cancellation has distinct owners:
 | Ctrl+C / Interrupt during `index watch` | That session's observation command |
 | `index cancel` | The shared active rebuild |
 | Disconnect or `exit` | That terminal session |
-| Stop the server/container | The host, worker and its sessions |
+| Ctrl+C, Ctrl+Break or SIGTERM to the `serve` process, including `docker stop` | The host, worker and its sessions; the process exits `130` or `143` |
 
 During the live Spectre view, the presenter captures Repl interaction events so they do not compete for the screen. Explicit async flushes send Spectre's buffered synchronous output through hosted writers. Limited terminals get changed status snapshots instead of live cursor updates.
 

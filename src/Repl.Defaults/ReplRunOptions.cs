@@ -1,4 +1,4 @@
-﻿namespace Repl;
+namespace Repl;
 
 /// <summary>
 /// Runtime execution options for a single REPL run.
@@ -9,6 +9,10 @@ public sealed record ReplRunOptions
 	/// Gets how standalone runs handle process termination signals.
 	/// <see langword="null"/> uses the active application profile's default.
 	/// </summary>
+	/// <remarks>
+	/// A standalone run fails with <see cref="ArgumentOutOfRangeException"/> when this is not a defined
+	/// <see cref="ProcessSignalHandlingMode"/>, as numeric configuration or deserialization can produce.
+	/// </remarks>
 	public ProcessSignalHandlingMode? ProcessSignalHandling { get; init; }
 
 	/// <summary>
@@ -27,6 +31,8 @@ public sealed record ReplRunOptions
 	/// binary break: a composition profile can only supply its own default if "the caller said nothing"
 	/// is distinguishable from an explicit value, which a non-nullable property could never express.
 	/// Governs the <c>Run*</c> family only; MCP's DI scope is unconditional and has no equivalent setting.
+	/// A run fails with <see cref="ArgumentOutOfRangeException"/> when this is not a defined
+	/// <see cref="SessionScopeBehavior"/>.
 	/// </remarks>
 	public SessionScopeBehavior? SessionScope { get; init; }
 

@@ -1,4 +1,4 @@
-﻿namespace Repl.Mcp;
+namespace Repl.Mcp;
 
 /// <summary>
 /// Provides access to MCP client roots for the current MCP session.

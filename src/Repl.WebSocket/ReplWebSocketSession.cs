@@ -20,7 +20,7 @@ public static class ReplWebSocketSession
 	/// <param name="socket">Connected WebSocket.</param>
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
-	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync(ReplApp, ReplRunOptions?, CancellationToken)" path="/exception"/>
+	/// <inheritdoc cref="StreamedReplHost.RunSessionAsync(ReplApp, ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.OperationCanceledException']"/>
 	public static ValueTask<int> RunAsync(
 		ReplApp app,
 		System.Net.WebSockets.WebSocket socket,

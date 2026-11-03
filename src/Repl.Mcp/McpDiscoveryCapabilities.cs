@@ -1,4 +1,4 @@
-﻿using Repl.Interaction;
+using Repl.Interaction;
 using Repl.Terminal;
 
 namespace Repl.Mcp;

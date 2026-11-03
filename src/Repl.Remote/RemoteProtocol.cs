@@ -21,7 +21,7 @@ public static class RemoteProtocol
 		return document.RootElement.Clone();
 	}
 
-	internal static JsonRpc CreateRpc(Stream input, Stream output)
+	internal static JsonRpc CreateRpc(Stream input, Stream output, Action<Exception>? onError = null)
 	{
 		var formatter = new SystemTextJsonFormatter
 		{
@@ -31,13 +31,34 @@ public static class RemoteProtocol
 				PropertyNameCaseInsensitive = false,
 			},
 		};
-		return new PortableJsonRpc(new HeaderDelimitedMessageHandler(new BorrowedStream(output), new BorrowedStream(input), formatter))
+		return new PortableJsonRpc(new HeaderDelimitedMessageHandler(new BorrowedStream(output), new BorrowedStream(input), formatter), onError)
 		{
 			CancelLocallyInvokedMethodsWhenConnectionIsClosed = true,
 		};
 	}
 
-	private sealed class PortableJsonRpc(IJsonRpcMessageHandler handler) : JsonRpc(handler)
+	/// <summary>
+	/// Hands a failure the client sees only as a sanitized error to the operator. It is always traced, which is
+	/// the only record when no callback is supplied; the callback is application code, so its own failure is
+	/// contained here rather than replacing the error the client is owed or faulting the connection.
+	/// </summary>
+	internal static void ReportFailure(Action<Exception>? onError, string message, Exception exception)
+	{
+		System.Diagnostics.Trace.TraceError(message, exception);
+		if (onError is null) { return; }
+		try
+		{
+			onError(exception);
+		}
+#pragma warning disable CA1031 // An operator callback must not turn a reported failure into a connection failure.
+		catch (Exception callbackFailure)
+#pragma warning restore CA1031
+		{
+			System.Diagnostics.Trace.TraceError("Remote CLI error callback failed: {0}", callbackFailure);
+		}
+	}
+
+	private sealed class PortableJsonRpc(IJsonRpcMessageHandler handler, Action<Exception>? onError) : JsonRpc(handler)
 	{
 		protected override JsonRpcError.ErrorDetail CreateErrorDetails(JsonRpcRequest request, Exception exception)
 		{
@@ -45,7 +66,7 @@ public static class RemoteProtocol
 			error.Data = null;
 			if (exception is not (LocalRpcException or OperationCanceledException))
 			{
-				System.Diagnostics.Trace.TraceError("Remote backend failure: {0}", exception);
+				ReportFailure(onError, "Remote backend failure: {0}", exception);
 				error.Code = JsonRpcErrorCode.InternalError;
 				error.Message = "The remote backend failed.";
 			}

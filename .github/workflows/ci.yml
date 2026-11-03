@@ -647,14 +647,17 @@ jobs:
         run: |
           $source = 'https://api.nuget.org/v3/index.json'
           $apiKey = $env:NUGET_API_KEY
-          $failed = @()
+          $failedPackages = @()
+          $failedSymbols = @()
 
+          # --no-symbols: without it, pushing a .nupkg also pushes the adjacent .snupkg, and a symbol
+          # endpoint failure would count a published package as failed. Symbols go in the loop below.
           foreach ($pkg in Get-ChildItem packages/*.nupkg) {
             Write-Host "Pushing $($pkg.Name)..."
-            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
+            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate --no-symbols 2>&1
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
-              $failed += $pkg.Name
+              $failedPackages += $pkg.Name
             }
           }
 
@@ -663,20 +666,25 @@ jobs:
             dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
-              $failed += $pkg.Name
+              $failedSymbols += $pkg.Name
             }
           }
 
-          $nupkgCount = @(Get-ChildItem packages/*.nupkg).Count
-          $failedNupkgCount = @($failed | Where-Object { $_ -like '*.nupkg' }).Count
-          $succeeded = $nupkgCount - $failedNupkgCount
-          if ($failed.Count -gt 0) {
-            Write-Warning "The following packages failed to publish: $($failed -join ', ')"
-            Write-Warning "This may be expected for new packages awaiting NuGet validation."
+          # Every package of a version must reach NuGet, so one failed .nupkg fails the job. The
+          # GitHub release already exists at this point; a green run would hide that consumers can
+          # restore some packages of the version and not others. Re-running this workflow is the
+          # recovery: --skip-duplicate passes over what was published and retries the rest.
+          # A missing symbol package (.snupkg) degrades debugging only, so it stays a warning.
+          if ($failedSymbols.Count -gt 0) {
+            Write-Warning "These symbol packages failed to publish: $($failedSymbols -join ', ')"
           }
-          if ($succeeded -eq 0 -and $nupkgCount -gt 0) {
-            throw "All $nupkgCount packages failed to publish. Check API key and NuGet source."
+          if ($failedPackages.Count -gt 0) {
+            Write-Host "::error title=NuGet publish incomplete::$($failedPackages.Count) package(s) failed to publish: $($failedPackages -join ', '). Re-run this workflow to push them; published packages are skipped."
+            exit 1
           }
+          # GitHub ends a pwsh step with the last native command's exit code, so a failed symbol push
+          # that ran last would otherwise fail the job despite the warning above.
+          exit 0
 
   container-hosting:
     name: Container Hosting Smoke

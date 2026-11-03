@@ -391,6 +391,13 @@ internal sealed class OptionSchema
 		FindNamedEntry(parameterName)?.Arity ?? ReplArity.ZeroOrMore;
 
 	/// <summary>
+	/// Name to show a user for a parameter: its option token when it has one, as typed on the command line,
+	/// otherwise the parameter name (e.g. ArgumentOnly or a route value).
+	/// </summary>
+	public string ResolveDisplayName(string parameterName) =>
+		ResolveDisplayToken(parameterName) ?? parameterName;
+
+	/// <summary>
 	/// Canonical display token of a parameter's named-option/flag entry (with prefix),
 	/// or null for parameters without one (e.g. ArgumentOnly).
 	/// </summary>

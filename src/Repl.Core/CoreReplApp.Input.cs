@@ -419,7 +419,8 @@ public sealed partial class CoreReplApp
 				if (_currentInput.Value?.Request is { Command: not null } native && native.Values.ContainsKey(parameter.Name))
 				{
 					HandlerArgumentBinder.ValidateNativeArity(match.Route.OptionSchema, parameter.Name, native.Values[parameter.Name]);
-					AddTypedInputValue(input, parameter.Name, [], parameter.ParameterType, values, checks,
+					AddTypedInputValue(input, parameter.Name, match.Route.OptionSchema.ResolveDisplayName(parameter.Name), [],
+						parameter.ParameterType, values, checks,
 						parameter.EffectiveCaseSensitivity(_options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive);
 					continue;
 				}
@@ -467,10 +468,11 @@ public sealed partial class CoreReplApp
 			}
 			if (raw is null)
 			{
-				AddMissingTypedInputValue(parameter, match.Route.Command.Handler, values, checks);
+				AddMissingTypedInputValue(match.Route.OptionSchema, parameter, match.Route.Command.Handler, values, checks);
 				continue;
 			}
-			AddTypedInputValue(input, parameter.Name, raw, parameter.ParameterType, values, checks,
+			AddTypedInputValue(input, parameter.Name, match.Route.OptionSchema.ResolveDisplayName(parameter.Name), raw,
+				parameter.ParameterType, values, checks,
 				parameter.EffectiveCaseSensitivity(_options.Parsing.OptionCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive, rawStart, rawCount);
 		}
 	}
@@ -487,7 +489,7 @@ public sealed partial class CoreReplApp
 		return positionalUncertain;
 	}
 
-	private static void AddMissingTypedInputValue(OptionSchemaParameter parameter, Delegate handler,
+	private static void AddMissingTypedInputValue(OptionSchema schema, OptionSchemaParameter parameter, Delegate handler,
 		Dictionary<string, InputValue> values, List<InputValidationResult> checks)
 	{
 		var metadata = handler.Method.GetParameters()
@@ -496,7 +498,7 @@ public sealed partial class CoreReplApp
 			? new(InputValueState.Available, metadata.DefaultValue) : new(InputValueState.Missing);
 		if (!parameter.CanBeOmitted && IsInputScalar(parameter.ParameterType))
 		{
-			checks.Add(InputValidationResult.Incomplete($"Supply a value for '{parameter.Name}'."));
+			checks.Add(InputValidationResult.Incomplete($"Supply a value for '{schema.ResolveDisplayName(parameter.Name)}'."));
 		}
 	}
 
@@ -526,13 +528,13 @@ public sealed partial class CoreReplApp
 		{
 			if (parameter.Name is { } name && match.Values.TryGetValue(name, out var raw))
 			{
-				AddTypedInputValue(input, name, [raw], parameter.ParameterType, values, checks,
+				AddTypedInputValue(input, name, displayName: name, [raw], parameter.ParameterType, values, checks,
 					_options.Parsing.OptionCaseSensitivity == ReplCaseSensitivity.CaseInsensitive);
 			}
 		}
 	}
 
-	private void AddTypedInputValue(ProcessedInput input, string name, IReadOnlyList<string> raw, Type type,
+	private void AddTypedInputValue(ProcessedInput input, string name, string displayName, IReadOnlyList<string> raw, Type type,
 		Dictionary<string, InputValue> values, List<InputValidationResult> checks, bool enumIgnoreCase,
 		int start = 0, int? count = null)
 	{
@@ -555,7 +557,7 @@ public sealed partial class CoreReplApp
 			var incomplete = input.Context.Mode != InputProcessingMode.Execution && length == 1 && first is not null
 				&& IsIncompleteValue(first, type, enumIgnoreCase);
 			var state = incomplete ? InputValidationState.Incomplete : InputValidationState.Invalid;
-			checks.Add(new(state, [new(state, $"Invalid value for '{name}': {exception.Message}", FindInputRange(input, first))]));
+			checks.Add(new(state, [new(state, $"Invalid value for '{displayName}': {exception.Message}", FindInputRange(input, first))]));
 		}
 	}
 
