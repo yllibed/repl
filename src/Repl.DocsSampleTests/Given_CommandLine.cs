@@ -138,6 +138,37 @@ public sealed class Given_CommandLine
 		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
 	}
 
+	[TestMethod]
+	[Description("A client command against a server that is not running reports the framework's one-line error, not a stack trace: the operator only needs to start the server or fix the pipe name.")]
+	public async Task When_AClientFindsNoServer_Then_ItReportsOneLineWithoutAStackTrace()
+	{
+		using var fixture = new TestCorpus();
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var start = new ProcessStartInfo("dotnet")
+		{
+			UseShellExecute = false, CreateNoWindow = true,
+			RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
+		};
+		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add("health");
+		start.Environment["DOCS_DOCUMENTS"] = fixture.Settings.Documents;
+		start.Environment["DOCS_INDEX"] = fixture.Settings.Index;
+		start.Environment["DOCS_PIPE"] = Guid.NewGuid().ToString("N")[..20];
+		using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the sample launcher.");
+		var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+		var error = process.StandardError.ReadToEndAsync(deadline.Token);
+		try
+		{
+			await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+
+			process.ExitCode.Should().NotBe(0);
+			var reported = await output.ConfigureAwait(false) + await error.ConfigureAwait(false);
+			reported.Should().Contain("Could not connect to pipe");
+			reported.Should().NotContain("TimeoutException").And.NotContain(" at ");
+		}
+		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
+	}
+
 	private sealed class TextHost(TextWriter output) : IReplHost
 	{
 		public TextReader Input => TextReader.Null;

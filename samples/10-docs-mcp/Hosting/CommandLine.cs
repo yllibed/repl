@@ -14,9 +14,12 @@ internal static class CommandLine
 		{
 			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
 			options.Output.BannerEnabled = false;
+			// A server that fails belongs in the container log with its full diagnostic. A client command's failure,
+			// such as no server on the pipe, is already explained by the framework's one-line error.
 			options.ExitCodes.Resolver = outcome =>
 			{
-				if (outcome.Kind != ReplExecutionOutcomeKind.Cancelled && outcome.Exception is { } error)
+				if (outcome.Kind != ReplExecutionOutcomeKind.Cancelled && outcome.Exception is { } error
+					&& string.Equals(outcome.Route, "serve", StringComparison.Ordinal))
 				{
 					Console.Error.WriteLine(error);
 				}
