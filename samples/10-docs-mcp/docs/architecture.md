@@ -135,7 +135,7 @@ Cancellation has distinct owners:
 | Ctrl+C / Interrupt during `index watch` | That session's observation command |
 | `index cancel` | The shared active rebuild |
 | Disconnect or `exit` | That terminal session |
-| Stop the server/container | The host, worker and its sessions |
+| Ctrl+C, Ctrl+Break or SIGTERM to the `serve` process, including `docker stop` | The host, worker and its sessions; the process exits `130` or `143` |
 
 During the live Spectre view, the presenter captures Repl interaction events so they do not compete for the screen. Explicit async flushes send Spectre's buffered synchronous output through hosted writers. Limited terminals get changed status snapshots instead of live cursor updates.
 
