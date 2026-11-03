@@ -92,6 +92,27 @@ public sealed class Given_WebSocketStream
 	}
 
 	[TestMethod]
+	[Description("Verifies a write once the WebSocket is aborted completes without sending and without failing, as its documentation states, so finishing a session whose peer is gone does not fail.")]
+	public async Task When_TheConnectionIsAlreadyAborted_Then_WritingIsDiscardedSilently()
+	{
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var stream = new TelnetWebSocketStream(server);
+			await using (stream.ConfigureAwait(false))
+			{
+				server.Abort();
+
+				var act = async () => await stream.WriteAsync(new byte[] { 1, 2, 3 }).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+				await act.Should().NotThrowAsync().ConfigureAwait(false);
+				server.State.Should().Be(WebSocketState.Aborted);
+			}
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies a cancelled read whose close the peer never answers still ends once the stream is disposed, aborting the connection after the close's grace period rather than leaving the read pending.")]
 	public async Task When_ACancelledReadIsFollowedByDisposal_Then_AnUnansweredCloseStillEndsTheRead()
 	{

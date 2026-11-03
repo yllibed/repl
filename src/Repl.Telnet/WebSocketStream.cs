@@ -103,7 +103,15 @@ public sealed class WebSocketStream : Stream
 	}
 
 	/// <inheritdoc />
-	/// <remarks>A failed connection is reported as an <see cref="IOException"/>.</remarks>
+	/// <remarks>
+	/// A send that fails is reported as an <see cref="IOException"/>. Once the WebSocket is closing or closed
+	/// (<see cref="WebSocketState.CloseSent"/>, <see cref="WebSocketState.Closed"/> or <see cref="WebSocketState.Aborted"/>),
+	/// the write completes without sending: the data is discarded and nothing is thrown, so a caller finishing a session
+	/// whose peer is gone does not fail. Detect a dead peer by reading, which ends with <c>0</c> or an
+	/// <see cref="IOException"/>, rather than by writing. After the peer's close alone
+	/// (<see cref="WebSocketState.CloseReceived"/>) writes are still sent, since the peer may read the reply to what it
+	/// sent before closing.
+	/// </remarks>
 	public override async ValueTask WriteAsync(
 		ReadOnlyMemory<byte> buffer,
 		CancellationToken cancellationToken = default)
