@@ -46,6 +46,9 @@ internal sealed class McpServerHandler
 	// Global routing version: bumped by InvalidateRouting for every session; each session's
 	// context caches the snapshot it built at a given version.
 	private SnapshotVersionState _snapshotState = new(Version: 1, LastVisibilityRetractionVersion: 0);
+	// The newest routing version whose hidden-required-option failure has been logged as an error, 0 for
+	// none. See WithholdHiddenRequiredOption.
+	private long _hiddenRequiredOptionReportedVersion;
 	// One handler can serve several concurrent sessions; everything session-owned lives in
 	// McpSessionContext, and this list (guarded by _attachLock) tracks every ACTIVE session
 	// for server-initiated notifications and subscription lifetime.
@@ -512,7 +515,6 @@ internal sealed class McpServerHandler
 		bool sessionless,
 		CancellationToken cancellationToken)
 	{
-		var clientHasSchema = context.HasServedSnapshot;
 		try
 		{
 			var built = await BuildCurrentSnapshotAsync(context, snapshotVersion, sessionless, cancellationToken)
@@ -535,10 +537,9 @@ internal sealed class McpServerHandler
 		{
 			throw;
 		}
-		catch (HiddenRequiredOptionException)
+		catch (HiddenRequiredOptionException ex)
 		{
-			ThrowSanitizedIfAClientAlreadyHasASchema(clientHasSchema);
-			throw;
+			throw WithholdHiddenRequiredOption(ex, snapshotVersion);
 		}
 		catch (Exception ex) when (IsFallbackEligible(context, sessionless))
 		{
@@ -573,22 +574,49 @@ internal sealed class McpServerHandler
 		}
 	}
 
-	// No snapshot has ever been served: a cold-start configuration error, not a runtime retraction
-	// reaching an already-connected client. Let the caller's rethrow carry the detailed exception so
-	// the operator sees exactly which option and route are misconfigured.
+	// The failure fails closed even where a previous catalog exists: serving it would keep advertising an
+	// option the app has just hidden. The exception's message names that option's target, rendered token
+	// and route, which is exactly what hiding it withholds, so it goes to the operator's log and the client
+	// gets a generic McpException, on every connection whether or not it was served a catalog before, rather
+	// than relying on the SDK's own flattening (see McpAppResource.ThrowIfFeedbackBuffered). It carries no
+	// inner exception: the SDK logs every failed request with its exception at Warning, which would repeat
+	// the detail on each one.
 	//
-	// Once a client HAS a working schema, the same failure must fail closed (returning the previous
-	// snapshot would keep advertising an option the app explicitly hid), but the exception's own
-	// message names that option's target, rendered token and route — precisely the identity hiding it
-	// was meant to withhold — so it must not reach the client verbatim. A generic McpException (the
-	// pattern this handler already uses for other client-facing failures) reports the failure without
-	// disclosing what triggered it.
-	private static void ThrowSanitizedIfAClientAlreadyHasASchema(bool clientHasSchema)
+	// The misconfiguration is usually the app's rather than a connection's, so it is logged once per
+	// routing version for the whole handler, and its repeats at Debug. A route that only some sessions'
+	// presence predicates expose can fail on another connection at a version already reported; its
+	// detail is then at Debug.
+	private McpException WithholdHiddenRequiredOption(HiddenRequiredOptionException exception, long snapshotVersion)
 	{
-		if (clientHasSchema)
+		if (TryClaimHiddenRequiredOptionReport(snapshotVersion))
 		{
-			throw new McpException("Tool discovery is temporarily unavailable due to a server configuration error.");
+			_diagnostics.HiddenRequiredOptionWithheld(exception, snapshotVersion, exception.Message);
 		}
+		else
+		{
+			_diagnostics.HiddenRequiredOptionStillWithheld(exception, snapshotVersion);
+		}
+
+		return new McpException("The server's MCP catalog is unavailable because of a server configuration error.");
+	}
+
+	// Only a newer version claims the report, so a connection still building at an older version cannot
+	// report it again once another connection has reported a newer one.
+	private bool TryClaimHiddenRequiredOptionReport(long snapshotVersion)
+	{
+		var reported = Volatile.Read(ref _hiddenRequiredOptionReportedVersion);
+		while (snapshotVersion > reported)
+		{
+			var observed = Interlocked.CompareExchange(ref _hiddenRequiredOptionReportedVersion, snapshotVersion, reported);
+			if (observed == reported)
+			{
+				return true;
+			}
+
+			reported = observed;
+		}
+
+		return false;
 	}
 
 	private async ValueTask<McpGeneratedSnapshot> BuildCurrentSnapshotAsync(

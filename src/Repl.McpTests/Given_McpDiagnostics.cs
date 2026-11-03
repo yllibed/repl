@@ -1,9 +1,12 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Repl.Documentation;
 using Repl.Mcp;
+using Repl.Parameters;
 
 // Deprecated by MCP spec 2026-07-28 (SEP-2577, MCP9005); kept for existing hosts.
 // Rationale and successor: docs/mcp-reference.md#sdk-and-protocol-versions (#51).
@@ -12,9 +15,10 @@ using Repl.Mcp;
 namespace Repl.McpTests;
 
 /// <summary>
-/// Repl.Mcp absorbs three failures by design: a tool failure's detail is withheld from the client, a
-/// failed catalog build is hidden behind the previous catalog, and a failed roots prime is swallowed.
-/// Each must still reach the operator's log — once per episode, not once per request that retries it.
+/// Repl.Mcp absorbs four failures by design: a tool failure's detail is withheld from the client, a
+/// failed catalog build is hidden behind the previous catalog, a failed roots prime is swallowed, and the
+/// option behind a hidden-required failure is withheld from the client. Each must still reach the
+/// operator's log — once per episode or routing version, not once per request that retries it.
 /// </summary>
 [TestClass]
 public sealed class Given_McpDiagnostics
@@ -30,6 +34,8 @@ public sealed class Given_McpDiagnostics
 	private const int CatalogRecoveredEvent = 2005;
 	private const int RootsPrimeStillFailingEvent = 2006;
 	private const int RootsPrimeRecoveredEvent = 2007;
+	private const int HiddenRequiredOptionWithheldEvent = 2008;
+	private const int HiddenRequiredOptionStillWithheldEvent = 2009;
 
 	[TestMethod]
 	[Description("A tool call that fails with a withheld detail (an unhandled exception, not McpException/McpInteractionException) must still record that detail for the operator: the client's generic 'Command failed' message is deliberate, discarding invocation.Failure and its rendered text entirely is not.")]
@@ -260,6 +266,174 @@ public sealed class Given_McpDiagnostics
 			.Should().NotContain(tool => string.Equals(tool.Name, "extra", StringComparison.Ordinal));
 
 		provider.Single(CatalogRecoveredEvent).Message.Should().Contain("version 3");
+	}
+
+	[TestMethod]
+	[Description("A connection never served a catalog gets the same generic error as a served one (#104); only the operator log names the option's target, rendered token and route, which hiding the option withholds from the client.")]
+	public async Task When_AColdConnectionHitsAHiddenRequiredOption_Then_OnlyTheOperatorLearnsWhichOne()
+	{
+		var provider = new CapturingLoggerProvider();
+		// A CommandFilter defers projection to the first discovery request, so the server starts and the
+		// failure reaches a connection that has never been served a catalog.
+		await using var fixture = await McpTestFixture.CreateAsync(
+			MapDeployWithAHiddenRequiredToken,
+			static options => options.CommandFilter = static _ => true,
+			clientOptions: null,
+			configureServices: services => CaptureLogs(services, provider)).ConfigureAwait(false);
+
+		var discover = async () => await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+
+		await ShouldFailWithoutNamingTheOptionAsync(discover).ConfigureAwait(false);
+		ShouldHaveLoggedTheHiddenOption(provider);
+	}
+
+	[TestMethod]
+	[Description("A connection already served a catalog fails closed with the same generic error; the withheld option and route must still reach the operator log, or nobody learns what to fix.")]
+	public async Task When_AServedConnectionHitsAHiddenRequiredOption_Then_OnlyTheOperatorLearnsWhichOne()
+	{
+		var provider = new CapturingLoggerProvider();
+		var exposeDeploy = false;
+		await using var fixture = await McpTestFixture.CreateAsync(
+			MapDeployWithAHiddenRequiredToken,
+			options => options.CommandFilter = command =>
+				exposeDeploy || !string.Equals(command.Path, "deploy", StringComparison.OrdinalIgnoreCase),
+			clientOptions: null,
+			configureServices: services => CaptureLogs(services, provider)).ConfigureAwait(false);
+		await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+
+		exposeDeploy = true;
+		fixture.App.Core.InvalidateRouting();
+		var discover = async () => await fixture.Client.ListToolsAsync().ConfigureAwait(false);
+
+		await ShouldFailWithoutNamingTheOptionAsync(discover).ConfigureAwait(false);
+		ShouldHaveLoggedTheHiddenOption(provider);
+	}
+
+	[TestMethod]
+	[Description("A hidden option the app also requires fails every discovery on every connection until the app changes, so it is an error once per routing version for the whole server, and its repeats are at Debug. Counted per connection, every client that connects would log the same misconfiguration as an error again.")]
+	public async Task When_AHiddenRequiredOptionKeepsFailing_Then_EachRoutingVersionLogsOneError()
+	{
+		var provider = new CapturingLoggerProvider();
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var (app, first, second) = await StartTwoConnectionsAsync(provider, static _ => true, cts.Token).ConfigureAwait(false);
+		await using var firstScope = first.ConfigureAwait(false);
+		await using var secondScope = second.ConfigureAwait(false);
+
+		await ShouldFailWithoutNamingTheOptionAsync(() => first.Client.ListToolsAsync(cancellationToken: cts.Token).AsTask()).ConfigureAwait(false);
+		await ShouldFailWithoutNamingTheOptionAsync(() => second.Client.ListToolsAsync(cancellationToken: cts.Token).AsTask()).ConfigureAwait(false);
+
+		provider.Count(HiddenRequiredOptionWithheldEvent).Should().Be(1, "another connection hitting the same version is a repeat");
+		provider.Count(HiddenRequiredOptionStillWithheldEvent).Should().Be(1, "the repeat is still recorded");
+		provider.Count(LogLevel.Error).Should().Be(1, "the repeat is recorded at Debug, below the threshold an operator reads");
+
+		app.Core.InvalidateRouting();
+		await ShouldFailWithoutNamingTheOptionAsync(() => first.Client.ListToolsAsync(cancellationToken: cts.Token).AsTask()).ConfigureAwait(false);
+
+		provider.Count(HiddenRequiredOptionWithheldEvent).Should().Be(2, "a routing change that leaves the failure in place reports it again");
+	}
+
+	[TestMethod]
+	[Description("Connections build at the routing version they read when their request started, so a slow build can fail at an older version after another connection has reported a newer one. That late failure is a repeat, not a new report: logging it as an error would report a version the server has already left.")]
+	public async Task When_AnOlderVersionFailsAfterANewerOneWasReported_Then_ItIsLoggedAtDebug()
+	{
+		var provider = new CapturingLoggerProvider();
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		using var slowBuildEntered = new ManualResetEventSlim();
+		using var releaseSlowBuild = new ManualResetEventSlim();
+		var holdFirstFilterCall = 1;
+		// Holds the first build, the slow connection's, inside its projection at version 1.
+		var (app, slow, fast) = await StartTwoConnectionsAsync(
+			provider,
+			_ =>
+			{
+				if (Interlocked.Exchange(ref holdFirstFilterCall, 0) == 1)
+				{
+					slowBuildEntered.Set();
+					releaseSlowBuild.Wait(cts.Token);
+				}
+
+				return true;
+			},
+			cts.Token).ConfigureAwait(false);
+		await using var slowScope = slow.ConfigureAwait(false);
+		await using var fastScope = fast.ConfigureAwait(false);
+
+		var slowDiscovery = ShouldFailWithoutNamingTheOptionAsync(() => slow.Client.ListToolsAsync(cancellationToken: cts.Token).AsTask());
+		try
+		{
+			slowBuildEntered.Wait(cts.Token);
+			app.Core.InvalidateRouting();
+			await ShouldFailWithoutNamingTheOptionAsync(() => fast.Client.ListToolsAsync(cancellationToken: cts.Token).AsTask()).ConfigureAwait(false);
+		}
+		finally
+		{
+			// Released on failure too: the SDK waits for the held request before the session can close, so a
+			// failed assertion above would otherwise surface as a dispose timeout instead.
+			releaseSlowBuild.Set();
+		}
+
+		await slowDiscovery.ConfigureAwait(false);
+
+		provider.Single(HiddenRequiredOptionWithheldEvent).Message.Should().Contain("version 2");
+		provider.Single(HiddenRequiredOptionStillWithheldEvent).Message.Should().Contain(
+			"version 1",
+			"the slow connection's failure at version 1 came after version 2 was reported");
+	}
+
+	/// <summary>
+	/// Starts two connections on one handler over an app whose <c>deploy</c> route hides a required option.
+	/// The <paramref name="commandFilter"/> defers projection to each connection's first discovery request.
+	/// </summary>
+	private static async Task<(ReplApp App, McpPipeSession First, McpPipeSession Second)> StartTwoConnectionsAsync(
+		CapturingLoggerProvider provider,
+		Func<ReplDocCommand, bool> commandFilter,
+		CancellationToken cancellationToken)
+	{
+		var app = ReplApp.Create(services => CaptureLogs(services, provider));
+		app.UseMcpServer();
+		MapDeployWithAHiddenRequiredToken(app);
+		var options = new ReplMcpServerOptions
+		{
+			TransportFactory = McpTestFixture.PipeTransportFactory,
+			CommandFilter = commandFilter,
+		};
+		var handler = new McpServerHandler(app.Core, options, app.Services);
+		var first = await McpPipeSession.StartAsync(handler.RunAsync, clientOptions: null, cancellationToken).ConfigureAwait(false);
+		try
+		{
+			var second = await McpPipeSession.StartAsync(handler.RunAsync, clientOptions: null, cancellationToken).ConfigureAwait(false);
+			return (app, first, second);
+		}
+		catch
+		{
+			// The caller only takes ownership once this returns.
+			await first.DisposeAsync().ConfigureAwait(false);
+			throw;
+		}
+	}
+
+	private static void MapDeployWithAHiddenRequiredToken(ReplApp app)
+	{
+		app.Map("ping", static () => "pong");
+		app.Map(
+			"deploy",
+			static string ([ReplOption(Name = "token", Hidden = true, Arity = ReplArity.ExactlyOne)] string token) => token);
+	}
+
+	private static async Task ShouldFailWithoutNamingTheOptionAsync(Func<Task> discover)
+	{
+		var failure = (await discover.Should().ThrowAsync<McpException>().ConfigureAwait(false)).Which;
+		failure.Message.Should().Contain("The server's MCP catalog is unavailable because of a server configuration error.");
+		failure.Message.Should().NotContain("token", "the option's target and rendered token are what hiding it withholds");
+		failure.Message.Should().NotContain("deploy", "the route is what hiding the option withholds");
+	}
+
+	private static void ShouldHaveLoggedTheHiddenOption(CapturingLoggerProvider provider)
+	{
+		var entry = provider.Single(HiddenRequiredOptionWithheldEvent);
+		entry.Level.Should().Be(LogLevel.Error);
+		entry.Exception.Should().BeAssignableTo<InvalidOperationException>();
+		entry.Message.Should().Contain("'token'").And.Contain("'--token'").And.Contain("'deploy'");
 	}
 
 	private static void CaptureLogs(IServiceCollection services, CapturingLoggerProvider provider) =>

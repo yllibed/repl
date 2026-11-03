@@ -61,10 +61,6 @@ internal sealed class McpSessionContext : IAsyncDisposable
 	/// </summary>
 	public SnapshotCacheEntry? GetSnapshotCache(bool sessionless) => Volatile.Read(ref Slot(sessionless));
 
-	/// <summary>Whether any catalog, of either era, has been published on this session.</summary>
-	public bool HasServedSnapshot =>
-		Volatile.Read(ref _legacySnapshot) is not null || Volatile.Read(ref _modernSnapshot) is not null;
-
 	/// <summary>Publishes <paramref name="snapshot"/> as current for <paramref name="version"/>.</summary>
 	public void PublishSnapshot(
 		McpServerHandler.McpGeneratedSnapshot snapshot,

@@ -49,7 +49,7 @@ internal sealed class McpAppResource : McpServerResource
 	/// non-<see cref="McpException"/> to "An error occurred." and passes an <see cref="McpException"/>'s
 	/// message through verbatim — so wrapping is the act that would disclose it, and returning without
 	/// throwing is what leaves the empty case sanitized. The same rule as
-	/// <c>McpServerHandler.ThrowSanitizedIfAClientAlreadyHasASchema</c>.
+	/// <c>McpServerHandler.WithholdHiddenRequiredOption</c>.
 	/// <para>
 	/// An <see cref="McpException"/> is the exception to that: raising one is a deliberate act and its
 	/// message was written for this client, which is why the SDK lets it through. Replacing it because
