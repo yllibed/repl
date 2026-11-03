@@ -65,6 +65,10 @@ var ok = execution.TryGetResult<Contact>(out var typed);
 For a result that carries an outcome of its own (`Results.Exit(code, payload)`,
 `Results.CompletedWithFailures(payload)`), both read through to the payload.
 
+> **Changed in 0.12.** `TryGetResult<Payload>()` on `Results.Exit(code, payload)` used to return `false`,
+> and `GetResult<Payload>()` to throw; both now return the payload. Asking for the wrapper type still
+> returns the wrapper.
+
 ### Rendered output contract (optional)
 
 Use `OutputText` when you intentionally validate the rendered contract (format/content as seen by users or external clients).

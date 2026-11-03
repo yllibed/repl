@@ -173,6 +173,12 @@ process. Repl passes a configured code through unchanged rather than clamping it
 
 ### Restoring the pre-policy codes
 
+> **Changed in 0.12.** This table is new. A usage or binding refusal used to exit `1` and now exits `2`.
+> A handler's own `OperationCanceledException`, with no cancellation requested by the caller, is a
+> `HandlerException` (exit `1`). Hosted-lifecycle failures and the unknown-`--output` refusal moved from
+> stdout to stderr, and `tool --output:bogus` is a `UsageError` instead of help. This section restores
+> the old codes; the stderr routing has no switch.
+
 Before this table existed, every framework refusal and every handler failure alike exited `1`. If an
 application or its test suite depends on that, set the two refusal codes back:
 
@@ -395,7 +401,7 @@ If a handler completes normally with its own non-zero exit code, that code takes
 
 #### What changes for an existing application
 
-Selecting `UseCliProfile()` or `UseDefaultInteractive()` takes process signal ownership by default, which is a change in two observable ways. `ProcessSignalHandlingMode.None` restores the previous behaviour for either.
+> **Changed in 0.12.** Selecting `UseCliProfile()` or `UseDefaultInteractive()` takes process signal ownership by default, which is a change in two observable ways. `ProcessSignalHandlingMode.None` restores the previous behaviour for either.
 
 - **Exit codes.** A run interrupted by Ctrl+C, Ctrl+Break on Windows, or SIGTERM on Unix resolves to `130` or `143`, where it previously produced whatever operating-system default termination yielded. A wrapper script or CI step that treats any non-zero code as a failure will start seeing these on interruption.
 - **Handler token identity — the one that fails quietly.** A one-shot handler receives a run-scoped token rather than the caller's own, and Repl disposes it when the run ends. A handler that stored one and used it afterwards, for detached or background work, gets `ObjectDisposedException` from `Register` or `WaitHandle` — and, worse, nothing at all from `IsCancellationRequested`, which keeps reporting `false`. Handlers that only await work within the run are unaffected, as are apps with no profile, `UseEmbeddedConsoleProfile()`, and the external `IServiceProvider` / `IHost` / `IReplHost` overloads, which pass the caller's token through unchanged.

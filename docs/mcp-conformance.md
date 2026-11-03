@@ -35,6 +35,10 @@ nothing a client can *observe* may depend on the connection.
 | Same, through `prompts/get` | Emitted | Rides in the prompt result after the payload, and in the surfaced error when the prompt fails | `Given_McpUserFeedback.When_APromptDeclaresNoLogLevel_Then_FeedbackRidesInThePromptResultInstead` / `...When_AFailingPromptDeclaresNoLogLevel_Then_FeedbackRidesInTheError` |
 | Error code for an unknown resource URI | `ResourceNotFound` (-32002) | `InvalidParams` (-32602) | `Given_McpProtocolErrorCodes.When_LegacyClientReadsAnUnknownResource_Then_ResourceNotFoundCodeIsReturned` / `...When_ModernClientReadsAnUnknownResource_Then_InvalidParamsCodeIsReturned` |
 
+> **Changed in 0.12.** An unknown resource URI and an unknown prompt name used to fail with `InternalError`
+> (-32603) on every revision. A client that matched -32603 to detect a missing resource or prompt must now
+> match the codes above; an unknown prompt is `InvalidParams` (-32602) on every revision.
+
 ## Tool list invariance on `2026-07-28`
 
 The tools chapter of that revision states:
