@@ -432,6 +432,21 @@ public sealed class Given_AdvancedInput
 	}
 
 	[TestMethod]
+	[Description("Live analysis names an option by the token the user types, as the binder's refusals do, never by the C# parameter name.")]
+	[DataRow("deploy", "Supply a value for '--retryCount'.", DisplayName = "Missing value")]
+	[DataRow("deploy --retryCount many", "Invalid value for '--retryCount':", DisplayName = "Invalid value")]
+	public async Task When_AnOptionValueIsMissingOrInvalid_Then_LiveAnalysisNamesItsToken(string text, string message)
+	{
+		var app = CoreReplApp.Create();
+		app.Map("deploy", (int retryCount) => retryCount);
+
+		var analysis = await AnalyzeAsync(app, text);
+
+		analysis.Validation.Diagnostics.Select(static diagnostic => diagnostic.Message)
+			.Should().ContainSingle(item => item.StartsWith(message, StringComparison.Ordinal));
+	}
+
+	[TestMethod]
 	[Description("Incomplete application checks must stop submitted execution as well as inform live analysis.")]
 	public async Task When_TypedValidationReturnsIncomplete_Then_SubmissionIsRefused()
 	{
