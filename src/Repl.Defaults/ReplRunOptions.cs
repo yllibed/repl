@@ -1,4 +1,4 @@
-﻿namespace Repl;
+namespace Repl;
 
 /// <summary>
 /// Runtime execution options for a single REPL run.

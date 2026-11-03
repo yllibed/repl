@@ -1,4 +1,4 @@
-﻿namespace Repl;
+namespace Repl;
 
 internal interface ISubInvocableReplApp
 {
