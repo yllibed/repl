@@ -19,4 +19,8 @@ internal sealed record OptionSchemaParameter(
 	bool SupportsServiceFallback = false,
 	// Whether the option is an options-group property rather than a handler parameter of the same name: a
 	// group parameter can be named like one of its own properties.
-	bool IsGroupProperty = false);
+	bool IsGroupProperty = false)
+{
+	/// <summary>This option's own case sensitivity, or <paramref name="global"/> when it sets none.</summary>
+	public ReplCaseSensitivity EffectiveCaseSensitivity(ReplCaseSensitivity global) => CaseSensitivity ?? global;
+}

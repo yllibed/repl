@@ -231,7 +231,7 @@ internal sealed class OptionSchema
 		foreach (var hidden in Entries.Where(static entry => entry.IsHidden))
 		{
 			var key = AliasVisibilityKey.From(hidden);
-			var effectiveCaseSensitivity = hidden.CaseSensitivity ?? globalCaseSensitivity;
+			var effectiveCaseSensitivity = hidden.EffectiveCaseSensitivity(globalCaseSensitivity);
 			_ = effectiveCaseSensitivity == ReplCaseSensitivity.CaseInsensitive
 				? insensitiveHidden.Add(key)
 				: exactHidden.Add(key);
@@ -367,7 +367,7 @@ internal sealed class OptionSchema
 		var matches = new List<OptionSchemaEntry>();
 		foreach (var entry in Entries)
 		{
-			var effectiveCase = entry.CaseSensitivity ?? globalCaseSensitivity;
+			var effectiveCase = entry.EffectiveCaseSensitivity(globalCaseSensitivity);
 			var comparison = effectiveCase == ReplCaseSensitivity.CaseInsensitive
 				? StringComparison.OrdinalIgnoreCase
 				: StringComparison.Ordinal;

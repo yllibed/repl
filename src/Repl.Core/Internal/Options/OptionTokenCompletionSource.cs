@@ -133,7 +133,7 @@ internal static class OptionTokenCompletionSource
 				continue;
 			}
 
-			var comparison = (entry.CaseSensitivity ?? globalCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive
+			var comparison = entry.EffectiveCaseSensitivity(globalCaseSensitivity) == ReplCaseSensitivity.CaseInsensitive
 				? StringComparison.OrdinalIgnoreCase
 				: StringComparison.Ordinal;
 			TryAdd(entry.Token, currentTokenPrefix, comparison, dedupe, results);

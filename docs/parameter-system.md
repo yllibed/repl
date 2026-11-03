@@ -46,6 +46,12 @@ Supporting enums:
 
 Option visibility can also be configured fluently with `CommandBuilder.WithOption(targetName, option => option.Hidden())` and `ParsingOptions.GlobalOption(name).Hidden()`. Fluent visibility overrides the attribute value, including `.Hidden(isHidden: false)`. Unknown targets fail during configuration instead of being ignored. Hidden options must be omittable, but inferred `ExactlyOne` alone does not make an omittable nullable/defaulted CLR parameter invalid. Required options-group properties fail immediately during mapping because their binder never consults DI. Required direct handler parameters are validated later, when aggregate documentation or MCP discovery knows the active provider; discovery accepts them when the binder can resolve the parameter from DI, and otherwise emits the required-hidden diagnostic.
 
+An explicit `Arity` of `ExactlyOne` or `OneOrMore` requires a value, and the binder enforces it before it would fall back to a default. `Map` therefore refuses a handler parameter that declares one of them together with a default value, whether a C# default or `[DefaultParameterValue]`. An options-group property's initializer never applies under such an arity either, but `Map` cannot detect it, since a property does not expose its initializer.
+
+> **Changed in 0.12.** Such a parameter used to be accepted, and its default never applied: an invocation without the
+> option failed with "requires exactly one value" or "requires at least one value". Remove the default value, or replace
+> `ExactlyOne` with `ZeroOrOne` and `OneOrMore` with `ZeroOrMore` if the option may be left out.
+
 ### Options groups
 
 - `ReplOptionsGroupAttribute` (on a class) marks it as a reusable parameter group
@@ -53,7 +59,7 @@ Option visibility can also be configured fluently with `CommandBuilder.WithOptio
 - standard `ReplOptionAttribute`, `ReplArgumentAttribute`, `ReplValueAliasAttribute` apply on properties
 - PascalCase property names are automatically lowered to camelCase for canonical tokens (`Format` → `--format`)
 - group properties are `OptionOnly` by default; positional binding is opt-in via explicit property attributes
-- properties with initializer values serve as defaults (no `HasDefaultValue` on `PropertyInfo`, so arity defaults to `ZeroOrOne`)
+- properties with initializer values serve as defaults (no `HasDefaultValue` on `PropertyInfo`, so arity defaults to `ZeroOrOne`), except under an explicit `ExactlyOne` or `OneOrMore` arity, where an absent option fails instead
 - named + positional values for the same group property in one invocation are rejected as validation errors
 - abstract/interface group types and nested groups are rejected at registration time
 - parameter name collisions between group properties and regular handler parameters are detected at registration time
