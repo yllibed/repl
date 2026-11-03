@@ -733,6 +733,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@microsoft/signalr@8.0.7/dist/browser/signalr.min.js"></script>
+  <script src="terminal-client.js"></script>
   <script>
     // ============================================================
     // Terminal themes and xterm bootstrap
@@ -1222,27 +1223,17 @@
     };
 
     function connectWS(config) {
-      const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl${buildConnectionQuery(config)}`);
-      ws.onmessage = e => writeTerminalOutput(e.data);
-      ws.onclose = ws.onerror = () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); };
-      send = d => { if (ws.readyState === 1) ws.send(d); };
-      inputHandler = term.onData(send);
-      // Send initial DTTERM size so the VT probe detects it.
-      ws.onopen = () => {
-        setConnectionState('connected');
-        send(buildHello(config));
-        if (config.capabilities.includes('ResizeReporting')) {
-          send(`\x1b[8;${term.rows};${term.cols}t`);
-        }
-        term.focus();
-      };
-      // DTTERM in-band VT resize sequence.
-      resizeHandler = term.onResize(({ cols, rows }) => {
-        if (send && config.capabilities.includes('ResizeReporting')) {
-          send(buildResize(cols, rows));
-          send(`\x1b[8;${rows};${cols}t`);
-        }
+      const connection = ReplTerminalClient.connect({
+        terminal: term,
+        url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/repl${buildConnectionQuery(config)}`,
+        hello: buildHello(config),
+        reportResize: config.capabilities.includes('ResizeReporting'),
+        onOutput: writeTerminalOutput,
+        onOpen: () => { setConnectionState('connected'); term.focus(); },
+        onClose: () => { send = null; setConnectionState('disconnected'); resetFeedbackMirror(); term.writeln('\r\n[disconnected]'); }
       });
+      send = connection.send;
+      inputHandler = connection;
     }
 
     function connectTelnet(config) {

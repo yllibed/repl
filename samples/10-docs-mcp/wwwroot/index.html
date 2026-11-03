@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Document index · Repl</title>
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/vendor/xterm.js" defer></script>
+  <script src="/vendor/addon-fit.js" defer></script>
+  <script src="/terminal-client.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/" aria-label="Document index home"><span class="brand-mark" aria-hidden="true">D<span>↗</span></span> Document index</a>
+    <span class="edition">A Repl reference application</span>
+    <span class="connection" id="connection-status" role="status">Connecting to console…</span>
+  </header>
+  <main>
+    <aside class="security"><strong>Trusted administration only.</strong> This console has no authentication. Anyone who can reach this port can administer the index. Add access control and TLS before exposing it.</aside>
+    <section class="intro" aria-labelledby="page-title">
+      <div><p class="eyebrow">Your documentation, connected</p><h1 id="page-title">Find the words.<br><span>Discover the meaning.</span></h1></div>
+      <p>One corpus. Three ways to explore it.<br>Search locally, read the source, and administer the same process your MCP client uses.</p>
+    </section>
+    <section class="workspace" aria-label="Index workspace">
+      <aside class="index-panel" aria-labelledby="index-title">
+        <div class="section-heading"><h2 id="index-title">The living index</h2><span class="badge" id="readiness">Starting</span></div>
+        <p class="phase" id="phase">Waiting for the service…</p>
+        <dl class="metrics">
+          <div><dt>Documents</dt><dd id="documents">—</dd></div>
+          <div><dt>Sections</dt><dd id="sections">—</dd></div>
+          <div class="generation"><dt>Serving generation</dt><dd id="generation">—</dd></div>
+          <div class="generation"><dt>Published</dt><dd id="published">—</dd></div>
+        </dl>
+        <div class="build-state"><span class="activity" id="activity" aria-hidden="true"></span><p id="progress">The first scan prepares a searchable index.</p></div>
+        <p class="error" id="index-error" hidden></p>
+        <div class="index-actions"><button type="button" data-index-action="rebuild" disabled>Rebuild index <span aria-hidden="true">↗</span></button><button class="quiet" type="button" data-index-action="cancel" disabled>Cancel rebuild</button></div>
+        <p class="caption" id="index-action-status" role="status">Actions use the Repl command pipeline. A rebuild keeps the published index available.</p>
+        <div class="access-note"><span class="eyebrow">Two tools. One public endpoint.</span><p><code>docs_search</code> finds sections.<br><code>docs_fetch</code> reads their source.</p><p>Administrative commands stay here.</p></div>
+        <p class="sr-only" id="index-status" role="status">Connecting to index…</p>
+        <p class="caption" id="refresh-status"></p>
+      </aside>
+      <section class="search-panel" aria-labelledby="search-title">
+        <div class="section-heading"><h2 id="search-title">A different angle on the same question</h2><span class="small-label">Keyword + vector → hybrid</span></div>
+        <form id="search-form" novalidate>
+          <label for="query">Ask your documentation</label>
+          <div class="search-field"><input id="query" name="q" type="search" maxlength="2000" placeholder="How do I connect to a running process?" autocomplete="off" aria-describedby="search-hint search-status"><button type="button" class="clear" id="clear-search" aria-label="Clear search" hidden disabled>×</button><button type="submit" id="search-button">Search <span aria-hidden="true">→</span></button></div>
+          <p class="caption" id="search-hint">Try an exact term, a paraphrase, or a question in another language.</p>
+        </form>
+        <p class="search-status" id="search-status" role="status">Your results will appear side by side. Select a section to read its source.</p>
+        <div class="rankings" id="rankings">
+          <section class="ranking" data-ranking="keyword"><header><span class="ranking-symbol" aria-hidden="true">Aa</span><h3>Keyword</h3><p>BM25 · lower is better</p></header><ol></ol></section>
+          <section class="ranking" data-ranking="vector"><header><span class="ranking-symbol" aria-hidden="true">≈</span><h3>Vector</h3><p>Cosine distance · lower is better</p></header><ol></ol></section>
+          <section class="ranking hybrid" data-ranking="hybrid"><header><span class="ranking-symbol" aria-hidden="true">⋈</span><h3>Hybrid</h3><p>Rank fusion · higher is better</p></header><ol></ol></section>
+        </div>
+        <section class="source" id="source" aria-labelledby="source-title" hidden>
+          <div class="section-heading"><h3 id="source-title" tabindex="-1">Source</h3><button type="button" class="quiet" id="close-source" disabled>Close source</button></div>
+          <p class="caption" id="source-meta"></p><pre id="source-text"></pre>
+        </section>
+      </section>
+    </section>
+    <section class="console-panel" aria-labelledby="console-title">
+      <div class="console-heading"><div><span class="eyebrow">Inside the running process</span><h2 id="console-title">The operator’s console</h2></div><div class="console-tools"><span id="session-count">— connections</span><button type="button" id="connect-console" disabled>Connecting…</button></div></div>
+      <nav class="quick-commands" aria-label="Console controls and command copies"><button type="button" id="interrupt-console" disabled>Interrupt · Ctrl+C</button><button type="button" data-copy="index status" aria-label="Copy index status" disabled>index status ⧉</button><button type="button" data-copy="index watch" aria-label="Copy index watch" disabled>index watch ⧉</button><button type="button" data-copy="docs list" aria-label="Copy docs list" disabled>docs list ⧉</button><button type="button" data-copy="sessions" aria-label="Copy sessions" disabled>sessions ⧉</button><span id="console-hint" role="status">Tab to complete · Ctrl+C to interrupt · exit to detach</span></nav>
+      <div id="terminal" aria-label="Interactive administration terminal"></div>
+    </section>
+    <footer><span>Local embeddings. No AI service. Your documents stay on this machine.</span><span>Built with Repl · SQLite · ONNX</span></footer>
+  </main>
+</body>
+</html>

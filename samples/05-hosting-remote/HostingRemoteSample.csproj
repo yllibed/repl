@@ -5,11 +5,15 @@
 		<Nullable>enable</Nullable>
 	</PropertyGroup>
 	<ItemGroup>
+		<Compile Include="../shared/SessionLifetime.cs" Link="SessionLifetime.cs" />
+		<Compile Include="../shared/RemoteClient.cs" Link="RemoteClient.cs" />
 		<ProjectReference Include="..\..\src\Repl.Remote.Defaults\Repl.Remote.Defaults.csproj" />
 		<ProjectReference Include="..\..\src\Repl\Repl.csproj" />
 		<ProjectReference Include="..\..\src\Repl.WebSocket\Repl.WebSocket.csproj" />
 		<ProjectReference Include="..\..\src\Repl.Telnet\Repl.Telnet.csproj" />
 		<InternalsVisibleTo Include="Repl.RemoteTests" />
 		<InternalsVisibleTo Include="Repl.Hosting.TestHost" />
+		<Content Include="../shared/terminal-client.js" Link="wwwroot/terminal-client.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+		<Content Update="wwwroot/**" CopyToOutputDirectory="PreserveNewest" />
 	</ItemGroup>
 </Project>

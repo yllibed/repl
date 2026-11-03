@@ -1,0 +1,14 @@
+**
+!global.json
+!nuget.config
+!version.json
+!.editorconfig
+!src/
+!src/**
+!samples/
+!samples/**
+**/bin
+**/obj
+**/.assets
+**/.index
+**/TestResults

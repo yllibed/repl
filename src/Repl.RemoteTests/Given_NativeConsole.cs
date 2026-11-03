@@ -26,10 +26,7 @@ public sealed class Given_NativeConsole
 		var name = TestPipeName.Create();
 		var server = new NamedPipeReplServer(name, _ => ValueTask.FromResult<IRemoteReplBackend>(new ReplAppRemoteBackend(app)));
 		await using var serverOwner = server.ConfigureAwait(false);
-		var root = FindRepositoryRoot();
-		var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
-		var assembly = Path.Combine(root, "samples", "05-hosting-remote", "bin", configuration, "net10.0", "HostingRemoteSample.dll");
-		await using var terminal = await PtySession.StartAsync("dotnet", [assembly, "--remote-console", name], deadline.Token);
+		await using var terminal = await PtySession.StartAsync("dotnet", [HostingSample.AssemblyPath, "--remote-console", name], deadline.Token);
 		await terminal.ExpectAsync("> ", deadline.Token);
 		await terminal.SendAsync("health\r", deadline.Token);
 		await terminal.ExpectAsync("native-ready-marker", deadline.Token);
@@ -51,14 +48,5 @@ public sealed class Given_NativeConsole
 		var client = await NamedPipeReplServer.ConnectAsync(name, deadline.Token).ConfigureAwait(false);
 		await using var clientOwner = client.ConfigureAwait(false);
 		(await client.ExecuteAsync(new() { Arguments = ["health"] }, deadline.Token).ConfigureAwait(false)).ExitCode.Should().Be(0);
-	}
-
-	private static string FindRepositoryRoot()
-	{
-		for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
-		{
-			if (File.Exists(Path.Combine(directory.FullName, "global.json"))) { return directory.FullName; }
-		}
-		throw new DirectoryNotFoundException("Could not locate the repository root for the sample executable.");
 	}
 }

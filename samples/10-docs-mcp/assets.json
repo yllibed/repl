@@ -1,0 +1,58 @@
+[
+  {
+    "path": "model.onnx",
+    "url": "https://huggingface.co/intfloat/multilingual-e5-small/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/onnx/model.onnx",
+    "sha256": "ca456c06b3a9505ddfd9131408916dd79290368331e7d76bb621f1cba6bc8665"
+  },
+  {
+    "path": "sentencepiece.bpe.model",
+    "url": "https://huggingface.co/intfloat/multilingual-e5-small/resolve/614241f622f53c4eeff9890bdc4f31cfecc418b3/sentencepiece.bpe.model",
+    "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865"
+  },
+  {
+    "path": "native/win-x64/archive.tar.gz",
+    "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-windows-x86_64.tar.gz",
+    "sha256": "51581189d52066b4dfc6631f6d7a3eab7dedc2260656ab09ca97ab3fb8165983",
+    "extract": "vec0.dll",
+    "rid": "win-x64"
+  },
+  {
+    "path": "native/linux-x64/archive.tar.gz",
+    "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-linux-x86_64.tar.gz",
+    "sha256": "b959baa1d8dc88861b1edb337b8587178cdcb12d60b4998f9d10b6a82052d5d7",
+    "extract": "vec0.so",
+    "rid": "linux-x64"
+  },
+  {
+    "path": "native/osx-arm64/archive.tar.gz",
+    "url": "https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-macos-aarch64.tar.gz",
+    "sha256": "8282126333399ddfe98bbbcc7a1936e7252625aac49df056a98be602e46bfd29",
+    "extract": "vec0.dylib",
+    "rid": "osx-arm64"
+  },
+  {
+    "path": "web/addon-fit-LICENSE",
+    "url": "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/LICENSE",
+    "sha256": "e256f01188af527e4d06d21d06fbf785ae9c50d4b328bf03cbe0ba7f0aa4228f"
+  },
+  {
+    "path": "web/addon-fit.js",
+    "url": "https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js",
+    "sha256": "bdaefa370b1bfc42ee88d46fe6072400902a4d4b2d45cd93438dda9b23c97089"
+  },
+  {
+    "path": "web/xterm-LICENSE",
+    "url": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/LICENSE",
+    "sha256": "b569f629d00f2626a8100df2a1798210535621e42164dfd426a6fe5aac7b0ccd"
+  },
+  {
+    "path": "web/xterm.css",
+    "url": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css",
+    "sha256": "ba8e6985669488981ccf40c0cefe3aba80722cb6c92de7ad628b0bd717faf2b6"
+  },
+  {
+    "path": "web/xterm.js",
+    "url": "https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js",
+    "sha256": "1f991ac3b4b283ebf96e60ae23a00a52765dd3a2e46fa6fdda9f1aab032f7495"
+  }
+]

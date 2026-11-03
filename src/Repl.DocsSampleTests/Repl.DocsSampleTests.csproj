@@ -1,0 +1,15 @@
+<Project Sdk="MSTest.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="TestData/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="../../samples/10-docs-mcp/DocsMcpSample.csproj" />
+    <PackageReference Include="AwesomeAssertions" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

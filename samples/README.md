@@ -24,6 +24,8 @@ If you’re new, start with **01**, then follow the sequence.
    Build a concrete MCP server from a Repl command graph: CLI + REPL + MCP mode, host config snippets for Cursor/VS Code/Claude/Cline, tools, resources, prompts, behavioral annotations, automation visibility, and a minimal MCP Apps UI.
 9. [09 — Advanced Input](09-advanced-input/)
    Legacy CLI adaptation, typed validators with injected services, and host-owned actions guarded during preview and completion. Advanced integration scenarios.
+10. [10 — Documentation MCP server](10-docs-mcp/)
+    Local hybrid Markdown search, a restricted MCP HTTP surface, an administration dashboard with a Spectre console, named-pipe attachment and Docker deployment. Advanced hosting integration.
 
 ## Run
 
@@ -43,6 +45,9 @@ Replace the project path with the one you want:
 - `samples/07-spectre/SpectreOpsSample.csproj`
 - `samples/08-mcp-server/McpServerSample.csproj`
 - `samples/09-advanced-input/AdvancedInputSample.csproj`
+- `samples/10-docs-mcp/DocsMcpSample.csproj`
+
+Sample 10 requires an initial model and browser asset download before starting the server. Follow its [native or Docker setup](10-docs-mcp/README.md#run-it), then take the [guided tour](10-docs-mcp/README.md#take-the-tour).
 
 ## Suggested reading (existing docs)
 

@@ -69,6 +69,8 @@ internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTran
 		HelpRenderDocument help => RenderedPayload.Plain(RenderHelp(help)),
 		IReplPage page => RenderPageWithFooter(page),
 		IReplResult replResult => RenderReplResult(replResult),
+		_ when _spectreOptions?.TryGetView(value.GetType(), out var view) == true =>
+			RenderedPayload.Plain(RenderToString(view(value))),
 		string text => RenderedPayload.Plain(text),
 		// Before the enumerable arm: a JsonObject enumerates as key/value pairs, and reflecting over
 		// those walks JsonNode's Root and Parent, which point back at each other.
@@ -337,7 +339,7 @@ internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTran
 
 	private bool TryRenderObject(object value, out string text)
 	{
-		var members = GetDisplayMembers(value.GetType());
+		var members = IsSimpleValue(value.GetType()) ? [] : GetDisplayMembers(value.GetType());
 		if (members.Length == 0)
 		{
 			text = string.Empty;
@@ -543,7 +545,7 @@ internal sealed class SpectreHumanOutputTransformer : ILayoutDeclaringOutputTran
 
 	private static bool TryRenderInlineObject(object value, out string text)
 	{
-		var members = GetDisplayMembers(value.GetType());
+		var members = IsSimpleValue(value.GetType()) ? [] : GetDisplayMembers(value.GetType());
 		if (members.Length == 0)
 		{
 			text = string.Empty;

@@ -109,6 +109,8 @@ Most MCP clients use the same format:
 
 See [mcp-reference.md](mcp-reference.md#agent-configuration) for all client-specific paths and formats (Claude Desktop, Claude Code, VS Code Copilot, Cursor, Cline, MCP Inspector). For a complete copy/paste sample, see [sample 08 — Build an MCP Server with Repl.Mcp](../samples/08-mcp-server/).
 
+For a stateless HTTP MCP server with local document search, see [sample 10 — Documentation MCP Server](../samples/10-docs-mcp/). Its guided tour combines an agent-facing search and fetch API with a separate administration console and Docker deployment.
+
 ## What most apps need vs what few apps need
 
 | Most apps need | Few apps need |

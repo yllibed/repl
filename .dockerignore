@@ -1,5 +1,7 @@
 **/bin
 **/obj
+**/.assets
+**/.index
 .git
 .claude
 .codex

@@ -1,4 +1,4 @@
-namespace HostingRemoteSample;
+namespace Repl.Samples;
 
 // Host and transport notifications must not execute command callbacks on their stopping thread.
 internal sealed class SessionLifetime : IAsyncDisposable

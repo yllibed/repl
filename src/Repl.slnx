@@ -26,6 +26,7 @@
 	<Project Path="Repl.IntegrationTests/Repl.IntegrationTests.csproj" />
 	<Project Path="Repl.ProtocolTests/Repl.ProtocolTests.csproj" />
 	<Project Path="Repl.McpTests/Repl.McpTests.csproj" />
+	<Project Path="Repl.DocsSampleTests/Repl.DocsSampleTests.csproj" />
 	<Project Path="Repl.SpectreTests/Repl.SpectreTests.csproj" />
 	<Folder Name="/Samples/">
 		<Project Path="../samples/01-core-basics/CoreBasicsSample.csproj" />
@@ -37,5 +38,6 @@
 		<Project Path="../samples/07-spectre/SpectreOpsSample.csproj" />
 		<Project Path="../samples/08-mcp-server/McpServerSample.csproj" />
 		<Project Path="../samples/09-advanced-input/AdvancedInputSample.csproj" />
+		<Project Path="../samples/10-docs-mcp/DocsMcpSample.csproj" />
 	</Folder>
 </Solution>

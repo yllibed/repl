@@ -6,6 +6,8 @@ Attach a console to an application that is already running, or ask it to execute
 
 For a runnable example, use [sample 05](../samples/05-hosting-remote/). The same process serves browser terminals, native console sessions and one-shot commands against shared application services.
 
+For a complete application using those connections to inspect a live document index, follow [sample 10's administration tour](../samples/10-docs-mcp/README.md#take-the-tour). It demonstrates named-pipe attachment and executable health probes alongside browser administration and an HTTP MCP endpoint.
+
 ## Explicit opt-in
 
 Existing applications do not enable remote access by upgrading Core or Defaults. Neither package depends on the remote packages. Reference `Repl.Remote.Defaults` when integrating a `ReplApp`; it brings in `Repl.Remote`. Reference only `Repl.Remote` when implementing your own backend. Referencing a package alone starts no listener.

@@ -1,5 +1,6 @@
 using System.Net.WebSockets;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using Repl.WebSocket;
 
 namespace Repl.IntegrationTests;
@@ -86,6 +87,40 @@ public sealed class Given_WebSocketSession
 	}
 
 	[TestMethod]
+	[DataRow(false, DisplayName = "Peer sends a normal close frame")]
+	[DataRow(true, DisplayName = "Peer drops the connection")]
+	[Description("A disconnected peer cancels an active command and lets the session finish without cancelling its embedding host.")]
+	public async Task When_ThePeerDisconnectsDuringACommand_Then_TheCommandAndSessionEnd(bool abort)
+	{
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var cleaned = false;
+		var app = CreateApp();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally { cleaned = true; }
+		});
+		using var caller = new CancellationTokenSource();
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options, caller.Token).AsTask();
+			await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+
+			if (abort) { client.Abort(); }
+			else { await client.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, statusDescription: null, CancellationToken.None).ConfigureAwait(false); }
+
+			(await run.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+			cleaned.Should().BeTrue();
+			caller.IsCancellationRequested.Should().BeFalse();
+			if (!abort) { (await InMemoryWebSocketPair.ReceiveTheCloseAsync(client).WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure); }
+		}
+	}
+
+	[TestMethod]
 	[Description("Verifies the caller cancelling a WebSocket session at its prompt still propagates the cancellation, rather than ending as if the user had exited.")]
 	public async Task When_TheCallerCancelsAtThePrompt_Then_TheCancellationPropagates()
 	{
@@ -167,6 +202,316 @@ public sealed class Given_WebSocketSession
 
 			await act.Should().ThrowAsync<OperationCanceledException>().ConfigureAwait(false);
 			server.State.Should().Be(WebSocketState.Aborted);
+		}
+	}
+
+	[TestMethod]
+	[Description("A WebSocket session borrows the embedding host's services and caller-owned scope without resolving a second scoped instance or disposing shared state.")]
+	public async Task When_TheHostSuppliesServices_Then_CommandsUseTheCallerScope()
+	{
+		using var services = new ServiceCollection().AddScoped<ServiceProbe>().BuildServiceProvider();
+		using var scope = services.CreateScope();
+		var expected = scope.ServiceProvider.GetRequiredService<ServiceProbe>();
+		ServiceProbe? observed = null;
+		var app = ReplApp.Create();
+		app.Map("probe", (ServiceProbe probe) => { observed = probe; return "ok"; });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(Encoding.UTF8.GetBytes("probe\rexit\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			var result = await ReplWebSocketSession.RunWithServicesAsync(app, server, scope.ServiceProvider,
+				s_options with { SessionScope = SessionScopeBehavior.CallerOwned }).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+			result.Should().Be(0);
+			observed.Should().BeSameAs(expected);
+			expected.Disposed.Should().BeFalse();
+			(await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure);
+		}
+	}
+
+	private sealed class ServiceProbe : IDisposable
+	{
+		internal bool Disposed { get; private set; }
+		public void Dispose() => Disposed = true;
+	}
+
+	[TestMethod]
+	[Description("An ignored size rejection still aborts the connection while asynchronous command cleanup is pending, without disposing the command's session prematurely.")]
+	public async Task When_AsyncCleanupOutlivesTheSizeRejection_Then_TheConnectionDeadlineRemainsActive()
+	{
+		using var deadline = new CancellationTokenSource(Patience);
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var cleaning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = CreateApp();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally
+			{
+				cleaning.TrySetResult();
+#pragma warning disable VSTHRD003 // The test owns the gate that deliberately holds asynchronous cleanup open.
+				await release.Task.ConfigureAwait(false);
+#pragma warning restore VSTHRD003
+			}
+		});
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var rejection = InMemoryWebSocketPair.ReceiveTheCloseAsync(client);
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+			try
+			{
+				await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+				await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+				await client.SendAsync(new byte[65537], WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+
+				(await rejection.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.MessageTooBig);
+				await cleaning.Task.WaitAsync(Patience).ConfigureAwait(false);
+				while (server.State != WebSocketState.Aborted) { await Task.Delay(10, deadline.Token).ConfigureAwait(false); }
+				run.IsCompleted.Should().BeFalse();
+			}
+			finally { release.TrySetResult(); }
+			await run.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("A failed rejection frame still cancels the active command, allowing the session to unwind instead of waiting forever for its token.")]
+	public async Task When_TheSizeRejectionCannotBeSent_Then_TheActiveCommandStillStops()
+	{
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = CreateApp();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally { stopped.TrySetResult(); }
+		});
+		var pair = InMemoryWebSocketPair.Create();
+		using var server = new CloseFailureSocket(pair.Server);
+		using var client = pair.Client;
+		var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+		var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+		await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+		await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+
+		await client.SendAsync(new byte[65537], WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+
+		await stopped.Task.WaitAsync(Patience).ConfigureAwait(false);
+		await run.WaitAsync(Patience).ConfigureAwait(false);
+		await peer.WaitAsync(Patience).ConfigureAwait(false);
+		server.RejectionAttempted.Should().BeTrue();
+	}
+
+	private sealed class CloseFailureSocket(WebSocket inner) : WebSocket
+	{
+		internal bool RejectionAttempted { get; private set; }
+		public override WebSocketCloseStatus? CloseStatus => inner.CloseStatus;
+		public override string? CloseStatusDescription => inner.CloseStatusDescription;
+		public override WebSocketState State => inner.State;
+		public override string? SubProtocol => inner.SubProtocol;
+		public override void Abort() => inner.Abort();
+		public override void Dispose() => inner.Dispose();
+		public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) => inner.CloseAsync(closeStatus, statusDescription, cancellationToken);
+		public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+		{
+			RejectionAttempted = true;
+			throw new WebSocketException("Injected close-send failure.");
+		}
+		public override Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken) => inner.ReceiveAsync(buffer, cancellationToken);
+		public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken) => inner.SendAsync(buffer, messageType, endOfMessage, cancellationToken);
+	}
+
+	[TestMethod]
+	[Description("The peer receives the size rejection before application cancellation callbacks run, so a slow callback cannot delay the close announcement.")]
+	public async Task When_ACancellationCallbackBlocks_Then_TheSizeRejectionIsAlreadySent()
+	{
+		using var deadline = new CancellationTokenSource(Patience);
+		using var release = new ManualResetEventSlim();
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var callbackEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = CreateApp();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			using var registration = ct.Register(() => { callbackEntered.TrySetResult(); release.Wait(Patience); });
+			entered.TrySetResult();
+			await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false);
+		});
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+			try
+			{
+				await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+				await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+				await client.SendAsync(new byte[65537], WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+
+				(await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.MessageTooBig);
+				await callbackEntered.Task.WaitAsync(Patience).ConfigureAwait(false);
+				while (server.State != WebSocketState.Aborted) { await Task.Delay(10, deadline.Token).ConfigureAwait(false); }
+				run.IsCompleted.Should().BeFalse();
+			}
+			finally { release.Set(); }
+			await run.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[DataRow(false, true, DisplayName = "Idle console, peer acknowledges rejection")]
+	[DataRow(true, true, DisplayName = "Active command, peer acknowledges rejection")]
+	[DataRow(true, false, DisplayName = "Active command, peer ignores rejection")]
+	[Description("An unfinished message cannot retain more than the documented byte budget, even when each continuation fragment is small.")]
+	public async Task When_FragmentsExceedTheMessageLimit_Then_TheSessionEnds(bool activeCommand, bool answerClose)
+	{
+		var app = CreateApp();
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		app.Map("wait", async (CancellationToken ct) => { entered.TrySetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = answerClose ? InMemoryWebSocketPair.AnswerTheCloseAsync(client) : null;
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+			if (activeCommand)
+			{
+				await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+				await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+			}
+			var fragment = new byte[1024];
+			for (var i = 0; i < 65; i++)
+			{
+				await client.SendAsync(fragment, WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			}
+
+			if (peer is not null) { (await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.MessageTooBig); }
+			await run.WaitAsync(Patience).ConfigureAwait(false);
+			server.State.Should().Be(answerClose ? WebSocketState.Closed : WebSocketState.Aborted);
+		}
+	}
+
+	[TestMethod]
+	[DataRow(false, DisplayName = "Single message at 64 KiB")]
+	[DataRow(true, DisplayName = "Fragmented message at 64 KiB with split UTF-8")]
+	[Description("The inclusive message limit accepts exactly 65,536 bytes, dispatches its control payload and resets the budget for the next message.")]
+	public async Task When_AMessageExactlyFitsTheLimit_Then_ItIsDispatched(bool fragmented)
+	{
+		const string prefix = "@@repl:resize {\"cols\":120,\"rows\":40,\"padding\":\"é";
+		const string suffix = "\"}";
+		var bytes = Encoding.UTF8.GetBytes(prefix + new string('x', 65536 - Encoding.UTF8.GetByteCount(prefix + suffix)) + suffix);
+		var observed = new TaskCompletionSource<TerminalControlMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			var run = ReplWebSocketSession.RunAsync(CreateApp(), server, s_options,
+				onControlMessage: control => observed.TrySetResult(control), CancellationToken.None).AsTask();
+			if (fragmented)
+			{
+				var split = Array.IndexOf(bytes, (byte)0xc3) + 1;
+				await client.SendAsync(bytes.AsMemory(0, split), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+				await client.SendAsync(bytes.AsMemory(split), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			}
+			else { await client.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false); }
+
+			(await observed.Task.WaitAsync(Patience).ConfigureAwait(false)).WindowSize.Should().Be((120, 40));
+			await client.SendAsync(Encoding.UTF8.GetBytes("exit\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			(await run.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+			(await peer.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(WebSocketCloseStatus.NormalClosure);
+		}
+	}
+
+	[TestMethod]
+	[Description("A multibyte character split across WebSocket fragments reaches the command intact rather than being replaced by invalid UTF-8 markers.")]
+	public async Task When_Utf8SpansFragments_Then_CommandArgumentsRemainIntact()
+	{
+		var app = ReplApp.Create();
+		string? observed = null;
+		app.Map("echo {text}", (string text) => { observed = text; return text; });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			var bytes = Encoding.UTF8.GetBytes("echo café🌈\rexit\r");
+			var split = Array.IndexOf(bytes, (byte)0xc3) + 1;
+			await client.SendAsync(bytes.AsMemory(0, split), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(bytes.AsMemory(split), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			await ReplWebSocketSession.RunAsync(app, server, s_options).AsTask().WaitAsync(Patience).ConfigureAwait(false);
+
+			observed.Should().Be("café🌈");
+			await peer.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("A pending supplementary Unicode character and a full following receive buffer are decoded without overflowing the character buffer; an empty final fragment still completes the command.")]
+	public async Task When_AFullFragmentCompletesASupplementaryCharacter_Then_TheCommandIsPreserved()
+	{
+		var app = ReplApp.Create();
+		string? observed = null;
+		app.Map("echo {text}", (string text) => { observed = text; return "ok"; });
+		var expected = "🌈" + new string('a', 4095);
+		var bytes = Encoding.UTF8.GetBytes("echo " + expected + "\rexit\r");
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(bytes.AsMemory(0, 8), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(bytes.AsMemory(8, 4096), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(bytes.AsMemory(4104), WebSocketMessageType.Text, endOfMessage: false, CancellationToken.None).ConfigureAwait(false);
+			await client.SendAsync(ReadOnlyMemory<byte>.Empty, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			(await ReplWebSocketSession.RunAsync(app, server, s_options).AsTask().WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+
+			observed.Should().Be(expected);
+			await peer.WaitAsync(Patience).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("A terminal Ctrl+C cancels the active command while preserving the session for a subsequent command and normal exit.")]
+	public async Task When_ThePeerSendsControlC_Then_OnlyTheActiveCommandIsCancelled()
+	{
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		var app = ReplApp.Create();
+		app.Map("wait", async (CancellationToken ct) =>
+		{
+			entered.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, ct).ConfigureAwait(false); }
+			finally { cancelled.TrySetResult(); }
+		});
+		var pinged = false;
+		app.Map("ping", () => { pinged = true; return "pong"; });
+		var (server, client) = InMemoryWebSocketPair.Create();
+		using (server)
+		using (client)
+		{
+			var run = ReplWebSocketSession.RunAsync(app, server, s_options).AsTask();
+			await client.SendAsync(Encoding.UTF8.GetBytes("wait\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			await entered.Task.WaitAsync(Patience).ConfigureAwait(false);
+
+			await client.SendAsync(new byte[] { 3 }, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+			await cancelled.Task.WaitAsync(Patience).ConfigureAwait(false);
+			var peer = InMemoryWebSocketPair.AnswerTheCloseAsync(client);
+			await client.SendAsync(Encoding.UTF8.GetBytes("ping\rexit\r"), WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None).ConfigureAwait(false);
+
+			(await run.WaitAsync(Patience).ConfigureAwait(false)).Should().Be(0);
+			pinged.Should().BeTrue();
+			await peer.WaitAsync(Patience).ConfigureAwait(false);
 		}
 	}
 

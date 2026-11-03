@@ -4,6 +4,8 @@ Embed Repl in a long-running service when operators need to inspect the running 
 
 The [hosting sample](../samples/05-hosting-remote/) serves browser terminals and a local named-pipe console against the same in-memory settings and message bus. The application host owns its services and process signals. MCP is optional and is not used in this recipe.
 
+For an application combining HTTP MCP, a persistent search index and separate administration, see [sample 10 — Documentation MCP Server](../samples/10-docs-mcp/). Its [operations guide](../samples/10-docs-mcp/docs/operations.md) covers the document and index volumes, live-process health probes and deployment boundaries. Administration is unauthenticated and must remain private.
+
 ## Start, probe and attach
 
 Run these commands from the repository root:
