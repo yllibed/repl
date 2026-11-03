@@ -43,15 +43,17 @@ await using var host = builder.Build();
 var app = host.Services.GetRequiredService<ReplApp>();
 var remote = new NamedPipeReplServer("my-app",
     _ => ValueTask.FromResult<IRemoteReplBackend>(
-        new ReplAppRemoteBackend(app, host.Services)));
+        new ReplAppRemoteBackend(app, host.Services)),
+    error => host.Logger.LogError(error, "Remote CLI failure"));
 
 try
 {
     await host.StartAsync();
-    await Task.Delay(Timeout.InfiniteTimeSpan, host.Lifetime.ApplicationStopping);
-}
-catch (OperationCanceledException) when (host.Lifetime.ApplicationStopping.IsCancellationRequested)
-{
+    var stopping = Task.Delay(Timeout.InfiniteTimeSpan, host.Lifetime.ApplicationStopping);
+    if (await Task.WhenAny(stopping, remote.Completion) == remote.Completion)
+    {
+        await remote.Completion; // rethrows the fault that stopped the endpoint
+    }
 }
 finally
 {
@@ -74,6 +76,12 @@ The order of startup and callbacks is:
 5. `terminal.open` creates a session scope and starts a hosted interactive run through `StreamedReplHost`. Normal startup callbacks run for that session; subsequent commands follow the interactive pipeline. See [startup callbacks](advanced-startup.md) and [input hooks](advanced-input.md) for their detailed order.
 6. Closing or losing a connection cancels its work. Terminal interruption cancels only that session's active command; an idle prompt remains open. Detach does not stop the serving application.
 7. Listener disposal stops acceptance and cancels connections before the host provider is disposed. Backend implementations must cooperate with cancellation. Shutdown waits are bounded; arbitrary application code cannot be forcibly stopped safely.
+
+### Failure reporting
+
+A client never receives the detail of a server-side failure: a backend method that throws answers `-32603` with "The remote backend failed.", and a failed terminal exits with `1`. The detail goes to the operator through the listener's third argument, `onConnectionError`, which receives every such exception: backend methods, terminal sessions, a connection that failed, and a fault that stops the endpoint accepting. Route it to the application's logger, as above. `RemoteReplServer.RunAsync` takes the same callback as `onError` when you serve your own streams. Without a callback, these failures go only to `System.Diagnostics.Trace`, which no default .NET logging provider reads.
+
+The callback runs on the failing path, so it should only record the error. An exception it throws is traced and ignored; it never replaces the client's error or faults the connection. An endpoint that stops accepting also faults `Completion`. Observe that task, as the example does, so the host stops instead of running on without its administration endpoint.
 
 When no provider is supplied to `ReplAppRemoteBackend`, it borrows `app.Services`. Supplying the embedding host's provider keeps its singleton services shared. The adapter never disposes the application or that root provider.
 
@@ -114,7 +122,7 @@ Closing a terminal waits locally for up to five seconds. If the server does not 
 
 `new RemoteReplClient(stream)` and `RemoteReplServer.RunAsync(stream, backend, token)` borrow their streams. Their two-stream overloads also support redirected standard I/O. Callers close those streams and dispose the backend. The named-pipe listener instead owns its accepted streams and backend instances; the named-pipe client factory owns the pipe it creates.
 
-The stream server drains in-flight backend calls before returning. Listener shutdown stops accepting and closes its owned pipes before waiting for application cancellation callbacks or active calls. Its five-second deadline covers the entire asynchronous shutdown, including callbacks and acceptance teardown. If that deadline expires, disposal throws `TimeoutException` while cleanup continues in the background; deferred cleanup failures are traced. Active backends remain owned until their calls finish, and the embedding application must keep borrowed services alive until that work has drained.
+The stream server drains in-flight backend calls before returning. Listener shutdown stops accepting and closes its owned pipes before waiting for application cancellation callbacks or active calls. Its five-second deadline covers the entire asynchronous shutdown, including callbacks and acceptance teardown. If that deadline expires, disposal throws `TimeoutException` while cleanup continues in the background; deferred cleanup failures are traced, since the caller has stopped listening by then. Active backends remain owned until their calls finish, and the embedding application must keep borrowed services alive until that work has drained.
 
 A connection permits one active execution or terminal. Different connections can execute concurrently; handlers must protect shared mutable state as they would for other hosted transports. A busy connection returns error `-32001`. A terminal identifier belongs only to its connection; a missing terminal returns `-32002`.
 

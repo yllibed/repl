@@ -8,18 +8,37 @@ public static class RemoteReplServer
 {
 	/// <summary>Serves a duplex stream until disconnection or cancellation.</summary>
 	public static Task RunAsync(Stream stream, IRemoteReplBackend backend, CancellationToken cancellationToken = default) =>
-		RunAsync(stream, stream, backend, cancellationToken);
+		RunAsync(stream, stream, backend, onError: null, cancellationToken);
+
+	/// <summary>Serves a duplex stream until disconnection or cancellation, reporting failures the client sees only as a sanitized error.</summary>
+	/// <param name="stream">The duplex stream to serve.</param>
+	/// <param name="backend">The backend that handles requests.</param>
+	/// <param name="onError">Receives the detail of each failure the client sees only as a sanitized error.</param>
+	/// <param name="cancellationToken">Stops serving.</param>
+	public static Task RunAsync(Stream stream, IRemoteReplBackend backend, Action<Exception>? onError,
+		CancellationToken cancellationToken = default) =>
+		RunAsync(stream, stream, backend, onError, cancellationToken);
 
 	/// <summary>Serves separate input/output streams, for example redirected standard I/O.</summary>
-	public static async Task RunAsync(Stream input, Stream output, IRemoteReplBackend backend,
+	public static Task RunAsync(Stream input, Stream output, IRemoteReplBackend backend,
+		CancellationToken cancellationToken = default) =>
+		RunAsync(input, output, backend, onError: null, cancellationToken);
+
+	/// <summary>Serves separate input/output streams, reporting failures the client sees only as a sanitized error.</summary>
+	/// <param name="input">The stream requests are read from.</param>
+	/// <param name="output">The stream responses and notifications are written to.</param>
+	/// <param name="backend">The backend that handles requests.</param>
+	/// <param name="onError">Receives the detail of each failure the client sees only as a sanitized error.</param>
+	/// <param name="cancellationToken">Stops serving.</param>
+	public static async Task RunAsync(Stream input, Stream output, IRemoteReplBackend backend, Action<Exception>? onError,
 		CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(input);
 		ArgumentNullException.ThrowIfNull(output);
 		ArgumentNullException.ThrowIfNull(backend);
 		using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-		using var rpc = RemoteProtocol.CreateRpc(input, output);
-		var connection = new Connection(rpc, backend, lifetime.Token);
+		using var rpc = RemoteProtocol.CreateRpc(input, output, onError);
+		var connection = new Connection(rpc, backend, onError, lifetime.Token);
 		await using var connectionScope = connection.ConfigureAwait(false);
 		RemoteProtocol.RegisterTarget(rpc, connection);
 		rpc.StartListening();
@@ -38,7 +57,8 @@ public static class RemoteReplServer
 		}
 	}
 
-	private sealed class Connection(JsonRpc rpc, IRemoteReplBackend backend, CancellationToken lifetime) : IAsyncDisposable
+	private sealed class Connection(JsonRpc rpc, IRemoteReplBackend backend, Action<Exception>? onError, CancellationToken lifetime)
+		: IAsyncDisposable
 	{
 		private readonly SemaphoreSlim _gate = new(1, 1);
 		private readonly SemaphoreSlim _terminalIo = new(1, 1);
@@ -156,7 +176,7 @@ public static class RemoteReplServer
 #pragma warning restore VSTHRD003
 			catch (OperationCanceledException) { exitCode = 130; }
 #pragma warning disable CA1031 // A backend failure terminates only its terminal, with a portable exit status.
-			catch (Exception ex) { System.Diagnostics.Trace.TraceError("Remote terminal failed: {0}", ex); }
+			catch (Exception ex) { RemoteProtocol.ReportFailure(onError, "Remote terminal failed: {0}", ex); }
 #pragma warning restore CA1031
 			finally
 			{
@@ -166,12 +186,12 @@ public static class RemoteReplServer
 					if (_terminalLifetime is { } cts) { await cts.CancelAsync().ConfigureAwait(false); }
 				}
 #pragma warning disable CA1031 // Cancellation callbacks are application code; still drain I/O and dispose the session if one throws.
-				catch (Exception ex) { System.Diagnostics.Trace.TraceError("Remote terminal cancellation failed: {0}", ex); exitCode = 1; }
+				catch (Exception ex) { RemoteProtocol.ReportFailure(onError, "Remote terminal cancellation failed: {0}", ex); exitCode = 1; }
 #pragma warning restore CA1031
 				await _terminalIo.WaitAsync().ConfigureAwait(false);
 				try { await terminal.DisposeAsync().ConfigureAwait(false); }
 #pragma warning disable CA1031 // Cleanup failure must not strand the connection in a permanently busy state.
-				catch (Exception ex) { System.Diagnostics.Trace.TraceError("Remote terminal cleanup failed: {0}", ex); exitCode = 1; }
+				catch (Exception ex) { RemoteProtocol.ReportFailure(onError, "Remote terminal cleanup failed: {0}", ex); exitCode = 1; }
 #pragma warning restore CA1031
 				finally
 				{

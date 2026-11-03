@@ -17,11 +17,15 @@ internal static class HostingLifetime
 		{
 			await host.StartAsync().ConfigureAwait(false);
 			Started(host.Logger, null);
-			try
+			// The listener's Completion faults when the pipe stops accepting; without watching it, the web host
+			// would keep running with no administration endpoint. Stop and exit with an error instead.
+			var stopping = Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, host.Lifetime.ApplicationStopping);
+			var ended = await Task.WhenAny(stopping, listener.Completion).ConfigureAwait(false);
+			if (ended == listener.Completion)
 			{
-				await Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, host.Lifetime.ApplicationStopping).ConfigureAwait(false);
+				await listener.Completion.ConfigureAwait(false);
+				throw new IOException("The administration pipe stopped unexpectedly.");
 			}
-			catch (OperationCanceledException) when (host.Lifetime.ApplicationStopping.IsCancellationRequested) { }
 		}
 #pragma warning disable CA1031 // This executable reports startup failures with logs and a process exit code.
 		catch (Exception error) { StartupFailed(host.Logger, error); exitCode = 1; }

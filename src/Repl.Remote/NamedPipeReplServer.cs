@@ -18,6 +18,14 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 	private int _disposed;
 
 	/// <summary>Starts accepting connections. An already-owned endpoint causes construction to fail.</summary>
+	/// <param name="pipeName">The local endpoint name.</param>
+	/// <param name="backendFactory">Creates the backend that owns one connection.</param>
+	/// <param name="onConnectionError">
+	/// Receives the detail of every failure the client sees only as a sanitized error or a dropped connection:
+	/// a backend method or terminal failure, a connection that failed, and a fault that stops the endpoint
+	/// accepting. It runs on the failing path, so it should only record the error; an exception it throws is
+	/// traced and otherwise ignored.
+	/// </param>
 	public NamedPipeReplServer(string pipeName, Func<CancellationToken, ValueTask<IRemoteReplBackend>> backendFactory,
 		Action<Exception>? onConnectionError = null)
 	{
@@ -30,7 +38,10 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		Completion = AcceptAsync();
 	}
 
-	/// <summary>Gets the accept loop; faults indicate that the endpoint is no longer being served.</summary>
+	/// <summary>
+	/// Gets the accept loop; a fault means the endpoint is no longer being served. The fault is also reported
+	/// to the connection error callback, but a host should observe this task to stop or restart in response.
+	/// </summary>
 	public Task Completion { get; }
 
 	/// <summary>Connects locally with a caller-specified deadline. The returned client owns its pipe.</summary>
@@ -71,6 +82,12 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		}
 		catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
 		catch (Exception ex) when (_lifetime.IsCancellationRequested && ex is ObjectDisposedException or IOException or System.Net.Sockets.SocketException) { }
+		catch (Exception ex)
+		{
+			// Completion carries the fault, but a host that never awaits it would lose the endpoint silently.
+			RemoteProtocol.ReportFailure(_onConnectionError, "Remote CLI endpoint stopped accepting: {0}", ex);
+			throw;
+		}
 		finally
 		{
 			Volatile.Write(ref _accepting, value: null);
@@ -84,13 +101,12 @@ public sealed class NamedPipeReplServer : IAsyncDisposable
 		{
 			var backend = await _backendFactory(_lifetime.Token).ConfigureAwait(false);
 			await using var backendScope = backend.ConfigureAwait(false);
-			await RemoteReplServer.RunAsync(pipe, backend, _lifetime.Token).ConfigureAwait(false);
+			await RemoteReplServer.RunAsync(pipe, backend, _onConnectionError, _lifetime.Token).ConfigureAwait(false);
 		}
 		catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
 		catch (Exception ex)
 		{
-			System.Diagnostics.Trace.TraceError("Remote CLI connection failed: {0}", ex);
-			_onConnectionError?.Invoke(ex);
+			RemoteProtocol.ReportFailure(_onConnectionError, "Remote CLI connection failed: {0}", ex);
 		}
 		finally
 		{
