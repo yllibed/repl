@@ -1,6 +1,7 @@
 using System.IO.Pipelines;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 
 namespace Repl.McpTests;
 
@@ -86,6 +87,32 @@ internal sealed class McpPipeSession : IAsyncDisposable
 			throw;
 		}
 	}
+
+	/// <summary>
+	/// Starts a session on a server built from prebuilt <paramref name="mcpOptions"/>, the reusable
+	/// <c>BuildMcpServerOptions()</c> path, with no Repl request handler in front of it.
+	/// </summary>
+	public static Task<McpPipeSession> StartAsync(
+		McpServerOptions mcpOptions,
+		McpClientOptions? clientOptions,
+		CancellationToken cancellationToken) =>
+		StartAsync(
+			async (io, token) =>
+			{
+				var transport = new StreamServerTransport(io.InputStream, io.OutputStream, "options-server");
+				var server = McpServer.Create(transport, mcpOptions);
+				try
+				{
+					await server.RunAsync(token).ConfigureAwait(false);
+				}
+				finally
+				{
+					await server.DisposeAsync().ConfigureAwait(false);
+					await transport.DisposeAsync().ConfigureAwait(false);
+				}
+			},
+			clientOptions,
+			cancellationToken);
 
 	/// <summary>
 	/// Closes the session and asserts the server terminated cleanly.

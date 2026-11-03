@@ -411,23 +411,7 @@ public sealed class Given_McpSharedServerOptions
 		McpServerOptions mcpOptions,
 		McpClientOptions? clientOptions,
 		CancellationToken cancellationToken) =>
-		McpPipeSession.StartAsync(
-			async (io, token) =>
-			{
-				var transport = new StreamServerTransport(io.InputStream, io.OutputStream, "shared-options-server");
-				var server = McpServer.Create(transport, mcpOptions);
-				try
-				{
-					await server.RunAsync(token).ConfigureAwait(false);
-				}
-				finally
-				{
-					await server.DisposeAsync().ConfigureAwait(false);
-					await transport.DisposeAsync().ConfigureAwait(false);
-				}
-			},
-			clientOptions,
-			cancellationToken);
+		McpPipeSession.StartAsync(mcpOptions, clientOptions, cancellationToken);
 
 	/// <summary>How long the caller in the cancellation guard waits before giving up.</summary>
 	private static readonly TimeSpan CallerPatience = TimeSpan.FromMilliseconds(200);

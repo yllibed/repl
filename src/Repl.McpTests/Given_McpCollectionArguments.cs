@@ -209,20 +209,7 @@ public sealed class Given_McpCollectionArguments
 		}
 
 		var options = app.BuildMcpServerOptions();
-		return McpPipeSession.StartAsync(async (io, token) =>
-		{
-			var transport = new StreamServerTransport(io.InputStream, io.OutputStream, "collection-options-server");
-			var server = McpServer.Create(transport, options);
-			try
-			{
-				await server.RunAsync(token).ConfigureAwait(false);
-			}
-			finally
-			{
-				await server.DisposeAsync().ConfigureAwait(false);
-				await transport.DisposeAsync().ConfigureAwait(false);
-			}
-		}, clientOptions: null, CancellationToken.None);
+		return McpPipeSession.StartAsync(options, clientOptions: null, CancellationToken.None);
 	}
 
 	[ReplOptionsGroup]
