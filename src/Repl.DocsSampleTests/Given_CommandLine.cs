@@ -169,10 +169,70 @@ public sealed class Given_CommandLine
 		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
 	}
 
+	[TestMethod]
+	[OSCondition(ConditionMode.Exclude, OperatingSystems.Windows)]
+	[DataRow("INT", 130, DisplayName = "SIGINT")]
+	[DataRow("TERM", 143, DisplayName = "SIGTERM")]
+	[Description("The launcher lets Repl own process signals: a real signal cancels the running command cooperatively, which reaches the remote backend, and the process exits with the conventional code a shell sees.")]
+	public async Task When_ASignalInterruptsAClientCommand_Then_ItIsCancelledAndExitsWithTheSignalCode(string signal, int expected)
+	{
+		using var fixture = new TestCorpus();
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var backend = new WaitingBackend();
+		await using var listener = new NamedPipeReplServer(fixture.Settings.Pipe, _ => ValueTask.FromResult<IRemoteReplBackend>(backend));
+		var start = new ProcessStartInfo("dotnet")
+		{
+			RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
+			WorkingDirectory = fixture.Root,
+		};
+		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add("exec");
+		start.ArgumentList.Add("wait");
+		start.Environment["DOCS_PIPE"] = fixture.Settings.Pipe;
+		using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start the sample launcher.");
+		var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+		var error = process.StandardError.ReadToEndAsync(deadline.Token);
+		try
+		{
+			await backend.Started.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+
+			var send = new ProcessStartInfo("kill") { UseShellExecute = false, CreateNoWindow = true };
+			send.ArgumentList.Add("-" + signal);
+			send.ArgumentList.Add(process.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+			using (var kill = Process.Start(send) ?? throw new InvalidOperationException("Could not start kill."))
+			{
+				await kill.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+			}
+			await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false);
+			await Task.WhenAll(output, error).ConfigureAwait(false);
+
+			process.ExitCode.Should().Be(expected);
+			await backend.Cancelled.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+		}
+		finally { if (!process.HasExited) { process.Kill(entireProcessTree: true); } }
+	}
+
 	private sealed class TextHost(TextWriter output) : IReplHost
 	{
 		public TextReader Input => TextReader.Null;
 		public TextWriter Output => output;
+	}
+
+	private sealed class WaitingBackend : IRemoteReplBackend
+	{
+		internal TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		internal TaskCompletionSource Cancelled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+		public ValueTask<RemoteCommandGraph> DescribeAsync(CancellationToken cancellationToken) => ValueTask.FromResult(new RemoteCommandGraph("test", [], []));
+		public async ValueTask<RemoteExecutionResult> ExecuteAsync(RemoteInvocationRequest request, CancellationToken cancellationToken)
+		{
+			Started.TrySetResult();
+			try { await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false); }
+			finally { Cancelled.TrySetResult(); }
+			return new RemoteExecutionResult(0, "success");
+		}
+		public ValueTask<IRemoteTerminalSession> OpenTerminalAsync(RemoteTerminalOptions options,
+			Func<string, CancellationToken, ValueTask> writeOutput, CancellationToken cancellationToken) => throw new NotSupportedException();
+		public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 	}
 
 	private sealed class RecordingBackend : IRemoteReplBackend
