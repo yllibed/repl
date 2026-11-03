@@ -650,9 +650,11 @@ jobs:
           $failedPackages = @()
           $failedSymbols = @()
 
+          # --no-symbols: without it, pushing a .nupkg also pushes the adjacent .snupkg, and a symbol
+          # endpoint failure would count a published package as failed. Symbols go in the loop below.
           foreach ($pkg in Get-ChildItem packages/*.nupkg) {
             Write-Host "Pushing $($pkg.Name)..."
-            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
+            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate --no-symbols 2>&1
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
               $failedPackages += $pkg.Name
