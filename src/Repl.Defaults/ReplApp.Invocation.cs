@@ -16,7 +16,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushInvocationRequest(request, ReplInvocationChannel.Programmatic);
@@ -36,7 +36,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, IServiceProvider services,
 		ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
@@ -50,7 +50,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public ValueTask<int> RunAsync(ReplInvocationRequest request, IHost host, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(host);
@@ -63,7 +63,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, IReplHost host,
 		ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
@@ -78,7 +78,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, IReplHost host, IServiceProvider services,
 		ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{

@@ -14,8 +14,7 @@ public static class RemoteReplServer
 	/// <param name="stream">The duplex stream to serve.</param>
 	/// <param name="backend">The backend that handles requests.</param>
 	/// <param name="onError">
-	/// Receives the detail of each failure the client sees only as a sanitized error. It runs on the failing path, so it
-	/// should only record the error; an exception it throws is traced and otherwise ignored.
+	/// As for <see cref="RunAsync(Stream, Stream, IRemoteReplBackend, Action{Exception}?, CancellationToken)"/>.
 	/// </param>
 	/// <param name="cancellationToken">Stops serving.</param>
 	public static Task RunAsync(Stream stream, IRemoteReplBackend backend, Action<Exception>? onError,

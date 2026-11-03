@@ -2,8 +2,7 @@ using DocsMcpSample;
 using DocsMcpSample.Hosting;
 using Microsoft.Extensions.Configuration;
 
-// The launcher's CLI profile lets Repl own Ctrl+C, Ctrl+Break and SIGTERM: the running command is cancelled
-// cooperatively, and an interrupted run exits 130 or 143.
+// The launcher's CLI profile lets Repl own process signals; docs/architecture.md says what each one stops.
 try
 {
 	using var configuration = new ConfigurationManager();

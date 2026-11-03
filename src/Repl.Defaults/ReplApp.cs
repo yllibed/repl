@@ -231,7 +231,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <summary>
 	/// Runs using internally configured services and owns process signals according to <see cref="ReplRunOptions"/>.
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public int Run(string[] args, ReplRunOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(args);
@@ -349,7 +349,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <summary>
 	/// Runs using an externally managed service provider; standalone signal bridging and cancellation remain caller-owned. Interactive mode retains its own Ctrl+C policy.
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public int Run(string[] args, IServiceProvider services, ReplRunOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(args);
@@ -362,7 +362,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <summary>
 	/// Runs using an externally managed host; standalone signal bridging and cancellation remain caller-owned. Interactive mode retains its own Ctrl+C policy.
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public int Run(string[] args, IHost host, ReplRunOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(args);
@@ -379,7 +379,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <param name="services">Caller-owned service provider.</param>
 	/// <param name="options">Per-run options. An explicit <see cref="ProcessSignalHandlingMode.Automatic"/> request is diagnosed and ignored because this overload is externally owned.</param>
 	/// <param name="cancellationToken">Caller-owned cancellation token. This overload does not install a standalone process-signal bridge or create a signal-linked token.</param>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(
 		string[] args,
 		IServiceProvider services,
@@ -613,7 +613,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <param name="host">Caller-owned application host.</param>
 	/// <param name="options">Per-run options. An explicit <see cref="ProcessSignalHandlingMode.Automatic"/> request is diagnosed and ignored because this overload is externally owned.</param>
 	/// <param name="cancellationToken">Caller-owned cancellation token. This overload does not install a standalone process-signal bridge or create a signal-linked token.</param>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public ValueTask<int> RunAsync(
 		string[] args,
 		IHost host,
@@ -628,7 +628,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <summary>
 	/// Runs against an externally managed input/output host; standalone signal bridging and cancellation remain caller-owned. Interactive mode retains its own Ctrl+C policy.
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public int Run(string[] args, IReplHost host, ReplRunOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(args);
@@ -645,7 +645,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <param name="host">Caller-owned input/output host.</param>
 	/// <param name="options">Per-run options. An explicit <see cref="ProcessSignalHandlingMode.Automatic"/> request is diagnosed and ignored because this overload is externally owned.</param>
 	/// <param name="cancellationToken">Caller-owned cancellation token. This overload does not install a standalone process-signal bridge or create a signal-linked token.</param>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(
 		string[] args,
 		IReplHost host,
@@ -668,7 +668,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <summary>
 	/// Runs against an externally managed input/output host with an external service provider; standalone signal bridging and cancellation remain caller-owned. Interactive mode retains its own Ctrl+C policy.
 	/// </summary>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public int Run(string[] args, IReplHost host, IServiceProvider services, ReplRunOptions? options = null)
 	{
 		ArgumentNullException.ThrowIfNull(args);
@@ -687,7 +687,7 @@ public sealed partial class ReplApp : IReplApp
 	/// <param name="services">Caller-owned service provider.</param>
 	/// <param name="options">Per-run options. An explicit <see cref="ProcessSignalHandlingMode.Automatic"/> request is diagnosed and ignored because this overload is externally owned.</param>
 	/// <param name="cancellationToken">Caller-owned cancellation token. This overload does not install a standalone process-signal bridge or create a signal-linked token.</param>
-	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
+	/// <inheritdoc cref="ReplApp.RunAsync(string[], ReplRunOptions?, CancellationToken)" path="/exception[@cref='T:System.ArgumentOutOfRangeException']"/>
 	public async ValueTask<int> RunAsync(
 		string[] args,
 		IReplHost host,
