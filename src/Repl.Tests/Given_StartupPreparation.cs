@@ -415,6 +415,32 @@ public sealed class Given_StartupPreparation
 		adapter.Should().Throw<InvalidOperationException>();
 	}
 
+	[TestMethod]
+	[Description("A run nested in a handler of a prepared run dispatches its own arguments, not the outer run's prepared input, and the outer run's input is restored afterwards.")]
+	public async Task When_AHandlerOfAPreparedRunStartsAnotherRun_Then_ItDoesNotReplayThePreparedInput()
+	{
+		var calls = new List<string>();
+		var builder = ReplStartup.CreateBuilder()
+			.UseArgumentPreprocessor((input, _) => ArgumentPreprocessingResult.Replace(["cmd", input.Arguments[0]]));
+		var prepared = await builder.PrepareAsync(["outer"]);
+		var app = CoreReplApp.Create(prepared);
+		app.Map("cmd {name}", async (string name) =>
+		{
+			calls.Add(name);
+			// A replayed outer input would land here again; stop instead of recursing.
+			if (string.Equals(name, "outer", StringComparison.Ordinal) && calls.Count == 1)
+			{
+				(await app.RunAsync(["inner"]).ConfigureAwait(false)).Should().Be(0);
+				(await app.RunAsync(["second"]).ConfigureAwait(false)).Should().Be(0);
+			}
+		});
+
+		(await app.RunAsync(prepared)).Should().Be(0);
+		(await app.RunAsync(["after"])).Should().Be(0);
+
+		calls.Should().Equal("outer", "inner", "second", "after");
+	}
+
 	public sealed class PortSettings { public int Port { get; set; } = 8080; }
 	public sealed class StartupSettings { public int Count { get; set; } = 1; }
 	private sealed record ChosenCount(int Value);
