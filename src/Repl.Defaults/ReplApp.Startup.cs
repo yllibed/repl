@@ -53,7 +53,7 @@ public sealed partial class ReplApp
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
 	/// <exception cref="InvalidOperationException">Preparation is terminal or belongs to a different builder.</exception>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(PreparedReplStartup prepared, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushPreparedStartup(prepared);
@@ -67,7 +67,7 @@ public sealed partial class ReplApp
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
 	/// <exception cref="InvalidOperationException">Preparation is terminal or belongs to a different builder.</exception>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(PreparedReplStartup prepared, IServiceProvider services, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushPreparedStartup(prepared);
@@ -81,7 +81,7 @@ public sealed partial class ReplApp
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
 	/// <exception cref="InvalidOperationException">Preparation is terminal or belongs to a different builder.</exception>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(PreparedReplStartup prepared, IHost host, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushPreparedStartup(prepared);
@@ -95,7 +95,7 @@ public sealed partial class ReplApp
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
 	/// <exception cref="InvalidOperationException">Preparation is terminal or belongs to a different builder.</exception>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(PreparedReplStartup prepared, IReplHost host, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushPreparedStartup(prepared);
@@ -110,7 +110,7 @@ public sealed partial class ReplApp
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
 	/// <exception cref="InvalidOperationException">Preparation is terminal or belongs to a different builder.</exception>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(PreparedReplStartup prepared, IReplHost host, IServiceProvider services, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushPreparedStartup(prepared);

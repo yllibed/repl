@@ -16,14 +16,17 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		using var scope = _core.PushInvocationRequest(request, ReplInvocationChannel.Programmatic);
 		return await RunAsync(_core.GetInvocationArguments(request), options, cancellationToken).ConfigureAwait(false);
 	}
 
-	/// <inheritdoc cref="RunAsync(ReplInvocationRequest, ReplRunOptions?, CancellationToken)"/>
+	/// <summary>Runs a textual or native structured request using application services.</summary>
+	/// <param name="request">Invocation target and values.</param>
+	/// <param name="cancellationToken">Caller cancellation.</param>
+	/// <returns>The process exit code.</returns>
 	public ValueTask<int> RunAsync(ReplInvocationRequest request, CancellationToken cancellationToken) =>
 		RunAsync(request, options: null, cancellationToken);
 
@@ -33,7 +36,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, IServiceProvider services,
 		ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
@@ -47,7 +50,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public ValueTask<int> RunAsync(ReplInvocationRequest request, IHost host, ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
 		ArgumentNullException.ThrowIfNull(host);
@@ -60,7 +63,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, IReplHost host,
 		ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{
@@ -75,7 +78,7 @@ public sealed partial class ReplApp
 	/// <param name="options">Run options.</param>
 	/// <param name="cancellationToken">Caller cancellation.</param>
 	/// <returns>The process exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunAsync(ReplInvocationRequest request, IReplHost host, IServiceProvider services,
 		ReplRunOptions? options = null, CancellationToken cancellationToken = default)
 	{

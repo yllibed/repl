@@ -181,7 +181,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// <param name="cancellationToken">Cancellation token.</param>
 	/// <returns>Execution exit code.</returns>
 	/// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled, for example while the session waited for input, and neither <see cref="ExitCodeOptions.Cancelled"/> nor <see cref="ExitCodeOptions.Resolver"/> is set to map the cancellation to an exit code. A client that closes the session ends it normally instead.</exception>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunSessionAsync(
 		ReplApp app,
 		ReplRunOptions? options = null,
@@ -194,7 +194,7 @@ public sealed class StreamedReplHost : IReplSessionHost, IAsyncDisposable
 	/// <param name="options">Optional run options.</param>
 	/// <param name="cancellationToken">Session cancellation.</param>
 	/// <returns>Session exit code.</returns>
-	/// <exception cref="ArgumentOutOfRangeException">A setting of <paramref name="options"/> that this run uses is not a defined value of its enumeration; see <see cref="ReplRunOptions"/>.</exception>
+	/// <exception cref="ArgumentOutOfRangeException"><paramref name="options"/> sets <see cref="ReplRunOptions.SessionScope"/>, or for a standalone run <see cref="ReplRunOptions.ProcessSignalHandling"/>, to a value its enumeration does not define.</exception>
 	public async ValueTask<int> RunSessionAsync(ReplApp app, IServiceProvider services,
 		ReplRunOptions? options, CancellationToken cancellationToken = default)
 	{
