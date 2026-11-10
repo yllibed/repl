@@ -137,7 +137,7 @@ internal static class TextTableFormatter
 				builder.Append(separator);
 			}
 
-			builder.Append(new string('-', widths[column]));
+			builder.Append('-', widths[column]);
 		}
 
 		return builder.ToString();
