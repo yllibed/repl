@@ -138,7 +138,7 @@ internal static class ShellCompletionTestHostRunner
 			"Repl.ShellCompletionTestHost",
 			"bin",
 			configuration,
-			"net10.0",
+			ResolveTargetFrameworkFolder(),
 			executableName);
 		if (File.Exists(path))
 		{
@@ -148,6 +148,11 @@ internal static class ShellCompletionTestHostRunner
 		throw new FileNotFoundException(
 			$"Shell completion test host executable was not found at '{path}'. Build the solution before running integration tests.");
 	}
+
+	// The host is built for every target framework of the test project, and a test run on net11.0 must drive
+	// the net11.0 host: bin/<configuration>/<tfm>/ is named after the target the test assembly was built for.
+	private static string ResolveTargetFrameworkFolder() =>
+		new DirectoryInfo(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)).Name;
 
 	private static string ResolveRepositoryRoot()
 	{

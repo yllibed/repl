@@ -25,6 +25,13 @@ The command uses the `release` settings in `version.json` to:
 - bump `main` to the next development version, for example `0.11.0-dev.{height}`;
 - merge the release branch back into `main` so the `version.json` changes are resolved.
 
+Packing validates every package against the last release (`PackageValidationBaselineVersion` in
+`src/Directory.Build.props`) and fails on a breaking change. Once a release has shipped, move that
+baseline to the version just published, in the next pull request to `main`. A new packable project has
+no package at that baseline, so restore fails with NU1101 until its first release: set
+`DisablePackageBaselineValidation` to `true` in that project and remove it once the baseline reaches
+a version that contains it.
+
 Push the resulting `main` and `release/<version>` branches when the release is ready.
 CI is responsible for build, test, pack, symbol packages, GitHub Release creation, and
 NuGet publication.

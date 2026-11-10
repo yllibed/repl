@@ -1,6 +1,6 @@
 <Project Sdk="MSTest.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>$(ReplTargetFrameworks)</TargetFrameworks>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
   </PropertyGroup>

@@ -249,7 +249,7 @@ public sealed class Given_SessionScopedServices
 		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
 		var dispose = session.DisposeAsync().AsTask();
-		var disposedInTime = await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(5))) == dispose;
+		var disposedInTime = await dispose.CompletesWithinAsync(TimeSpan.FromSeconds(5));
 
 		release.TrySetResult();
 		var completed = await running.WaitAsync(TimeSpan.FromSeconds(30));
@@ -292,7 +292,7 @@ public sealed class Given_SessionScopedServices
 		await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
 		var dispose = session.DisposeAsync().AsTask();
-		await Task.WhenAny(dispose, Task.Delay(TimeSpan.FromSeconds(5)));
+		await dispose.CompletesWithinAsync(TimeSpan.FromSeconds(5));
 		disposed.Should().BeEmpty("disposal must not race the command that is still using the scope");
 
 		release.TrySetResult();

@@ -92,7 +92,7 @@ public sealed class Given_TelnetFraming
 		await WaitUntilWrittenAsync(toPeer.Reader).WaitAsync(Patience).ConfigureAwait(false);
 
 		var disposal = framing.DisposeAsync().AsTask();
-		var disposedDuringTheNegotiation = await Task.WhenAny(disposal, Task.Delay(TimeSpan.FromMilliseconds(200))).ConfigureAwait(false) == disposal;
+		var disposedDuringTheNegotiation = await disposal.CompletesWithinAsync(TimeSpan.FromMilliseconds(200)).ConfigureAwait(false);
 		toPeer.Reader.TryRead(out var written).Should().BeTrue();
 		toPeer.Reader.AdvanceTo(written.Buffer.End);
 		await disposal.WaitAsync(Patience).ConfigureAwait(false);

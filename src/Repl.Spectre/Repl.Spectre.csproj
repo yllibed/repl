@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFrameworks>$(ReplTargetFrameworks)</TargetFrameworks>
 		<Description>Spectre.Console integration for Repl Toolkit: rich prompts, IAnsiConsole injection, and table rendering.</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>

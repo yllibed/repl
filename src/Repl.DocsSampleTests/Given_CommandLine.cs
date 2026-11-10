@@ -87,7 +87,7 @@ public sealed class Given_CommandLine
 			RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
 			WorkingDirectory = fixture.Root,
 		};
-		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add(SampleLauncher.AssemblyPath);
 		start.ArgumentList.Add("exec");
 		foreach (var token in remote) { start.ArgumentList.Add(token); }
 		start.Environment.Remove("DOCS_PIPE");
@@ -119,7 +119,7 @@ public sealed class Given_CommandLine
 			UseShellExecute = false, CreateNoWindow = true,
 			RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
 		};
-		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add(SampleLauncher.AssemblyPath);
 		start.ArgumentList.Add("serve");
 		start.Environment["DOCS_DOCUMENTS"] = fixture.Settings.Documents;
 		start.Environment["DOCS_INDEX"] = fixture.Settings.Index;
@@ -149,7 +149,7 @@ public sealed class Given_CommandLine
 			UseShellExecute = false, CreateNoWindow = true,
 			RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = fixture.Root,
 		};
-		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add(SampleLauncher.AssemblyPath);
 		start.ArgumentList.Add("health");
 		start.Environment["DOCS_DOCUMENTS"] = fixture.Settings.Documents;
 		start.Environment["DOCS_INDEX"] = fixture.Settings.Index;
@@ -185,7 +185,7 @@ public sealed class Given_CommandLine
 			RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true,
 			WorkingDirectory = fixture.Root,
 		};
-		start.ArgumentList.Add(typeof(CommandLine).Assembly.Location);
+		start.ArgumentList.Add(SampleLauncher.AssemblyPath);
 		start.ArgumentList.Add("exec");
 		start.ArgumentList.Add("wait");
 		start.Environment["DOCS_PIPE"] = fixture.Settings.Pipe;

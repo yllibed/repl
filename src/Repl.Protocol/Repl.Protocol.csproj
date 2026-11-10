@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFrameworks>$(ReplTargetFrameworks)</TargetFrameworks>
 		<Description>Machine-readable protocol contracts (help/error/docs export) for tooling and automation.</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>

@@ -314,7 +314,7 @@ public sealed class Given_StartupPreparation
 		void Register(IServiceCollection services)
 		{
 			if (failure == 1) { return; }
-			services.AddKeyedScoped("primary", (IServiceProvider _, object? _) =>
+			services.AddKeyedScoped("primary", (_, _) =>
 				failure == 2 ? throw new InvalidOperationException("keyed factory failed") : new ScopedDependency(log));
 		}
 		var services = new ServiceCollection();
