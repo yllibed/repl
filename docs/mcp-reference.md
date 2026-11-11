@@ -751,4 +751,7 @@ myapp mcp serve
 dnx -y MyApp -- mcp serve
 ```
 
+An agent host that does not inherit the user's shell may find neither `dnx` nor the .NET runtime when
+.NET was installed with dotnetup; see [dotnetup installs and agent hosts](dotnet-11.md#dotnetup-installs-and-agent-hosts).
+
 NuGet.org discovery: `nuget.org/packages?packagetype=mcpserver`

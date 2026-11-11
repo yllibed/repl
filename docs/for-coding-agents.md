@@ -103,6 +103,8 @@ Typical MCP client configuration:
 }
 ```
 
+If .NET was installed per user with dotnetup and the host does not start from the user's shell, `myapp`, `dotnet` and `dnx` may not be found; see [dotnetup installs and agent hosts](dotnet-11.md#dotnetup-installs-and-agent-hosts).
+
 ## Agent coding guidelines
 
 When generating Repl Toolkit code:
@@ -242,6 +244,7 @@ Use these rules:
 - [Quick start](../README.md#quick-start)
 - [MCP Server Integration](mcp-overview.md)
 - [MCP Server Reference](mcp-reference.md)
+- [Running on .NET 11](dotnet-11.md) ([dotnetup installs and agent hosts](dotnet-11.md#dotnetup-installs-and-agent-hosts), `dotnet watch`)
 - [Output System](output-system.md)
 - [Testing Toolkit](testing-toolkit.md)
 - [Comparison & Migration](comparison.md)

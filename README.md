@@ -155,6 +155,7 @@ Start with the sample READMEs; the guides below explain the relevant patterns.
 | [Packages overview](https://repl.yllibed.org/reference/packages/) | [API Reference](https://repl.yllibed.org/api/index.html) |
 | [For coding agents](docs/for-coding-agents.md) | [Agent-Native Development](https://repl.yllibed.org/reference/agent-native/) |
 | [Glossary](docs/glossary.md) | [Dependency Injection](https://repl.yllibed.org/reference/dependency-injection/) |
+| [Running on .NET 11](docs/dotnet-11.md) | |
 
 ## AI-assisted development
 
