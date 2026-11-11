@@ -747,8 +747,8 @@ dotnet nuget push bin/Release/MyApp.1.0.0.nupkg --source https://api.nuget.org/v
 dotnet tool install -g MyApp
 myapp mcp serve
 
-# Run without install
-dnx -y MyApp -- mcp serve
+# Run without install, at a fixed version
+dnx -y MyApp@1.0.0 -- mcp serve
 ```
 
 An agent host that does not inherit the user's shell may find neither `dnx` nor the .NET runtime when
