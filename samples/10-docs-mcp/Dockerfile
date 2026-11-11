@@ -4,7 +4,8 @@ COPY global.json nuget.config version.json .editorconfig ./
 COPY src/ src/
 COPY samples/ samples/
 RUN dotnet publish samples/10-docs-mcp/DocsMcpSample.csproj -c Release -r linux-x64 --self-contained false -o /out
-RUN DOCS_ASSETS=/assets dotnet /out/docs-index.dll assets fetch linux-x64
+# The build image carries the .NET 11 runtime only, and this net10.0 program only downloads files.
+RUN DOTNET_ROLL_FORWARD=Major DOCS_ASSETS=/assets dotnet /out/docs-index.dll assets fetch linux-x64
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
