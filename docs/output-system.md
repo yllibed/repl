@@ -122,18 +122,77 @@ app.Configure<OutputOptions>(o =>
 
 ## ANSI Detection
 
-ANSI color and styling support is resolved through a chain of checks:
+Two questions are answered separately: may the output be **coloured**, and may it **drive the terminal**
+(clear the screen, move the cursor for arrow-key menus, the full-screen pager or Spectre's live
+displays, write shell-integration marks or advanced progress). This section is the reference for both;
+other pages link here.
 
-1. **Session override** — a hosted session can force ANSI on or off.
-2. **Explicit `AnsiMode`** — set via `OutputOptions.AnsiMode`.
-3. **Environment variables**, in this order: `FORCE_COLOR` (any non-empty value, including `0`, enables colour, as `System.Console` does on .NET 11), `NO_COLOR` (disables), `CLICOLOR_FORCE=1` (enables), `TERM=dumb` (disables).
-4. **Redirection check** — if stdout is redirected to a file or pipe, ANSI is disabled.
+### Colour
 
-The first check that produces a definitive answer wins.
+Checked in this order; the first row that decides wins:
 
-Forcing colour is not forcing terminal control sequences. `FORCE_COLOR` and `CLICOLOR_FORCE=1` on a redirected stream colour the output, but shell-integration marks and advanced progress stay off there: they are written only when the stream reaches a terminal or a hosted session asks for them (`AnsiMode.Always` also lets advanced progress through on a redirected stream; marks are never written to redirected local output), and `NO_COLOR` and `TERM=dumb` switch them off, even when `FORCE_COLOR` wins for colour, unless the application set `AnsiMode.Always` or a hosted session states its own ANSI support.
+| # | Check | Result |
+|---|---|---|
+| 1 | A hosted session states its ANSI support (`ReplSessionIO.AnsiSupport`) | that answer |
+| 2 | `OutputOptions.AnsiMode` is `Always` or `Never` | on or off |
+| 3 | The host reports no ANSI support (`CapabilityOptions.SupportsAnsi = false`) | off |
+| 4 | `FORCE_COLOR` has any non-empty value, including `0` (the rule `System.Console` applies on .NET 11) | on |
+| 5 | `NO_COLOR` has a non-blank value ([no-color.org](https://no-color.org)) | off |
+| 6 | `CLICOLOR_FORCE=1` | on |
+| 7 | `TERM=dumb` | off |
+| 8 | The stream is redirected to a file or a pipe | off, otherwise on |
 
-Terminal-sequence emitters (shell-integration marks, advanced progress) and Spectre rendering add one shared fallback on top: a hosted client that advertises ANSI purely through capability flags (terminal identity, control messages) is honored even when the server console's own state says no — the environment escape hatches above always win. Spectre rendering (the `spectre` format and injected `IAnsiConsole` instances) follows the same verdict: colors degrade to plain text when ANSI is off, and Unicode box drawing falls back to safe borders when the output sink's encoding cannot carry the glyphs. See [Terminal Shell Integration](terminal-shell-integration.md) for the gate order.
+### Terminal control
+
+Colour must be on, and in addition one of these must hold:
+
+- a hosted session stated its ANSI support;
+- the application set `AnsiMode.Always`;
+- the stream reaches a terminal, and neither `NO_COLOR` nor `TERM=dumb` (without `CLICOLOR_FORCE=1`) is set.
+
+Independently of the colour table, a hosted client that advertises ANSI through capability flags may be
+driven too, unless `AnsiMode.Never`, `NO_COLOR` or `TERM=dumb` says otherwise; see
+[Hosted clients and Spectre](#hosted-clients-and-spectre).
+
+So `FORCE_COLOR` or `CLICOLOR_FORCE=1` colours a file or a pipe without writing control sequences into it,
+and `NO_COLOR` keeps them off even where `FORCE_COLOR` turned colour on. `ITerminalInfo.IsAnsiSupported`
+reports this answer, and `ITerminalInfo.Palette` the colour one. Some features add their own conditions:
+screen clearing and progress need the stream they write to reach a terminal (a session's writer always
+does), and shell-integration marks are never written to redirected local output, even under `AnsiMode.Always`.
+
+> **Changed in 0.12.1.** `FORCE_COLOR` is new, and it outranks `NO_COLOR` for colour: with both set, output
+> used to be plain and is now coloured. Terminal control is now decided apart from colour:
+>
+> - `CLICOLOR_FORCE=1` on redirected output cleared the screen and enabled arrow-key menus there; it no longer does.
+> - Under `AnsiMode.Always`, a redirected local output was cleared; the clear now needs a terminal, as progress did.
+> - A hosted client that advertises ANSI only through capability flags got no screen clear and the line-by-line
+>   pager; it now gets the clear and the full-screen pager, as it already got shell-integration marks.
+> - A Spectre console coloured where the terminal may not be driven is no longer interactive: Spectre prompts
+>   give way to Repl's text prompts, and a prompt on an injected `IAnsiConsole` fails there; ask through
+>   `IReplInteractionChannel` to keep working ([Hosted clients and Spectre](#hosted-clients-and-spectre)).
+>
+> `ITerminalInfo.IsAnsiSupported` follows the same answer; see [`ITerminalInfo`](interaction.md#iterminalinfo).
+> Upgrade Repl.Spectre together with Repl.Core: Repl.Spectre 0.12.0 takes forced colour from the new
+> Repl.Core but not the rule that keeps its live displays out of a redirected output.
+
+### Hosted clients and Spectre
+
+A hosted client that advertises ANSI only through capability flags (terminal identity, control messages)
+gets terminal control, Spectre styling and an `ITerminalInfo` palette even when the server console's own
+state says no; `AnsiMode.Never`, `NO_COLOR` and `TERM=dumb` still win over that fallback. Spectre rendering
+(the `spectre` format and injected `IAnsiConsole` instances) is otherwise styled by the colour answer:
+colours degrade to plain text when it is off. Unicode box drawing falls back to safe borders when the
+output sink's encoding cannot carry the glyphs.
+
+Spectre animates `Progress` and `Status` only when its console is interactive and ANSI. A console that is
+coloured but may not drive the terminal (colour forced onto redirected output, or onto a terminal under
+`NO_COLOR` or `TERM=dumb`) is therefore not interactive: live displays print static lines, a prompt on an
+injected `IAnsiConsole` fails as it does in any non-interactive console, and Repl's own text prompts answer
+`IReplInteractionChannel` requests instead of Spectre's. An uncoloured console stays interactive: prompts on
+an injected `IAnsiConsole` keep working under `app | tee log`, and `NO_COLOR` on a terminal keeps Spectre's
+prompts.
+
+See [Terminal Shell Integration](terminal-shell-integration.md) for the mark gates.
 
 ## Banner Rendering
 
@@ -163,7 +222,7 @@ The output width used for wrapping and table layout is resolved as:
 
 ## JSON Colorization
 
-In interactive mode, when ANSI is supported, JSON output is syntax-highlighted automatically. This applies only to the `json` format rendered to a terminal — redirected or non-ANSI output remains plain.
+In interactive mode, when ANSI is supported, JSON output is syntax-highlighted automatically. This applies only to the `json` format, and follows the colour answer ([ANSI Detection](#ansi-detection)): redirected output stays plain unless colour is forced.
 
 ## Interaction Feedback And Machine Formats
 

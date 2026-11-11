@@ -169,11 +169,14 @@ Unicode characters (progress bars, spinners, box-drawing) render correctly on Wi
 Spectre rendering follows the same terminal detection as the rest of the framework — no
 configuration required:
 
-- **ANSI**: colors are emitted only when the host detection allows them (the same colour rule as
-  Repl's own output; shell-integration marks and advanced progress use a stricter one). `FORCE_COLOR`, `NO_COLOR`, `CLICOLOR_FORCE`, and
-  `TERM=dumb` are honored with the usual precedence, hosted clients can advertise ANSI through
-  capability flags, and a redirected console (an IDE Run window, a pipe) gets plain text instead
-  of raw escape sequences. When ANSI is off, the color system degrades to `NoColors`.
+- **ANSI**: colors follow the same colour rule as Repl's own output
+  ([ANSI Detection](../../docs/output-system.md#ansi-detection)), hosted clients can advertise ANSI
+  through capability flags, and a redirected console (an IDE Run window, a pipe) gets plain text
+  instead of raw escape sequences unless colour is forced. When ANSI is off, the color system
+  degrades to `NoColors`.
+- **Live displays**: `Progress` and `Status` animate only where Repl may drive the terminal; see
+  [Hosted clients and Spectre](../../docs/output-system.md#hosted-clients-and-spectre). Upgrade
+  Repl.Spectre together with Repl.Core.
 - **Unicode**: box-drawing degrades in three tiers, resolved per console creation from the
   actual output sink. When the sink's encoding carries the rounded glyphs, full Unicode borders
   render intact. When only the square safe-border glyphs survive (a real console on a legacy OEM
@@ -188,7 +191,8 @@ configuration required:
   active verdict is exposed as `SpectreTerminalDetection.CurrentBoxDrawingSupport` for
   diagnostics commands.
 - **CI logs are plain by default**: Spectre's built-in CI enrichers are disabled so they cannot
-  override the host detection; set `CLICOLOR_FORCE=1` in the workflow to restore colored logs.
+  override the host detection; set `FORCE_COLOR=1` (or `CLICOLOR_FORCE=1`) in the workflow to
+  restore colored logs.
 - Outside a Repl container (bare `AddSpectreConsole` without `UseSpectreConsole`), the profile
   falls back to Spectre's own detection instead of the host gate.
 

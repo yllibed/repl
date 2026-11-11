@@ -47,8 +47,8 @@ CLI one-shot mode emits no marks: Repl does not own the surrounding shell prompt
 
 Regardless of mode, marks are never written when:
 
-- output is redirected and no hosted session is active (forcing colour with `FORCE_COLOR` or `CLICOLOR_FORCE=1` colours the output but does not lift this: a mark in a file or a pipe is noise for whatever reads it);
-- ANSI output is disabled (`NO_COLOR`, `TERM=dumb`, explicit `AnsiMode.Never`, ...), which holds even when `FORCE_COLOR` wins for colour (a hosted session that states its own ANSI support is the exception, as everywhere else);
+- output is redirected and no hosted session is active, even when colour is forced onto it;
+- the output may not drive the terminal ([ANSI Detection](output-system.md#ansi-detection): `NO_COLOR`, `TERM=dumb`, `AnsiMode.Never`, ...);
 - a command is streaming raw protocol bytes (protocol passthrough, including MCP stdio).
 
 ## Protocol-passthrough commands
@@ -60,7 +60,7 @@ An input that only *looks* like it targets a passthrough route but does not actu
 ## Disabling marks
 
 - **Per app**: `options.ShellIntegration = ShellIntegrationMode.Never` (or simply never calling `UseTerminalIntegration`).
-- **Per run, by the end user**: `NO_COLOR=1` or `TERM=dumb` disables marks — but as collateral of disabling all ANSI styling, since marks ride a stricter variant of the ANSI gate (`CLICOLOR_FORCE=1` overrides `TERM=dumb`, matching styled output; `FORCE_COLOR` does not override `NO_COLOR` here, whatever it does for colour). There is no mark-only runtime switch; on a **local console**, if a terminal is misdetected and shows raw `]133;…`, `NO_COLOR` is the escape hatch. For **hosted sessions** these variables live in the *server* process environment: a remote user cannot set them, and setting them server-side disables ANSI for every connected session — a misdetected hosted client is better fixed by correcting the identity/capabilities it advertises (or `ShellIntegrationMode.Never` app-side).
+- **Per run, by the end user**: `NO_COLOR=1` or `TERM=dumb` disables marks — but as collateral of disabling all ANSI styling, since marks follow the terminal-control rule ([ANSI Detection](output-system.md#ansi-detection)), on which `FORCE_COLOR` does not override `NO_COLOR`. There is no mark-only runtime switch; on a **local console**, if a terminal is misdetected and shows raw `]133;…`, `NO_COLOR` is the escape hatch. For **hosted sessions** these variables live in the *server* process environment: a remote user cannot set them, and setting them server-side disables ANSI for every connected session that does not state its own ANSI support (Telnet sessions and hosts setting `TerminalSessionOverrides.AnsiSupported` do) — a misdetected hosted client is better fixed by correcting the identity/capabilities it advertises (or `ShellIntegrationMode.Never` app-side).
 
 ## Backend selection
 
@@ -85,13 +85,13 @@ app.Map("terminal", (IReplSessionInfo session) =>
     session.ShellIntegrationStatus ?? "no prompt cycle yet");
 ```
 
-The decision is also deterministic, so it can be walked by hand: gates are evaluated in a fixed order and the first failing gate decides. In order: integration configured → not in protocol passthrough → ANSI capable → output not redirected (local only) → mode (`Always`/`Never`) → capability advertised (hosted) or terminal recognized (local). When marks misbehave, walk that chain — the first gate that fails explains the symptom:
+The decision is also deterministic, so it can be walked by hand: gates are evaluated in a fixed order and the first failing gate decides. In order: integration configured → not in protocol passthrough → output not redirected (local only) → ANSI capable → mode (`Always`/`Never`) → capability advertised (hosted) or terminal recognized (local). When marks misbehave, walk that chain — the first gate that fails explains the symptom:
 
 | Symptom | Gate to check |
 |---|---|
 | Marks emitted but nothing visible in Windows Terminal | Terminal-side setup: unlike VS Code, Windows Terminal (≥ 1.21) exposes mark features only through settings — `"showMarksOnScrollbar": true` on the profile for scrollbar pips, and `scrollToMark` actions bound to keys (e.g. Ctrl+Up/Down) for command navigation; neither is on by default. |
-| Raw `]133;…` / `]633;…` text on screen | The terminal does not render marks. Set `ShellIntegrationMode.Never`, or `NO_COLOR=1` as a local end-user escape hatch; for a hosted client, fix the identity/capabilities it advertises (server-side `NO_COLOR` affects every session — see Disabling marks). |
-| No marks at all (expected some) | `ShellIntegration` mode (`Never`?); then `UseTerminalIntegration` actually called?; then the ANSI gate (`NO_COLOR`, `TERM=dumb`, `AnsiMode.Never`, redirected output with no hosted session). |
+| Raw `]133;…` / `]633;…` text on screen | The terminal does not render marks. Set `ShellIntegrationMode.Never`, or `NO_COLOR=1` as a local end-user escape hatch; for a hosted client, fix the identity/capabilities it advertises (server-side `NO_COLOR` affects every session that does not state its ANSI support — see Disabling marks). |
+| No marks at all (expected some) | `ShellIntegration` mode (`Never`?); then `UseTerminalIntegration` actually called?; then redirected local output; then the ANSI gate (`NO_COLOR`, `TERM=dumb`, `AnsiMode.Never`). |
 | No marks under Auto specifically | Detection: locally `WT_SESSION`/`TERM_PROGRAM`; under tmux/screen Auto stays off; for a hosted client, the advertised `ShellIntegrationMarks` capability. |
 | Command navigation works but wrong dialect | Backend selection: OSC 633 only when VS Code is detected (`TERM_PROGRAM=vscode` locally or a `vscode` hosted identity), else OSC 133. |
 | Marks missing only around one command | That command is protocol passthrough (see above) — this is intended. |
