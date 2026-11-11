@@ -16,7 +16,7 @@ internal static class ShellCompletionHostValidator
 			return false;
 		}
 
-		var processName = Path.GetFileNameWithoutExtension(processPath);
+		var processName = GetExecutableName(processPath);
 		if (!string.IsNullOrWhiteSpace(processName)
 			&& string.Equals(processName, entryAssemblyName, StringComparison.OrdinalIgnoreCase))
 		{
@@ -24,7 +24,7 @@ internal static class ShellCompletionHostValidator
 		}
 
 		var resolvedCommandHead = commandHead ?? ResolveCommandHead();
-		var commandHeadName = Path.GetFileNameWithoutExtension(resolvedCommandHead);
+		var commandHeadName = GetExecutableName(resolvedCommandHead);
 		if (string.IsNullOrWhiteSpace(commandHeadName)
 			|| !string.Equals(commandHeadName, entryAssemblyName, StringComparison.OrdinalIgnoreCase))
 		{
@@ -39,6 +39,23 @@ internal static class ShellCompletionHostValidator
 		var resolvedParentProcessName = parentProcessName ?? ResolveParentProcessName();
 		return string.IsNullOrWhiteSpace(resolvedParentProcessName)
 			|| !string.Equals(processName, resolvedParentProcessName, StringComparison.OrdinalIgnoreCase);
+	}
+
+	// Drops only an executable extension. Path.GetFileNameWithoutExtension reads the last dot-separated part of any
+	// name as an extension, so "Acme.Tool" would become "Acme"; and .NET 11 reports the extensionless apphost
+	// as the command head where .NET 10 reported the dll, which made that mismatch decisive.
+	private static string GetExecutableName(string? path)
+	{
+		var name = Path.GetFileName(path);
+		if (string.IsNullOrEmpty(name))
+		{
+			return string.Empty;
+		}
+
+		return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+			|| name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+			? name[..^4]
+			: name;
 	}
 
 	private static string ResolveCommandHead()
