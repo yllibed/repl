@@ -49,11 +49,20 @@ internal static class TerminalEnvironmentClassifier
 		string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "vscode", StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
+	/// True when <c>FORCE_COLOR</c> holds any non-empty value, including <c>0</c>: the rule .NET 11 applies in
+	/// <c>System.Console</c> and the console logger, so one process answers the same way everywhere. It asks for
+	/// colour only; it does not lift the opt-out of <see cref="IsAnsiOptOutEnvironment"/> for terminal sequences.
+	/// </summary>
+	public static bool IsForceColorRequested() =>
+		!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FORCE_COLOR"));
+
+	/// <summary>
 	/// True when the environment explicitly opts out of ANSI output — the documented
-	/// end-user escape hatches, with the same precedence styled output applies:
-	/// NO_COLOR wins over everything, CLICOLOR_FORCE=1 overrides TERM=dumb. Shared by
-	/// <c>OutputOptions.IsAnsiEnabled</c> and the hosted capability fallback
-	/// (<c>TerminalAnsiCapability</c>) so the two gates cannot drift.
+	/// end-user escape hatches: NO_COLOR wins over everything here, CLICOLOR_FORCE=1
+	/// overrides TERM=dumb. Colour checks <see cref="IsForceColorRequested"/> before this;
+	/// terminal sequences (shell marks, progress) never do, so for them this is a veto.
+	/// Shared by <c>OutputOptions.IsAnsiEnabled</c> and <c>TerminalAnsiCapability</c> so
+	/// the two gates cannot drift.
 	/// </summary>
 	public static bool IsAnsiOptOutEnvironment()
 	{

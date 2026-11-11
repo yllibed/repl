@@ -230,6 +230,14 @@ public sealed class OutputOptions
 			return false;
 		}
 
+		// FORCE_COLOR asks for colour outright, ahead of NO_COLOR and TERM=dumb, as it does for
+		// System.Console on .NET 11. It speaks for colour only: TerminalAnsiCapability keeps the
+		// opt-outs below as a veto on terminal control sequences.
+		if (TerminalEnvironmentClassifier.IsForceColorRequested())
+		{
+			return true;
+		}
+
 		// Environment opt-outs (NO_COLOR > CLICOLOR_FORCE > TERM=dumb) share one predicate
 		// with the hosted capability fallback (TerminalAnsiCapability) so the two gates
 		// cannot drift on the documented escape hatches.

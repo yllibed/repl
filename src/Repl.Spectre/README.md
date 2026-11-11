@@ -169,8 +169,8 @@ Unicode characters (progress bars, spinners, box-drawing) render correctly on Wi
 Spectre rendering follows the same terminal detection as the rest of the framework — no
 configuration required:
 
-- **ANSI**: colors are emitted only when the host detection allows them (the shared gate also
-  driving shell-integration marks and advanced progress). `NO_COLOR`, `CLICOLOR_FORCE`, and
+- **ANSI**: colors are emitted only when the host detection allows them (the same colour rule as
+  Repl's own output; shell-integration marks and advanced progress use a stricter one). `FORCE_COLOR`, `NO_COLOR`, `CLICOLOR_FORCE`, and
   `TERM=dumb` are honored with the usual precedence, hosted clients can advertise ANSI through
   capability flags, and a redirected console (an IDE Run window, a pipe) gets plain text instead
   of raw escape sequences. When ANSI is off, the color system degrades to `NoColors`.

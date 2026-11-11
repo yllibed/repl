@@ -126,10 +126,12 @@ ANSI color and styling support is resolved through a chain of checks:
 
 1. **Session override** — a hosted session can force ANSI on or off.
 2. **Explicit `AnsiMode`** — set via `OutputOptions.AnsiMode`.
-3. **Environment variables** — `NO_COLOR` (disables), `CLICOLOR_FORCE` (enables), `TERM` (checked for `dumb`).
+3. **Environment variables**, in this order: `FORCE_COLOR` (any non-empty value, including `0`, enables colour, as `System.Console` does on .NET 11), `NO_COLOR` (disables), `CLICOLOR_FORCE=1` (enables), `TERM=dumb` (disables).
 4. **Redirection check** — if stdout is redirected to a file or pipe, ANSI is disabled.
 
 The first check that produces a definitive answer wins.
+
+Forcing colour is not forcing terminal control sequences. `FORCE_COLOR` and `CLICOLOR_FORCE=1` on a redirected stream colour the output, but shell-integration marks and advanced progress stay off there: they are written only when the stream reaches a terminal or a hosted session asks for them (`AnsiMode.Always` also lets advanced progress through on a redirected stream; marks are never written to redirected local output), and `NO_COLOR` and `TERM=dumb` switch them off, even when `FORCE_COLOR` wins for colour, unless the application set `AnsiMode.Always` or a hosted session states its own ANSI support.
 
 Terminal-sequence emitters (shell-integration marks, advanced progress) and Spectre rendering add one shared fallback on top: a hosted client that advertises ANSI purely through capability flags (terminal identity, control messages) is honored even when the server console's own state says no — the environment escape hatches above always win. Spectre rendering (the `spectre` format and injected `IAnsiConsole` instances) follows the same verdict: colors degrade to plain text when ANSI is off, and Unicode box drawing falls back to safe borders when the output sink's encoding cannot carry the glyphs. See [Terminal Shell Integration](terminal-shell-integration.md) for the gate order.
 

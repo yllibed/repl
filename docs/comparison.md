@@ -50,7 +50,7 @@ Repl Toolkit is a command-surface framework — not just a CLI parser. It builds
 | Multiple return values (tuple) | ❌ | ❌ | ✅ `(T1, T2, ...)` rendered separately |
 | Rich terminal UI (charts, trees...) | ❌ Removed | ✅ Full Spectre.Console | ⚠️ Via add-on |
 | ANSI color auto-detection | ❌ | ✅ | ✅ |
-| `NO_COLOR` / `CLICOLOR_FORCE` | ❌ | ✅ | ✅ |
+| `NO_COLOR` / `CLICOLOR_FORCE` / `FORCE_COLOR` | ❌ | ✅ | ✅ |
 | Machine-readable help (`--help --json`) | ❌ | ❌ | ✅ |
 
 ## Architecture & Extensibility

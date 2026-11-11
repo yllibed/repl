@@ -68,9 +68,9 @@ internal static class SessionAnsiConsole
 	}
 
 	// Issue #46: the profile follows the host's terminal detection instead of hardcoding
-	// ANSI + TrueColor. The gate is the same one driving shell-integration marks and
-	// advanced progress: IsAnsiEnabled first, then the hosted capability fallback, with
-	// the NO_COLOR > CLICOLOR_FORCE > TERM=dumb escape hatches honored. Callers pass
+	// ANSI + TrueColor. Styling follows the colour gate that also colours Repl's own output:
+	// IsAnsiEnabled first, then the hosted capability fallback, with FORCE_COLOR >
+	// NO_COLOR > CLICOLOR_FORCE > TERM=dumb honored. Callers pass
 	// their app's OutputOptions explicitly (no process-wide static: parallel apps or
 	// tests must not contaminate each other); when none is reachable (bare
 	// AddSpectreConsole outside a Repl DI container), the decision is handed to
@@ -84,7 +84,7 @@ internal static class SessionAnsiConsole
 			return;
 		}
 
-		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(outputOptions);
+		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForColor(outputOptions);
 		settings.Ansi = ansiCapable ? AnsiSupport.Yes : AnsiSupport.No;
 		settings.ColorSystem = ansiCapable ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors;
 	}

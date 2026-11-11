@@ -58,7 +58,7 @@ public sealed class Given_SpectreViews
 	[Description("NO_COLOR also disables styling inside a registered view on an ANSI-capable host.")]
 	public void When_NoColorIsSet_Then_CustomViewsDoNotEmitAnsi()
 	{
-		using var environment = new EnvironmentVariableScope([("NO_COLOR", null), ("CLICOLOR_FORCE", "1"), ("TERM", null)]);
+		using var environment = new EnvironmentVariableScope([("NO_COLOR", null), ("FORCE_COLOR", null), ("CLICOLOR_FORCE", "1"), ("TERM", null)]);
 		var app = CreateApp();
 		app.Options(options => options.Output.SetHostAnsiSupportResolver(static () => true));
 		var baseline = ConsoleCaptureHelper.Capture(() => app.Run(["status", "--no-logo"]));

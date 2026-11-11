@@ -17,6 +17,7 @@ public sealed class Given_SpectreTerminalDetection
 	[
 		("NO_COLOR", null),
 		("CLICOLOR_FORCE", null),
+		("FORCE_COLOR", null),
 		("TERM", null),
 		("TMUX", null),
 		("WT_SESSION", null),

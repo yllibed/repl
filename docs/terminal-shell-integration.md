@@ -47,8 +47,8 @@ CLI one-shot mode emits no marks: Repl does not own the surrounding shell prompt
 
 Regardless of mode, marks are never written when:
 
-- output is redirected and no hosted session is active;
-- ANSI output is disabled (`NO_COLOR`, `TERM=dumb`, explicit `AnsiMode.Never`, ...);
+- output is redirected and no hosted session is active (forcing colour with `FORCE_COLOR` or `CLICOLOR_FORCE=1` colours the output but does not lift this: a mark in a file or a pipe is noise for whatever reads it);
+- ANSI output is disabled (`NO_COLOR`, `TERM=dumb`, explicit `AnsiMode.Never`, ...), which holds even when `FORCE_COLOR` wins for colour (a hosted session that states its own ANSI support is the exception, as everywhere else);
 - a command is streaming raw protocol bytes (protocol passthrough, including MCP stdio).
 
 ## Protocol-passthrough commands
@@ -60,7 +60,7 @@ An input that only *looks* like it targets a passthrough route but does not actu
 ## Disabling marks
 
 - **Per app**: `options.ShellIntegration = ShellIntegrationMode.Never` (or simply never calling `UseTerminalIntegration`).
-- **Per run, by the end user**: `NO_COLOR=1` or `TERM=dumb` disables marks — but as collateral of disabling all ANSI styling, since marks ride the same ANSI gate (`CLICOLOR_FORCE=1` overrides `TERM=dumb`, matching styled output). There is no mark-only runtime switch; on a **local console**, if a terminal is misdetected and shows raw `]133;…`, `NO_COLOR` is the escape hatch. For **hosted sessions** these variables live in the *server* process environment: a remote user cannot set them, and setting them server-side disables ANSI for every connected session — a misdetected hosted client is better fixed by correcting the identity/capabilities it advertises (or `ShellIntegrationMode.Never` app-side).
+- **Per run, by the end user**: `NO_COLOR=1` or `TERM=dumb` disables marks — but as collateral of disabling all ANSI styling, since marks ride a stricter variant of the ANSI gate (`CLICOLOR_FORCE=1` overrides `TERM=dumb`, matching styled output; `FORCE_COLOR` does not override `NO_COLOR` here, whatever it does for colour). There is no mark-only runtime switch; on a **local console**, if a terminal is misdetected and shows raw `]133;…`, `NO_COLOR` is the escape hatch. For **hosted sessions** these variables live in the *server* process environment: a remote user cannot set them, and setting them server-side disables ANSI for every connected session — a misdetected hosted client is better fixed by correcting the identity/capabilities it advertises (or `ShellIntegrationMode.Never` app-side).
 
 ## Backend selection
 

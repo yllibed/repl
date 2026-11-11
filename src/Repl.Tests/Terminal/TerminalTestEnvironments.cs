@@ -20,5 +20,6 @@ internal static class TerminalTestEnvironments
 		// profile would otherwise flip every capability-fallback test spuriously.
 		("NO_COLOR", null),
 		("CLICOLOR_FORCE", null),
+		("FORCE_COLOR", null),
 	];
 }
