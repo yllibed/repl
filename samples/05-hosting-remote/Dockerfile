@@ -5,7 +5,7 @@ RUN dotnet publish samples/05-hosting-remote/HostingRemoteSample.csproj -c Relea
 
 FROM build AS tests
 RUN dotnet build src/Repl.RemoteTests/Repl.RemoteTests.csproj -c Release
-RUN dotnet src/Repl.RemoteTests/bin/Release/net10.0/Repl.RemoteTests.dll --timeout 2m
+RUN dotnet src/Repl.RemoteTests/bin/Release/net11.0/Repl.RemoteTests.dll --timeout 2m
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
