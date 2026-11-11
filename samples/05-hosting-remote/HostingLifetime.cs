@@ -38,10 +38,6 @@ internal static class HostingLifetime
 			catch (Exception error)
 			{
 				ShutdownFailed(host.Logger, error);
-				// The console logger writes from a background queue that Environment.Exit does not wait for, and on
-				// .NET 11 the last line is lost often enough to matter. Disposing the factory drains the queue; later
-				// log calls from active work are dropped, which cannot hurt a process that is about to terminate.
-				host.Services.GetService<ILoggerFactory>()?.Dispose();
 				Environment.Exit(1);
 			}
 #pragma warning restore CA1031
