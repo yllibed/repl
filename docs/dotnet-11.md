@@ -72,16 +72,15 @@ The configurations below use the default folders above; if dotnetup installed .N
 
 For an MCP server registered in such a host, use one of these entries in the host's configuration:
 
-- run `dnx` through the absolute path of the dotnetup `dotnet`, which finds its own runtime. Give the
-  package version: without one, `dnx` resolves the newest version from the feed when the server starts, so
-  the server changes whenever a new version is published. To update the server, change the version.
+- run `dnx` through the absolute path of the dotnetup `dotnet`, which finds its own runtime. `dnx` runs the
+  newest stable version; to stay on one version, install the tool and use the next entry.
 
   ```json
   {
     "mcpServers": {
       "myapp": {
         "command": "/home/me/.local/share/dotnetup/dotnet/dotnet",
-        "args": ["dnx", "-y", "MyApp@1.0.0", "--", "mcp", "serve"]
+        "args": ["dnx", "-y", "MyApp", "--", "mcp", "serve"]
       }
     }
   }
