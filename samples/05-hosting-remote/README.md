@@ -165,7 +165,7 @@ Portainer attachment, logging, non-root users, mounts and startup/shutdown order
 Use `docker stop --time 20 repl-hosting-remote` to allow the sample's fifteen-second
 shutdown budget to complete before Docker forces termination.
 
-On Linux, with .NET 10, Node.js 22+ and Docker available, run from the repository root:
+On Linux, with the .NET 11 SDK and the .NET 10 runtime, Node.js 22+ and Docker available, run from the repository root:
 
 ```sh
 node eng/ci/container-hosting-smoke.mjs

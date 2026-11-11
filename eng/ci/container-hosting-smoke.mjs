@@ -83,6 +83,8 @@ try {
     assert.equal(build.status, 0, `C# console test host build failed:\n${build.stdout}\n${build.stderr}\n${build.error ?? ''}`);
     if (!process.env.REPL_CONTAINER_IMAGE) {
         docker(['build', '-f', 'samples/05-hosting-remote/Dockerfile', '-t', image, '.'], 0, 600_000);
+        // The documented tests target is not part of the final image, so build it explicitly or it can break unnoticed.
+        docker(['build', '--target', 'tests', '-f', 'samples/05-hosting-remote/Dockerfile', '.'], 0, 900_000);
     }
     assert(!['', '0', 'root'].includes(docker(['image', 'inspect', '-f', '{{.Config.User}}', image])), 'Image must use a non-root user');
     run(name, image);
