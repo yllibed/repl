@@ -5,7 +5,8 @@ RUN dotnet publish samples/05-hosting-remote/HostingRemoteSample.csproj -c Relea
 
 FROM build AS tests
 RUN dotnet build src/Repl.RemoteTests/Repl.RemoteTests.csproj -c Release
-RUN dotnet src/Repl.RemoteTests/bin/Release/net10.0/Repl.RemoteTests.dll --timeout 2m
+# The SDK 11 image carries the .NET 11 runtime only; the net10.0 tests roll forward onto it.
+RUN DOTNET_ROLL_FORWARD=Major dotnet src/Repl.RemoteTests/bin/Release/net10.0/Repl.RemoteTests.dll --timeout 2m
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
