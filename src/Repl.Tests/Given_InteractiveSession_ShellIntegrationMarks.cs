@@ -993,7 +993,7 @@ public sealed class Given_InteractiveSession_ShellIntegrationMarks
 	private static string MarkPayloadAt(string raw, int index)
 	{
 		var length = raw.AsSpan(index).IndexOf('\a');
-		return length < 0 ? raw[index..] : raw.Substring(index, length);
+		return length < 0 ? raw[index..] : raw[index..(index + length)];
 	}
 
 	private static ConsoleKeyInfo ToKeyInfo(char ch) =>

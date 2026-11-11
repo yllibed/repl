@@ -1,7 +1,7 @@
 <Project>
 
 	<PropertyGroup>
-		<!-- One list for every library, test project and test host under src/. -->
+		<!-- Target list for the projects that opt in through $(ReplTargetFrameworks). -->
 		<ReplTargetFrameworks>net10.0;net11.0</ReplTargetFrameworks>
 		<LangVersion>latest</LangVersion>
 		<Nullable>enable</Nullable>
