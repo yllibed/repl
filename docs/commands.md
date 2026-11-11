@@ -383,6 +383,7 @@ Handlers can return any type. The framework renders the return value through the
 | `IExitResult` | Renders optional payload and sets the process exit code verbatim (`Results.Exit`); the only return type that carries an exit code — bypasses the `ReplOptions.ExitCodes` table, still visible to `ExitCodes.Resolver` |
 | `ICompletedWithFailuresResult` | The command ran to completion and its report contains failures (`Results.CompletedWithFailures`): renders the payload as the result, with no error prefix, and exits with `ExitCodes.CompletedWithFailures` (default `1`). Over MCP it is not a tool error |
 | `EnterInteractiveResult` | Renders optional payload and enters interactive REPL mode (`Results.EnterInteractive`). A payload that cannot be rendered — an unknown `--output` format — is a `UsageError` and the loop is not entered |
+| `union` (.NET 11) | The active case is processed as if the handler had returned it directly; see [Union return values](#union-return-values-net-11) |
 | `void` / `null` | No output |
 | `int` and other scalars | Rendered as data like any other value — **never** interpreted as an exit code (`int Count() => 3` prints `3`, exits `0`) |
 
@@ -425,6 +426,31 @@ Tuple semantics:
 - the execution outcome (and therefore the exit code) is determined by the last element
 - null elements are silently skipped
 - nested tuples are not flattened — use a flat tuple instead
+
+### Union return values (.NET 11)
+
+On `net11.0`, a handler can return a C# 15 `union`. Repl processes the **active case** and never exposes the union wrapper: classification, exit codes and rendering treat the case exactly as if the handler had returned it directly.
+
+```csharp
+public record Contact(string Name);
+public record MissingContact(string Id);
+public union ContactLookup(Contact, MissingContact);
+
+app.Map("contact {id}", (string id) =>
+    Find(id) is { } contact
+        ? (ContactLookup)contact
+        : new MissingContact(id));
+```
+
+A case that implements a Repl result type keeps its meaning: a case implementing `IExitResult` sets the process exit code, and a case implementing `IReplResult` renders and classifies as that result. This works with sync, `Task<T>` and `ValueTask<T>` handlers, and a union holding another union is unwrapped down to the case that carries the value.
+
+Limits:
+
+- a `default` union has no active case and behaves like a handler that returned `null`
+- a union is not a bindable input: a handler parameter of a union type is refused as a usage error
+- discovery does not look inside a union, so the command is not described as paged even when every case is a page
+- a union that is an element of a returned tuple is unwrapped like a top-level one
+- native unions need the .NET 11 runtime, so they are processed on the `net11.0` build of Repl only. A `net10.0` application that polyfills `IUnion` itself gets no unwrapping: its union is treated as an ordinary object
 
 ### Exit codes
 

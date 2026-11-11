@@ -17,6 +17,32 @@ internal static class CommandInvoker
 	private static readonly ConcurrentDictionary<Type, Func<Task, object?>> TaskResultReaders = new();
 	private static readonly ConcurrentDictionary<Type, ValueTaskAdapter> ValueTaskAdapters = new();
 
+#if NET11_0_OR_GREATER
+	// Bounds the unwrapping of a custom IUnion whose Value leads back to a union forever. A compiler-generated
+	// union is a struct and cannot contain itself, so real unions end after their own nesting depth.
+	private const int MaxUnionDepth = 16;
+#endif
+
+	/// <summary>
+	/// Invokes a command handler and returns what it produced once awaited. A C# 15 union result is replaced by its
+	/// active case, so classification, exit codes and rendering see the value the handler meant to return.
+	/// </summary>
+	public static async ValueTask<object?> InvokeAsync(
+		Delegate handler,
+		object?[] arguments) =>
+		UnwrapUnion(await InvokeHandlerAsync(handler, arguments).ConfigureAwait(false));
+
+	internal static object? UnwrapUnion(object? result)
+	{
+#if NET11_0_OR_GREATER
+		for (var depth = 0; depth < MaxUnionDepth && result is System.Runtime.CompilerServices.IUnion union; depth++)
+		{
+			result = union.Value;
+		}
+#endif
+		return result;
+	}
+
 	[UnconditionalSuppressMessage(
 		"Trimming",
 		"IL2075",
@@ -25,7 +51,7 @@ internal static class CommandInvoker
 		"Trimming",
 		"IL2067",
 		Justification = "Runtime command invocation resolves async generic wrappers from runtime types.")]
-	public static async ValueTask<object?> InvokeAsync(
+	private static async ValueTask<object?> InvokeHandlerAsync(
 		Delegate handler,
 		object?[] arguments)
 	{

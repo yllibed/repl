@@ -1273,7 +1273,8 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 
 		for (var i = 0; i < tuple.Length; i++)
 		{
-			var element = tuple[i];
+			// A union element is replaced by its active case, as a handler result is by CommandInvoker.
+			var element = CommandInvoker.UnwrapUnion(tuple[i]);
 
 			// EnterInteractiveResult: extract payload (if any) and signal interactive entry.
 			if (element is EnterInteractiveResult eir)
