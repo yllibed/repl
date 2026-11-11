@@ -31,7 +31,7 @@ cd samples/10-docs-mcp
 
 ### With .NET
 
-Requires .NET 10 on Windows x64, Linux x64 or macOS Apple Silicon. The selected ONNX Runtime package does not support macOS Intel; other native targets are not packaged by this sample.
+Requires the .NET 11 SDK and the .NET 10 runtime on Windows x64, Linux x64 or macOS Apple Silicon. The selected ONNX Runtime package does not support macOS Intel; other native targets are not packaged by this sample.
 
 ```sh
 dotnet run -- assets fetch

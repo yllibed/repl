@@ -10,7 +10,7 @@ Thanks for contributing.
 
 ## Local checks
 
-The remote tests build their C# helpers with the .NET SDK. Native terminal checks use a test-only PTY dependency; no additional language runtime is required.
+The repository builds with the .NET 11 SDK pinned in `global.json`; the test projects also need the .NET 10 runtime. The remote tests build their C# helpers with that SDK. Native terminal checks use a test-only PTY dependency; no additional language runtime is required.
 
 ```powershell
 dotnet restore src/Repl.slnx
