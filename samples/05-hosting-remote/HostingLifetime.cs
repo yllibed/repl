@@ -38,6 +38,8 @@ internal static class HostingLifetime
 			catch (Exception error)
 			{
 				ShutdownFailed(host.Logger, error);
+				// Exit does not wait for the console logger's background queue: drain it so this line survives.
+				foreach (var provider in host.Services.GetServices<ILoggerProvider>()) { provider.Dispose(); }
 				Environment.Exit(1);
 			}
 #pragma warning restore CA1031
