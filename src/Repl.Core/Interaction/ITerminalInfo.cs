@@ -7,7 +7,9 @@ namespace Repl.Interaction;
 public interface ITerminalInfo
 {
 	/// <summary>
-	/// Gets a value indicating whether the terminal supports ANSI escape sequences.
+	/// Gets a value indicating whether the terminal supports ANSI escape sequences, including those that drive
+	/// it: cursor movement, screen clearing. It is <c>false</c> on redirected output even when colour was forced
+	/// (<c>FORCE_COLOR</c>, <c>CLICOLOR_FORCE</c>); <see cref="Palette"/> answers for colour.
 	/// </summary>
 	bool IsAnsiSupported { get; }
 
@@ -23,7 +25,7 @@ public interface ITerminalInfo
 	(int Width, int Height)? WindowSize { get; }
 
 	/// <summary>
-	/// Gets the active ANSI color palette, or <c>null</c> when ANSI is disabled.
+	/// Gets the active ANSI color palette, or <c>null</c> when colour is disabled.
 	/// </summary>
 	AnsiPalette? Palette { get; }
 }

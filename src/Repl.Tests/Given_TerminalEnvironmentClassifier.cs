@@ -18,7 +18,7 @@ public sealed class Given_TerminalEnvironmentClassifier
 	}
 
 	[TestMethod]
-	[Description("The ANSI opt-out predicate applies the same precedence as styled output: NO_COLOR wins over everything, CLICOLOR_FORCE=1 overrides TERM=dumb, TERM=dumb alone opts out — so the marks/progress gate and IsAnsiEnabled cannot disagree.")]
+	[Description("The ANSI opt-out predicate applies the same precedence as styled output: NO_COLOR wins over everything, CLICOLOR_FORCE=1 overrides TERM=dumb, TERM=dumb alone opts out — so the marks/progress gate and IsColorEnabled cannot disagree.")]
 	public void When_CheckingAnsiOptOut_Then_PrecedenceMatchesStyledOutput()
 	{
 		using (new EnvironmentVariableScope(("NO_COLOR", "1"), ("CLICOLOR_FORCE", "1"), ("TERM", null)))

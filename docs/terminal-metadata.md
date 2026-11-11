@@ -43,7 +43,7 @@ using Repl.Terminal;
 | Field | Stored in `ReplSessionIO.SessionMetadata` | Primary consumer |
 |---|---|---|
 | `SessionId` | yes | correlation/session lookup |
-| `AnsiSupport` | yes | `OutputOptions.IsAnsiEnabled()` |
+| `AnsiSupport` | yes | `OutputOptions.IsColorEnabled()` |
 | `WindowSize` | yes | `OutputOptions.ResolveRenderWidth()` |
 | `TransportName` | yes | `IReplSessionInfo.TransportName` |
 | `RemotePeer` | yes | `IReplSessionInfo.RemotePeer` |
@@ -164,7 +164,8 @@ sequenceDiagram
 
 | Render decision | Data source order | Code path |
 |---|---|---|
-| ANSI enabled? | session `AnsiSupport` -> `OutputOptions.AnsiMode` -> environment/host checks | `OutputOptions.IsAnsiEnabled` |
+| Colour enabled? | see [ANSI Detection](output-system.md#ansi-detection) | `OutputOptions.IsColorEnabled` (human output); `TerminalAnsiCapability.IsAnsiCapableForColor` (Spectre, `ITerminalInfo.Palette`, adds the hosted-client fallback) |
+| May drive the terminal? | see [ANSI Detection](output-system.md#ansi-detection) | `TerminalAnsiCapability.IsAnsiCapableForControlSequences` |
 | Width for human rendering | preferred width -> session `WindowSize.Width` -> console width -> fallback | `OutputOptions.ResolveRenderWidth` |
 
 ## Policy

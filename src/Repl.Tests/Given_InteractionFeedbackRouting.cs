@@ -297,9 +297,9 @@ public sealed class Given_InteractionFeedbackRouting
 		using var env = new EnvironmentVariableScope(TerminalTestEnvironments.Neutral);
 		var options = new OutputOptions { AnsiMode = AnsiMode.Auto };
 
-		options.IsAnsiEnabled(isStreamRedirected: false).Should().BeTrue();
-		options.IsAnsiEnabled(isStreamRedirected: true).Should().BeFalse();
-		new OutputOptions { AnsiMode = AnsiMode.Always }.IsAnsiEnabled(isStreamRedirected: true)
+		options.IsColorEnabled(isStreamRedirected: false).Should().BeTrue();
+		options.IsColorEnabled(isStreamRedirected: true).Should().BeFalse();
+		new OutputOptions { AnsiMode = AnsiMode.Always }.IsColorEnabled(isStreamRedirected: true)
 			.Should().BeTrue("forced colour applies to a redirected stream too, as it does to standard output");
 	}
 

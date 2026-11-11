@@ -517,6 +517,14 @@ public interface ITerminalInfo
 }
 ```
 
+`IsAnsiSupported` says whether the handler may drive the terminal (move the cursor, redraw), and `Palette`
+whether it may colour; colour forced onto redirected output gives a palette but not `IsAnsiSupported`.
+See [ANSI Detection](output-system.md#ansi-detection).
+
+> **Changed in 0.12.1.** `IsAnsiSupported` used to follow the colour answer. It is now `false` on redirected
+> output under `CLICOLOR_FORCE=1`, and `true` for a hosted client that advertises ANSI only through
+> capability flags. A handler that used it to decide on colour should test `Palette is not null` instead.
+
 ### Usage in a custom handler
 
 ```csharp

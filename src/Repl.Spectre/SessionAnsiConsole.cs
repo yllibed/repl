@@ -29,12 +29,9 @@ internal static class SessionAnsiConsole
 			// force ANSI back on under CI, overriding the explicit Ansi/ColorSystem below;
 			// the host detection is authoritative here, so enrichment is disabled. That
 			// also loses the enrichers' Interactive=false under CI, so interactivity is
-			// derived explicitly: prompts can only be answered on a local, non-redirected
-			// stdin (mirrors SpectreInteractionHandler.CanHandle).
+			// derived explicitly (shared with SpectreInteractionHandler.CanHandle).
 			Enrichment = new ProfileEnrichment { UseDefaultEnrichers = false },
-			Interactive = !ReplSessionIO.IsHostedSession && !Console.IsInputRedirected
-				? InteractionSupport.Yes
-				: InteractionSupport.No,
+			Interactive = IsInteractive(outputOptions) ? InteractionSupport.Yes : InteractionSupport.No,
 		};
 		ApplyTerminalDetection(settings, outputOptions);
 
@@ -68,13 +65,12 @@ internal static class SessionAnsiConsole
 	}
 
 	// Issue #46: the profile follows the host's terminal detection instead of hardcoding
-	// ANSI + TrueColor. The gate is the same one driving shell-integration marks and
-	// advanced progress: IsAnsiEnabled first, then the hosted capability fallback, with
-	// the NO_COLOR > CLICOLOR_FORCE > TERM=dumb escape hatches honored. Callers pass
-	// their app's OutputOptions explicitly (no process-wide static: parallel apps or
-	// tests must not contaminate each other); when none is reachable (bare
-	// AddSpectreConsole outside a Repl DI container), the decision is handed to
-	// Spectre's own detection rather than forcing always-on output.
+	// ANSI + TrueColor. Styling follows the colour answer of TerminalAnsiCapability, which adds
+	// the hosted capability-flag fallback to OutputOptions.IsColorEnabled (precedence in
+	// docs/output-system.md). Callers pass their app's OutputOptions explicitly (no
+	// process-wide static: parallel apps or tests must not contaminate each other); when none
+	// is reachable (bare AddSpectreConsole outside a Repl DI container), the decision is
+	// handed to Spectre's own detection rather than forcing always-on output.
 	private static void ApplyTerminalDetection(AnsiConsoleSettings settings, OutputOptions? outputOptions)
 	{
 		if (outputOptions is null)
@@ -84,7 +80,7 @@ internal static class SessionAnsiConsole
 			return;
 		}
 
-		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(outputOptions);
+		var ansiCapable = TerminalAnsiCapability.IsAnsiCapableForColor(outputOptions);
 		settings.Ansi = ansiCapable ? AnsiSupport.Yes : AnsiSupport.No;
 		settings.ColorSystem = ansiCapable ? ColorSystemSupport.TrueColor : ColorSystemSupport.NoColors;
 	}
@@ -97,6 +93,35 @@ internal static class SessionAnsiConsole
 	}
 
 	internal static bool IsLocalRedirected() => !ReplSessionIO.IsHostedSession && Console.IsOutputRedirected;
+
+	/// <summary>
+	/// Whether a console created for <paramref name="outputOptions"/> is interactive, the condition under
+	/// which <see cref="SpectreInteractionHandler"/> takes over Repl's prompts too.
+	/// </summary>
+	internal static bool IsInteractive(OutputOptions? outputOptions) =>
+		IsInteractive(outputOptions, ReplSessionIO.IsHostedSession, Console.IsInputRedirected, Console.IsOutputRedirected);
+
+	/// <summary>
+	/// Prompts need a local, non-redirected standard input. Spectre also animates <c>Progress</c> and
+	/// <c>Status</c> when the console is both interactive and ANSI, so a console that is coloured where Repl may
+	/// not drive the terminal (<c>FORCE_COLOR</c> or <c>CLICOLOR_FORCE=1</c> on a redirected output,
+	/// <c>FORCE_COLOR</c> on a terminal under <c>NO_COLOR</c> or <c>TERM=dumb</c>; see
+	/// <see cref="TerminalAnsiCapability.IsAnsiCapableForControlSequences(OutputOptions, bool)"/>) is not
+	/// interactive: the animation's cursor sequences would land where they must not. An uncoloured console stays
+	/// interactive, since it cannot animate, so prompts on an injected console keep working under
+	/// <c>app | tee log</c> or <c>NO_COLOR</c>. Without options, Spectre's own detection decides the colour and
+	/// only the input is checked, as before.
+	/// </summary>
+	internal static bool IsInteractive(
+		OutputOptions? outputOptions,
+		bool isHostedSession,
+		bool isInputRedirected,
+		bool isOutputRedirected) =>
+		!isHostedSession
+		&& !isInputRedirected
+		&& (outputOptions is null
+			|| !TerminalAnsiCapability.IsAnsiCapableForColor(outputOptions, isOutputRedirected)
+			|| TerminalAnsiCapability.IsAnsiCapableForControlSequences(outputOptions, isOutputRedirected));
 
 	/// <summary>
 	/// Reads a writer's declared encoding under guard: hosted transports can supply writers

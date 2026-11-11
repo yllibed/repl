@@ -14,8 +14,10 @@ internal sealed partial class RichPromptInteractionHandler(
 	IReplInteractionPresenter? presenter = null) : IReplInteractionHandler
 {
 	private readonly OutputOptions? _outputOptions = outputOptions;
-	private readonly bool _useRichPrompts = outputOptions?.IsAnsiEnabled() ?? false;
-	private readonly AnsiPalette? _palette = outputOptions is not null && outputOptions.IsAnsiEnabled()
+	// The menus move the cursor and redraw, so they need the control-sequence gate; colour alone is not enough.
+	private readonly bool _useRichPrompts =
+		outputOptions is not null && TerminalAnsiCapability.IsAnsiCapableForControlSequences(outputOptions);
+	private readonly AnsiPalette? _palette = outputOptions is not null && TerminalAnsiCapability.IsAnsiCapableForColor(outputOptions)
 		? outputOptions.ResolvePalette() : null;
 
 	/// <inheritdoc />

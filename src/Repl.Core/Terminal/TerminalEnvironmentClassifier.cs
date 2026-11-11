@@ -49,11 +49,30 @@ internal static class TerminalEnvironmentClassifier
 		string.Equals(Environment.GetEnvironmentVariable("TERM_PROGRAM"), "vscode", StringComparison.OrdinalIgnoreCase);
 
 	/// <summary>
-	/// True when the environment explicitly opts out of ANSI output — the documented
-	/// end-user escape hatches, with the same precedence styled output applies:
-	/// NO_COLOR wins over everything, CLICOLOR_FORCE=1 overrides TERM=dumb. Shared by
-	/// <c>OutputOptions.IsAnsiEnabled</c> and the hosted capability fallback
-	/// (<c>TerminalAnsiCapability</c>) so the two gates cannot drift.
+	/// What the environment says about colour: <c>true</c> forces it, <c>false</c> refuses it, <c>null</c> leaves
+	/// the decision to the stream's redirection. In order: <c>FORCE_COLOR</c> with any non-empty value (even
+	/// <c>0</c>, as in .NET 11's <c>System.Console</c>) forces it, then <see cref="IsAnsiOptOutEnvironment"/>
+	/// refuses it, then <c>CLICOLOR_FORCE=1</c> forces it.
+	/// </summary>
+	public static bool? ResolveColorOverride()
+	{
+		if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FORCE_COLOR")))
+		{
+			return true;
+		}
+
+		if (IsAnsiOptOutEnvironment())
+		{
+			return false;
+		}
+
+		return IsCliColorForced() ? true : null;
+	}
+
+	/// <summary>
+	/// True when the environment opts out of ANSI output: <c>NO_COLOR</c> with any non-blank value, or
+	/// <c>TERM=dumb</c> unless <c>CLICOLOR_FORCE=1</c>. <c>TerminalAnsiCapability</c> decides how each gate
+	/// weighs it.
 	/// </summary>
 	public static bool IsAnsiOptOutEnvironment()
 	{
@@ -62,11 +81,10 @@ internal static class TerminalEnvironmentClassifier
 			return true;
 		}
 
-		if (string.Equals(Environment.GetEnvironmentVariable("CLICOLOR_FORCE"), "1", StringComparison.Ordinal))
-		{
-			return false;
-		}
-
-		return string.Equals(Environment.GetEnvironmentVariable("TERM"), "dumb", StringComparison.OrdinalIgnoreCase);
+		return !IsCliColorForced()
+			&& string.Equals(Environment.GetEnvironmentVariable("TERM"), "dumb", StringComparison.OrdinalIgnoreCase);
 	}
+
+	private static bool IsCliColorForced() =>
+		string.Equals(Environment.GetEnvironmentVariable("CLICOLOR_FORCE"), "1", StringComparison.Ordinal);
 }

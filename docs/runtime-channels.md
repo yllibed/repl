@@ -39,16 +39,9 @@ app.MapModule(new DiagModule(),
 
 ## ANSI Color Detection
 
-The framework resolves ANSI support through an 8-step chain (highest priority first):
-
-1. **Session override** — `ReplSessionIO.AnsiSupport` if a hosted session is active
-2. **Explicit mode** — `AnsiMode.Always` forces on, `AnsiMode.Never` forces off
-3. **Host capability** — `CapabilityOptions.SupportsAnsi` (default: `true`)
-4. **`NO_COLOR` env var** — if non-empty, ANSI is disabled (see no-color.org)
-5. **`CLICOLOR_FORCE` env var** — if `"1"`, ANSI is forced on
-6. **Output redirection** — `Console.IsOutputRedirected` → disabled (piped output)
-7. **`TERM` env var** — if `"dumb"`, ANSI is disabled
-8. **Default** — enabled
+Colour and terminal control (screen clearing, arrow-key menus, pager, shell-integration marks, advanced
+progress) are decided separately; colour forced onto a file or a pipe does not enable terminal control.
+See [Output System: ANSI Detection](output-system.md#ansi-detection).
 
 Configure explicitly:
 

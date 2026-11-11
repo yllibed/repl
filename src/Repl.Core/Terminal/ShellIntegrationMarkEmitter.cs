@@ -316,14 +316,16 @@ internal sealed class ShellIntegrationMarkEmitter
 			return ShellIntegrationGate.ProtocolPassthrough;
 		}
 
-		if (!TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(outputOptions))
-		{
-			return ShellIntegrationGate.AnsiUnsupported;
-		}
-
+		// Redirection first: with colour forced onto redirected output, it is the redirection that keeps the
+		// marks off, and the status names it.
 		if (Console.IsOutputRedirected && !ReplSessionIO.IsSessionActive)
 		{
 			return ShellIntegrationGate.OutputRedirected;
+		}
+
+		if (!TerminalAnsiCapability.IsAnsiCapableForControlSequences(outputOptions))
+		{
+			return ShellIntegrationGate.AnsiUnsupported;
 		}
 
 		// Hosted sessions decide from what the remote client advertised, never from the
