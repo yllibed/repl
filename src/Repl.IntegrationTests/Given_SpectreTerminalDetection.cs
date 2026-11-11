@@ -49,7 +49,7 @@ public sealed class Given_SpectreTerminalDetection
 		output.ExitCode.Should().Be(0);
 		output.Text.Should().Contain("bib overalls");
 		var gateVerdict = configuredOutput is { } configured
-			? $"gate={TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(configured)}, ansiEnabled={configured.IsAnsiEnabled()}"
+			? $"gate={TerminalAnsiCapability.IsAnsiCapableForColor(configured)}, colorEnabled={configured.IsColorEnabled()}"
 			: "options not captured";
 		var escapedText = output.Text.Replace(AnsiIntroducer, "<ESC>[", StringComparison.Ordinal);
 		output.Text.Should().NotContain(

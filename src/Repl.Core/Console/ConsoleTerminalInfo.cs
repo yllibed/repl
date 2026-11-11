@@ -6,7 +6,8 @@ namespace Repl;
 /// </summary>
 internal sealed class ConsoleTerminalInfo(OutputOptions? outputOptions) : ITerminalInfo
 {
-	public bool IsAnsiSupported => outputOptions?.IsAnsiEnabled() ?? false;
+	public bool IsAnsiSupported =>
+		outputOptions is not null && TerminalAnsiCapability.IsAnsiCapableForControlSequences(outputOptions);
 
 	public bool CanReadKeys => !Console.IsInputRedirected && !ReplSessionIO.IsSessionActive;
 
@@ -33,7 +34,7 @@ internal sealed class ConsoleTerminalInfo(OutputOptions? outputOptions) : ITermi
 	}
 
 	public AnsiPalette? Palette =>
-		outputOptions is not null && outputOptions.IsAnsiEnabled()
+		outputOptions is not null && TerminalAnsiCapability.IsAnsiCapableForColor(outputOptions)
 			? outputOptions.ResolvePalette()
 			: null;
 }

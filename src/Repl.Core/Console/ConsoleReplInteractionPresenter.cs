@@ -36,7 +36,7 @@ internal sealed class ConsoleReplInteractionPresenter(
 		_options.Observer?.OnInteractionEvent(evt);
 		var target = _resolveTarget(_outputOptions);
 		var output = target.Writer;
-		var palette = _outputOptions is not null && _outputOptions.IsAnsiEnabled(target.IsStreamRedirected)
+		var palette = _outputOptions is not null && _outputOptions.IsColorEnabled(target.IsStreamRedirected)
 			? _palette?.Value
 			: null;
 
@@ -81,7 +81,7 @@ internal sealed class ConsoleReplInteractionPresenter(
 
 			case ReplClearScreenEvent:
 				await CloseProgressLinesAsync().ConfigureAwait(false);
-				if (palette is not null)
+				if (CanDriveTerminal(target))
 				{
 					await output.WriteAsync("\x1b[2J\x1b[H").ConfigureAwait(false);
 				}
@@ -183,9 +183,7 @@ internal sealed class ConsoleReplInteractionPresenter(
 		// Evaluated per event (not frozen at construction) through the shared ANSI gate,
 		// so a hosted client advertising ANSI via capability flags alone — or mid-session —
 		// gets the same treatment as shell-integration marks.
-		var ansiCapable = _outputOptions is { } outputOptions
-			&& TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(outputOptions, target.IsStreamRedirected);
-		if (ReplSessionIO.IsProtocolPassthrough || !ansiCapable || !target.IsTerminal)
+		if (ReplSessionIO.IsProtocolPassthrough || !CanDriveTerminal(target))
 		{
 			return false;
 		}
@@ -197,6 +195,13 @@ internal sealed class ConsoleReplInteractionPresenter(
 			_ => SessionAdvertisesAdvancedProgress() || TerminalEnvironmentClassifier.IsKnownAdvancedProgressTerminal(),
 		};
 	}
+
+	// Control sequences need a terminal behind the target, not only colour: colour forced onto a redirected
+	// stream must not bring a screen clear or a progress sequence with it.
+	private bool CanDriveTerminal(FeedbackTarget target) =>
+		target.IsTerminal
+		&& _outputOptions is { } outputOptions
+		&& TerminalAnsiCapability.IsAnsiCapableForControlSequences(outputOptions, target.IsStreamRedirected);
 
 	private static bool SessionAdvertisesAdvancedProgress() =>
 		ReplSessionIO.IsSessionActive

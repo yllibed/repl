@@ -22,4 +22,11 @@ internal static class TerminalTestEnvironments
 		("CLICOLOR_FORCE", null),
 		("FORCE_COLOR", null),
 	];
+
+	/// <summary>
+	/// The <see cref="Neutral"/> environment with <paramref name="overrides"/> applied on top: the scope sets
+	/// variables in order, so a later entry for the same name wins.
+	/// </summary>
+	public static EnvironmentVariableScope NeutralWith(params (string Name, string? Value)[] overrides) =>
+		new([.. Neutral, .. overrides]);
 }

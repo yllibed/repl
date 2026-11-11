@@ -17,11 +17,11 @@ internal enum ShellIntegrationGate
 	/// <summary>A protocol-passthrough scope is active: no mark may reach a protocol stream.</summary>
 	ProtocolPassthrough,
 
-	/// <summary>Neither the writer nor the session capabilities support ANSI escape sequences.</summary>
-	AnsiUnsupported,
-
 	/// <summary>Local console output is redirected (no terminal on the other end).</summary>
 	OutputRedirected,
+
+	/// <summary>Neither the writer nor the session capabilities support ANSI escape sequences.</summary>
+	AnsiUnsupported,
 
 	/// <summary><see cref="ShellIntegrationMode.Never"/> was configured.</summary>
 	ModeNever,

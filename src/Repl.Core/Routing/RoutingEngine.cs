@@ -329,7 +329,7 @@ internal sealed class RoutingEngine(CoreReplApp app)
 		var result = await CommandInvoker.InvokeAsync(banner, arguments).ConfigureAwait(false);
 		if (result is string text && !string.IsNullOrEmpty(text))
 		{
-			var styled = app.OptionsSnapshot.Output.IsAnsiEnabled()
+			var styled = app.OptionsSnapshot.Output.IsColorEnabled()
 				? AnsiText.Apply(text, app.OptionsSnapshot.Output.ResolvePalette().BannerStyle)
 				: text;
 			await ReplSessionIO.Output.WriteLineAsync(styled).ConfigureAwait(false);

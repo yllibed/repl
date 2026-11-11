@@ -204,16 +204,20 @@ public sealed class OutputOptions
 	internal HumanRenderSettings ResolveHumanRenderSettings() =>
 		new(
 			Width: ResolveRenderWidth(),
-			UseAnsi: IsAnsiEnabled(),
+			UseAnsi: IsColorEnabled(),
 			Palette: ResolvePalette());
 
-	internal bool IsAnsiEnabled() => IsAnsiEnabled(Console.IsOutputRedirected);
+	/// <summary>
+	/// Whether styling may be written to standard output. It says nothing about terminal control sequences:
+	/// <see cref="TerminalAnsiCapability.IsAnsiCapableForControlSequences(OutputOptions)"/> answers that.
+	/// </summary>
+	internal bool IsColorEnabled() => IsColorEnabled(Console.IsOutputRedirected);
 
 	/// <summary>
 	/// The colour rule applied to a stream whose redirection is <paramref name="isStreamRedirected"/>, for
 	/// output written somewhere other than standard output.
 	/// </summary>
-	internal bool IsAnsiEnabled(bool isStreamRedirected)
+	internal bool IsColorEnabled(bool isStreamRedirected)
 	{
 		if (ReplSessionIO.IsSessionActive && ReplSessionIO.AnsiSupport is { } sessionAnsi)
 		{
@@ -230,27 +234,9 @@ public sealed class OutputOptions
 			return false;
 		}
 
-		// FORCE_COLOR asks for colour outright, ahead of NO_COLOR and TERM=dumb, as it does for
-		// System.Console on .NET 11. It speaks for colour only: TerminalAnsiCapability keeps the
-		// opt-outs below as a veto on terminal control sequences.
-		if (TerminalEnvironmentClassifier.IsForceColorRequested())
+		if (TerminalEnvironmentClassifier.ResolveColorOverride() is { } environmentDecision)
 		{
-			return true;
-		}
-
-		// Environment opt-outs (NO_COLOR > CLICOLOR_FORCE > TERM=dumb) share one predicate
-		// with the hosted capability fallback (TerminalAnsiCapability) so the two gates
-		// cannot drift on the documented escape hatches.
-		if (TerminalEnvironmentClassifier.IsAnsiOptOutEnvironment())
-		{
-			return false;
-		}
-
-		// CLICOLOR_FORCE also overrides the redirection heuristic below (its veto of
-		// TERM=dumb is handled inside the shared predicate).
-		if (string.Equals(Environment.GetEnvironmentVariable("CLICOLOR_FORCE"), "1", StringComparison.Ordinal))
-		{
-			return true;
+			return environmentDecision;
 		}
 
 		return !isStreamRedirected;

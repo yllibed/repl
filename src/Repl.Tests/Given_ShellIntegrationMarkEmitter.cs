@@ -458,7 +458,7 @@ public sealed class Given_ShellIntegrationMarkEmitter
 			input: TextReader.Null);
 		ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi | TerminalCapabilities.ShellIntegrationMarks;
 		var outputOptions = new OutputOptions();
-		// An ANSI-incapable server console: forces IsAnsiEnabled onto its host-detection
+		// An ANSI-incapable server console: forces IsColorEnabled onto its host-detection
 		// branch so the capability fallback (the code under test) is what decides.
 		outputOptions.SetHostAnsiSupportResolver(static () => false);
 		var emitter = ShellIntegrationMarkEmitter.Create(

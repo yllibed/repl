@@ -1,3 +1,4 @@
+using System.Reflection;
 using Repl.Tests.TerminalSupport;
 
 namespace Repl.Tests;
@@ -7,48 +8,39 @@ namespace Repl.Tests;
 public sealed class Given_ForceColor
 {
 	[TestMethod]
-	[Description("FORCE_COLOR colours a redirected stream, the way .NET 11's System.Console does.")]
-	public void When_ForceColorIsSet_Then_ARedirectedStreamIsColoured()
-	{
-		using var env = WithEnv(("FORCE_COLOR", "1"));
-
-		new OutputOptions().IsAnsiEnabled(isStreamRedirected: true).Should().BeTrue();
-	}
-
-	[TestMethod]
 	[DataRow("0")]
 	[DataRow("false")]
 	[DataRow("1")]
 	[Description("Any non-empty FORCE_COLOR forces colour, including 0, as System.Console does on .NET 11.")]
 	public void When_ForceColorHasAnyNonEmptyValue_Then_ColourIsForced(string value)
 	{
-		using var env = WithEnv(("FORCE_COLOR", value));
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", value));
 
-		new OutputOptions().IsAnsiEnabled(isStreamRedirected: true).Should().BeTrue();
+		new OutputOptions().IsColorEnabled(isStreamRedirected: true).Should().BeTrue();
 	}
 
 	[TestMethod]
 	[Description("An empty FORCE_COLOR is ignored, so redirection decides as usual.")]
 	public void When_ForceColorIsEmpty_Then_RedirectionDecides()
 	{
-		using var env = WithEnv(("FORCE_COLOR", ""));
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", ""));
 
-		new OutputOptions().IsAnsiEnabled(isStreamRedirected: true).Should().BeFalse();
-		new OutputOptions().IsAnsiEnabled(isStreamRedirected: false).Should().BeTrue();
+		new OutputOptions().IsColorEnabled(isStreamRedirected: true).Should().BeFalse();
+		new OutputOptions().IsColorEnabled(isStreamRedirected: false).Should().BeTrue();
 	}
 
 	[TestMethod]
 	[Description("FORCE_COLOR outranks NO_COLOR and TERM=dumb for colour, as it does on .NET 11.")]
 	public void When_ForceColorMeetsNoColorOrDumbTerm_Then_ColourIsForced()
 	{
-		using (WithEnv(("FORCE_COLOR", "1"), ("NO_COLOR", "1")))
+		using (TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"), ("NO_COLOR", "1")))
 		{
-			new OutputOptions().IsAnsiEnabled(isStreamRedirected: true).Should().BeTrue();
+			new OutputOptions().IsColorEnabled(isStreamRedirected: true).Should().BeTrue();
 		}
 
-		using (WithEnv(("FORCE_COLOR", "1"), ("TERM", "dumb")))
+		using (TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"), ("TERM", "dumb")))
 		{
-			new OutputOptions().IsAnsiEnabled(isStreamRedirected: true).Should().BeTrue();
+			new OutputOptions().IsColorEnabled(isStreamRedirected: true).Should().BeTrue();
 		}
 	}
 
@@ -56,102 +48,99 @@ public sealed class Given_ForceColor
 	[Description("The application's own settings stay above every environment variable: AnsiMode.Never wins over FORCE_COLOR.")]
 	public void When_AnsiModeIsNever_Then_ForceColorDoesNotColour()
 	{
-		using var env = WithEnv(("FORCE_COLOR", "1"));
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"));
 
-		new OutputOptions { AnsiMode = AnsiMode.Never }.IsAnsiEnabled(isStreamRedirected: true).Should().BeFalse();
+		new OutputOptions { AnsiMode = AnsiMode.Never }.IsColorEnabled(isStreamRedirected: true).Should().BeFalse();
 	}
 
 	[TestMethod]
 	[Description("Forcing colour on a redirected stream must not bring terminal control sequences (shell marks, progress) with it: they would land in the file or in the next program's input.")]
-	public void When_ColourIsForcedOnARedirectedStream_Then_NoTerminalSequencesAreAllowed()
+	public void When_ColourIsForcedOnARedirectedStream_Then_NoControlSequencesAreAllowed()
 	{
-		using (WithEnv(("FORCE_COLOR", "1")))
+		using (TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1")))
 		{
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(new OutputOptions(), isStreamRedirected: true)
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(new OutputOptions(), isStreamRedirected: true)
 				.Should().BeFalse(because: "FORCE_COLOR asks for colour, not for control sequences");
 		}
 
-		using (WithEnv(("CLICOLOR_FORCE", "1")))
+		using (TerminalTestEnvironments.NeutralWith(("CLICOLOR_FORCE", "1")))
 		{
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(new OutputOptions(), isStreamRedirected: true)
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(new OutputOptions(), isStreamRedirected: true)
 				.Should().BeFalse(because: "CLICOLOR_FORCE asks for colour, not for control sequences");
 		}
 	}
 
 	[TestMethod]
-	[Description("On a real terminal, terminal sequences stay allowed whether or not colour is forced.")]
-	public void When_TheStreamIsATerminal_Then_TerminalSequencesAreAllowed()
+	[Description("On a real terminal, control sequences stay allowed whether or not colour is forced.")]
+	public void When_TheStreamIsATerminal_Then_ControlSequencesAreAllowed()
 	{
-		using (WithEnv())
+		using (TerminalTestEnvironments.NeutralWith())
 		{
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(new OutputOptions(), isStreamRedirected: false)
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(new OutputOptions(), isStreamRedirected: false)
 				.Should().BeTrue();
 		}
 
-		using (WithEnv(("FORCE_COLOR", "1")))
+		using (TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1")))
 		{
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(new OutputOptions(), isStreamRedirected: false)
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(new OutputOptions(), isStreamRedirected: false)
 				.Should().BeTrue();
 		}
 	}
 
 	[TestMethod]
-	[Description("NO_COLOR and TERM=dumb keep their veto on terminal sequences even when FORCE_COLOR wins for colour.")]
-	public void When_ForceColorMeetsNoColorOrDumbTerm_Then_TerminalSequencesStayOff()
+	[Description("NO_COLOR and TERM=dumb keep their veto on control sequences even when FORCE_COLOR wins for colour.")]
+	public void When_ForceColorMeetsNoColorOrDumbTerm_Then_ControlSequencesStayOff()
 	{
-		using (WithEnv(("FORCE_COLOR", "1"), ("NO_COLOR", "1")))
+		using (TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"), ("NO_COLOR", "1")))
 		{
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(new OutputOptions(), isStreamRedirected: false)
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(new OutputOptions(), isStreamRedirected: false)
 				.Should().BeFalse();
 		}
 
-		using (WithEnv(("FORCE_COLOR", "1"), ("TERM", "dumb")))
+		using (TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"), ("TERM", "dumb")))
 		{
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(new OutputOptions(), isStreamRedirected: false)
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(new OutputOptions(), isStreamRedirected: false)
 				.Should().BeFalse();
 		}
 	}
 
 	[TestMethod]
-	[Description("Spectre styling follows the colour gate, so forced colour reaches it on a redirected stream where terminal sequences stay off.")]
-	public void When_ColourIsForcedOnARedirectedStream_Then_StylingIsAllowedButSequencesAreNot()
+	[Description("A Repl.Spectre 0.12.0 binary styles its console through IsAnsiCapableForTerminalSequences(OutputOptions), which answered for colour in 0.12.0. The exact signature is bound by that compiled binary, so it is looked up by reflection, and it must keep the colour answer, or forced colour would not reach Spectre 0.12.0 running on this Repl.Core.")]
+	public void When_ColourIsForcedWhereControlSequencesAreVetoed_Then_TheOldGateStillAnswersForColour()
 	{
-		using var env = WithEnv(("FORCE_COLOR", "1"));
+		// NO_COLOR keeps control sequences off on any stream, while FORCE_COLOR turns colour on.
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"), ("NO_COLOR", "1"));
 		var options = new OutputOptions();
+		var legacy = typeof(TerminalAnsiCapability).GetMethod(
+			"IsAnsiCapableForTerminalSequences",
+			BindingFlags.Public | BindingFlags.Static,
+			binder: null,
+			types: [typeof(OutputOptions)],
+			modifiers: null);
 
-		TerminalAnsiCapability.IsAnsiCapableForColor(options, isStreamRedirected: true).Should().BeTrue();
-		TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(options, isStreamRedirected: true).Should().BeFalse();
-	}
-
-	[TestMethod]
-	[Description("AnsiMode.Always is an explicit choice by the application and keeps allowing terminal sequences on a redirected stream.")]
-	public void When_AnsiModeIsAlways_Then_TerminalSequencesAreAllowedOnARedirectedStream()
-	{
-		using var env = WithEnv();
-
-		TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(
-				new OutputOptions { AnsiMode = AnsiMode.Always },
-				isStreamRedirected: true)
-			.Should().BeTrue();
+		legacy.Should().NotBeNull("an already-compiled Repl.Spectre 0.12.0 binds to this signature");
+		legacy!.ReturnType.Should().Be<bool>();
+		TerminalAnsiCapability.IsAnsiCapableForControlSequences(options).Should().BeFalse();
+		legacy.Invoke(obj: null, parameters: [options]).Should().BeOfType<bool>().Which.Should().BeTrue();
 	}
 
 	[TestMethod]
 	[Description("A hosted session that states its ANSI support decides for itself, ahead of FORCE_COLOR: an explicit yes carries sequences, an explicit no stops colour too.")]
 	public void When_AHostedSessionStatesItsAnsiSupport_Then_ForceColorDoesNotOverrideIt()
 	{
-		using var env = WithEnv(("FORCE_COLOR", "1"));
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"));
 		var options = new OutputOptions();
 
 		using (ReplSessionIO.SetSession(output: TextWriter.Null, input: TextReader.Null, ansiMode: AnsiMode.Always))
 		{
 			TerminalAnsiCapability.IsAnsiCapableForColor(options, isStreamRedirected: true).Should().BeTrue();
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(options, isStreamRedirected: true).Should().BeTrue();
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(options, isStreamRedirected: true).Should().BeTrue();
 		}
 
 		using (ReplSessionIO.SetSession(output: TextWriter.Null, input: TextReader.Null, ansiMode: AnsiMode.Never))
 		{
 			TerminalAnsiCapability.IsAnsiCapableForColor(options, isStreamRedirected: true).Should().BeFalse();
-			TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(options, isStreamRedirected: true).Should().BeFalse();
+			TerminalAnsiCapability.IsAnsiCapableForControlSequences(options, isStreamRedirected: true).Should().BeFalse();
 		}
 	}
 
@@ -159,40 +148,39 @@ public sealed class Given_ForceColor
 	[Description("A hosted client advertising ANSI through capability flags is coloured under FORCE_COLOR, yet NO_COLOR still vetoes the sequences it would otherwise get through the capability fallback.")]
 	public void When_ForceColorMeetsNoColorInAHostedSession_Then_ColourIsOnAndSequencesAreOff()
 	{
-		using var env = WithEnv(("FORCE_COLOR", "1"), ("NO_COLOR", "1"));
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"), ("NO_COLOR", "1"));
 		using var session = ReplSessionIO.SetSession(output: TextWriter.Null, input: TextReader.Null);
 		ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi;
 		var options = new OutputOptions();
 
 		TerminalAnsiCapability.IsAnsiCapableForColor(options, isStreamRedirected: true).Should().BeTrue();
-		TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(options, isStreamRedirected: true).Should().BeFalse();
+		TerminalAnsiCapability.IsAnsiCapableForControlSequences(options, isStreamRedirected: true).Should().BeFalse();
 	}
 
 	[TestMethod]
 	[Description("AnsiMode.Never stays above FORCE_COLOR and the hosted capability fallback for both gates.")]
 	public void When_AnsiModeIsNeverInAHostedSession_Then_NeitherGateOpens()
 	{
-		using var env = WithEnv(("FORCE_COLOR", "1"));
+		using var env = TerminalTestEnvironments.NeutralWith(("FORCE_COLOR", "1"));
 		using var session = ReplSessionIO.SetSession(output: TextWriter.Null, input: TextReader.Null);
 		ReplSessionIO.TerminalCapabilities = TerminalCapabilities.Ansi;
 		var options = new OutputOptions { AnsiMode = AnsiMode.Never };
 
 		TerminalAnsiCapability.IsAnsiCapableForColor(options, isStreamRedirected: true).Should().BeFalse();
-		TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(options, isStreamRedirected: true).Should().BeFalse();
+		TerminalAnsiCapability.IsAnsiCapableForControlSequences(options, isStreamRedirected: true).Should().BeFalse();
 	}
 
 	[TestMethod]
-	[Description("AnsiMode.Always outranks NO_COLOR, so it keeps allowing terminal sequences on a redirected stream whatever the environment says.")]
-	public void When_AnsiModeIsAlwaysAndNoColorIsSet_Then_TerminalSequencesAreStillAllowed()
+	[DataRow(null)]
+	[DataRow("1")]
+	[Description("AnsiMode.Always is an explicit choice by the application: it allows control sequences on a redirected stream, and outranks NO_COLOR doing so.")]
+	public void When_AnsiModeIsAlways_Then_ControlSequencesAreAllowedOnARedirectedStream(string? noColor)
 	{
-		using var env = WithEnv(("NO_COLOR", "1"));
+		using var env = TerminalTestEnvironments.NeutralWith(("NO_COLOR", noColor));
 
-		TerminalAnsiCapability.IsAnsiCapableForTerminalSequences(
+		TerminalAnsiCapability.IsAnsiCapableForControlSequences(
 				new OutputOptions { AnsiMode = AnsiMode.Always },
 				isStreamRedirected: true)
 			.Should().BeTrue();
 	}
-
-	private static EnvironmentVariableScope WithEnv(params (string Name, string? Value)[] overrides) =>
-		new([.. TerminalTestEnvironments.Neutral.Where(neutral => !overrides.Any(over => string.Equals(over.Name, neutral.Name, StringComparison.Ordinal))), .. overrides]);
 }

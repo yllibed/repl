@@ -1669,7 +1669,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 			return false;
 		}
 
-		ansiEnabled = _options.Output.IsAnsiEnabled();
+		ansiEnabled = TerminalAnsiCapability.IsAnsiCapableForControlSequences(_options.Output);
 		return true;
 	}
 
@@ -1779,7 +1779,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		if (string.IsNullOrEmpty(payload)
 			|| !isInteractive
 			|| !_options.Output.ColorizeStructuredInteractive
-			|| !_options.Output.IsAnsiEnabled()
+			|| !_options.Output.IsColorEnabled()
 			|| !string.Equals(format, "json", StringComparison.OrdinalIgnoreCase))
 		{
 			return payload;
