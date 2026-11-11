@@ -1,4 +1,6 @@
 #if NET11_0_OR_GREATER
+using Microsoft.Extensions.DependencyInjection;
+
 namespace Repl.Tests;
 
 [TestClass]
@@ -79,6 +81,129 @@ public sealed class Given_UnionResults
 	}
 
 	[TestMethod]
+	[Description("A case that holds null behaves like a handler that returned null.")]
+	public async Task When_TheActiveCaseHoldsNull_Then_ResultIsNull()
+	{
+		var result = await CommandInvoker.InvokeAsync(
+			(Func<UnionLookup>)(() => (UnionContact)null!),
+			[]);
+
+		result.Should().BeNull();
+	}
+
+	[TestMethod]
+	[Description("A case that is a Task<T> is awaited, as the same task returned directly would be.")]
+	public async Task When_TheActiveCaseIsATask_Then_ItIsAwaited()
+	{
+		var result = await CommandInvoker.InvokeAsync(
+			(Func<UnionPending>)(() => Task.FromResult(new UnionContact("Ada"))),
+			[]);
+
+		result.Should().Be(new UnionContact("Ada"));
+	}
+
+	[TestMethod]
+	[Description("A case that is a ValueTask<T> is awaited, as the same value task returned directly would be.")]
+	public async Task When_TheActiveCaseIsAValueTask_Then_ItIsAwaited()
+	{
+		var result = await CommandInvoker.InvokeAsync(
+			(Func<UnionPending>)(() => new ValueTask<UnionMissing>(new UnionMissing("7"))),
+			[]);
+
+		result.Should().Be(new UnionMissing("7"));
+	}
+
+	[TestMethod]
+	[Description("A Task case carrying an exit code sets the process exit code once awaited, as the task returned directly does.")]
+	public void When_TheActiveCaseIsATaskOfAnExitResult_Then_ItsExitCodeIsTheProcessExitCode()
+	{
+		var app = CreateApp();
+		app.Map("run", () => (UnionPending)Task.FromResult(new UnionExit(7, "done")));
+
+		var (exitCode, output) = RunCapturing(app, ["run"]);
+
+		exitCode.Should().Be(7);
+		output.Should().Contain("done");
+	}
+
+	[TestMethod]
+	[Description("A faulted Task case fails the run exactly as the same faulted task returned directly, instead of rendering the task as data.")]
+	public void When_TheActiveCaseIsAFaultedTask_Then_TheRunFailsAsTheTaskReturnedDirectly()
+	{
+		var viaUnion = CreateApp();
+		viaUnion.Map("run", () => (UnionPending)Task.FromException<UnionContact>(new InvalidOperationException("boom")));
+		var direct = CreateApp();
+		direct.Map("run", () => Task.FromException<UnionContact>(new InvalidOperationException("boom")));
+
+		var wrapped = RunCapturing(viaUnion, ["run"]);
+		var bare = RunCapturing(direct, ["run"]);
+
+		bare.ExitCode.Should().NotBe(0);
+		wrapped.Should().Be(bare);
+	}
+
+	[TestMethod]
+	[Description("A custom IUnion whose Value returns itself cannot hang the run: unwrapping stops after a bounded number of steps.")]
+	public async Task When_AUnionLeadsBackToItself_Then_UnwrappingStops()
+	{
+		// Every step completes synchronously, so the invocation runs on another thread for the timeout to fire.
+		var result = await Task.Run(() => CommandInvoker.InvokeAsync((Func<SelfUnion>)(() => new SelfUnion()), []).AsTask())
+			.WaitAsync(TimeSpan.FromSeconds(10));
+
+		result.Should().BeOfType<SelfUnion>();
+	}
+
+	[TestMethod]
+	[Description("A middleware reading the result after next() sees the active case of the handler's union, not the union.")]
+	public void When_AMiddlewareReadsTheResult_Then_ItSeesTheActiveCase()
+	{
+		object? observed = null;
+		var app = CreateApp();
+		app.Use(async (context, next) =>
+		{
+			await next().ConfigureAwait(false);
+			observed = context.Result;
+		});
+		app.Map("run", () => (UnionOutcome)new UnionExit(7, "done"));
+
+		var (exitCode, _) = RunCapturing(app, ["run"]);
+
+		exitCode.Should().Be(7);
+		observed.Should().Be(new UnionExit(7, "done"));
+	}
+
+	[TestMethod]
+	[Description("A union a middleware sets as the result is unwrapped too, so no union reaches the output.")]
+	public void When_AMiddlewareSetsAUnionResult_Then_ItsActiveCaseIsProcessed()
+	{
+		var app = CreateApp();
+		app.Use(async (context, next) =>
+		{
+			await next().ConfigureAwait(false);
+			context.Result = (UnionOutcome)new UnionExit(7, "done");
+		});
+		app.Map("run", () => "replaced");
+
+		var (exitCode, output) = RunCapturing(app, ["run"]);
+
+		exitCode.Should().Be(7);
+		output.Should().Contain("done");
+	}
+
+	[TestMethod]
+	[Description("A tuple element that is a union whose case is a task is awaited as a top-level one is.")]
+	public void When_ATupleElementIsAUnionOfATask_Then_ItIsAwaited()
+	{
+		var app = CreateApp();
+		app.Map("run", () => ("head", (UnionPending)Task.FromResult(new UnionExit(7, "done"))));
+
+		var (exitCode, output) = RunCapturing(app, ["run"]);
+
+		exitCode.Should().Be(7);
+		output.Should().Contain("head").And.Contain("done");
+	}
+
+	[TestMethod]
 	[Description("A case that carries an exit code sets the process exit code, as it does when returned directly.")]
 	public void When_TheActiveCaseIsAnExitResult_Then_ItsExitCodeIsTheProcessExitCode()
 	{
@@ -92,16 +217,19 @@ public sealed class Given_UnionResults
 	}
 
 	[TestMethod]
-	[Description("A case that is an error result is classified and rendered as one, not as an object named after the union.")]
-	public void When_TheActiveCaseIsAnErrorResult_Then_TheRunFailsWithItsMessage()
+	[Description("A case that is an error result is classified and rendered as the same result returned directly, not as an object named after the union.")]
+	public void When_TheActiveCaseIsAnErrorResult_Then_TheRunFailsAsTheResultReturnedDirectly()
 	{
-		var app = CreateApp();
-		app.Map("run", () => (UnionOutcome)new UnionRefusal("not allowed"));
+		var viaUnion = CreateApp();
+		viaUnion.Map("run", () => (UnionOutcome)new UnionRefusal("not allowed"));
+		var direct = CreateApp();
+		direct.Map("run", () => new UnionRefusal("not allowed"));
 
-		var (exitCode, output) = RunCapturing(app, ["run"]);
+		var wrapped = RunCapturing(viaUnion, ["run"]);
+		var bare = RunCapturing(direct, ["run"]);
 
-		exitCode.Should().NotBe(0);
-		output.Should().Contain("not allowed");
+		bare.ExitCode.Should().NotBe(0);
+		wrapped.Should().Be(bare);
 	}
 
 	[TestMethod]
@@ -152,16 +280,39 @@ public sealed class Given_UnionResults
 	}
 
 	[TestMethod]
-	[Description("A union is not a bindable input type: a handler parameter of a union type is refused as a usage error rather than crashing the run.")]
-	public void When_AHandlerParameterIsAUnion_Then_TheRunReportsAUsageError()
+	[DataRow("run {value}", "run", "5")]
+	[DataRow("run", "run", "--value", "5")]
+	[Description("A union gets no special conversion from command input: like any type Repl cannot convert, a value given for it is refused as a usage error rather than crashing the run.")]
+	public void When_CommandInputIsGivenForAUnionParameter_Then_TheRunReportsAUsageError(string route, params string[] args)
 	{
 		var app = CreateApp();
-		app.Map("run {value}", (UnionCount value) => "got");
+		app.Map(route, (UnionCount value) => "got");
 
-		var (exitCode, output) = RunCapturing(app, ["run", "5"]);
+		var (exitCode, output) = RunCapturing(app, args);
 
 		exitCode.Should().Be(2);
 		output.Should().StartWith("Error:");
+	}
+
+	[TestMethod]
+	[Description("A union parameter can come from the services, implicitly or with [FromServices], like any other type.")]
+	public void When_AUnionParameterComesFromServices_Then_ItIsInjected()
+	{
+		var app = ReplApp.Create(services => services.AddSingleton(typeof(UnionCount), (UnionCount)42));
+		app.Options(options =>
+		{
+			options.Interactive.InteractivePolicy = InteractivePolicy.Prevent;
+			options.Output.BannerEnabled = false;
+		});
+		app.Map("run", (UnionCount value) => value);
+		app.Map("explicit", ([FromServices] UnionCount value) => value);
+
+		var implicitly = RunCapturing(app, ["run"]);
+		var explicitly = RunCapturing(app, ["explicit"]);
+
+		implicitly.ExitCode.Should().Be(0);
+		implicitly.Output.Should().Contain("42");
+		explicitly.Should().Be(implicitly);
 	}
 
 	private sealed record UnionContact(string Name);
@@ -186,6 +337,14 @@ public sealed class Given_UnionResults
 	private union UnionOutcome(UnionContact, UnionExit, UnionRefusal);
 
 	private union UnionNested(UnionLookup, int);
+
+	private union UnionPending(Task<UnionContact>, Task<UnionExit>, ValueTask<UnionMissing>);
+
+	// A hand-written IUnion that never reaches a case, which a compiler-generated union cannot do.
+	private sealed class SelfUnion : System.Runtime.CompilerServices.IUnion
+	{
+		public object? Value => this;
+	}
 
 	private static ReplApp CreateApp()
 	{

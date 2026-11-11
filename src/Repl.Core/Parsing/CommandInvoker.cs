@@ -18,30 +18,59 @@ internal static class CommandInvoker
 	private static readonly ConcurrentDictionary<Type, ValueTaskAdapter> ValueTaskAdapters = new();
 
 #if NET11_0_OR_GREATER
-	// Bounds the unwrapping of a custom IUnion whose Value leads back to a union forever. A compiler-generated
-	// union is a struct and cannot contain itself, so real unions end after their own nesting depth.
+	// Bounds the unwrapping of a value that leads back to a union forever: a custom IUnion whose Value returns
+	// itself, or a union that reaches itself again through a task case. Past the bound, what remains is passed on
+	// as is.
 	private const int MaxUnionDepth = 16;
 #endif
 
 	/// <summary>
 	/// Invokes a command handler and returns what it produced once awaited. A C# 15 union result is replaced by its
-	/// active case, so classification, exit codes and rendering see the value the handler meant to return.
+	/// active case (<see cref="UnwrapUnionAsync"/>), so classification, exit codes and rendering see the value the
+	/// handler meant to return.
 	/// </summary>
 	public static async ValueTask<object?> InvokeAsync(
 		Delegate handler,
-		object?[] arguments) =>
-		UnwrapUnion(await InvokeHandlerAsync(handler, arguments).ConfigureAwait(false));
+		object?[] arguments)
+	{
+		ArgumentNullException.ThrowIfNull(handler);
+		ArgumentNullException.ThrowIfNull(arguments);
 
-	internal static object? UnwrapUnion(object? result)
+		var method = handler.Method;
+		var invoker = RawInvokers.GetOrAdd(method, static m => CreateRawInvoker(m));
+		var result = await AwaitResultAsync(invoker(method.IsStatic ? null : handler.Target, arguments))
+			.ConfigureAwait(false);
+		return await UnwrapUnionAsync(result).ConfigureAwait(false);
+	}
+
+	/// <summary>
+	/// Replaces a C# 15 union by its active case, as if that case had been returned in its place: a case that is a
+	/// task is awaited, and a case that is itself a union is unwrapped in turn. Anything else is returned as is.
+	/// </summary>
+	internal static ValueTask<object?> UnwrapUnionAsync(object? result)
 	{
 #if NET11_0_OR_GREATER
-		for (var depth = 0; depth < MaxUnionDepth && result is System.Runtime.CompilerServices.IUnion union; depth++)
+		if (result is System.Runtime.CompilerServices.IUnion)
 		{
-			result = union.Value;
+			return UnwrapUnionCoreAsync(result);
 		}
 #endif
+		return ValueTask.FromResult(result);
+	}
+
+#if NET11_0_OR_GREATER
+	private static async ValueTask<object?> UnwrapUnionCoreAsync(object? result)
+	{
+		// Only a value that comes out of a union is awaited here; a handler's own Task<Task<T>> keeps the single
+		// await it always had.
+		for (var depth = 0; depth < MaxUnionDepth && result is System.Runtime.CompilerServices.IUnion union; depth++)
+		{
+			result = await AwaitResultAsync(union.Value).ConfigureAwait(false);
+		}
+
 		return result;
 	}
+#endif
 
 	[UnconditionalSuppressMessage(
 		"Trimming",
@@ -51,16 +80,8 @@ internal static class CommandInvoker
 		"Trimming",
 		"IL2067",
 		Justification = "Runtime command invocation resolves async generic wrappers from runtime types.")]
-	private static async ValueTask<object?> InvokeHandlerAsync(
-		Delegate handler,
-		object?[] arguments)
+	private static async ValueTask<object?> AwaitResultAsync(object? result)
 	{
-		ArgumentNullException.ThrowIfNull(handler);
-		ArgumentNullException.ThrowIfNull(arguments);
-
-		var method = handler.Method;
-		var invoker = RawInvokers.GetOrAdd(method, static m => CreateRawInvoker(m));
-		var result = invoker(method.IsStatic ? null : handler.Target, arguments);
 		if (result is Task task)
 		{
 			await task.ConfigureAwait(false);

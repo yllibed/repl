@@ -1274,7 +1274,7 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		for (var i = 0; i < tuple.Length; i++)
 		{
 			// A union element is replaced by its active case, as a handler result is by CommandInvoker.
-			var element = CommandInvoker.UnwrapUnion(tuple[i]);
+			var element = await CommandInvoker.UnwrapUnionAsync(tuple[i]).ConfigureAwait(false);
 
 			// EnterInteractiveResult: extract payload (if any) and signal interactive entry.
 			if (element is EnterInteractiveResult eir)
@@ -1861,7 +1861,9 @@ public sealed partial class CoreReplApp : ISubInvocableReplApp
 		}
 
 		await NextAsync().ConfigureAwait(false);
-		return context.Result;
+
+		// The handler's union is already unwrapped above; this catches one a middleware set in its place.
+		return await CommandInvoker.UnwrapUnionAsync(context.Result).ConfigureAwait(false);
 	}
 
 	private static object? ApplyNavigationResult(object? result, List<string>? scopeTokens)
