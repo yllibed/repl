@@ -168,7 +168,7 @@ public sealed class Given_FeedbackStream
 		// output; only the JSON command's moves, and nothing may sit between its prompt and its payload.
 		var text = output.ToString();
 		var payloadStart = text.IndexOf('{', StringComparison.Ordinal);
-		var promptEnd = text.LastIndexOf('>', payloadStart) + 1;
+		var promptEnd = text.AsSpan(0, payloadStart).LastIndexOf('>') + 1;
 		text[promptEnd..payloadStart].Should().BeNullOrWhiteSpace();
 		error.ToString().Should().Contain("Hook ran");
 	}

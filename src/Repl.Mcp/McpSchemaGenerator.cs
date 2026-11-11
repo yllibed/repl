@@ -249,8 +249,9 @@ internal static class McpSchemaGenerator
 		}
 
 		// List<T>, IList<T>, IReadOnlyList<T> → T
-		var openBracket = replType.IndexOf('<');
-		var closeBracket = replType.LastIndexOf('>');
+		var type = replType.AsSpan();
+		var openBracket = type.IndexOf('<');
+		var closeBracket = type.LastIndexOf('>');
 		if (openBracket >= 0 && closeBracket > openBracket)
 		{
 			return replType[(openBracket + 1)..closeBracket].Trim();

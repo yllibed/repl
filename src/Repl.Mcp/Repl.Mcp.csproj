@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFrameworks>$(ReplTargetFrameworks)</TargetFrameworks>
 		<Description>MCP server integration for Repl Toolkit: expose a .NET command graph as AI agent tools, resources, prompts, and MCP Apps.</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>

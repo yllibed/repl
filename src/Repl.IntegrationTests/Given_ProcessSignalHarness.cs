@@ -634,11 +634,9 @@ public sealed class Given_ProcessSignalHarness
 			await secondFactoryEntered.Task.WaitAsync(StartTimeout).ConfigureAwait(false);
 
 			releaseFirstFactory.Release();
-			var releasedEarly = await Task.WhenAny(secondStart, Task.Delay(TimeSpan.FromMilliseconds(300)))
-				.ConfigureAwait(false);
+			var releasedEarly = await secondStart.CompletesWithinAsync(TimeSpan.FromMilliseconds(300)).ConfigureAwait(false);
 
-			releasedEarly.Should().NotBeSameAs(
-				secondStart,
+			releasedEarly.Should().BeFalse(
 				because: "the first launch's late registration belongs to the start that gave up, not this one");
 
 			releaseSecondFactory.Release();

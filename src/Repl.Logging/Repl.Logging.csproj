@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFrameworks>$(ReplTargetFrameworks)</TargetFrameworks>
 		<Description>Logging infrastructure for Repl Toolkit with ambient session-aware context for Microsoft.Extensions.Logging.</Description>
 		<PackageReadmeFile>README.md</PackageReadmeFile>
 	</PropertyGroup>

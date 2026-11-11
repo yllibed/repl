@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
-		<TargetFramework>net10.0</TargetFramework>
+		<TargetFrameworks>$(ReplTargetFrameworks)</TargetFrameworks>
 		<Description>Remote CLI protocol, clients and local listeners independent of the application engine.</Description>
 		<EnableTrimAnalyzer>false</EnableTrimAnalyzer>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>

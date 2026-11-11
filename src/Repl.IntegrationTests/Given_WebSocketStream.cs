@@ -172,7 +172,7 @@ public sealed class Given_WebSocketStream
 			await paused.Closing.WaitAsync(Patience).ConfigureAwait(false);
 
 			var disposal = stream.DisposeAsync().AsTask();
-			var disposedWhileClosing = await Task.WhenAny(disposal, Task.Delay(TimeSpan.FromMilliseconds(200))).ConfigureAwait(false) == disposal;
+			var disposedWhileClosing = await disposal.CompletesWithinAsync(TimeSpan.FromMilliseconds(200)).ConfigureAwait(false);
 			paused.Resume();
 			await disposal.WaitAsync(Patience).ConfigureAwait(false);
 			await cancelling.WaitAsync(Patience).ConfigureAwait(false);

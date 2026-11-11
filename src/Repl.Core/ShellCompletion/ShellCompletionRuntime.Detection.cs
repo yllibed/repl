@@ -313,7 +313,7 @@ internal sealed partial class ShellCompletionRuntime
 	#pragma warning disable MA0045 // Synchronous by design — process tree walking is synchronous utility code
 		var stat = File.ReadAllText(statPath);
 #pragma warning restore MA0045
-			var endCommand = stat.LastIndexOf(')');
+			var endCommand = stat.AsSpan().LastIndexOf(')');
 			if (endCommand < 0 || endCommand + 2 >= stat.Length)
 			{
 				return false;

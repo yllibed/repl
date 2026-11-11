@@ -67,4 +67,43 @@ public sealed class Given_ShellCompletionHostValidator
 			.Should()
 			.BeFalse();
 	}
+
+	[TestMethod]
+	[Description("An app whose name contains a dot is recognised through its extensionless executable: Path.GetFileNameWithoutExtension reads the last dot-separated part as an extension and would turn \"Acme.Tool\" into \"Acme\". .NET 11 reports the apphost, not the dll, as the command head, so this is the only way such an app passes.")]
+	public void When_TheAppNameContainsADotAndTheHeadIsItsExecutable_Then_HostIsSupported()
+	{
+		ShellCompletionHostValidator.IsSupportedHostProcess(
+				processPath: "/apps/Acme.Tool",
+				entryAssemblyName: "Acme.Tool",
+				commandHead: "/apps/Acme.Tool",
+				parentProcessName: "bash")
+			.Should()
+			.BeTrue();
+	}
+
+	[TestMethod]
+	[Description("A dotted app name is still recognised when a managed host runs its dll, the way .NET 10 reports the command head.")]
+	public void When_TheAppNameContainsADotAndTheHeadIsItsDll_Then_HostIsSupported()
+	{
+		ShellCompletionHostValidator.IsSupportedHostProcess(
+				processPath: "/usr/share/dotnet/dotnet",
+				entryAssemblyName: "Acme.Tool",
+				commandHead: "/apps/Acme.Tool.dll",
+				parentProcessName: "bash")
+			.Should()
+			.BeTrue();
+	}
+
+	[TestMethod]
+	[Description("Only an executable extension is dropped: an executable named Acme.Other is not the app Acme, whatever follows the first dot.")]
+	public void When_TheExecutableNameOnlyStartsLikeTheApp_Then_HostIsNotSupported()
+	{
+		ShellCompletionHostValidator.IsSupportedHostProcess(
+				processPath: "/apps/Acme.Other",
+				entryAssemblyName: "Acme",
+				commandHead: "/apps/Acme.Other",
+				parentProcessName: "bash")
+			.Should()
+			.BeFalse();
+	}
 }

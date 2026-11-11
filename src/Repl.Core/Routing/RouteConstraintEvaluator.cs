@@ -59,7 +59,7 @@ internal static class RouteConstraintEvaluator
 			return false;
 		}
 
-		var atIndex = value.LastIndexOf('@');
+		var atIndex = value.AsSpan().LastIndexOf('@');
 		if (atIndex < 0 || atIndex == value.Length - 1)
 		{
 			return false;

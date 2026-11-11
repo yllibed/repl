@@ -1,6 +1,8 @@
 <Project>
 
 	<PropertyGroup>
+		<!-- Target list for the projects that opt in through $(ReplTargetFrameworks). -->
+		<ReplTargetFrameworks>net10.0;net11.0</ReplTargetFrameworks>
 		<LangVersion>latest</LangVersion>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
@@ -21,8 +23,21 @@
 		<RepositoryType>git</RepositoryType>
 		<PublishRepositoryUrl>true</PublishRepositoryUrl>
 		<PackageProjectUrl>https://repl.yllibed.org/</PackageProjectUrl>
+		<!-- Pack fails on a breaking change against the last release. Move the baseline to each release as it ships. -->
+		<EnablePackageValidation>true</EnablePackageValidation>
+		<PackageValidationBaselineVersion>0.12.0</PackageValidationBaselineVersion>
 		<Authors>Carl de Billy</Authors>
 		<PackageTags>repl;cli;command-line;terminal;interactive-shell;automation;dotnet;csharp;mcp;model-context-protocol;ai-agents;developer-tools</PackageTags>
+	</PropertyGroup>
+
+	<!--
+		.NET 11 adds cancellable TextWriter.WriteAsync/WriteLineAsync overloads, so CA2016 asks to forward the token to
+		every write that has one in scope. Doing so changes behaviour on net11.0 only: a token that is already
+		cancelled makes the write throw OperationCanceledException instead of completing. Keeping both targets
+		identical comes first, so the rule stays off on net11.0 until each write has been judged on its own.
+	-->
+	<PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+		<NoWarn>$(NoWarn);CA2016</NoWarn>
 	</PropertyGroup>
 
 	<!-- Reproducible build — enable only under CI to preserve local debug paths -->
