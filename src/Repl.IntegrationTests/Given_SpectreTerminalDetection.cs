@@ -406,6 +406,50 @@ public sealed class Given_SpectreTerminalDetection
 			because: "the container's explicit registration must take precedence over the app fallback");
 	}
 
+	[TestMethod]
+	[DataRow("FORCE_COLOR", false, null, null)]
+	[DataRow("CLICOLOR_FORCE", false, null, null)]
+	[DataRow("FORCE_COLOR", true, "NO_COLOR", "1")]
+	[DataRow("FORCE_COLOR", true, "TERM", "dumb")]
+	[Description("Colour forced where Repl may not drive the terminal (a redirected output, or a terminal under NO_COLOR or TERM=dumb) turns ANSI on for Spectre, which would then animate Progress and Status; the console must not be interactive, and the Spectre prompts must give way to Repl's text prompts.")]
+	public void When_ColourIsForcedWhereTheTerminalMayNotBeDriven_Then_TheConsoleIsNotInteractive(
+		string forcing,
+		bool isOutputATerminal,
+		string? optOut,
+		string? optOutValue)
+	{
+		using var env = new EnvironmentVariableScope(
+		[
+			.. NeutralAnsiEnvironment,
+			(forcing, "1"),
+			(optOut ?? "NO_COLOR", optOutValue),
+		]);
+		var options = new OutputOptions();
+
+		TerminalAnsiCapability.IsAnsiCapableForColor(options, isStreamRedirected: !isOutputATerminal)
+			.Should().BeTrue(because: "the colour is forced");
+		SessionAnsiConsole.IsInteractive(
+				options,
+				isHostedSession: false,
+				isInputRedirected: false,
+				isOutputRedirected: !isOutputATerminal)
+			.Should().BeFalse();
+	}
+
+	[TestMethod]
+	[Description("On a terminal that may be driven, forced colour keeps the console interactive: live displays animate as they should.")]
+	public void When_ColourIsForcedOnATerminalThatMayBeDriven_Then_TheConsoleStaysInteractive()
+	{
+		using var env = new EnvironmentVariableScope([.. NeutralAnsiEnvironment, ("FORCE_COLOR", "1")]);
+
+		SessionAnsiConsole.IsInteractive(
+				new OutputOptions(),
+				isHostedSession: false,
+				isInputRedirected: false,
+				isOutputRedirected: false)
+			.Should().BeTrue();
+	}
+
 	private sealed record WardrobeRow(string Item, int Quantity);
 
 	// Stands in for a hosted transport whose TextWriter.Encoding getter itself throws.

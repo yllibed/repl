@@ -3,7 +3,8 @@ namespace Repl.Spectre;
 /// <summary>
 /// Handles interaction requests using Spectre.Console rich prompts.
 /// Returns <see cref="InteractionResult.Unhandled"/> when the terminal
-/// does not support interactive Spectre prompts (hosted sessions, redirected input), and while the
+/// does not support interactive Spectre prompts (hosted sessions, redirected input, colour forced where the
+/// terminal may not be driven), and while the
 /// command's feedback goes elsewhere than the output the prompts draw on (output for a program, such as
 /// <c>--json</c> or a redirected standard output): the text prompts then take over.
 /// </summary>
@@ -62,23 +63,12 @@ public sealed class SpectreInteractionHandler : IReplInteractionHandler
 	}
 
 	/// <summary>
-	/// Returns <c>true</c> when Spectre prompts can operate: non-hosted session, non-redirected input, and
-	/// feedback on the output the prompts draw on.
+	/// Returns <c>true</c> when Spectre prompts can operate: the console they draw on is interactive
+	/// (<see cref="SessionAnsiConsole.IsInteractive(OutputOptions?)"/>) and feedback goes to the output the
+	/// prompts draw on. Otherwise Repl's own text prompts answer.
 	/// </summary>
-	private bool CanHandle()
-	{
-		if (ReplSessionIO.IsHostedSession || !InteractionFeedbackRouting.PromptsMayDrawOnOutput(_outputOptions))
-		{
-			return false;
-		}
-
-		if (Console.IsInputRedirected)
-		{
-			return false;
-		}
-
-		return true;
-	}
+	private bool CanHandle() =>
+		SessionAnsiConsole.IsInteractive(_outputOptions) && InteractionFeedbackRouting.PromptsMayDrawOnOutput(_outputOptions);
 
 	private async ValueTask<InteractionResult> HandleChoiceAsync(
 		AskChoiceRequest r, CancellationToken ct)

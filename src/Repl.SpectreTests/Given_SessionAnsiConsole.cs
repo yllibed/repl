@@ -1,4 +1,5 @@
 using System.Text;
+using Repl.Rendering;
 using Repl.Spectre;
 
 namespace Repl.SpectreTests;
@@ -9,6 +10,44 @@ public sealed class Given_SessionAnsiConsole
 	static Given_SessionAnsiConsole() =>
 		// cp437 (below) ships in System.Text.Encoding.CodePages, not in the default set.
 		Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+	[TestMethod]
+	[Description("An uncoloured console cannot animate, so it stays interactive on a redirected output and prompts on an injected console keep working under 'app | tee log'.")]
+	public void When_AnUncolouredConsoleWritesToARedirectedOutput_Then_ItStaysInteractive()
+	{
+		SessionAnsiConsole.IsInteractive(
+				new OutputOptions { AnsiMode = AnsiMode.Never },
+				isHostedSession: false,
+				isInputRedirected: false,
+				isOutputRedirected: true)
+			.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[Description("AnsiMode.Always is an explicit grant to drive the terminal, so the console stays interactive on a redirected output.")]
+	public void When_TheApplicationSetsAnsiModeAlways_Then_TheConsoleStaysInteractive()
+	{
+		SessionAnsiConsole.IsInteractive(
+				new OutputOptions { AnsiMode = AnsiMode.Always },
+				isHostedSession: false,
+				isInputRedirected: false,
+				isOutputRedirected: true)
+			.Should().BeTrue();
+	}
+
+	[TestMethod]
+	[DataRow(true, false)]
+	[DataRow(false, true)]
+	[Description("Prompts need a local standard input: a hosted session or a redirected input is never interactive.")]
+	public void When_InputIsNotALocalTerminal_Then_TheConsoleIsNotInteractive(bool isHostedSession, bool isInputRedirected)
+	{
+		SessionAnsiConsole.IsInteractive(
+				new OutputOptions { AnsiMode = AnsiMode.Always },
+				isHostedSession,
+				isInputRedirected,
+				isOutputRedirected: false)
+			.Should().BeFalse();
+	}
 
 	[TestMethod]
 	[Description("Unicode-capable encodings roundtrip the rounded probe, so Spectre keeps its full rounded borders on UTF sinks — even when the local output is redirected, since the bytes stay valid UTF for any modern reader.")]
