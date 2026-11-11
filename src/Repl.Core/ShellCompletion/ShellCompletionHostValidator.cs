@@ -44,7 +44,7 @@ internal static class ShellCompletionHostValidator
 	// Drops only an executable extension. Path.GetFileNameWithoutExtension reads the last dot-separated part of any
 	// name as an extension, so "Acme.Tool" would become "Acme"; and .NET 11 reports the extensionless apphost
 	// as the command head where .NET 10 reported the dll, which made that mismatch decisive.
-	private static string GetExecutableName(string? path)
+	internal static string GetExecutableName(string? path)
 	{
 		var name = Path.GetFileName(path);
 		if (string.IsNullOrEmpty(name))

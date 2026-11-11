@@ -216,7 +216,8 @@ public sealed class Given_ShellCompletionRuntime
 		resolveCandidates ??= static (_, _, _, _, _) => ValueTask.FromResult<string[]>([]);
 		return new ShellCompletionRuntime(
 			options,
-			resolveEntryAssemblyName: static () => Path.GetFileNameWithoutExtension(Environment.ProcessPath) ?? string.Empty,
+			// The name the host validator derives from this process, so the runtime accepts the test host as its own app.
+			resolveEntryAssemblyName: static () => ShellCompletionHostValidator.GetExecutableName(Environment.ProcessPath),
 			resolveCommandName: static () => "app",
 			resolveCandidates: resolveCandidates,
 			tryReadProfileContent: tryReadProfileContent);
