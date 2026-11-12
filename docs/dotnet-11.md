@@ -10,7 +10,7 @@ on their own (dotnetup), and are here because .NET 11 developers meet them. Each
 A `net11.0` project compiles C# 15 by default, so it can declare a `union` without setting `LangVersion`;
 the same declaration does not compile in a `net10.0` project with its default language version. A handler
 can return a union, and Repl processes its active case: see
-[Union return values](commands.md#union-return-values-net-11).
+[Union return values](commands.md#union-return-values-c-15).
 
 ## `FORCE_COLOR`
 
@@ -20,9 +20,11 @@ Linux). Repl applies the same rule to its own output, so one variable colours bo
 file or a pipe does not make Repl write terminal control sequences there (screen clearing,
 shell-integration marks, progress); the exact rules are in [ANSI Detection](output-system.md#ansi-detection).
 
-Colours an application sets through `Console.ForegroundColor` are not written to a redirected stream,
-whatever `FORCE_COLOR` says (checked on Windows and Linux). Repl writes its colours as ANSI sequences and
-is not affected.
+`System.Console` reads the same variable for the colours an application sets through
+`Console.ForegroundColor`. On Linux, with `FORCE_COLOR` set, they are written to a redirected stream when
+`TERM` names a terminal whose terminfo describes colours (checked with `xterm-256color`), and not when
+`TERM` is unset or `dumb`. On Windows they are not written to a redirected stream, whatever `FORCE_COLOR`
+says. Repl writes its colours as ANSI sequences itself, so its output does not depend on `TERM`'s terminfo.
 
 ## `dotnet watch`
 

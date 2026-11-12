@@ -136,7 +136,7 @@ Checked in this order; the first row that decides wins:
 | 1 | A hosted session states its ANSI support (`ReplSessionIO.AnsiSupport`) | that answer |
 | 2 | `OutputOptions.AnsiMode` is `Always` or `Never` | on or off |
 | 3 | The host reports no ANSI support (`CapabilityOptions.SupportsAnsi = false`) | off |
-| 4 | `FORCE_COLOR` has any non-empty value, including `0` (the rule `System.Console` applies on .NET 11) | on |
+| 4 | `FORCE_COLOR` has any non-empty value, including `0` (the rule .NET 11 applies, in its console logger and in `System.Console` on Linux; see [Running on .NET 11](dotnet-11.md#force_color)) | on |
 | 5 | `NO_COLOR` has a non-blank value ([no-color.org](https://no-color.org)) | off |
 | 6 | `CLICOLOR_FORCE=1` | on |
 | 7 | `TERM=dumb` | off |

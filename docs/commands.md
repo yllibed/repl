@@ -383,7 +383,7 @@ Handlers can return any type. The framework renders the return value through the
 | `IExitResult` | Renders optional payload and sets the process exit code verbatim (`Results.Exit`); the only return type that carries an exit code — bypasses the `ReplOptions.ExitCodes` table, still visible to `ExitCodes.Resolver` |
 | `ICompletedWithFailuresResult` | The command ran to completion and its report contains failures (`Results.CompletedWithFailures`): renders the payload as the result, with no error prefix, and exits with `ExitCodes.CompletedWithFailures` (default `1`). Over MCP it is not a tool error |
 | `EnterInteractiveResult` | Renders optional payload and enters interactive REPL mode (`Results.EnterInteractive`). A payload that cannot be rendered — an unknown `--output` format — is a `UsageError` and the loop is not entered |
-| `union` (.NET 11) | The active case is processed as if the handler had returned it directly; see [Union return values](#union-return-values-net-11) |
+| `union` (C# 15) | The active case is processed as if the handler had returned it directly, on the `net11.0` build of Repl; see [Union return values](#union-return-values-c-15) |
 | `void` / `null` | No output |
 | `int` and other scalars | Rendered as data like any other value — **never** interpreted as an exit code (`int Count() => 3` prints `3`, exits `0`) |
 
@@ -427,7 +427,7 @@ Tuple semantics:
 - null elements are silently skipped
 - nested tuples are not flattened — use a flat tuple instead
 
-### Union return values (.NET 11)
+### Union return values (C# 15)
 
 On `net11.0`, a handler can return a C# 15 `union`. Repl processes the **active case** in place of the returned union: classification, exit codes and rendering treat the case exactly as if the handler had returned it directly.
 
