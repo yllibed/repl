@@ -10,7 +10,7 @@ on their own (dotnetup), and are here because .NET 11 developers meet them. Each
 A `net11.0` project compiles C# 15 by default, so it can declare a `union` without setting `LangVersion`;
 the same declaration does not compile in a `net10.0` project with its default language version. A handler
 can return a union, and Repl processes its active case: see
-[Union return values](commands.md#union-return-values-net-11).
+[Union return values](commands.md#union-return-values-c-15).
 
 ## `FORCE_COLOR`
 
