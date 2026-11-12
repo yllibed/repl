@@ -21,16 +21,20 @@ try
 		app.UseEmbeddedConsoleProfile();
 		app.Map("wait", async (CancellationToken ct) =>
 		{
-			using var callback = ct.Register(() =>
+			if (args[0] is "blocking-callback")
 			{
-				if (args[0] is "blocking-callback")
+				// Never unregistered: cancellation runs callbacks in reverse registration order, so the Task.Delay
+				// callback below runs first, and the handler can return before cancellation reaches this one.
+				// Disposing the registration on return would then skip the hostile callback, and the host would
+				// shut down cleanly.
+				ct.Register(static () =>
 				{
 					Console.WriteLine("blocking-callback-entered");
 #pragma warning disable MA0045 // Deliberately hostile command callback, isolated in a child process.
 					Thread.Sleep(Timeout.Infinite);
 #pragma warning restore MA0045
-				}
-			});
+				});
+			}
 			entered.SetResult();
 			try { await Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, ct).ConfigureAwait(false); }
 			finally
