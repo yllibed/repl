@@ -59,7 +59,9 @@ completion detect-shell
 ```
 
 These commands are CLI-only (they are not available in interactive mode or hosted session mode).
-They also require invoking the app through its own executable command head (the running process must match the app binary).
+Run them through the app's own executable (`myapp completion install`), which works wherever .NET is installed.
+A setup started as `dotnet myapp.dll` is accepted, but the PowerShell completer it writes is registered for `dotnet` as well as `myapp`, and runs `dotnet completion __complete` without the DLL: `myapp` gets no completions, and completing a `dotnet` command line shows `dotnet` error text instead.
+To repair such a setup, run `myapp completion install --shell powershell --force` from the executable, then open a new shell.
 
 Structured output is supported via global output flags:
 

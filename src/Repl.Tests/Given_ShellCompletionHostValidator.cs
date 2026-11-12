@@ -106,4 +106,20 @@ public sealed class Given_ShellCompletionHostValidator
 			.Should()
 			.BeFalse();
 	}
+
+	[TestMethod]
+	[Description("A dotnet installed by dotnetup lives in a user folder (%LOCALAPPDATA%\\dotnetup\\dotnet on Windows, ~/.local/share/dotnetup/dotnet on Linux, observed with dotnetup 0.3.0-preview); only executable file names are compared, so that folder changes nothing.")]
+	public void When_TheManagedHostIsADotnetupInstall_Then_HostIsSupported()
+	{
+		var (processPath, commandHead) = OperatingSystem.IsWindows()
+			? ("C:\\Users\\ada\\AppData\\Local\\dotnetup\\dotnet\\dotnet.exe", "C:\\apps\\CoreBasicsSample.dll")
+			: ("/home/ada/.local/share/dotnetup/dotnet/dotnet", "/apps/CoreBasicsSample.dll");
+		ShellCompletionHostValidator.IsSupportedHostProcess(
+				processPath,
+				entryAssemblyName: "CoreBasicsSample",
+				commandHead: commandHead,
+				parentProcessName: "pwsh")
+			.Should()
+			.BeTrue();
+	}
 }
