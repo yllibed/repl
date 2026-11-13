@@ -35,7 +35,9 @@ public sealed class Given_DocumentIndex
 		using var fixture = new TestCorpus();
 		fixture.Index.Initialize();
 		await fixture.WriteAsync("guide.md", "# Guide\n\n## Current\n\nRaw body.").ConfigureAwait(false);
+
 		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+
 		fixture.Embedding.LastPassage.Should().Be("Guide\nCurrent\n\nRaw body.");
 	}
 
@@ -49,13 +51,17 @@ public sealed class Given_DocumentIndex
 		var markdown = "# Guide\n\n" + body + "\n## Other\n\nDifferent heading.";
 		await fixture.WriteAsync("guide.md", markdown).ConfigureAwait(false);
 		var parsed = fixture.Corpus.Parse("guide.md", markdown);
+		await fixture.WriteAsync("other.md", "# Other\n\nAn unrelated document with the same final heading anchor.").ConfigureAwait(false);
+
 		var generation = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+
 		var parts = new List<string>();
 		var offset = 0;
 		do
 		{
 			var page = fixture.Index.Fetch(parsed.Id, 20000, offset);
 			page.Generation.Should().Be(generation.Id);
+			page.NextId.Should().BeNull();
 			page.Offset.Should().Be(offset);
 			parts.Add(page.Text);
 			if (page.NextOffset is not int next) { break; }
@@ -70,6 +76,7 @@ public sealed class Given_DocumentIndex
 			var page = fixture.Index.Fetch(sections[i].Id, 20000);
 			page.NextId.Should().Be(i + 1 < sections.Length ? sections[i + 1].Id : null);
 		}
+		fixture.Index.Fetch(parsed.Sections[^1].Id, 20000).NextId.Should().BeNull();
 		Action invalid = () => fixture.Index.Fetch(parsed.Id, 100, markdown.Length + 1);
 		invalid.Should().Throw<ArgumentException>();
 	}

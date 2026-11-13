@@ -123,7 +123,7 @@ public sealed class Given_IndexingWorker
 	}
 
 	[TestMethod]
-	[Description("An agent receives a retry hint only while the initial index is actively building, not after cancellation or failure.")]
+	[Description("An agent receives a retry hint while starting or building, with a distinct cancellation message.")]
 	public async Task When_TheInitialBuildIsPaused_Then_ReadinessExplainsWhetherToRetry()
 	{
 		using var fixture = new TestCorpus();
@@ -133,6 +133,8 @@ public sealed class Given_IndexingWorker
 		using var pause = new ManualResetEventSlim();
 		fixture.Embedding.Preparing = ct => { entered.TrySetResult(); pause.Wait(ct); };
 		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, fixture.Clock);
+		Action starting = worker.RequireReady;
+		starting.Should().Throw<InvalidOperationException>().WithMessage("*starting*retry shortly*");
 		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
 		try
 		{
@@ -157,7 +159,8 @@ public sealed class Given_IndexingWorker
 		using (var connection = fixture.Index.Open()) { DocsMcpSample.Search.DocumentIndex.Execute(connection, "UPDATE metadata SET version=1"); }
 		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
 		var clock = new ObservedTimeProvider(fixture.Clock);
-		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, clock);
+		var logger = new RecordingLogger();
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, logger, clock);
 		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
 		try
 		{
@@ -165,8 +168,20 @@ public sealed class Given_IndexingWorker
 			worker.Status.Ready.Should().BeTrue();
 			worker.Status.Generation!.Id.Should().NotBe(old.Id);
 			worker.Status.Generation.Fingerprint.Should().Be(old.Fingerprint);
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers > 1, deadline.Token).ConfigureAwait(false);
+			logger.Messages.Should().ContainSingle(message => message.Contains("stored index schema", StringComparison.Ordinal));
 		}
 		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<IndexingWorker>
+	{
+		internal List<string> Messages { get; } = [];
+		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+		public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+		public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+			TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
 	}
 
 	private sealed class ObservedTimeProvider(TimeProvider inner) : TimeProvider

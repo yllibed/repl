@@ -215,11 +215,14 @@ public sealed class Given_DocumentHosting
 			["id"] = fixture.Corpus.Parse("long.md", markdown, cancellationToken).Id, ["maxChars"] = 100, ["offset"] = 100,
 		}, cancellationToken: cancellationToken).ConfigureAwait(false);
 		page.IsError.Should().NotBeTrue();
-		var fetched = JsonSerializer.Deserialize<FetchedDocument>(string.Join("", page.Content.OfType<TextContentBlock>().Select(content => content.Text)), JsonSerializerOptions.Web)!;
-		fetched.Text.Should().Be(markdown.Substring(100, 100));
-		fetched.Offset.Should().Be(100);
-		fetched.NextOffset.Should().Be(200);
-		fetched.Generation.Should().Be(fixture.Index.Generation()!.Id);
+		using var json = JsonDocument.Parse(string.Join("", page.Content.OfType<TextContentBlock>().Select(content => content.Text)));
+		var fetched = json.RootElement;
+		fetched.GetProperty("text").GetString().Should().Be(markdown.Substring(100, 100));
+		fetched.GetProperty("offset").GetInt32().Should().Be(100);
+		fetched.GetProperty("nextOffset").GetInt32().Should().Be(200);
+		fetched.GetProperty("generation").GetString().Should().Be(fixture.Index.Generation()!.Id);
+		fetched.GetProperty("documentId").GetString().Should().Be(fixture.Corpus.Parse("long.md", markdown, cancellationToken).Id);
+		fetched.GetProperty("nextId").ValueKind.Should().Be(JsonValueKind.Null);
 	}
 
 	private static void AssertPublicToolSchemas(IEnumerable<McpClientTool> tools)

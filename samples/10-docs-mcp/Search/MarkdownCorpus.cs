@@ -10,6 +10,7 @@ namespace DocsMcpSample.Search;
 internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding)
 {
 	private const int MaximumPassageCharacters = 8192;
+	private const int MaximumContextCharacters = 32;
 	private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseYamlFrontMatter().UseAutoIdentifiers().Build();
 
 	internal IReadOnlyList<string> Files() => Directory.EnumerateFiles(settings.Documents, "*", new EnumerationOptions
@@ -47,14 +48,15 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 	}
 
 	// Keep context small even for generated headings. Clipping affects embeddings only, never source metadata.
-	internal static string EmbeddingText(string title, string heading, string text)
+	internal static string EmbeddingText(string title, string heading, string text) => string.Concat(EmbeddingPrefix(title, heading), text.AsSpan());
+
+	private static string EmbeddingPrefix(string title, string heading)
 	{
-		return Clip(title) + "\n" + Clip(heading) + "\n\n" + text;
+		return Clip(title) + "\n" + Clip(heading) + "\n\n";
 
 		static string Clip(string value)
 		{
-			var length = Math.Min(value.Length, 32);
-			if (length < value.Length && length > 0 && char.IsHighSurrogate(value[length - 1])) { length--; }
+			var length = TextBoundary.BeforeSurrogatePair(value, Math.Min(value.Length, MaximumContextCharacters));
 			return value[..length];
 		}
 	}
@@ -98,18 +100,21 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		void FlushRange(int end)
 		{
 			if (rangeStart < 0) { return; }
-			var text = markdown[rangeStart..end];
-			var consumed = 0;
+			var prefix = EmbeddingPrefix(title, heading);
+			var consumed = rangeStart;
 			var line = startLine;
 			var sectionKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(anchor)))[..16];
-			while (consumed < text.Length)
+			while (consumed < end)
 			{
 				cancellationToken.ThrowIfCancellationRequested();
-				var length = FitPassagePrefix(title, heading, text, consumed, cancellationToken);
-				var passage = text.Substring(consumed, length);
+				var length = FitPassagePrefix(prefix, markdown, consumed, end, cancellationToken);
+				var passage = markdown.Substring(consumed, length);
 				var newlines = passage.AsSpan().Count('\n');
 				var endLine = line + newlines - (passage.EndsWith('\n') ? 1 : 0);
-				sections.Add(new($"{documentId}:{sectionKey}:{part++}", documentId, source, title, heading, anchor, line, endLine, passage));
+				if (!string.IsNullOrWhiteSpace(passage))
+				{
+					sections.Add(new($"{documentId}:{sectionKey}:{part++}", documentId, source, title, heading, anchor, line, endLine, passage));
+				}
 				line += newlines;
 				consumed += length;
 			}
@@ -117,10 +122,10 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		}
 	}
 
-	private int FitPassagePrefix(string title, string heading, string text, int offset, CancellationToken cancellationToken)
+	private int FitPassagePrefix(string prefix, string text, int offset, int end, CancellationToken cancellationToken)
 	{
 		var low = 0;
-		var high = Math.Min(text.Length - offset, MaximumPassageCharacters - EmbeddingText(title, heading, "").Length);
+		var high = Math.Min(end - offset, MaximumPassageCharacters - prefix.Length);
 		high = SafeLength(high);
 		if (Count(high) <= embedding.MaxTokens) { low = high; }
 		else
@@ -133,8 +138,8 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 			}
 		}
 		low = SafeLength(low);
-		if (low == 0) { throw new InvalidOperationException("The tokenizer cannot fit context and one character in a passage."); }
-		if (offset + low < text.Length)
+		if (low == 0) { throw CannotFitPassage(); }
+		if (offset + low < end)
 		{
 			var newline = text.AsSpan(offset, low).LastIndexOf('\n');
 			if (newline >= 0) { low = newline + 1; }
@@ -143,22 +148,23 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		while (Count(low) > embedding.MaxTokens)
 		{
 			low = SafeLength(low - 1);
-			if (low == 0) { throw new InvalidOperationException("The tokenizer cannot fit context and one character in a passage."); }
+			if (low == 0) { throw CannotFitPassage(); }
 		}
 		return low;
+
+		static InvalidOperationException CannotFitPassage() => new("The tokenizer cannot fit context and one character in a passage.");
 
 		int Count(int length)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			return embedding.CountPassageTokens(EmbeddingText(title, heading, text.Substring(offset, SafeLength(length))));
+			return embedding.CountPassageTokens(string.Concat(prefix, text.AsSpan(offset, SafeLength(length))));
 		}
 
 		int SafeLength(int length)
 		{
-			if (length > 0 && offset + length < text.Length
-				&& (char.IsHighSurrogate(text[offset + length - 1])
-					|| (text[offset + length - 1] == '\r' && text[offset + length] == '\n'))) { length--; }
-			return length;
+			var boundary = TextBoundary.BeforeSurrogatePair(text, offset + length);
+			if (boundary > offset && boundary < end && text[boundary - 1] == '\r' && text[boundary] == '\n') { boundary--; }
+			return boundary - offset;
 		}
 	}
 }

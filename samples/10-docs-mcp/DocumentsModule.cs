@@ -18,7 +18,7 @@ internal sealed class DocumentsModule : IReplModule
 			})
 				.WithDescription("Search the Markdown documentation by keywords and meaning. Fetch an identifier from the results to read its source.")
 				.WithDetails("Use a result's id for its passage or documentId for the full page. Fetch the source before citing it.").ReadOnly();
-			docs.Map("fetch", ([Description("An indexed passage id or documentId from search, or an id from docs list; not a filesystem path.")] string id, [FromServices] DocumentIndex index, [FromServices] IndexingWorker worker, [ReplOption, Description("Maximum UTF-16 code units per page: 100 to 20,000, default 20,000.")] int maxChars = 20000,
+			docs.Map("fetch", ([Description("An indexed passage id or documentId returned by search (console users can also use docs list); not a filesystem path.")] string id, [FromServices] DocumentIndex index, [FromServices] IndexingWorker worker, [ReplOption, Description("Maximum UTF-16 code units per page: 100 to 20,000, default 20,000.")] int maxChars = 20000,
 				[ReplOption, Description("UTF-16 offset into this identifier: start at 0, then use nextOffset exactly. Must not split a surrogate pair.")] int offset = 0) =>
 			{
 				worker.RequireReady();

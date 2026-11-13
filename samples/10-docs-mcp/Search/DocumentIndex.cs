@@ -44,6 +44,14 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(id INTEGER PRIMARY KEY, embedding float[{{embedding.Dimensions}}] distance_metric=cosine);
 		""");
 
+	internal bool HasDifferentSchema()
+	{
+		using var connection = Open();
+		using var command = connection.CreateCommand();
+		command.CommandText = "SELECT version FROM metadata WHERE id=1";
+		return command.ExecuteScalar() is long version && version != SchemaVersion;
+	}
+
 	internal IndexGeneration? Generation(SqliteConnection? connection = null)
 	{
 		using var owner = connection is null ? Open() : null;
@@ -155,15 +163,15 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 			SELECT source,title,body,id,NULL FROM documents WHERE id=$id
 			UNION ALL
 			SELECT s.source,s.title,s.body,s.document_id,
-			 (SELECT n.id FROM sections n WHERE n.document_id=s.document_id AND n.anchor=s.anchor AND n.rowid>s.rowid ORDER BY n.rowid LIMIT 1)
+			 (SELECT n.id FROM sections n WHERE n.document_id=s.document_id AND n.anchor=s.anchor AND n.rowid=s.rowid+1)
 			FROM sections s WHERE s.id=$id LIMIT 1
 			""";
 		command.Parameters.AddWithValue("$id", id);
 		using var reader = command.ExecuteReader();
 		if (!reader.Read()) { throw new KeyNotFoundException("Identifier not found in the current index. Search again for an updated reference."); }
 		var text = reader.GetString(2);
-		return FetchPaging.Create(id, reader.GetString(3), reader.GetString(1), reader.GetString(0), text, maxChars, offset,
-			reader.IsDBNull(4) ? null : reader.GetString(4), generation.Id);
+		return FetchPaging.Create(id, reader.GetString(0), reader.GetString(1), text, generation.Id, maxChars, offset,
+			reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(3));
 	}
 
 	internal DocumentSummary[] List(int offset, int count, CancellationToken cancellationToken = default)
@@ -202,7 +210,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		{
 			var text = reader.GetString(9);
 			var excerptLength = Math.Min(text.Length, 500);
-			if (excerptLength < text.Length && char.IsHighSurrogate(text[excerptLength - 1])) { excerptLength--; }
+			excerptLength = TextBoundary.BeforeSurrogatePair(text, excerptLength);
 			result.Add(new(reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6),
 				reader.GetInt32(7), reader.GetInt32(8), text[..excerptLength], reader.GetDouble(10)));
 		}

@@ -6,18 +6,33 @@ namespace Repl.DocsSampleTests;
 [TestClass]
 public sealed class Given_FetchPaging
 {
+	private static FetchedDocument Page(string text, int maxChars = 100, int offset = 0, string? nextId = null) =>
+		FetchPaging.Create("section", "guide.md", "Guide", text, "generation", maxChars, offset, nextId, "doc");
+
+	[TestMethod]
+	[DataRow(0)]
+	[DataRow(99)]
+	[DataRow(20001)]
+	[Description("The paging boundary rejects invalid budgets before slicing any text.")]
+	public void When_ThePageBudgetIsInvalid_Then_ItIsRejected(int maxChars)
+	{
+		Action fetch = () => Page("hello", maxChars);
+
+		fetch.Should().Throw<ArgumentOutOfRangeException>().Which.ParamName.Should().Be("maxChars");
+	}
+
 	[TestMethod]
 	[Description("A bounded page preserves the fetched reference and reports a UTF-16 continuation offset.")]
 	public void When_ARequestedPageHasMoreText_Then_ItReturnsTheRequestedSlice()
 	{
-		var page = FetchPaging.Create("section", "doc", "Guide", "guide.md", new string((char)97, 300), 100, 100, "next", "generation");
+		var page = Page(new string('a', 300), 100, 100, "next");
 
 		page.Id.Should().Be("section");
 		page.DocumentId.Should().Be("doc");
 		page.Source.Should().Be("guide.md");
 		page.Title.Should().Be("Guide");
 		page.Generation.Should().Be("generation");
-		page.Text.Should().Be(new string((char)97, 100));
+		page.Text.Should().Be(new string('a', 100));
 		page.Offset.Should().Be(100);
 		page.NextOffset.Should().Be(200);
 		page.Truncated.Should().BeTrue();
@@ -36,7 +51,7 @@ public sealed class Given_FetchPaging
 		var pages = 0;
 		while (true)
 		{
-			var page = FetchPaging.Create("doc", "doc", "Guide", "guide.md", text, maxChars, offset);
+			var page = Page(text, maxChars, offset);
 			page.Offset.Should().Be(offset);
 			page.Text.Length.Should().BeInRange(1, maxChars);
 			char.IsLowSurrogate(page.Text[0]).Should().BeFalse();
@@ -63,8 +78,8 @@ public sealed class Given_FetchPaging
 	public void When_ThePageBoundarySplitsASurrogatePair_Then_ThePairStartsTheNextPage()
 	{
 		var text = new string('a', 99) + "😀end";
-		var first = FetchPaging.Create("section", "doc", "Guide", "guide.md", text, 100);
-		var second = FetchPaging.Create("section", "doc", "Guide", "guide.md", text, 100, first.NextOffset!.Value);
+		var first = Page(text, 100);
+		var second = Page(text, 100, first.NextOffset!.Value);
 
 		first.Text.Should().Be(new string('a', 99));
 		first.NextOffset.Should().Be(99);
@@ -79,7 +94,7 @@ public sealed class Given_FetchPaging
 	[Description("Offsets outside the text produce an actionable argument error rather than substring failures.")]
 	public void When_TheOffsetIsOutOfRange_Then_ItIsRejected(int offset)
 	{
-		var fetch = () => FetchPaging.Create("doc", "doc", "Guide", "guide.md", "hello", 100, offset);
+		var fetch = () => Page("hello", 100, offset);
 
 		var exception = fetch.Should().Throw<ArgumentException>().Which;
 		exception.ParamName.Should().Be("offset");
@@ -90,7 +105,7 @@ public sealed class Given_FetchPaging
 	[Description("An offset between a high and low surrogate is rejected rather than returning invalid UTF-16.")]
 	public void When_TheOffsetSplitsASurrogatePair_Then_ItIsRejected()
 	{
-		var fetch = () => FetchPaging.Create("doc", "doc", "Guide", "guide.md", "a😀b", 100, 2);
+		var fetch = () => Page("a😀b", 100, 2);
 
 		var exception = fetch.Should().Throw<ArgumentException>().Which;
 		exception.ParamName.Should().Be("offset");
@@ -103,7 +118,7 @@ public sealed class Given_FetchPaging
 	[Description("An offset equal to the text length returns an empty terminal page, including for empty text.")]
 	public void When_TheOffsetIsAtTheEnd_Then_ThePageIsEmpty(string text)
 	{
-		var page = FetchPaging.Create("doc", "doc", "Guide", "guide.md", text, 100, text.Length);
+		var page = Page(text, 100, text.Length);
 
 		page.Offset.Should().Be(text.Length);
 		page.Text.Should().BeEmpty();
@@ -117,9 +132,9 @@ public sealed class Given_FetchPaging
 	public void When_ASectionHasASibling_Then_OnlyItsFinalPageReturnsNextId()
 	{
 		var text = new string('a', 200);
-		var first = FetchPaging.Create("section", "doc", "Guide", "guide.md", text, 100, 0, "sibling");
-		var last = FetchPaging.Create("section", "doc", "Guide", "guide.md", text, 100, 100, "sibling");
-		var end = FetchPaging.Create("section", "doc", "Guide", "guide.md", text, 100, text.Length, "sibling");
+		var first = Page(text, 100, 0, "sibling");
+		var last = Page(text, 100, 100, "sibling");
+		var end = Page(text, 100, text.Length, "sibling");
 
 		first.NextId.Should().BeNull();
 		last.NextId.Should().Be("sibling");
@@ -129,19 +144,10 @@ public sealed class Given_FetchPaging
 	}
 
 	[TestMethod]
-	[Description("Whole-document fetches never expose section siblings, even when supplied by a caller.")]
-	public void When_FetchingADocument_Then_ItHasNoSiblingContinuation()
-	{
-		var page = FetchPaging.Create("doc", "doc", "Guide", "guide.md", "hello", 100, 0, "sibling");
-
-		page.NextId.Should().BeNull();
-	}
-
-	[TestMethod]
 	[Description("A section without a supplied same-source, same-anchor sibling ends without a next identifier.")]
 	public void When_ASectionHasNoSibling_Then_ItHasNoIdentifierContinuation()
 	{
-		var page = FetchPaging.Create("section", "doc", "Guide", "guide.md", "hello", 100);
+		var page = Page("hello", 100);
 
 		page.NextId.Should().BeNull();
 		page.NextOffset.Should().BeNull();

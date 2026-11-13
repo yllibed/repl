@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Content Include="TestData/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../../samples/10-docs-mcp/documents/*.md" Link="TestData/documents/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="../../samples/10-docs-mcp/DocsMcpSample.csproj" />
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />

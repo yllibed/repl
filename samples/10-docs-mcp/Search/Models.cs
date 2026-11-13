@@ -6,7 +6,7 @@ internal sealed record DocumentSummary(string Id, string Source, string Title);
 internal sealed record SearchHit(string Id, string DocumentId, string Source, string Title, string Heading, string Anchor, int StartLine, int EndLine, string Excerpt, double Score);
 internal sealed record SearchComparison(string Query, string Generation, IReadOnlyList<SearchHit> Keyword, IReadOnlyList<SearchHit> Vector, IReadOnlyList<SearchHit> Hybrid);
 internal sealed record FetchedDocument(string Id, string Source, string Title, string Text, bool Truncated, string Generation,
-	int Offset = 0, int? NextOffset = null, string? NextId = null, string? DocumentId = null);
+	int Offset, int? NextOffset, string? NextId, string DocumentId);
 internal sealed record IndexGeneration(string Id, string Fingerprint, string Model, int Documents, int Sections, DateTimeOffset PublishedAt);
 
 internal interface ITextEmbedding

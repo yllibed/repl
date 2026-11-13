@@ -8,6 +8,26 @@ public sealed class Given_MarkdownCorpus
 	[TestMethod]
 	[DataRow("\n")]
 	[DataRow("\r\n")]
+	[Description("Blank chunk boundaries and trailing empty lines do not create searchable whitespace-only evidence.")]
+	public void When_AChunkBoundaryContainsOnlyWhitespace_Then_ItIsNotIndexed(string newline)
+	{
+		using var fixture = new TestCorpus();
+		var corpus = new MarkdownCorpus(fixture.Settings, new TestEmbedding { MaxTokens = 32 });
+		var text = new string('a', 24) + newline + newline + new string('b', 40) + newline + newline;
+
+		var document = corpus.Parse("a.md", text);
+
+		document.Sections.Should().NotBeEmpty();
+		document.Sections.Should().OnlyContain(section => !string.IsNullOrWhiteSpace(section.Text));
+		document.Sections.Should().OnlyContain(section => section.EndLine >= section.StartLine);
+		document.Sections.Select(section => int.Parse(section.Id.AsSpan(section.Id.AsSpan().LastIndexOf(':') + 1), System.Globalization.CultureInfo.InvariantCulture))
+			.Should().Equal(Enumerable.Range(0, document.Sections.Count));
+	}
+
+	[TestMethod]
+	[DataRow("\n")]
+	[DataRow("\r\n")]
+	[Description("YAML metadata is excluded while the first real heading supplies the page title and source lines remain intact.")]
 	public void When_FrontMatterPrecedesTheFirstHeading_Then_OnlyMarkdownSuppliesTheTitle(string newline)
 	{
 		using var fixture = new TestCorpus();
@@ -25,6 +45,7 @@ public sealed class Given_MarkdownCorpus
 	[TestMethod]
 	[DataRow("\n")]
 	[DataRow("\r\n")]
+	[Description("Oversized paragraphs prefer complete LF or CRLF lines without normalizing source text.")]
 	public void When_AnOversizedParagraphContainsNewlines_Then_ChunksPreserveSourceLines(string newline)
 	{
 		using var fixture = new TestCorpus();
@@ -44,6 +65,7 @@ public sealed class Given_MarkdownCorpus
 	}
 
 	[TestMethod]
+	[Description("The long-line fallback never splits a UTF-16 surrogate pair.")]
 	public void When_ALongLineHasSurrogatePairs_Then_EachChunkRemainsValidUnicode()
 	{
 		using var fixture = new TestCorpus();
@@ -65,6 +87,7 @@ public sealed class Given_MarkdownCorpus
 	}
 
 	[TestMethod]
+	[Description("Original paragraph separators are retained within nonempty passages.")]
 	public void When_AParagraphBreakHasSeveralBlankLines_Then_SourceTextIsNotNormalized()
 	{
 		using var fixture = new TestCorpus();
@@ -76,6 +99,7 @@ public sealed class Given_MarkdownCorpus
 	}
 
 	[TestMethod]
+	[Description("Embedding input includes the page title and current heading, not ancestor headings.")]
 	public void When_ContextIsEmbedded_Then_ItContainsOnlyTitleAndCurrentHeading()
 	{
 		using var fixture = new TestCorpus();
@@ -91,6 +115,7 @@ public sealed class Given_MarkdownCorpus
 	}
 
 	[TestMethod]
+	[Description("Generated titles and headings are clipped only in bounded embedding input, not source metadata.")]
 	public void When_ContextIsHuge_Then_PreparationIsBoundedAndMetadataRemainsRaw()
 	{
 		using var fixture = new TestCorpus();
@@ -177,6 +202,24 @@ public sealed class Given_MarkdownCorpus
 
 		parse.Should().Throw<OperationCanceledException>();
 		probes.Should().Be(1);
+	}
+
+	[TestMethod]
+	[Description("The bundled corpus exceeds the default twenty-passage candidate budget.")]
+	public async Task When_TheBundledCorpusIsParsed_Then_ItExceedsTheDefaultCandidateWindow()
+	{
+		using var fixture = new TestCorpus();
+		var settings = fixture.Settings with { Documents = Path.Combine(AppContext.BaseDirectory, "TestData", "documents") };
+		var corpus = new MarkdownCorpus(settings, fixture.Embedding);
+		var passages = 0;
+
+		foreach (var path in corpus.Files())
+		{
+			var text = await corpus.ReadAsync(path, CancellationToken.None).ConfigureAwait(false);
+			passages += corpus.Parse(corpus.RelativePath(path), text).Sections.Count;
+		}
+
+		passages.Should().BeGreaterThan(20);
 	}
 
 	[TestMethod]

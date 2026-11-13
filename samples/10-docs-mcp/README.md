@@ -69,7 +69,7 @@ The bundled documents are in English. Watch which passages move between the thre
 | Vector | Related meaning, including across languages |
 | Hybrid | Results supported by either branch, with agreement rewarded |
 
-The supplied deployment and retrieval guides bring the corpus above the default twenty-passage candidate limit without requiring twenty files. Keyword candidates still need a matching term; vector candidates do not. Try an exact name, a paraphrase, a cross-language question and an unrelated string. The lists can agree. This is a comparison, not a promise that one method always wins. BM25 and cosine distances sort lower first; fusion scores sort higher first. These scores are **not confidence percentages**.
+The six bundled documents provide 24 passages, exceeding the default twenty-passage candidate limit. Keyword candidates still need a matching term; vector candidates do not. Try an exact name, a paraphrase, a cross-language question and an unrelated string. The lists can agree. This is a comparison, not a promise that one method always wins. BM25 and cosine distances sort lower first; fusion scores sort higher first. These scores are **not confidence percentages**.
 
 Select a result. The source reader shows the indexed passage, relative filename, line range and generation. You can check what a search result actually says without leaving the application.
 
