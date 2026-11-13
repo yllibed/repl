@@ -134,5 +134,5 @@ The toolkit provides two application entry points for different scenarios.
 ## Branching and versioning
 
 - NBGV (`version.json`) drives package/release versioning.
-- `main` publishes prerelease.
-- `release/*` publishes stable.
+- `ci.yml` builds, tests and packs every push; `publish.yml` publishes one CI run's packages. Which
+  runs are published, and when, is in [Publishing](publishing.md#what-triggers-publishing-artifacts).

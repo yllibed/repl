@@ -1,6 +1,7 @@
 # Publishing Process
 
-This repository publishes packages from CI.
+This repository publishes packages from GitHub Actions: `ci.yml` builds them, `publish.yml` publishes
+them.
 
 ## Release preparation
 
@@ -36,22 +37,33 @@ no package at that baseline, so restore fails with NU1101 until its first releas
 a version that contains it.
 
 Push the resulting `main` and `release/<version>` branches when the release is ready.
-CI is responsible for build, test, pack, symbol packages, GitHub Release creation, and
-NuGet publication.
+CI (`ci.yml`) builds, tests and packs, symbol packages included; `publish.yml` creates the GitHub
+Release and publishes to NuGet.
 
 ## What triggers publishing artifacts
 
-- CI runs on:
-  - `pull_request`
-  - `push` on `main`
-  - `push` on `release/**`
-- On pushes to `main` or `release/**`, the GitHub Release job runs after build, test,
-  pack, and documentation lint succeed.
+- `ci.yml` runs on pull requests and on pushes to `main` and `release/**`. It builds, tests and
+  packs, and uploads the packages as the run's `packages-<version>` artifact, kept 30 days. It
+  publishes nothing.
+- `publish.yml` publishes one CI run's artifact as it is: it tags that run's commit, creates the
+  GitHub Release and pushes to NuGet. Nothing is rebuilt.
+  - It runs on its own when CI succeeds on a push to `release/**`. Every job of that CI run must
+    pass, not only `Build, Test, Pack`; re-running a failed CI run publishes once it succeeds.
+  - It runs by hand for any other successful CI push run of `main` or `release/**`:
+    `gh workflow run publish.yml -f run-id=<id>`, where the id is the number in the CI run's URL
+    (`/actions/runs/<id>`). That is how a `-dev` prerelease of `main` reaches NuGet: a package for
+    every merge had no consumer, so `main` is never published on its own.
+  - It refuses any run that is not a successful push run of this repository's `ci.yml` on `main` or
+    `release/*` (a pull-request run, for example), and a run whose artifact has expired.
+  - Publications run one at a time; later requests wait their turn.
+  - It always runs from `main`, whatever branch built the packages: the `nuget` environment admits
+    `main` only, so a copy of `publish.yml` on another branch cannot obtain a NuGet key.
 
 ## Branch strategy
 
-- `main`: prerelease flow (`-dev.*`).
-- `release/*`: release branch flow (same packaging pipeline, intended for release stabilization).
+- `main`: prerelease versions (`-dev.*`), published by hand.
+- `release/*`: release branch flow (same packaging pipeline, intended for release stabilization),
+  published automatically once CI succeeds.
 - Branch names come from `version.json`'s `release.branchName`, currently `release/{version}`, so
   they carry the full three-part version: `release/0.11.0`, not `release/0.11`.
 - Release branches should be created from `main` with `nbgv prepare-release` rather than by hand.
@@ -85,10 +97,11 @@ NuGet publication.
 `nbgv prepare-release` removes the prerelease tag on the release branch, so its `version` has no
 `{height}`: **every commit on `release/0.11.0` computes the same `0.11.0`**. That is the intended
 behaviour for a stable line, and pushing to such a branch more than once is an ordinary thing to do —
-a documentation fix, a workflow tweak, a cherry-picked change. Neither publish step treats the repeat
-as an error, and neither of them can republish the version either.
+a documentation fix, a workflow tweak, a cherry-picked change. Publishing the same CI run twice is
+the same case. Neither publish step treats the repeat as an error, and neither of them can republish
+the version either.
 
-**A published release is left entirely alone.** The job checks whether `v<version>` has already been
+**A published release is left entirely alone.** `publish.yml` checks whether `v<version>` has already been
 published and, if it has, touches nothing: not the assets, not the tag. It does not re-upload,
 because a released version is immutable on NuGet — replacing the assets would leave a direct GitHub
 download and a NuGet install of one version number carrying different binaries. The tag likewise keeps pointing at the
@@ -107,12 +120,12 @@ re-run: both are decisions about what has already reached consumers, and CI shou
 version it already has alone, which is the normal outcome here. But it *does* upload a package NuGet
 is missing, and that is the only way a push whose upload failed part-way recovers without manual
 intervention. Two things follow. A repeat run is not guaranteed to publish nothing at all — it
-publishes precisely what NuGet lacks. And such a recovery uploads from the *current* commit, while
-the release's assets and tag stay on the one that created them.
+publishes precisely what NuGet lacks. And such a recovery uploads from the CI run being published,
+while the release's assets and tag stay on the one that created them.
 
 **A package that fails to push fails the job.** The release exists by then, so a green run would
 hide that consumers can restore some packages of the version and not others. The error names the
-packages that did not reach NuGet; re-running the workflow is the recovery described above. A symbol
+packages that did not reach NuGet; re-running `publish.yml` is the recovery described above. A symbol
 package (`.snupkg`) that fails only degrades debugging, so it stays a warning.
 
 **So a change meant for consumers needs a new version.** Under a number already released, the release
@@ -163,20 +176,22 @@ do not cover; do not improvise a version edit.
 
 ### What a release contains
 
-The release job does not rebuild: it downloads the `packages` artifact produced by
-`Build, Test, Pack`. Within that job, `Test` and `Pack` both run with `--no-build` against the
-outputs of a single `Build`, so a release publishes exactly the assemblies the tests ran against.
+`publish.yml` does not rebuild: it downloads the `packages-<version>` artifact of the CI run it
+publishes, produced by `Build, Test, Pack`. Within that job, `Test` and `Pack` both run with
+`--no-build` against the outputs of a single `Build`, so a release publishes exactly the assemblies
+the tests ran against.
 
 ## Do I need to create a Git tag manually?
 
 - No for normal flow.
-- On push to `main`/`release/*`, CI creates a GitHub Release with tag `v<NuGetPackageVersion>`.
+- When `publish.yml` publishes a CI run, it creates a GitHub Release with tag
+  `v<NuGetPackageVersion>` on that run's commit.
 - Only create tags manually for exceptional/manual workflows.
 
 ## Release notes
 
-There is no changelog file to maintain. CI creates a GitHub Release per published version with
-`gh release create "v${VERSION}" --target "${GITHUB_SHA}" --generate-notes`, so the notes are
+There is no changelog file to maintain. `publish.yml` creates a GitHub Release per published version
+with `gh release create "v${VERSION}" --target <commit of the CI run> --generate-notes`, so the notes are
 generated from the pull requests merged since the previous tag and the tag points at the commit whose
 packages are attached — an anchoring a hand-written file cannot have, since Nerdbank.GitVersioning
 assigns the version at pack time.
@@ -203,8 +218,8 @@ dependency bumped for a vulnerability. Give such a pull request the consumer lab
 that bump), so it is listed with the consumer changes.
 
 Label each pull request when it merges. The rest of this section applies to stable releases, the ones
-cut with `nbgv prepare-release` and servicing releases alike, not to the prereleases CI publishes on
-every push to `main`. Before cutting one, preview the notes CI will generate, from the previous stable
+cut with `nbgv prepare-release` and servicing releases alike, not to the `-dev` prereleases of `main`
+published by hand. Before cutting one, preview the notes CI will generate, from the previous stable
 tag to `main` (or to the release branch for a servicing release), and label what landed under *Other
 pull requests* by mistake:
 
@@ -225,7 +240,7 @@ upgrade. Every stable release therefore gets a written summary, placed above the
    note under `docs/`, then *Other changes*. Pin the links to the coming tag
    (`blob/v<version>/docs/...`). Keep the draft as the body of an issue titled `Release notes
    <version>`, in the release milestone, so it can be reviewed.
-2. **After CI publishes the release**, replace its body with the summary followed by the generated
+2. **After `publish.yml` publishes the release**, replace its body with the summary followed by the generated
    notes. This needs PowerShell 7.4 or later, which keeps `gh`'s UTF-8 output intact through `>`.
    It rebuilds the generated part each time, so running it again after fixing the draft does not
    duplicate anything:
@@ -242,12 +257,12 @@ upgrade. Every stable release therefore gets a written summary, placed above the
 
 ## NuGet publish status
 
-- Package and symbol packages (`.snupkg`) are produced by `Build, Test, Pack` and published
-  by the release job.
+- Package and symbol packages (`.snupkg`) are produced by `Build, Test, Pack` in `ci.yml` and
+  published by `publish.yml`.
 - `Publish to NuGet` runs after GitHub Release creation when the preceding step succeeds
   (`if: success()`).
-- The release job exchanges GitHub's OIDC identity for a short-lived NuGet API key through
-  `NuGet/login`. Only this job has `id-token: write`; it uses the `nuget` environment.
+- `publish.yml` exchanges GitHub's OIDC identity for a short-lived NuGet API key through
+  `NuGet/login`. Only its job has `id-token: write`; it uses the `nuget` environment.
 - The `NUGET_USER` GitHub Actions variable identifies the NuGet.org user who created the
   trusted publishing policy. It is a profile name, not an email address or organization name.
 
@@ -258,8 +273,10 @@ See the [NuGet Trusted Publishing documentation](https://learn.microsoft.com/nug
 for the token exchange and policy ownership rules.
 
 1. In GitHub repository settings, create an environment named `nuget`. Under deployment
-   branches and tags, select **Selected branches and tags** and add branch rules `main` and
-   `release/*`. Do not add a tag rule. These match the publishing branches used by this repo.
+   branches and tags, select **Selected branches and tags** and add the branch rule `main` only.
+   Do not add a tag rule. `publish.yml` always runs from `main`, whatever branch built the
+   packages; a rule admitting another branch would let that branch's copy of `publish.yml`
+   obtain a NuGet key without any of its checks.
 2. Set the environment's Actions variable `NUGET_USER` to the NuGet.org username that creates
    the policy (`carl.debilly` for this repository). The username is public; no secret is needed.
 3. Sign in to NuGet.org as that user and open **Trusted Publishing**. Create a GitHub policy
@@ -270,16 +287,17 @@ for the token exchange and policy ownership rules.
    | Package owner | The NuGet user or organization that owns the Repl packages |
    | Repository owner | `yllibed` |
    | Repository | `repl` |
-   | Workflow file | `ci.yml` |
+   | Workflow file | `publish.yml` |
    | Environment | `nuget` |
 
-   Enter only `ci.yml`, not `.github/workflows/ci.yml`. Grant publishing of new packages and
-   versions. Add `Repl` and `Repl.*` as separate glob-pattern lines to cover the meta-package
+   Enter only `publish.yml`, not `.github/workflows/publish.yml`. Grant publishing of new packages
+   and versions. Add `Repl` and `Repl.*` as separate glob-pattern lines to cover the meta-package
    and its companion packages. Unlisting is not needed by this workflow.
-4. Configure the policy and GitHub environment before merging the workflow change: merging
-   to `main` starts the normal prerelease publication. A PR build skips the release job and
-   cannot validate the OIDC exchange. The first publishing run must show successful
-   `Authenticate to NuGet` and `Publish to NuGet` steps.
+4. Configure the policy and GitHub environment before the first publishing run. `ci.yml` never
+   publishes, so no CI run validates the OIDC exchange. The first run of `publish.yml` does:
+   publishing a `-dev` build of `main` by hand validates it without cutting a release. That run
+   must show successful `Authenticate to NuGet` and `Publish to NuGet` steps. (Publishing used to
+   run from `ci.yml`; a policy naming `ci.yml` can be removed once `publish.yml` has published.)
 5. After the first successful OIDC publication, remove the old `NUGET_API_KEY` GitHub secret
    and revoke its long-lived key on NuGet.org. The workflow has no API-key fallback.
 

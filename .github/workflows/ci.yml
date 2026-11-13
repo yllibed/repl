@@ -6,8 +6,7 @@ on:
     branches: [main, 'release/**']
 
 permissions:
-  contents: write
-  checks: write
+  contents: read
 
 env:
   DOTNET_NOLOGO: true
@@ -231,10 +230,12 @@ jobs:
   build-test-pack:
     name: Build, Test, Pack
     runs-on: ubuntu-latest
+    # checks: write is for the Test report step below.
+    permissions:
+      contents: read
+      checks: write
     env:
       PUBLIC_RELEASE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')) }}
-    outputs:
-      version: ${{ steps.resolve-version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -277,7 +278,7 @@ jobs:
       - name: Test report
         # Creating a check run needs `checks: write`, but GitHub caps GITHUB_TOKEN
         # to read-only for `pull_request` events raised from a fork — the
-        # workflow-level `permissions:` block cannot lift that ceiling. The action
+        # job's `permissions:` block cannot lift that ceiling. The action
         # then fails with "Resource not accessible by integration", which cascades
         # into skipping Pack and the package validation steps below. Fork PRs still
         # gate on the Test step and publish the .trx via the test-results artifact.
@@ -541,169 +542,17 @@ jobs:
           path: TestResults/**
           retention-days: 14
 
+      # publish.yml publishes this artifact as it is, and reads the version from its name. It is kept
+      # long enough that a build of main can still be published by hand weeks later.
       - name: Upload packages
         if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: packages
+          name: packages-${{ steps.resolve-version.outputs.version }}
           path: |
             ${{ runner.temp }}/packages/*.nupkg
             ${{ runner.temp }}/packages/*.snupkg
-          retention-days: 14
-
-  release:
-    name: GitHub Release
-    needs: [build-test-pack, lint-docs]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
-    runs-on: ubuntu-latest
-    environment: nuget
-    permissions:
-      contents: write
-      id-token: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # `dotnet nuget push` below resolves the SDK through global.json, which the runner image may not carry.
-      - name: Setup .NET
-        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
-        with:
-          dotnet-version: '11.0.x'
-          dotnet-quality: ga
-
-      - name: Download packages
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: packages
-          path: packages
-
-      - name: Authenticate to NuGet
-        id: nuget-login
-        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
-        with:
-          user: ${{ vars.NUGET_USER }}
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.build-test-pack.outputs.version }}"
-          PRERELEASE=""
-          [[ "$VERSION" == *-* ]] && PRERELEASE="--prerelease"
-
-          # `gh release create` with assets is not one API call: gh's manual (Immutable Releases)
-          # states it creates the release as a draft, uploads the assets, then publishes it. A run
-          # interrupted mid-upload leaves an unpublished draft, which `gh release view` still finds
-          # because its lookup queries drafts too. Reading that as an existing release would skip
-          # the creation below and let Publish to NuGet run, putting packages on NuGet under a
-          # version no one can see a release for — so the three states are told apart here. A
-          # lookup that fails for any other reason reads as `missing` and falls through to
-          # `gh release create`, which then fails loudly rather than skipping anything.
-          RELEASE_STATE=missing
-          if IS_DRAFT="$(gh release view "v${VERSION}" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
-            RELEASE_STATE=published
-            if [[ "$IS_DRAFT" == "true" ]]; then
-              RELEASE_STATE=draft
-            fi
-          fi
-
-          if [[ "$RELEASE_STATE" == draft ]]; then
-            # Detection, not repair: publishing the draft and deleting it are both decisions about
-            # what has already reached consumers, and this job is the one part of the workflow that
-            # pull-request CI never runs, so untested recovery logic here is worse than stopping.
-            echo "::error title=Release v${VERSION} exists as an unpublished draft::A previous run created it and did not finish. Nothing was published by this run. Inspect the draft, then either publish it with the packages it is missing or delete it and re-run."
-            {
-              echo "### Release \`v${VERSION}\` exists as an unpublished draft"
-              echo
-              echo "A previous run created the release and did not finish uploading its assets."
-              echo "**Nothing was published by this run** — not the release, not NuGet."
-              echo
-              echo "Inspect the draft, then either publish it with the packages it is missing or"
-              echo "delete it and re-run this workflow."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          fi
-
-          # A release branch's version has no {height}, so every commit on it computes the same
-          # number. Creating the release twice is therefore an ordinary occurrence rather than an
-          # error, and failing here would skip Publish to NuGet for a run that had nothing wrong
-          # with it. So this path does nothing at all — deliberately, and loudly.
-          #
-          # Nothing, rather than re-uploading: a published version is immutable on NuGet, so
-          # replacing the release's assets would leave a direct GitHub download and a NuGet install
-          # of the same version carrying different binaries, with the tag describing neither.
-          # Whatever a repeat run built cannot ship under this version; that needs a version bump.
-          if [[ "$RELEASE_STATE" == published ]]; then
-            echo "::warning title=Release v${VERSION} already exists::Its assets and tag are left untouched. NuGet still runs and will skip every version it already has — but it accepts one it is missing, which is how a partial push recovers. If this commit changed shipped code, bump the version on the release branch: the release's own assets will not be updated."
-            {
-              echo "### Release \`v${VERSION}\` already exists — left untouched"
-              echo
-              echo "Its assets and tag are unchanged. \`Publish to NuGet\` still runs: it skips every"
-              echo "version already published, which is the normal outcome here, and uploads one that"
-              echo "is missing, which is how a partially failed push recovers."
-              echo
-              echo "So a code change in this commit cannot reach consumers as \`${VERSION}\` through the"
-              echo "release assets, and reaches NuGet only for a package NuGet does not yet have."
-              echo "Bump the version on the release branch if the change is meant to ship."
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            # --target is what makes the tag point at the commit that built these packages. Without
-            # it, gh creates a missing tag from the latest state of the default branch, so a
-            # release/** publish would tag main instead of the release branch it ran on.
-            gh release create "v${VERSION}" packages/* \
-              --title "v${VERSION}" \
-              --target "${GITHUB_SHA}" \
-              --generate-notes \
-              $PRERELEASE
-          fi
-
-      - name: Publish to NuGet
-        if: success()
-        shell: pwsh
-        env:
-          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
-        run: |
-          $source = 'https://api.nuget.org/v3/index.json'
-          $apiKey = $env:NUGET_API_KEY
-          $failedPackages = @()
-          $failedSymbols = @()
-
-          # --no-symbols: without it, pushing a .nupkg also pushes the adjacent .snupkg, and a symbol
-          # endpoint failure would count a published package as failed. Symbols go in the loop below.
-          foreach ($pkg in Get-ChildItem packages/*.nupkg) {
-            Write-Host "Pushing $($pkg.Name)..."
-            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate --no-symbols 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
-              $failedPackages += $pkg.Name
-            }
-          }
-
-          foreach ($pkg in Get-ChildItem packages/*.snupkg -ErrorAction SilentlyContinue) {
-            Write-Host "Pushing $($pkg.Name)..."
-            dotnet nuget push $pkg.FullName --api-key $apiKey --source $source --skip-duplicate 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Warning "Failed to push $($pkg.Name) (exit code $LASTEXITCODE) — continuing with remaining packages."
-              $failedSymbols += $pkg.Name
-            }
-          }
-
-          # Every package of a version must reach NuGet, so one failed .nupkg fails the job. The
-          # GitHub release already exists at this point; a green run would hide that consumers can
-          # restore some packages of the version and not others. Re-running this workflow is the
-          # recovery: --skip-duplicate passes over what was published and retries the rest.
-          # A missing symbol package (.snupkg) degrades debugging only, so it stays a warning.
-          if ($failedSymbols.Count -gt 0) {
-            Write-Warning "These symbol packages failed to publish: $($failedSymbols -join ', ')"
-          }
-          if ($failedPackages.Count -gt 0) {
-            Write-Host "::error title=NuGet publish incomplete::$($failedPackages.Count) package(s) failed to publish: $($failedPackages -join ', '). Re-run this workflow to push them; published packages are skipped."
-            exit 1
-          }
-          # GitHub ends a pwsh step with the last native command's exit code, so a failed symbol push
-          # that ran last would otherwise fail the job despite the warning above.
-          exit 0
+          retention-days: 30
 
   container-hosting:
     name: Container Hosting Smoke
