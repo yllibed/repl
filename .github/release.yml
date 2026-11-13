@@ -1,0 +1,26 @@
+# Categories for the notes `gh release create --generate-notes` writes; see docs/publishing.md#categories.
+# Titles differ from the curated summary's headings (Breaking changes, Other changes), which sit above
+# this list on the same release page. Internal work is grouped last, not excluded.
+changelog:
+  categories:
+    - title: Breaking pull requests
+      labels:
+        - breaking-change
+    - title: Features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Other pull requests
+      labels:
+        - "*"
+      exclude:
+        labels:
+          - internal
+    - title: Internal (tests, CI, refactoring)
+      labels:
+        - internal
