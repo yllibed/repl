@@ -25,7 +25,7 @@
 		<PackageProjectUrl>https://repl.yllibed.org/</PackageProjectUrl>
 		<!-- Pack fails on a breaking change against the last release. Move the baseline to each release as it ships. -->
 		<EnablePackageValidation>true</EnablePackageValidation>
-		<PackageValidationBaselineVersion>0.12.0</PackageValidationBaselineVersion>
+		<PackageValidationBaselineVersion>0.12.1</PackageValidationBaselineVersion>
 		<Authors>Carl de Billy</Authors>
 		<PackageTags>repl;cli;command-line;terminal;interactive-shell;automation;dotnet;csharp;mcp;model-context-protocol;ai-agents;developer-tools</PackageTags>
 	</PropertyGroup>
