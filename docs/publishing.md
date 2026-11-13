@@ -13,6 +13,9 @@ git status --short
 nbgv prepare-release
 ```
 
+Before running it, check the labels and draft the curated summary, as *Release notes* below
+describes.
+
 Cutting a release line starts from a clean `main`, never from a feature branch or a pull
 request branch. That is what this section covers. Two other `nbgv prepare-release`
 invocations operate on an existing release branch instead — promoting its stability stage,
@@ -146,7 +149,8 @@ There is no changelog file to fall back on, so that is a patch release that does
 fixed. A pull request targeting `release/0.11.0` costs nothing extra and puts its title in the notes.
 
 If a fix does land as a direct commit anyway, edit the release body by hand afterwards: the workflow
-passes `--generate-notes` unconditionally and has no way to supply notes for that path.
+passes `--generate-notes` unconditionally and has no way to supply notes for that path. Say what it
+fixed in the curated summary; see *Release notes* below.
 
 `nbgv prepare-release` can also be run *on* a release branch to move its stability stage, for example
 from a prerelease tag to stable — that is Nerdbank.GitVersioning's documented behaviour, not an
@@ -188,6 +192,53 @@ Durable guidance therefore belongs in the topic page under `docs/` that owns the
 default, a behavioural break and its restore recipe, a constraint on upgrading packages together.
 The PR description is where you explain the change to a reviewer; `docs/` is where a consumer finds
 it six months later.
+
+### Categories
+
+`.github/release.yml` groups the generated list by label, in this order: `breaking-change`,
+`enhancement`, `bug`, `documentation`, then every pull request without one of those under *Other pull
+requests*, and `internal` (tests, CI, refactoring) last. Internal work is grouped rather than excluded,
+because a test or CI pull request can still carry a change a consumer needs to see, such as a
+dependency bumped for a vulnerability. Give such a pull request the consumer label as well (`bug` for
+that bump), so it is listed with the consumer changes.
+
+Label each pull request when it merges. The rest of this section applies to stable releases, the ones
+cut with `nbgv prepare-release` and servicing releases alike, not to the prereleases CI publishes on
+every push to `main`. Before cutting one, preview the notes CI will generate, from the previous stable
+tag to `main` (or to the release branch for a servicing release), and label what landed under *Other
+pull requests* by mistake:
+
+```powershell
+gh api repos/yllibed/repl/releases/generate-notes -f tag_name=v<version> -f target_commitish=main -f previous_tag_name=v<previous version> --jq .body
+```
+
+The call only returns text; it creates nothing.
+
+### Curated summary
+
+The generated list is not enough on its own: titles cannot say what a release is about or how to
+upgrade. Every stable release therefore gets a written summary, placed above the generated list.
+
+1. **Before the cut**, draft the summary over the same range as the preview above, every pull request
+   since the previous stable tag, not only the milestone's. Use this shape: one opening paragraph, then
+   *Highlights*, then *Breaking changes* (or *Behaviour changes*) with a link to each "Changed in"
+   note under `docs/`, then *Other changes*. Pin the links to the coming tag
+   (`blob/v<version>/docs/...`). Keep the draft as the body of an issue titled `Release notes
+   <version>`, in the release milestone, so it can be reviewed.
+2. **After CI publishes the release**, replace its body with the summary followed by the generated
+   notes. This needs PowerShell 7.4 or later, which keeps `gh`'s UTF-8 output intact through `>`.
+   It rebuilds the generated part each time, so running it again after fixing the draft does not
+   duplicate anything:
+
+   ```powershell
+   $notes = Join-Path ([IO.Path]::GetTempPath()) "release-notes-<version>.md"
+   gh issue view <draft issue> --json body --jq .body > $notes
+   Add-Content $notes ""
+   gh api repos/yllibed/repl/releases/generate-notes -f tag_name=v<version> -f previous_tag_name=v<previous version> --jq .body >> $notes
+   gh release edit "v<version>" --notes-file $notes
+   ```
+
+3. Check the release page, then close the draft issue.
 
 ## NuGet publish status
 
