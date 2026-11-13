@@ -22,9 +22,11 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 	{
 		var status = Status;
 		if (status.Ready) { return; }
-		throw new IndexUnavailableException(status.LastError is null
-			? "No documentation index is ready yet. Indexing may be running or cancelled; ask the administrator to check index status."
-			: "The documentation index could not be built. Ask the administrator to check index status for the failure.");
+		throw new IndexUnavailableException(status.Rebuilding
+			? "The documentation index is being built. Please retry shortly."
+			: status.LastError is not null
+				? "The documentation index could not be built. Ask the administrator to check index status for the failure."
+				: "No documentation index is ready yet. Indexing may be starting or cancelled; ask the administrator to check index status.");
 	}
 
 	internal string RequestRebuild() => Status.Rebuilding ? "A rebuild is already running."

@@ -56,7 +56,7 @@ Each module declares a static `Context`: `docs` or `index`. Entering one changes
 
 [MarkdownCorpus.cs](../Search/MarkdownCorpus.cs) enumerates Markdown files, skipping symbolic links. Relative paths and file contents form the corpus fingerprint; filenames alone are insufficient to detect edits.
 
-Markdig supplies heading structure and unique anchors. Headings become passage metadata. Paragraphs and other blocks are combined up to the model's token window; oversized blocks are split without cutting surrogate pairs. Every section retains its source path, heading, anchor and line range. The original page is also stored for whole-document fetch.
+Markdig supplies heading structure and unique anchors. YAML front matter is ignored; the first meaningful heading supplies the page title. Headings become passage metadata. Paragraphs and other blocks are combined up to the model's token window; oversized blocks prefer line-end cuts, falling back to Unicode-safe cuts for long lines. Fragments retain the original source text, not repaired Markdown fences. Every section retains its source path, heading, anchor and line range. The original page is also stored for whole-document fetch.
 
 Passages also have an 8,192-character ceiling. Tokenizer probes use at most that prefix, and parsing checks cancellation between blocks, chunks and probes. Long blocks are processed by offset, avoiding repeated copies or scans of the entire remaining suffix. Markdig's initial syntax parse is synchronous; cancellation is checked immediately before and after it.
 
@@ -71,7 +71,7 @@ Document identifiers hash relative paths. Section identifiers add a bounded hash
 3. Run the model on CPU, with an attention mask covering the input tokens.
 4. Mean-pool the token states and normalize the resulting 384-dimensional vector to unit length.
 
-The complete input, including prefix and markers, must fit 512 tokens. Corpus chunking respects that budget. An oversized query is rejected explicitly rather than silently truncated. Tokenization is synchronized; each inference owns its cancellation-aware run options. ONNX Runtime telemetry is disabled.
+The complete input, including prefix and markers, must fit 512 tokens. Corpus chunking and indexing use the same title/current-heading context construction within that budget. Each context field is clipped to 32 UTF-16 code units without cutting surrogate pairs; ancestor headings are not tracked. Raw source text remains unchanged. The index schema version changes with this input policy, forcing an automatic rebuild of older body-only vectors even when the source fingerprint is unchanged. Heading context is not a measured guarantee of better rankings. An oversized query is rejected explicitly rather than silently truncated. Tokenization is synchronized; each inference owns its cancellation-aware run options. ONNX Runtime telemetry is disabled.
 
 The [real-model regression](../../../src/Repl.DocsSampleTests/Given_E5Embedding.cs) checks exact token IDs and vector agreement with stored reference output from the model's PyTorch implementation. Tests need no reference-generation toolchain.
 
@@ -87,7 +87,7 @@ SQLite holds the data together:
 | `vectors` | sqlite-vec vectors keyed to section rows |
 | `metadata` | Published generation, corpus fingerprint, model identity and schema version |
 
-Keyword search extracts letter/digit/underscore terms and joins quoted terms with OR. FTS5 BM25 weights title, heading and body by 3, 2 and 1. Vector search asks sqlite-vec for exact cosine nearest neighbors. Each branch considers at least 20 candidates, or four times the requested result count.
+Keyword search extracts letter/digit/underscore terms and joins quoted terms with OR. FTS5 BM25 weights title, heading and body by 3, 2 and 1. Vector search asks sqlite-vec for exact cosine nearest neighbors. Each branch has a candidate limit of at least 20, or four times the requested result count. Keyword candidates must still satisfy MATCH; vector candidates need not share query words. The bundled corpus exceeds the default 20-passage limit, not every supported result-count budget.
 
 Reciprocal rank fusion adds `1 / (60 + rank)` from each branch, using one-based ranks. For illustration, a passage ranked first by keywords and third by vectors scores `1/61 + 1/63`, approximately `0.0323`. This combines positions rather than trying to compare BM25 directly with cosine distance. Ties in the fused list use the section identifier for deterministic ordering.
 

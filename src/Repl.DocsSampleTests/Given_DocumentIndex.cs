@@ -29,6 +29,52 @@ public sealed class Given_DocumentIndex
 	}
 
 	[TestMethod]
+	[Description("Indexing embeds the same bounded title/heading context as the parser, while fetch retains the raw source text.")]
+	public async Task When_APassageIsIndexed_Then_EmbeddingIncludesItsContext()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("guide.md", "# Guide\n\n## Current\n\nRaw body.").ConfigureAwait(false);
+		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		fixture.Embedding.LastPassage.Should().Be("Guide\nCurrent\n\nRaw body.");
+	}
+
+	[TestMethod]
+	[Description("Offset pages reconstruct an oversized document exactly, and sibling navigation remains within the current heading.")]
+	public async Task When_FetchIsContinued_Then_TextAndHeadingPartsAreNotLost()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		var body = string.Concat(Enumerable.Repeat("A line with 😀 Unicode.\n", 1000));
+		var markdown = "# Guide\n\n" + body + "\n## Other\n\nDifferent heading.";
+		await fixture.WriteAsync("guide.md", markdown).ConfigureAwait(false);
+		var parsed = fixture.Corpus.Parse("guide.md", markdown);
+		var generation = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		var parts = new List<string>();
+		var offset = 0;
+		do
+		{
+			var page = fixture.Index.Fetch(parsed.Id, 20000, offset);
+			page.Generation.Should().Be(generation.Id);
+			page.Offset.Should().Be(offset);
+			parts.Add(page.Text);
+			if (page.NextOffset is not int next) { break; }
+			next.Should().BeGreaterThan(offset);
+			offset = next;
+		} while (true);
+		string.Concat(parts).Should().Be(markdown);
+		var sections = parsed.Sections.Where(section => string.Equals(section.Anchor, "guide", StringComparison.Ordinal)).ToArray();
+		sections.Should().HaveCountGreaterThan(1);
+		for (var i = 0; i < sections.Length; i++)
+		{
+			var page = fixture.Index.Fetch(sections[i].Id, 20000);
+			page.NextId.Should().Be(i + 1 < sections.Length ? sections[i + 1].Id : null);
+		}
+		Action invalid = () => fixture.Index.Fetch(parsed.Id, 100, markdown.Length + 1);
+		invalid.Should().Throw<ArgumentException>();
+	}
+
+	[TestMethod]
 	[Description("Cancellation after replacement preparation starts preserves both the searchable rows and generation metadata.")]
 	public async Task When_ARebuildIsCancelled_Then_ThePublishedIndexSurvives()
 	{

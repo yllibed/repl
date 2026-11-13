@@ -122,6 +122,53 @@ public sealed class Given_IndexingWorker
 		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
 	}
 
+	[TestMethod]
+	[Description("An agent receives a retry hint only while the initial index is actively building, not after cancellation or failure.")]
+	public async Task When_TheInitialBuildIsPaused_Then_ReadinessExplainsWhetherToRetry()
+	{
+		using var fixture = new TestCorpus();
+		await fixture.WriteAsync("guide.md", "# Guide\n\nInitial build.").ConfigureAwait(false);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		using var pause = new ManualResetEventSlim();
+		fixture.Embedding.Preparing = ct => { entered.TrySetResult(); pause.Wait(ct); };
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, fixture.Clock);
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await entered.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+			Action ready = worker.RequireReady;
+			ready.Should().Throw<InvalidOperationException>().WithMessage("*being built*retry shortly*");
+			await worker.CancelRebuildAsync().ConfigureAwait(false);
+			await WaitForAsync(() => string.Equals(worker.Status.Phase, "Rebuild cancelled", StringComparison.Ordinal), deadline.Token).ConfigureAwait(false);
+			ready.Should().Throw<InvalidOperationException>().WithMessage("*cancelled*").Which.Message.Should().NotContain("retry shortly");
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	[TestMethod]
+	[Description("An old body-only index is rebuilt on warm startup even when source files and embedding model are unchanged.")]
+	public async Task When_AnOldIndexPolicyIsReopened_Then_UnchangedSourcesAreRebuilt()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("guide.md", "# Guide\n\nUnchanged source.").ConfigureAwait(false);
+		var old = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		using (var connection = fixture.Index.Open()) { DocsMcpSample.Search.DocumentIndex.Execute(connection, "UPDATE metadata SET version=1"); }
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		var clock = new ObservedTimeProvider(fixture.Clock);
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, clock);
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await WaitForAsync(() => clock.Timers > 0, deadline.Token).ConfigureAwait(false);
+			worker.Status.Ready.Should().BeTrue();
+			worker.Status.Generation!.Id.Should().NotBe(old.Id);
+			worker.Status.Generation.Fingerprint.Should().Be(old.Fingerprint);
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
 	private sealed class ObservedTimeProvider(TimeProvider inner) : TimeProvider
 	{
 		private int _timers;

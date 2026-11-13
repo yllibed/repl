@@ -31,7 +31,7 @@ cd samples/10-docs-mcp
 
 ### With .NET
 
-Requires the .NET 11 SDK and the .NET 10 runtime on Windows x64, Linux x64 or macOS Apple Silicon. The selected ONNX Runtime package does not support macOS Intel; other native targets are not packaged by this sample.
+Requires the .NET 11 SDK on Windows x64, Linux x64 or macOS Apple Silicon. The sample targets .NET 10 and permits major-version roll-forward, so no separate .NET 10 runtime installation is needed. The selected ONNX Runtime package does not support macOS Intel; other native targets are not packaged by this sample.
 
 ```sh
 dotnet run -- assets fetch
@@ -69,9 +69,25 @@ The bundled documents are in English. Watch which passages move between the thre
 | Vector | Related meaning, including across languages |
 | Hybrid | Results supported by either branch, with agreement rewarded |
 
-The lists can agree. This is a comparison, not a promise that one method always wins. BM25 and cosine distances sort lower first; fusion scores sort higher first. These scores are **not confidence percentages**.
+The supplied deployment and retrieval guides bring the corpus above the default twenty-passage candidate limit without requiring twenty files. Keyword candidates still need a matching term; vector candidates do not. Try an exact name, a paraphrase, a cross-language question and an unrelated string. The lists can agree. This is a comparison, not a promise that one method always wins. BM25 and cosine distances sort lower first; fusion scores sort higher first. These scores are **not confidence percentages**.
 
 Select a result. The source reader shows the indexed passage, relative filename, line range and generation. You can check what a search result actually says without leaving the application.
+
+<details>
+<summary>A small, measured retrieval check — not a general benchmark</summary>
+
+The pinned E5 model was run on Linux/.NET 11 with the same six-file, 24-passage corpus for both the body-only implementation at `8b53087` and this contextual implementation, requesting five results (twenty candidates per branch). The table reports the one-based rank of the specified passage, not answer quality:
+
+| Fixed query | Expected passage | Vector, before → after | Hybrid, before → after |
+| --- | --- | --- | --- |
+| `DOCS_ADMIN_ORIGIN` | `deployment-checklist.md#browser-origins` | 1 → 1 | 1 → 1 |
+| How do I connect to an existing process? | `remote-console.md#attach-from-a-shell` | 5 → 1 | 2 → 1 |
+| Comment se connecter à un processus déjà démarré ? | `remote-console.md#attach-from-a-shell` | 5 → 3 | 1 → 1 |
+| How can I run without internet access? | `deployment-checklist.md#offline-assets` | 1 → 1 | 1 → 1 |
+
+The control `zzzznonexistent` returns no keyword hits but still returns vector/hybrid neighbors in both versions. Those neighbors are not relevant answers. On the English connection query, the displayed keyword and vector sets differ. These few observations support the demonstration, not a claim that context improves every query or corpus. Repeat the queries with `search compare` when changing the corpus or model.
+
+</details>
 
 ### 2. Inspect the process that answered
 
@@ -167,13 +183,15 @@ Configuration files and keys vary by client. After connecting, check that the di
 | Tool | Input | Result |
 | --- | --- | --- |
 | `docs_search` | `query`, optional `count` | Ranked sections with identifiers, excerpts and source locations |
-| `docs_fetch` | `id`, optional `maxChars` | Indexed Markdown, generation and an explicit truncation flag |
+| `docs_fetch` | `id`, optional `maxChars`, `offset` | Indexed Markdown, generation, truncation and continuation fields |
 
 Try asking your agent:
 
 > Find how to attach a console to an already running process. Search the documentation, fetch the relevant passage, and cite its source when you explain it.
 
-The agent supplies the answer-generation step. This server supplies retrieval and evidence. Fetch a search result's `id` for its section, or `documentId` for the full page. Fetch is bounded and reports truncation; identifiers refer to the **current** published index, so search again if a rebuild has made an identifier stale.
+The agent supplies the answer-generation step. This server supplies retrieval and evidence. Fetch a search result's `id` for its section, or `documentId` for the full page. If `nextOffset` is non-null, fetch the same identifier with that `offset` to read on. At the end of a section, `nextId` identifies the next part under the same heading, if any; fetch it from offset zero. Null continuations mean that traversal is complete.
+
+Offsets and `maxChars` use UTF-16 code units (the .NET string convention); returned pages never split a surrogate pair. Negative, out-of-range or mid-pair offsets are rejected; an offset at the text's end returns an empty final page. Each request reads the **current** generation, not a retained snapshot. If `generation` changes while reading, discard the partial traversal and restart; search again if an identifier has disappeared.
 
 Only the allowlisted command paths `docs search` and `docs fetch` enter the MCP projection. `index rebuild`, `sessions` and the rest of the administration graph stay outside it. Admin HTTP and WebSocket routes are also unavailable on the public listener.
 
@@ -184,7 +202,7 @@ These commands run inside an attached console, or after `exec` in a one-shot cli
 | Command | Purpose |
 | --- | --- |
 | `docs search --query "remote console"` | Hybrid search; `--count` defaults to 5, maximum 20 |
-| `docs fetch --id <identifier>` | Read a document or section; `--max-chars` defaults to 20,000 |
+| `docs fetch --id <identifier>` | Read a document or section; `--max-chars` defaults to 20,000, `--offset` to zero |
 | `docs list` | Browse document identifiers with the console pager; one-shot callers use `--result:page-size` and `--result:cursor` |
 | `search compare --query "remote console"` | Compare the three rankings in Spectre tables |
 | `index status` | Generation, readiness, progress and last failure |

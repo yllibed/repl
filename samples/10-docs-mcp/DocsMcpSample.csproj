@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
     <AssemblyName>docs-index</AssemblyName>
     <RootNamespace>DocsMcpSample</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
