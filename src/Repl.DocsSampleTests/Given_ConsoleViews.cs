@@ -39,6 +39,8 @@ public sealed class Given_ConsoleViews
 		});
 		console.Profile.Width = 160;
 		console.Write(ConsoleViews.Document(document));
-		return writer.ToString();
+		var output = writer.ToString();
+		output.Should().Contain("From the root prompt (inside docs, enter .. first):");
+		return output;
 	}
 }
