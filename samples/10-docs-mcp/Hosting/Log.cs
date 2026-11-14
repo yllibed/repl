@@ -10,6 +10,8 @@ internal static partial class Log
 	internal static partial void RemoteAdministration(ILogger logger, string address);
 	[LoggerMessage(Level = LogLevel.Warning, Message = "Local administration connection failed.")]
 	internal static partial void PipeFailure(ILogger logger, Exception error);
+	[LoggerMessage(Level = LogLevel.Information, Message = "The stored index schema is incompatible; rebuilding for the current passage and embedding policy.")]
+	internal static partial void IndexSchemaChanged(ILogger logger);
 	[LoggerMessage(Level = LogLevel.Information, Message = "Preparing a replacement documentation index.")]
 	internal static partial void IndexStarted(ILogger logger);
 	[LoggerMessage(Level = LogLevel.Information, Message = "Published generation {Generation}: {Documents} documents and {Sections} sections.")]

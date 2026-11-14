@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Markdig;
 using Markdig.Syntax;
+using Markdig.Extensions.Yaml;
 using Markdig.Renderers.Html;
 
 namespace DocsMcpSample.Search;
@@ -9,7 +10,8 @@ namespace DocsMcpSample.Search;
 internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding)
 {
 	private const int MaximumPassageCharacters = 8192;
-	private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAutoIdentifiers().Build();
+	private const int MaximumContextCharacters = 32;
+	private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseYamlFrontMatter().UseAutoIdentifiers().Build();
 
 	internal IReadOnlyList<string> Files() => Directory.EnumerateFiles(settings.Documents, "*", new EnumerationOptions
 	{
@@ -45,78 +47,124 @@ internal sealed class MarkdownCorpus(Settings settings, ITextEmbedding embedding
 		hash.AppendData(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 	}
 
+	// Keep context small even for generated headings. Clipping affects embeddings only, never source metadata.
+	internal static string EmbeddingText(string title, string heading, string text) => string.Concat(EmbeddingPrefix(title, heading), text.AsSpan());
+
+	private static string EmbeddingPrefix(string title, string heading)
+	{
+		return Clip(title) + "\n" + Clip(heading) + "\n\n";
+
+		static string Clip(string value)
+		{
+			var length = TextBoundary.BeforeSurrogatePair(value, Math.Min(value.Length, MaximumContextCharacters));
+			return value[..length];
+		}
+	}
+
 	internal SourceDocument Parse(string source, string markdown, CancellationToken cancellationToken = default)
 	{
 		cancellationToken.ThrowIfCancellationRequested();
 		var documentId = "doc-" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(source)))[..16];
 		var blocks = Markdown.Parse(markdown, Pipeline);
 		cancellationToken.ThrowIfCancellationRequested();
-		var title = Path.GetFileNameWithoutExtension(source);
+		var title = blocks.OfType<HeadingBlock>().Select(HeadingText).FirstOrDefault(value => value.Length > 0)
+			?? Path.GetFileNameWithoutExtension(source);
 		var heading = title;
 		var anchor = "";
 		var sections = new List<Section>();
-		var pending = new StringBuilder();
+		var rangeStart = -1;
 		var startLine = 1;
-		var endLine = 1;
 		var part = 0;
 		foreach (var block in blocks)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
+			if (block is YamlFrontMatterBlock) { continue; }
 			if (block is HeadingBlock headingBlock)
 			{
-				Flush();
-				heading = Markdown.ToPlainText(markdown[block.Span.Start..(block.Span.End + 1)], Pipeline).Trim();
-				if (sections.Count == 0 && pending.Length == 0 && block == blocks.FirstOrDefault()) { title = heading; }
+				FlushRange(block.Span.Start);
+				heading = HeadingText(headingBlock);
 				anchor = headingBlock.GetAttributes().Id!;
 				part = 0;
-				continue;
 			}
-
-			var text = markdown[block.Span.Start..(block.Span.End + 1)];
-			var consumed = 0;
-			var line = block.Line + 1;
-			while (consumed < text.Length)
+			else if (rangeStart < 0)
 			{
-				cancellationToken.ThrowIfCancellationRequested();
-				if (pending.Length > 0 && (pending.Length + 2 + text.Length - consumed > MaximumPassageCharacters
-					|| embedding.CountPassageTokens(pending + "\n\n" + text[consumed..]) > embedding.MaxTokens)) { Flush(); }
-				var length = FitPassagePrefix(text, consumed, cancellationToken);
-				if (pending.Length == 0) { startLine = line; }
-				else { pending.Append("\n\n"); }
-				pending.Append(text.AsSpan(consumed, length));
-				line += text.AsSpan(consumed, length).Count('\n');
-				endLine = line;
-				consumed += length;
-				if (consumed < text.Length) { Flush(); }
+				rangeStart = block.Span.Start;
+				startLine = block.Line + 1;
 			}
 		}
-		Flush();
+		FlushRange(markdown.Length);
 		return new(documentId, source, title, markdown, sections);
 
-		void Flush()
+		string HeadingText(HeadingBlock block) => Markdown.ToPlainText(markdown[block.Span.Start..(block.Span.End + 1)], Pipeline).Trim();
+
+		void FlushRange(int end)
 		{
-			if (pending.Length == 0) { return; }
+			if (rangeStart < 0) { return; }
+			var prefix = EmbeddingPrefix(title, heading);
+			var consumed = rangeStart;
+			var line = startLine;
 			var sectionKey = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(anchor)))[..16];
-			sections.Add(new($"{documentId}:{sectionKey}:{part++}", documentId, source, title, heading, anchor, startLine, endLine, pending.ToString()));
-			pending.Clear();
+			while (consumed < end)
+			{
+				cancellationToken.ThrowIfCancellationRequested();
+				var length = FitPassagePrefix(prefix, markdown, consumed, end, cancellationToken);
+				var passage = markdown.Substring(consumed, length);
+				var newlines = passage.AsSpan().Count('\n');
+				var endLine = line + newlines - (passage.EndsWith('\n') ? 1 : 0);
+				if (!string.IsNullOrWhiteSpace(passage))
+				{
+					sections.Add(new($"{documentId}:{sectionKey}:{part++}", documentId, source, title, heading, anchor, line, endLine, passage));
+				}
+				line += newlines;
+				consumed += length;
+			}
+			rangeStart = -1;
 		}
 	}
 
-	private int FitPassagePrefix(string text, int offset, CancellationToken cancellationToken)
+	private int FitPassagePrefix(string prefix, string text, int offset, int end, CancellationToken cancellationToken)
 	{
 		var low = 0;
-		var high = Math.Min(text.Length - offset, MaximumPassageCharacters);
-		if (offset + high < text.Length && char.IsHighSurrogate(text[offset + high - 1])) { high--; }
-		if (embedding.CountPassageTokens(text.Substring(offset, high)) <= embedding.MaxTokens) { return high; }
-		while (low < high)
+		var high = Math.Min(end - offset, MaximumPassageCharacters - prefix.Length);
+		high = SafeLength(high);
+		if (Count(high) <= embedding.MaxTokens) { low = high; }
+		else
+		{
+			while (low < high)
+			{
+				var middle = (low + high + 1) / 2;
+				if (Count(middle) <= embedding.MaxTokens) { low = middle; }
+				else { high = middle - 1; }
+			}
+		}
+		low = SafeLength(low);
+		if (low == 0) { throw CannotFitPassage(); }
+		if (offset + low < end)
+		{
+			var newline = text.AsSpan(offset, low).LastIndexOf('\n');
+			if (newline >= 0) { low = newline + 1; }
+		}
+		// A shorter prefix can tokenize differently at its new boundary. Check the final, exact input too.
+		while (Count(low) > embedding.MaxTokens)
+		{
+			low = SafeLength(low - 1);
+			if (low == 0) { throw CannotFitPassage(); }
+		}
+		return low;
+
+		static InvalidOperationException CannotFitPassage() => new("The tokenizer cannot fit context and one character in a passage.");
+
+		int Count(int length)
 		{
 			cancellationToken.ThrowIfCancellationRequested();
-			var middle = (low + high + 1) / 2;
-			if (embedding.CountPassageTokens(text.Substring(offset, middle)) <= embedding.MaxTokens) { low = middle; }
-			else { high = middle - 1; }
+			return embedding.CountPassageTokens(string.Concat(prefix, text.AsSpan(offset, SafeLength(length))));
 		}
-		if (low > 0 && char.IsHighSurrogate(text[offset + low - 1])) { low--; }
-		if (low == 0) { throw new InvalidOperationException("The tokenizer cannot fit one character in a passage."); }
-		return low;
+
+		int SafeLength(int length)
+		{
+			var boundary = TextBoundary.BeforeSurrogatePair(text, offset + length);
+			if (boundary > offset && boundary < end && text[boundary - 1] == '\r' && text[boundary] == '\n') { boundary--; }
+			return boundary - offset;
+		}
 	}
 }

@@ -14,6 +14,7 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 	private readonly Channel<bool> _requests = Channel.CreateBounded<bool>(1);
 	private static readonly TimeSpan ScanInterval = TimeSpan.FromMinutes(1);
 	private int _failures;
+	private bool _schemaChangeReported;
 	private string? _failedFingerprint;
 	private DateTimeOffset _retryAt;
 	private WorkerState _state = new(new(false, null, "Starting", false, 0, 0, null, null));
@@ -22,9 +23,13 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 	{
 		var status = Status;
 		if (status.Ready) { return; }
-		throw new IndexUnavailableException(status.LastError is null
-			? "No documentation index is ready yet. Indexing may be running or cancelled; ask the administrator to check index status."
-			: "The documentation index could not be built. Ask the administrator to check index status for the failure.");
+		throw new IndexUnavailableException(status switch
+		{
+			{ Rebuilding: true } => "The documentation index is being built. Please retry shortly.",
+			{ Phase: "Rebuild cancelled" } => "Indexing was cancelled. The next automatic scan may retry; console users can request index rebuild.",
+			{ LastError: not null } => "The documentation index could not be built. Ask the administrator to check index status for the failure.",
+			_ => "The documentation index is starting. Please retry shortly.",
+		});
 	}
 
 	internal string RequestRebuild() => Status.Rebuilding ? "A rebuild is already running."
@@ -59,6 +64,11 @@ internal sealed class IndexingWorker(DocumentIndex index, MarkdownCorpus corpus,
 		{
 			index.Initialize();
 			var published = index.Generation();
+			if (published is null && !_schemaChangeReported && index.HasDifferentSchema())
+			{
+				_schemaChangeReported = true;
+				Hosting.Log.IndexSchemaChanged(logger);
+			}
 			SetStatus(Status with { Ready = published is not null, Generation = published, Phase = "Checking documents" });
 			fingerprint = await corpus.FingerprintAsync(stoppingToken);
 			if (!force && Status.Generation?.Fingerprint == fingerprint)

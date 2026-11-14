@@ -9,6 +9,34 @@ namespace Repl.DocsSampleTests;
 public sealed class Given_E5Embedding
 {
 	[TestMethod]
+	[DataRow("\n")]
+	[DataRow("\r\n")]
+	[Description("Contextual chunk budgets count exactly the passage-prefixed XLM-R input, including both special tokens.")]
+	public void When_ContextualPassagesArePrepared_Then_TheRealEncoderAcceptsEveryChunk(string newline)
+	{
+		using var fixture = new TestCorpus();
+		using var embedding = new E5Embedding(fixture.Settings);
+		var corpus = new MarkdownCorpus(fixture.Settings, embedding);
+		var title = string.Concat(Enumerable.Repeat("文😀", 1000));
+		var heading = string.Concat(Enumerable.Repeat("章😀", 1000));
+		var body = string.Join(newline, Enumerable.Repeat("日本語 café 😀 console commands and connection settings.", 300));
+
+		var document = corpus.Parse("guide.md", "# " + title + newline + "## " + heading + newline + body);
+
+		document.Sections.Should().HaveCountGreaterThan(1);
+		string.Concat(document.Sections.Select(section => section.Text)).Should().Be(body);
+		foreach (var section in document.Sections)
+		{
+			var input = MarkdownCorpus.EmbeddingText(section.Title, section.Heading, section.Text);
+			var ids = embedding.Encode("passage: " + input);
+			embedding.CountPassageTokens(input).Should().Be(ids.Length);
+			ids.Length.Should().BeLessThanOrEqualTo(512);
+			ids[0].Should().Be(0);
+			ids[^1].Should().Be(2);
+		}
+	}
+
+	[TestMethod]
 	[Description("Pinned assets reproduce reference XLM-R token IDs and normalized PyTorch embeddings, including non-Latin input.")]
 	public async Task When_TheRealModelRuns_Then_TokenizationAndVectorsMatchTheReference()
 	{

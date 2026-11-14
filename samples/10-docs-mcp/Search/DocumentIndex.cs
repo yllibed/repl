@@ -8,7 +8,8 @@ namespace DocsMcpSample.Search;
 
 internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding embedding, TimeProvider time)
 {
-	private const int SchemaVersion = 1;
+	// Version 2 budgets and embeds title/heading context; version 1 stored body-only vectors.
+	private const int SchemaVersion = 2;
 	private const int RrfRankOffset = 60;
 	private string DatabasePath => Path.Combine(settings.Index, "documents.db");
 	internal string ExtensionPath => Path.Combine(settings.Assets, "native", RuntimeInformation.RuntimeIdentifier,
@@ -43,6 +44,14 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		CREATE VIRTUAL TABLE IF NOT EXISTS vectors USING vec0(id INTEGER PRIMARY KEY, embedding float[{{embedding.Dimensions}}] distance_metric=cosine);
 		""");
 
+	internal bool HasDifferentSchema()
+	{
+		using var connection = Open();
+		using var command = connection.CreateCommand();
+		command.CommandText = "SELECT version FROM metadata WHERE id=1";
+		return command.ExecuteScalar() is long version && version != SchemaVersion;
+	}
+
 	internal IndexGeneration? Generation(SqliteConnection? connection = null)
 	{
 		using var owner = connection is null ? Open() : null;
@@ -75,7 +84,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 					Execute(staging, "INSERT INTO documents VALUES($1,$2,$3,$4)", document.Id, document.Source, document.Title, document.Text);
 					foreach (var section in document.Sections)
 					{
-						var vector = embedding.Embed(section.Text, query: false, cancellationToken);
+						var vector = embedding.Embed(MarkdownCorpus.EmbeddingText(section.Title, section.Heading, section.Text), query: false, cancellationToken);
 						cancellationToken.ThrowIfCancellationRequested();
 						var rowid = ++sections;
 						Execute(staging, "INSERT INTO sections VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
@@ -142,7 +151,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 			.Select(group => group.First() with { Score = group.Sum(hit => hit.Score) })
 			.OrderByDescending(hit => hit.Score).ThenBy(hit => hit.Id, StringComparer.Ordinal).Take(count).ToArray();
 
-	internal FetchedDocument Fetch(string id, int maxChars)
+	internal FetchedDocument Fetch(string id, int maxChars, int offset = 0)
 	{
 		if (string.IsNullOrWhiteSpace(id) || id.Length > 300) { throw new ArgumentException("Use an identifier returned by search or docs list."); }
 		if (maxChars is < 100 or > 20000) { throw new ArgumentOutOfRangeException(nameof(maxChars), "Choose 100 to 20,000 characters."); }
@@ -150,14 +159,19 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		using var transaction = connection.BeginTransaction(deferred: true);
 		var generation = RequireGeneration(connection);
 		using var command = connection.CreateCommand();
-		command.CommandText = "SELECT source,title,body FROM documents WHERE id=$id UNION ALL SELECT source,title,body FROM sections WHERE id=$id LIMIT 1";
+		command.CommandText = """
+			SELECT source,title,body,id,NULL FROM documents WHERE id=$id
+			UNION ALL
+			SELECT s.source,s.title,s.body,s.document_id,
+			 (SELECT n.id FROM sections n WHERE n.document_id=s.document_id AND n.anchor=s.anchor AND n.rowid=s.rowid+1)
+			FROM sections s WHERE s.id=$id LIMIT 1
+			""";
 		command.Parameters.AddWithValue("$id", id);
 		using var reader = command.ExecuteReader();
 		if (!reader.Read()) { throw new KeyNotFoundException("Identifier not found in the current index. Search again for an updated reference."); }
 		var text = reader.GetString(2);
-		var length = Math.Min(text.Length, maxChars);
-		if (length < text.Length && char.IsHighSurrogate(text[length - 1])) { length--; }
-		return new(id, reader.GetString(0), reader.GetString(1), text[..length], text.Length > length, generation.Id);
+		return FetchPaging.Create(id, reader.GetString(0), reader.GetString(1), text, generation.Id, maxChars, offset,
+			reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetString(3));
 	}
 
 	internal DocumentSummary[] List(int offset, int count, CancellationToken cancellationToken = default)
@@ -196,7 +210,7 @@ internal sealed partial class DocumentIndex(Settings settings, ITextEmbedding em
 		{
 			var text = reader.GetString(9);
 			var excerptLength = Math.Min(text.Length, 500);
-			if (excerptLength < text.Length && char.IsHighSurrogate(text[excerptLength - 1])) { excerptLength--; }
+			excerptLength = TextBoundary.BeforeSurrogatePair(text, excerptLength);
 			result.Add(new(reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetString(6),
 				reader.GetInt32(7), reader.GetInt32(8), text[..excerptLength], reader.GetDouble(10)));
 		}

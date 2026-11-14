@@ -122,6 +122,68 @@ public sealed class Given_IndexingWorker
 		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
 	}
 
+	[TestMethod]
+	[Description("An agent receives a retry hint while starting or building, with a distinct cancellation message.")]
+	public async Task When_TheInitialBuildIsPaused_Then_ReadinessExplainsWhetherToRetry()
+	{
+		using var fixture = new TestCorpus();
+		await fixture.WriteAsync("guide.md", "# Guide\n\nInitial build.").ConfigureAwait(false);
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		using var pause = new ManualResetEventSlim();
+		fixture.Embedding.Preparing = ct => { entered.TrySetResult(); pause.Wait(ct); };
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, NullLogger<IndexingWorker>.Instance, fixture.Clock);
+		Action starting = worker.RequireReady;
+		starting.Should().Throw<InvalidOperationException>().WithMessage("*starting*retry shortly*");
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await entered.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+			Action ready = worker.RequireReady;
+			ready.Should().Throw<InvalidOperationException>().WithMessage("*being built*retry shortly*");
+			await worker.CancelRebuildAsync().ConfigureAwait(false);
+			await WaitForAsync(() => string.Equals(worker.Status.Phase, "Rebuild cancelled", StringComparison.Ordinal), deadline.Token).ConfigureAwait(false);
+			ready.Should().Throw<InvalidOperationException>().WithMessage("*cancelled*").Which.Message.Should().NotContain("retry shortly");
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	[TestMethod]
+	[Description("An old body-only index is rebuilt on warm startup even when source files and embedding model are unchanged.")]
+	public async Task When_AnOldIndexPolicyIsReopened_Then_UnchangedSourcesAreRebuilt()
+	{
+		using var fixture = new TestCorpus();
+		fixture.Index.Initialize();
+		await fixture.WriteAsync("guide.md", "# Guide\n\nUnchanged source.").ConfigureAwait(false);
+		var old = await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
+		using (var connection = fixture.Index.Open()) { DocsMcpSample.Search.DocumentIndex.Execute(connection, "UPDATE metadata SET version=1"); }
+		using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+		var clock = new ObservedTimeProvider(fixture.Clock);
+		var logger = new RecordingLogger();
+		using var worker = new IndexingWorker(fixture.Index, fixture.Corpus, logger, clock);
+		await worker.StartAsync(deadline.Token).ConfigureAwait(false);
+		try
+		{
+			await WaitForAsync(() => clock.Timers > 0, deadline.Token).ConfigureAwait(false);
+			worker.Status.Ready.Should().BeTrue();
+			worker.Status.Generation!.Id.Should().NotBe(old.Id);
+			worker.Status.Generation.Fingerprint.Should().Be(old.Fingerprint);
+			fixture.Clock.Advance(TimeSpan.FromMinutes(1));
+			await WaitForAsync(() => clock.Timers > 1, deadline.Token).ConfigureAwait(false);
+			logger.Messages.Should().ContainSingle(message => message.Contains("stored index schema", StringComparison.Ordinal));
+		}
+		finally { await worker.StopAsync(deadline.Token).ConfigureAwait(false); }
+	}
+
+	private sealed class RecordingLogger : Microsoft.Extensions.Logging.ILogger<IndexingWorker>
+	{
+		internal List<string> Messages { get; } = [];
+		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+		public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+		public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId,
+			TState state, Exception? exception, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, exception));
+	}
+
 	private sealed class ObservedTimeProvider(TimeProvider inner) : TimeProvider
 	{
 		private int _timers;

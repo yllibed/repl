@@ -184,7 +184,7 @@ This is a usable reference for modest corpora, with deliberate limits:
 | Local CPU inference, exact cosine search | Capacity planning, larger-scale indexing/search if needed |
 | Full rebuilds, atomic publication and a persistent volume | Backup/recovery policy, schema migrations and multi-writer coordination |
 
-Search accepts up to 2,000 characters and 20 results; the model's 512-token input limit can reject a query before the character limit. Fetch returns up to 20,000 characters and reports truncation. Full rebuilds and exact vector search favor understandable code over scaling to a large collection.
+Search accepts up to 2,000 characters and 20 results; the model's 512-token input limit can reject a query before the character limit. Fetch returns up to 20,000 UTF-16 code units without splitting surrogate pairs and reports truncation. Use its `nextOffset` with the same identifier to continue, then `nextId` from offset zero for another part of the same heading. Null continuations end traversal; restart if the generation changes between requests. Full rebuilds and exact vector search favor understandable code over scaling to a large collection.
 
 Only index content you intend to make available to the MCP audience. Local inference keeps model computation on the host; it does not make a public search endpoint private. The unauthenticated administration port grants much broader access and must remain a trusted surface.
 

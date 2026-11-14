@@ -28,6 +28,7 @@ public sealed class Given_DocumentHosting
 		using var fixture = new TestCorpus();
 		fixture.Index.Initialize();
 		await fixture.WriteAsync("console.md", "# Console\n\nAttach to the console of a running process.").ConfigureAwait(false);
+		await fixture.WriteAsync("long.md", "# Long\n\n" + new string('a', 22000)).ConfigureAwait(false);
 		await fixture.Index.RebuildAsync(fixture.Corpus, (_, _) => { }, CancellationToken.None).ConfigureAwait(false);
 		var settings = fixture.Settings with { McpPort = AvailablePort(), AdminPort = AvailablePort() };
 		var host = Server.Create(settings, services =>
@@ -64,11 +65,8 @@ public sealed class Given_DocumentHosting
 			var fetch = await client.CallToolAsync("docs_fetch", new Dictionary<string, object?>(StringComparer.Ordinal) { ["id"] = identifier }, cancellationToken: deadline.Token).ConfigureAwait(false);
 			fetch.IsError.Should().NotBeTrue();
 			string.Join("", fetch.Content.OfType<TextContentBlock>().Select(content => content.Text)).Should().Contain("running process");
-			foreach (var forbidden in new[] { "index_rebuild", "index_cancel", "sessions", "call_tool" })
-			{
-				var call = async () => await client.CallToolAsync(forbidden, cancellationToken: deadline.Token).ConfigureAwait(false);
-				await call.Should().ThrowAsync<McpException>().ConfigureAwait(false);
-			}
+			await AssertFetchContinuationAsync(client, fixture, deadline.Token).ConfigureAwait(false);
+			await AssertForbiddenToolsAsync(client, deadline.Token).ConfigureAwait(false);
 			using var socket = new ClientWebSocket();
 			await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{settings.AdminPort}/ws/repl"), deadline.Token).ConfigureAwait(false);
 			await AssertConsoleStatusAsync(socket, deadline.Token).ConfigureAwait(false);
@@ -200,14 +198,50 @@ public sealed class Given_DocumentHosting
 		await reconnect.Should().ThrowAsync<TimeoutException>().ConfigureAwait(false);
 	}
 
+	private static async Task AssertForbiddenToolsAsync(McpClient client, CancellationToken cancellationToken)
+	{
+		foreach (var forbidden in new[] { "index_rebuild", "index_cancel", "sessions", "call_tool" })
+		{
+			var call = async () => await client.CallToolAsync(forbidden, cancellationToken: cancellationToken).ConfigureAwait(false);
+			await call.Should().ThrowAsync<McpException>().ConfigureAwait(false);
+		}
+	}
+
+	private static async Task AssertFetchContinuationAsync(McpClient client, TestCorpus fixture, CancellationToken cancellationToken)
+	{
+		var markdown = await fixture.Corpus.ReadAsync(Path.Combine(fixture.Settings.Documents, "long.md"), cancellationToken).ConfigureAwait(false);
+		var page = await client.CallToolAsync("docs_fetch", new Dictionary<string, object?>(StringComparer.Ordinal)
+		{
+			["id"] = fixture.Corpus.Parse("long.md", markdown, cancellationToken).Id, ["maxChars"] = 100, ["offset"] = 100,
+		}, cancellationToken: cancellationToken).ConfigureAwait(false);
+		page.IsError.Should().NotBeTrue();
+		using var json = JsonDocument.Parse(string.Join("", page.Content.OfType<TextContentBlock>().Select(content => content.Text)));
+		var fetched = json.RootElement;
+		fetched.GetProperty("text").GetString().Should().Be(markdown.Substring(100, 100));
+		fetched.GetProperty("offset").GetInt32().Should().Be(100);
+		fetched.GetProperty("nextOffset").GetInt32().Should().Be(200);
+		fetched.GetProperty("generation").GetString().Should().Be(fixture.Index.Generation()!.Id);
+		fetched.GetProperty("documentId").GetString().Should().Be(fixture.Corpus.Parse("long.md", markdown, cancellationToken).Id);
+		fetched.GetProperty("nextId").ValueKind.Should().Be(JsonValueKind.Null);
+	}
+
 	private static void AssertPublicToolSchemas(IEnumerable<McpClientTool> tools)
 	{
 		var catalog = tools.ToArray();
 		catalog.Select(tool => tool.Name).Should().BeEquivalentTo("docs_search", "docs_fetch");
-		catalog.Single(tool => string.Equals(tool.Name, "docs_search", StringComparison.Ordinal)).JsonSchema
-			.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("query", "count");
-		catalog.Single(tool => string.Equals(tool.Name, "docs_fetch", StringComparison.Ordinal)).JsonSchema
-			.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("id", "maxChars");
+		var search = catalog.Single(tool => string.Equals(tool.Name, "docs_search", StringComparison.Ordinal));
+		var fetch = catalog.Single(tool => string.Equals(tool.Name, "docs_fetch", StringComparison.Ordinal));
+		search.JsonSchema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("query", "count");
+		fetch.JsonSchema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Should().BeEquivalentTo("id", "maxChars", "offset");
+		foreach (var tool in new[] { search, fetch })
+		{
+			foreach (var parameter in tool.JsonSchema.GetProperty("properties").EnumerateObject())
+			{
+				parameter.Value.GetProperty("description").GetString().Should().NotBeNullOrWhiteSpace();
+			}
+		}
+		search.JsonSchema.GetProperty("properties").GetProperty("query").GetProperty("description").GetString().Should().Contain("2,000");
+		fetch.Description.Should().Contain("generation");
 	}
 
 	[TestMethod]

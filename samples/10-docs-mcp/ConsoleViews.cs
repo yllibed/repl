@@ -43,9 +43,17 @@ internal static class ConsoleViews
 			new Rule(Markup.Escape(document.Source)),
 			new Text(document.Text),
 		};
-		if (document.Truncated)
+		if (document.NextOffset is not null || document.NextId is not null)
 		{
-			sections.Add(new Text("\nTruncated; fetch a section for a focused extract.", new Style(Color.Yellow)));
+			sections.Add(new Text("\nFrom the root prompt (inside docs, enter .. first):", new Style(Color.Yellow)));
+		}
+		if (document.NextOffset is { } offset)
+		{
+			sections.Add(new Text($"\nRead on: docs fetch --id {document.Id} --offset {offset}", new Style(Color.Yellow)));
+		}
+		if (document.NextId is { } nextId)
+		{
+			sections.Add(new Text($"\nNext part: docs fetch --id {nextId}", new Style(Color.Yellow)));
 		}
 		return new Rows(sections);
 	}
