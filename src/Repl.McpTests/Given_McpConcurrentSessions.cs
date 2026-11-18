@@ -708,7 +708,7 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("The compatibility-shim transition is connection-local — each session claims its own intro — so its tools/list_changed must reach that session alone, not every session attached to the handler. Each notification is recorded as the server hands it to that session's transport. SDK 2.2.0 reaches the transport from the send without an intervening await, the handler-wide fan-out included, so once a list returns, whatever it caused on any connection is already recorded; re-check that when the SDK changes. The client side cannot prove an absence: it dispatches each incoming message on its own task.")]
+	[Description("The compatibility-shim transition is connection-local — each session claims its own intro — so its tools/list_changed must reach that session alone, not every session attached to the handler. Each notification is recorded as the server hands it to that session's transport. SDK 2.4.0 reaches the transport from the send without an intervening await, the handler-wide fan-out included, so once a list returns, whatever it caused on any connection is already recorded; re-check that when the SDK changes. The client side cannot prove an absence: it dispatches each incoming message on its own task.")]
 	public async Task When_OneLegacySessionConsumesItsShimIntro_Then_NoOtherSessionIsNotified()
 	{
 		var app = ReplApp.Create();
@@ -898,56 +898,29 @@ public sealed class Given_McpConcurrentSessions
 	// Repl.Mcp until the SDK removes the surface (#51).
 #pragma warning disable MCP9005
 	[TestMethod]
-	[Description("Regression guard: one connection really can be served both eras, so each era needs its own snapshot cache slot. The SDK accepts a modern per-request _meta call and then an initialize handshake on the same pipe, and the two eras see different command graphs — a capability gate reads as supported during modern discovery and against the real client on legacy. With one shared entry the second request is served the first one\u0027s catalog.")]
-	public async Task When_OneConnectionIsServedBothEras_Then_EachGetsItsOwnCatalog()
+	[Description("Pins the SDK admission rule that keeps an initialize-era connection in its era: after initialize, a request's modern _meta is treated as opaque and the request is served the legacy catalog. Repl keeps one snapshot slot per era because a modern request and an initialize admitted together can still both be served (see When_BothErasPublishOnOneSession_Then_EachKeepsItsOwnEntry). If this fails after an SDK update, one connection can again be served both eras in sequence, and an end-to-end test of the per-era slots becomes possible again.")]
+	public async Task When_AModernTaggedRequestFollowsInitialize_Then_ItIsServedTheLegacyCatalog()
 	{
 		var app = ReplApp.Create();
 		app.UseMcpServer();
 		app.Map("always", () => "ok");
 		app.MapModule(new RootsGatedModule(), (IMcpClientRoots roots) => roots.IsSupported);
-		var handler = CreateHandler(app);
-
 		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-		var clientToServer = new Pipe();
-		var serverToClient = new Pipe();
-		var io = new McpRawIo(clientToServer, serverToClient);
-		var serverTask = handler.RunAsync(
-			new McpTestFixture.PipeIoContext(
-				clientToServer.Reader.AsStream(),
-				serverToClient.Writer.AsStream()),
-			cts.Token);
+		var (io, serverTask) = StartRawServer(CreateHandler(app), cts.Token);
 
 		try
 		{
-			// A modern request: the era travels in _meta, there is no handshake.
-			var modern = await io.CallAsync(
-				id: 1,
+			await io.InitializeLegacyAsync(id: 1, cts.Token).ConfigureAwait(false);
+			var modernTagged = await io.CallAsync(
+				id: 2,
 				method: "tools/list",
-				meta: new JsonObject
-				{
-					["io.modelcontextprotocol/protocolVersion"] = McpProtocolRevisions.Sessionless,
-					["io.modelcontextprotocol/clientCapabilities"] = new JsonObject(),
-				},
+				meta: ModernMeta(),
 				cancellationToken: cts.Token).ConfigureAwait(false);
 
-			ToolNames(modern).Should().Contain(
+			ToolNames(modernTagged).Should().Contain("always");
+			ToolNames(modernTagged).Should().NotContain(
 				"gated",
-				because: "modern discovery answers IsSupported with a constant, so the gate matches for everyone");
-
-			// The same connection then opens a legacy session, which the SDK accepts.
-			await io.InitializeLegacyAsync(id: 2, cts.Token).ConfigureAwait(false);
-
-			var legacy = await io.CallAsync(
-				id: 3,
-				method: "tools/list",
-				meta: null,
-				cancellationToken: cts.Token).ConfigureAwait(false);
-
-			ToolNames(legacy).Should().Contain("always");
-			ToolNames(legacy).Should().NotContain(
-				"gated",
-				because: "this legacy client declares no roots, so it must not be served the catalog the "
-					+ "modern request seeded on the same connection");
+				because: "the connection is in the legacy era, whose client declared no roots");
 		}
 		finally
 		{
@@ -956,7 +929,53 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("Publishing one era's catalog must not evict the other's. A connection is served modern requests, then an initialize and legacy ones — and a modern request accepted before initialize can still be in flight, since the SDK dispatches one connection's requests concurrently. With one slot, that late modern publication replaced the legacy entry the availability fallback reads, so a legacy build that then failed transiently found only an opposite-era catalog and failed closed. That interleaving cannot be driven through the handler on demand, so this pins the storage; the handler's reads of each era's slot are pinned by Given_McpDiagnostics' stale-catalog tests (legacy fallback) and When_AModernProjectionFailsTransiently_Then_NoSessionServesItsOwnStaleCatalog.")]
+	[Description("Pins the SDK admission rule that keeps a modern connection in its era: once a modern request has been admitted, initialize is refused, even while that request is still being served, and the modern request still gets the modern catalog. If this fails after an SDK update, one connection can again be served both eras in sequence, and an end-to-end test of the per-era slots becomes possible again.")]
+	public async Task When_InitializeArrivesWhileAModernRequestIsServed_Then_TheHandshakeIsRefused()
+	{
+		using var modernBuildEntered = new SemaphoreSlim(0);
+		using var releaseModernBuild = new SemaphoreSlim(0);
+		var held = 0;
+		var app = ReplApp.Create();
+		app.UseMcpServer();
+		app.Map("always", () => "ok");
+		app.MapModule(new RootsGatedModule(), (IMcpClientRoots roots) =>
+		{
+			// Only the modern build answers "supported"; hold its first evaluation until initialize is answered.
+			if (roots.IsSupported && Interlocked.Exchange(ref held, 1) == 0)
+			{
+				modernBuildEntered.Release();
+				releaseModernBuild.Wait(TimeSpan.FromSeconds(10));
+			}
+
+			return roots.IsSupported;
+		});
+		using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+		var (io, serverTask) = StartRawServer(CreateHandler(app), cts.Token);
+
+		try
+		{
+			await io.SendAsync(id: 1, method: "tools/list", meta: ModernMeta(), cts.Token).ConfigureAwait(false);
+			(await modernBuildEntered.WaitAsync(TimeSpan.FromSeconds(10), cts.Token).ConfigureAwait(false))
+				.Should().BeTrue("the modern request must be mid-build when initialize arrives");
+
+			await io.SendAsync(id: 2, method: "initialize", meta: null, cts.Token, LegacyInitializeParameters()).ConfigureAwait(false);
+			var initialize = await io.ReadResponseAsync(id: 2, cts.Token).ConfigureAwait(false);
+			releaseModernBuild.Release();
+			var modern = await io.ReadResponseAsync(id: 1, cts.Token).ConfigureAwait(false);
+
+			var initializeError = initialize["error"]?["code"]?.GetValue<int>();
+			initializeError.Should().Be(-32601, because: "a modern request was admitted first");
+			ToolNames(modern).Should().Contain("gated", because: "the modern request keeps its own era");
+		}
+		finally
+		{
+			releaseModernBuild.Release();
+			await StopRawServerAsync(cts, io, serverTask).ConfigureAwait(false);
+		}
+	}
+
+	[TestMethod]
+	[Description("Publishing one era's catalog must not evict the other's. One connection can still be served both eras: the SDK dispatches a connection's requests concurrently, so a modern request and an initialize admitted together are both served, and the modern build can publish after legacy requests have run. That is the only way left: SDK 2.4.0 refuses initialize once a modern request has been admitted, and serves a modern-tagged request in the legacy era once initialize has run (both pinned above). With one slot, that late modern publication replaced the legacy entry the availability fallback reads, so a legacy build that then failed transiently found only an opposite-era catalog and failed closed. That race cannot be driven through the handler on demand, so this pins the storage; the handler's reads of each era's slot are pinned by Given_McpDiagnostics' stale-catalog tests (legacy fallback) and When_AModernProjectionFailsTransiently_Then_NoSessionServesItsOwnStaleCatalog.")]
 	public async Task When_BothErasPublishOnOneSession_Then_EachKeepsItsOwnEntry()
 	{
 		var context = CreateSessionContext();
@@ -976,7 +995,7 @@ public sealed class Given_McpConcurrentSessions
 	}
 
 	[TestMethod]
-	[Description("Only a legacy build can fall back, so only a legacy failure opens a catalog-failure episode, and only a legacy build can end it. A modern request accepted before initialize can still build after a legacy failure; its success says nothing about the legacy build, which sees the session's own capabilities and roots. Ending the episode then would log a recovery while the connection still serves its stale legacy catalog, and make the next legacy failure warn again.")]
+	[Description("Only a legacy build can fall back, so only a legacy failure opens a catalog-failure episode, and only a legacy build can end it. A modern request admitted together with initialize can still build after a legacy failure; its success says nothing about the legacy build, which sees the session's own capabilities and roots. Ending the episode then would log a recovery while the connection still serves its stale legacy catalog, and make the next legacy failure warn again.")]
 	public async Task When_TheModernEraEndsALegacyFailureEpisode_Then_TheEpisodeStaysOpen()
 	{
 		var context = CreateSessionContext();
@@ -1000,6 +1019,18 @@ public sealed class Given_McpConcurrentSessions
 		return new McpSessionContext(roots, McpTestFixture.EmptyServices, scope: null);
 	}
 
+	private static (McpRawIo Io, Task ServerTask) StartRawServer(McpServerHandler handler, CancellationToken cancellationToken)
+	{
+		var clientToServer = new Pipe();
+		var serverToClient = new Pipe();
+		var serverTask = handler.RunAsync(
+			new McpTestFixture.PipeIoContext(
+				clientToServer.Reader.AsStream(),
+				serverToClient.Writer.AsStream()),
+			cancellationToken);
+		return (new McpRawIo(clientToServer, serverToClient), serverTask);
+	}
+
 	private static async Task StopRawServerAsync(CancellationTokenSource cts, McpRawIo io, Task serverTask)
 	{
 		await cts.CancelAsync().ConfigureAwait(false);
@@ -1014,6 +1045,23 @@ public sealed class Given_McpConcurrentSessions
 		}
 	}
 
+	private static JsonObject ModernMeta() => new()
+	{
+		["io.modelcontextprotocol/protocolVersion"] = McpProtocolRevisions.Sessionless,
+		["io.modelcontextprotocol/clientCapabilities"] = new JsonObject(),
+	};
+
+	private static JsonObject LegacyInitializeParameters() => new()
+	{
+		["protocolVersion"] = McpProtocolRevisions.LastWithSessions,
+		["capabilities"] = new JsonObject(),
+		["clientInfo"] = new JsonObject
+		{
+			["name"] = "mixed-era-probe",
+			["version"] = "1.0.0",
+		},
+	};
+
 	private static IReadOnlyList<string> ToolNames(JsonObject response) =>
 		[
 			.. (response["result"]?["tools"]?.AsArray() ?? [])
@@ -1021,14 +1069,27 @@ public sealed class Given_McpConcurrentSessions
 		];
 
 	/// <summary>
-	/// A raw newline-delimited JSON-RPC peer. <see cref="McpClient"/> cannot express this test: it
+	/// A raw newline-delimited JSON-RPC peer. <see cref="McpClient"/> cannot express these tests: it
 	/// speaks one era for the life of a connection, and the point here is to send both down one pipe.
+	/// Responses that arrive while another one is awaited are kept until they are asked for.
 	/// </summary>
 	private sealed class McpRawIo(Pipe clientToServer, Pipe serverToClient) : IAsyncDisposable
 	{
 		private readonly StreamReader _reader = new(serverToClient.Reader.AsStream(), Encoding.UTF8);
+		private readonly Dictionary<int, JsonObject> _unclaimed = [];
 
 		public async Task<JsonObject> CallAsync(
+			int id,
+			string method,
+			JsonObject? meta,
+			CancellationToken cancellationToken,
+			JsonObject? parameters = null)
+		{
+			await SendAsync(id, method, meta, cancellationToken, parameters).ConfigureAwait(false);
+			return await ReadResponseAsync(id, cancellationToken).ConfigureAwait(false);
+		}
+
+		public Task SendAsync(
 			int id,
 			string method,
 			JsonObject? meta,
@@ -1041,7 +1102,7 @@ public sealed class Given_McpConcurrentSessions
 				parameterObject["_meta"] = meta;
 			}
 
-			await WriteAsync(
+			return WriteAsync(
 				new JsonObject
 				{
 					["jsonrpc"] = "2.0",
@@ -1049,19 +1110,33 @@ public sealed class Given_McpConcurrentSessions
 					["method"] = method,
 					["params"] = parameterObject,
 				},
-				cancellationToken).ConfigureAwait(false);
+				cancellationToken);
+		}
+
+		public async Task<JsonObject> ReadResponseAsync(int id, CancellationToken cancellationToken)
+		{
+			if (_unclaimed.Remove(id, out var earlier))
+			{
+				return earlier;
+			}
 
 			while (await _reader.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
 			{
-				if (JsonNode.Parse(line) is not JsonObject frame)
+				// A frame with a method is a request or notification from the server, whose id is its own.
+				if (JsonNode.Parse(line) is not JsonObject frame
+					|| frame.ContainsKey("method")
+					|| frame["id"] is not JsonValue value
+					|| !value.TryGetValue(out int responseId))
 				{
 					continue;
 				}
 
-				if (frame["id"] is JsonValue value && value.TryGetValue(out int responseId) && responseId == id)
+				if (responseId == id)
 				{
 					return frame;
 				}
+
+				_unclaimed[responseId] = frame;
 			}
 
 			throw new InvalidOperationException($"No response for request {id}.");
@@ -1070,34 +1145,26 @@ public sealed class Given_McpConcurrentSessions
 		/// <summary>Opens an initialize-era session on this same connection.</summary>
 		public async Task InitializeLegacyAsync(int id, CancellationToken cancellationToken)
 		{
-			await CallAsync(
+			var response = await CallAsync(
 				id,
 				"initialize",
 				meta: null,
 				cancellationToken,
-				parameters: new JsonObject
-				{
-					["protocolVersion"] = McpProtocolRevisions.LastWithSessions,
-					["capabilities"] = new JsonObject(),
-					["clientInfo"] = new JsonObject
-					{
-						["name"] = "mixed-era-probe",
-						["version"] = "1.0.0",
-					},
-				}).ConfigureAwait(false);
+				parameters: LegacyInitializeParameters()).ConfigureAwait(false);
+			if (response["error"] is { } error)
+			{
+				throw new InvalidOperationException($"The SDK refused initialize: {error.ToJsonString()}");
+			}
 
-			await NotifyAsync("notifications/initialized", cancellationToken).ConfigureAwait(false);
-		}
-
-		public Task NotifyAsync(string method, CancellationToken cancellationToken) =>
-			WriteAsync(
+			await WriteAsync(
 				new JsonObject
 				{
 					["jsonrpc"] = "2.0",
-					["method"] = method,
+					["method"] = "notifications/initialized",
 					["params"] = new JsonObject(),
 				},
-				cancellationToken);
+				cancellationToken).ConfigureAwait(false);
+		}
 
 		public async ValueTask DisposeAsync()
 		{

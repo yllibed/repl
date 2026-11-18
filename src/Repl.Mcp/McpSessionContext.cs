@@ -22,11 +22,11 @@ internal sealed class McpSessionContext : IAsyncDisposable
 {
 	// One entry per protocol era, since the two eras see different command graphs: a modern build answers
 	// every capability question "supported" so the advertised set cannot vary per connection, while a
-	// legacy build reflects the session's own capabilities. One connection really is served both: modern
-	// requests, then an initialize and legacy ones (see
-	// When_OneConnectionIsServedBothEras_Then_EachGetsItsOwnCatalog). A modern request accepted before
-	// initialize can still publish after the legacy one — the SDK dispatches a connection's requests
-	// concurrently — so one shared slot would let it evict the legacy entry the availability fallback reads.
+	// legacy build reflects the session's own capabilities. One connection can be served both: the SDK
+	// dispatches a connection's requests concurrently, so a modern request and an initialize admitted
+	// together are both served, and the modern build can publish after the legacy one. One shared slot would
+	// let it evict the legacy entry the availability fallback reads (see
+	// When_BothErasPublishOnOneSession_Then_EachKeepsItsOwnEntry).
 	private SnapshotCacheEntry? _legacySnapshot;
 	private SnapshotCacheEntry? _modernSnapshot;
 	private int _compatibilityIntroServed;
