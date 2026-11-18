@@ -14,7 +14,7 @@
     <ProjectReference Include="../../src/Repl.Remote.Defaults/Repl.Remote.Defaults.csproj" />
     <ProjectReference Include="../../src/Repl.WebSocket/Repl.WebSocket.csproj" />
     <ProjectReference Include="../../src/Repl.Spectre/Repl.Spectre.csproj" />
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.4.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.0" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
