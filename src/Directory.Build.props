@@ -40,6 +40,23 @@
 		<NoWarn>$(NoWarn);CA2016</NoWarn>
 	</PropertyGroup>
 
+	<!--
+		Runtime async, on request only (-p:ReplRuntimeAsync=true): the runtime runs async methods itself instead of
+		compiler-generated state machines. Packages never ship with it: .NET 11 WebAssembly runs on Mono, which
+		does not support it, and Microsoft keeps its own NuGet packages off it for that reason
+		(dotnet/runtime#125406, dotnet/aspnetcore#66200). The Runtime Async CI job tests Repl with it, ready for
+		when packages can ship with it. net11.0 and later: on net10.0 it is a preview feature and fails the build
+		with SYSLIB5007.
+	-->
+	<PropertyGroup Condition="'$(ReplRuntimeAsync)' == 'true' And $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net11.0'))">
+		<Features>$(Features);runtime-async=on</Features>
+		<DefineConstants>$(DefineConstants);REPL_RUNTIME_ASYNC</DefineConstants>
+	</PropertyGroup>
+
+	<Target Name="ReplRefuseRuntimeAsyncPackage" BeforeTargets="GenerateNuspec" Condition="'$(ReplRuntimeAsync)' == 'true'">
+		<Error Text="$(MSBuildProjectName): packages are never built with ReplRuntimeAsync=true (see src/Directory.Build.props). Pack from a build without it." />
+	</Target>
+
 	<!-- Reproducible build — enable only under CI to preserve local debug paths -->
 	<PropertyGroup Condition="'$(CI)' == 'true'">
 		<ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
