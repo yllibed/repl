@@ -12,6 +12,24 @@ the same declaration does not compile in a `net10.0` project with its default la
 can return a union, and Repl processes its active case: see
 [Union return values](commands.md#union-return-values-c-15).
 
+## Runtime async
+
+With [runtime async](https://learn.microsoft.com/dotnet/core/whats-new/dotnet-11/runtime#runtime-async),
+the .NET 11 runtime suspends and resumes async methods itself, instead of running the state machines the
+C# compiler generates otherwise. The .NET 11 libraries are compiled this way.
+
+Repl's packages are not: .NET 11 WebAssembly runs on Mono, which does not support runtime async, and
+Repl runs in the browser. Microsoft keeps its own NuGet packages off runtime async for the same reason.
+
+An application that does not run in the browser can compile its own async methods with runtime async,
+and keep calling Repl as before:
+
+```xml
+<PropertyGroup Condition="'$(TargetFramework)' == 'net11.0'">
+  <Features>$(Features);runtime-async=on</Features>
+</PropertyGroup>
+```
+
 ## `FORCE_COLOR`
 
 The .NET 11 console logger (`Microsoft.Extensions.Logging.Console`) colours its output when `FORCE_COLOR`

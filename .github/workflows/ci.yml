@@ -132,6 +132,58 @@ jobs:
         shell: bash
         run: bash ./eng/ci/process-signal-stress.sh 3 2
 
+  # Builds Repl with runtime async and runs the net11.0 tests. Packages never ship in this mode (see
+  # ReplRuntimeAsync in src/Directory.Build.props), so a failure here does not block the pull request:
+  # file it as its own issue. This job never packs.
+  runtime-async:
+    name: Runtime Async (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+          dotnet-quality: ga
+
+      - name: Build
+        run: dotnet build src/Repl.slnx -c Release -warnaserror -p:ReplRuntimeAsync=true
+
+      # Fails if the switch did not take effect, so a green job always means runtime-async binaries.
+      - name: Check the runtime async build
+        run: >-
+          dotnet test --project src/Repl.Tests/Repl.Tests.csproj
+          -c Release --no-build --framework net11.0
+          --filter FullyQualifiedName~When_TheRuntimeAsyncSwitchIsOn
+          --minimum-expected-tests 1
+
+      # Only net11.0 changes. The test projects are run one by one because the solution also holds a
+      # net10.0-only sample test project, which a solution-wide --framework net11.0 run cannot start.
+      - name: Test (net11.0)
+        shell: bash
+        run: |
+          failed=0
+          for project in src/Repl.*Tests/*.csproj; do
+            dotnet test --project "$project" -c Release --no-build --framework net11.0 \
+              --results-directory TestResults -- --report-trx || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-runtime-async
+          path: TestResults/**
+          retention-days: 14
+
   shell-completion-real-shells:
     name: Shell Completion Smoke (Real Shells)
     runs-on: ubuntu-latest

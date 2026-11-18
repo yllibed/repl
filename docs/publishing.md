@@ -181,6 +181,12 @@ publishes, produced by `Build, Test, Pack`. Within that job, `Test` and `Pack` b
 `--no-build` against the outputs of a single `Build`, so a release publishes exactly the assemblies
 the tests ran against.
 
+Packages are never compiled with runtime async ([Running on .NET 11](dotnet-11.md#runtime-async) says
+why). The `Runtime Async` CI job builds with `-p:ReplRuntimeAsync=true` and never packs, and `pack`
+fails when that property is set. A build with the property followed by `pack --no-build` without it is
+not caught, so never pack after such a build. `Given_RuntimeAsyncCompilation` in `Repl.Tests` also fails
+if `Repl.Core` or `Repl.Defaults` gets compiled with runtime async without the property.
+
 ## Do I need to create a Git tag manually?
 
 - No for normal flow.
