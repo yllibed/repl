@@ -1,13 +1,17 @@
 using HostingRemoteSample;
 using Repl;
+using Repl.Hosting.TestHost;
 using Repl.Remote;
 
 try
 {
-	if (args is not ["cooperative" or "async-cleanup" or "blocking-callback"])
+	if (args is not ["cooperative" or "async-cleanup" or "blocking-callback" or "slow-console-log" or "blocked-stderr"])
 	{
 		return 2;
 	}
+	// Installed before the console logger captures Console.Out, so the logged failure lags past its 1.5 s flush budget.
+	if (args[0] is "slow-console-log") { Console.SetOut(new FatalLineDelayingWriter(Console.Out, TimeSpan.FromSeconds(5))); }
+	if (args[0] is "blocked-stderr") { Console.SetError(new FatalLineDelayingWriter(Console.Error, Timeout.InfiniteTimeSpan)); }
 	using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
 	var builder = WebApplication.CreateBuilder();
 	// Child-process assertions observe console logs; Windows Event Log requires unrelated machine permissions.
@@ -40,7 +44,7 @@ try
 			finally
 			{
 				Console.WriteLine("command-cleaning");
-				if (args[0] is "async-cleanup")
+				if (args[0] is "async-cleanup" or "slow-console-log" or "blocked-stderr")
 				{
 					await Task.Delay(Timeout.InfiniteTimeSpan, TimeProvider.System, CancellationToken.None).ConfigureAwait(false);
 				}
