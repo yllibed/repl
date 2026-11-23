@@ -38,8 +38,21 @@ internal static class HostingLifetime
 			catch (Exception error)
 			{
 				ShutdownFailed(host.Logger, error);
-				// Exit does not wait for the console logger's background queue: drain it so this line survives.
+				// Exit does not wait for logging providers, and disposing the console logger gives its writer only
+				// 1.5 s before queued lines are dropped. Report the failure on stderr as well, so it survives a slow
+				// stdout. The report runs on its own thread, waited for at most 1 s, so a blocked stderr cannot keep
+				// the process from exiting; a thread-pool task would depend on the pool that stuck work may starve.
+				var report = new Thread(() =>
+				{
+					try { Console.Error.WriteLine($"Administration shutdown failed: {error.Message}"); }
+					catch (Exception) { /* The process is exiting either way; the logged entry may still survive. */ }
+				})
+				{
+					IsBackground = true,
+				};
+				report.Start();
 				foreach (var provider in host.Services.GetServices<ILoggerProvider>()) { provider.Dispose(); }
+				report.Join(TimeSpan.FromSeconds(1));
 				Environment.Exit(1);
 			}
 #pragma warning restore CA1031
